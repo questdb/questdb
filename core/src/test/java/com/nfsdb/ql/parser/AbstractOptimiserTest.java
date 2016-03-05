@@ -52,6 +52,7 @@ public abstract class AbstractOptimiserTest {
     }
 
     protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
+        // todo: exercise cache
         assertThat(expected, query, false);
         assertThat(expected, query, false);
         compiler.clearCache();

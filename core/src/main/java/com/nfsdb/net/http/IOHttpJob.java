@@ -73,6 +73,20 @@ public class IOHttpJob implements Job {
         }
     }
 
+    private static void logAccess(IOContext context) {
+        ACCESS.xinfo().
+                $ip(Net.getPeerIP(context.channel.getFd())).
+                $(" -").
+                $(" -").
+                $(" [").
+                $ts(System.currentTimeMillis()).
+                $("] ").
+                $('"').$(context.request.getMethodLine()).$('"').
+                $(' ').$(context.getResponseCode()).
+                $(' ').$(context.channel.getTotalWrittenAndReset()).
+                $();
+    }
+
     private void process(IOContext context, final ChannelStatus status) {
         final Request r = context.request;
         final SimpleResponse sr = context.simpleResponse();
@@ -122,17 +136,7 @@ public class IOHttpJob implements Job {
                 }
 
                 if (log && !r.isIncomplete()) {
-                    ACCESS.xinfo().
-                            $ip(Net.getPeerIP(context.channel.getFd())).
-                            $(" -").
-                            $(" -").
-                            $(" [").
-                            $ts(System.currentTimeMillis()).
-                            $("] ").
-                            $('"').$(r.getMethodLine()).$('"').
-                            $(' ').$(context.getResponseCode()).
-                            $(' ').$(context.channel.getTotalWrittenAndReset()).
-                            $();
+                    logAccess(context);
                 }
             }
             context.clear();
@@ -140,6 +144,7 @@ public class IOHttpJob implements Job {
         } catch (HeadersTooLargeException ignored) {
             silent(sr, 431, null);
             LOG.info().$("Headers too large").$();
+            logAccess(context);
             result = ChannelStatus.READ;
         } catch (MalformedHeaderException | DisconnectedChannelException e) {
             result = ChannelStatus.DISCONNECTED;
@@ -151,13 +156,11 @@ public class IOHttpJob implements Job {
         } catch (SlowWritableChannelException e) {
             LOG.debug().$("Slow write").$();
             result = ChannelStatus.WRITE;
-        } catch (IOException e) {
-            result = ChannelStatus.DISCONNECTED;
-            LOG.error().$("Unexpected IOException: ").$(e).$();
         } catch (Throwable e) {
             silent(sr, 500, e.getMessage());
             result = ChannelStatus.DISCONNECTED;
             LOG.error().$("Internal error: ").$(e).$();
+            logAccess(context);
         }
         ioDispatcher.registerChannel(context, result);
     }

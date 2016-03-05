@@ -85,6 +85,7 @@ public class AssociativeCache<V> implements Closeable {
         }
         V value = Unsafe.arrayGet(values, index);
         Unsafe.arrayPut(values, index, null);
+        Unsafe.arrayPut(keys, index, null);
         return value;
     }
 

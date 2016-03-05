@@ -368,13 +368,18 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         }
 
         public KeyWriter putStr(CharSequence value) {
-            int len = value.length();
-            checkSize(len << 1);
-            for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putChar(appendAddr + (i << 1), value.charAt(i));
+            if (value == null) {
+                Unsafe.getUnsafe().putInt(nextColOffset, 0);
+                nextColOffset += 4;
+            } else {
+                int len = value.length();
+                checkSize(len << 1);
+                for (int i = 0; i < len; i++) {
+                    Unsafe.getUnsafe().putChar(appendAddr + (i << 1), value.charAt(i));
+                }
+                appendAddr += len << 1;
+                writeOffset();
             }
-            appendAddr += len << 1;
-            writeOffset();
             return this;
         }
 

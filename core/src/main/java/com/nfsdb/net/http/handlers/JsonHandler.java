@@ -31,6 +31,7 @@ import com.nfsdb.log.Log;
 import com.nfsdb.log.LogFactory;
 import com.nfsdb.log.LogRecord;
 import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.net.http.ChunkedResponse;
 import com.nfsdb.net.http.ContextHandler;
@@ -45,14 +46,13 @@ import com.nfsdb.std.Mutable;
 import com.nfsdb.std.ObjectFactory;
 import com.nfsdb.std.ThreadLocal;
 import com.nfsdb.store.ColumnType;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
 
 public class JsonHandler implements ContextHandler {
-    private static final ThreadLocal<QueryCompiler> queryCompilerLocal = new ThreadLocal<>(new ObjectFactory<QueryCompiler>() {
+    private static final ThreadLocal<QueryCompiler> COMPILER = new ThreadLocal<>(new ObjectFactory<QueryCompiler>() {
         @Override
         public QueryCompiler newInstance() {
             return new QueryCompiler();
@@ -127,32 +127,29 @@ public class JsonHandler implements ContextHandler {
                 $(", stop: ").$(stop).
                 $(", withCount: ").$(ctx.includeCount).$();
 
-        if (executeQuery(r, ctx) != null) {
-            // Send records.
-            resume(context);
-        }
+        executeQuery(r, ctx);
+        resume(context);
     }
 
     @Override
     public void resume(IOContext context) throws IOException {
         JsonHandlerContext ctx = localContext.get(context);
-
-        Iterator<Record> records = ctx.records;
-        if (records == null) {
+        Iterator<Record> records;
+        if (ctx == null || (records = ctx.cursor) == null) {
             return;
         }
 
-        RecordMetadata metadata = ctx.metadata;
+        final RecordMetadata metadata = ctx.metadata;
         final int columnCount = metadata.getColumnCount();
 
-        if (ctx.current == null && records.hasNext()) {
-            ctx.current = records.next();
+        if (ctx.record == null && records.hasNext()) {
+            ctx.record = records.next();
             ctx.count++;
         }
 
         final ChunkedResponse r = context.chunkedResponse();
         try {
-            while (ctx.current != null) {
+            while (ctx.record != null) {
                 if (ctx.count > ctx.skip) {
                     r.bookmark();
                     if (ctx.count > ctx.stop && !ctx.includeCount) {
@@ -172,7 +169,7 @@ public class JsonHandler implements ContextHandler {
                                 r.put(',');
                             }
                             r.putQuoted(m.getName()).put(':');
-                            putValue(r, m.getType(), ctx.current, col);
+                            putValue(r, m.getType(), ctx.record, col);
                         }
                         r.put('}');
                         r.sendChunk();
@@ -180,10 +177,10 @@ public class JsonHandler implements ContextHandler {
                 }
 
                 if (records.hasNext()) {
-                    ctx.current = records.next();
+                    ctx.record = records.next();
                     ctx.count++;
                 } else {
-                    ctx.current = null;
+                    ctx.record = null;
                 }
             }
             sendDone(r, ctx);
@@ -267,29 +264,25 @@ public class JsonHandler implements ContextHandler {
         }
     }
 
-    @Nullable
-    private Iterator<Record> executeQuery(ChunkedResponse r, JsonHandlerContext ctx) throws IOException {
+    private void executeQuery(ChunkedResponse r, JsonHandlerContext ctx) throws IOException {
         CharSequence query = ctx.query;
         try {
             // Prepare Context.
             JournalCachingFactory factory = factoryPool.get();
             ctx.factory = factory;
-            ctx.recordSource = queryCompilerLocal.get().compileAndRemoveFromCache(factory, query);
-            RecordCursor records = ctx.recordSource.prepareCursor(factory);
+            ctx.recordSource = COMPILER.get().compileAndRemoveFromCache(factory, query);
+            RecordCursor cursor = ctx.cursor = ctx.recordSource.prepareCursor(factory);
 
             r.status(200, "application/json; charset=utf-8");
             r.sendHeader();
             r.put('{').putQuoted("query").put(':').putUtf8EscapedAndQuoted(query);
             r.put(',').putQuoted("columns").put(':').put('[');
 
-            RecordMetadata metadata = records.getMetadata();
+            RecordMetadata metadata = cursor.getMetadata();
             ctx.metadata = metadata;
-            ctx.records = records;
 
             // List columns.
-            int columnCount = metadata.getColumnCount();
-
-            for (int i = 0; i < columnCount; i++) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 RecordColumnMetadata column = metadata.getColumnQuick(i);
                 if (i > 0) {
                     r.put(',');
@@ -302,20 +295,16 @@ public class JsonHandler implements ContextHandler {
             }
             r.put(']').put(',');
             r.putQuoted("result").put(':').put('[');
-            return records;
         } catch (ParserException pex) {
-            // todo: log exception properly
-            ctx.info().$("Parser error executing query ").$(query).$(pex).$();
+            ctx.info().$("Parser error executing query ").$(query).$(": at (").$(QueryError.getPosition()).$(") ").$(QueryError.getMessage()).$();
             sendException(r, query, QueryError.getPosition(), QueryError.getMessage(), 400);
         } catch (JournalException jex) {
-            ctx.info().$("Server error executing query ").$(query).$(jex).$();
+            ctx.error().$("Server error executing query ").$(query).$(jex).$();
             sendException(r, query, 0, jex.getMessage(), 500);
         } catch (InterruptedException ex) {
-            // todo: probably eliminate this
-            ctx.info().$("Error executing query. Server is shutting down. Query: ").$(query).$(ex).$();
+            ctx.error().$("Error executing query. Server is shutting down. Query: ").$(query).$(ex).$();
             sendException(r, query, 0, "Server is shutting down.", 500);
         }
-        return null;
     }
 
     private void sendDone(ChunkedResponse r, JsonHandlerContext ctx) throws DisconnectedChannelException, SlowWritableChannelException {
@@ -341,11 +330,11 @@ public class JsonHandler implements ContextHandler {
         public RecordSource recordSource;
         private CharSequence query;
         private RecordMetadata metadata;
-        private Iterator<Record> records;
+        private RecordCursor cursor;
         private long count;
         private long skip;
         private long stop;
-        private Record current;
+        private Record record;
         private boolean includeCount;
         private JournalCachingFactory factory;
         private long fd;
@@ -354,15 +343,12 @@ public class JsonHandler implements ContextHandler {
         public void clear() {
             debug().$("Cleaning context").$();
             metadata = null;
-            records = null;
-            current = null;
-            if (factory != null) {
-                debug().$("Closing journal factory").$();
-                factory.close();
-                factory = null;
-            }
+            cursor = null;
+            record = null;
+            debug().$("Closing journal factory").$();
+            factory = Misc.free(factory);
             if (recordSource != null) {
-                queryCompilerLocal.get().reuse(query, recordSource);
+                COMPILER.get().reuse(query, recordSource);
                 recordSource = null;
             }
             query = null;

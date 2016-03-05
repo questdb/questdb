@@ -148,7 +148,7 @@ public class QueryCompiler {
     public RecordSource compileSource(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
         RecordSource rs = cache.peek(query);
         if (rs == null) {
-            cache.put(query, rs = resetAndCompile(factory, query));
+            cache.put(query.toString(), rs = resetAndCompile(factory, query));
         } else {
             rs.reset();
         }
@@ -163,7 +163,7 @@ public class QueryCompiler {
 
     public void reuse(CharSequence query, RecordSource rs) {
         if (query != null) {
-            cache.put(query, rs);
+            cache.put(query.toString(), rs);
         }
     }
 

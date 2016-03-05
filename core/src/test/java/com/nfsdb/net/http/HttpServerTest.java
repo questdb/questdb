@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -443,6 +443,27 @@ public class HttpServerTest extends AbstractJournalTest {
             Assert.assertEquals(0, queryResponse.result[0].w);
             Assert.assertEquals(10, queryResponse.result[0].timestamp);
             Assert.assertEquals(false, queryResponse.moreExist);
+
+            Assert.assertEquals("id4", queryResponse.result[4].id);
+            Assert.assertTrue(Double.isNaN(queryResponse.result[4].y));
+        } finally {
+            factoryPool.close();
+            server.halt();
+        }
+    }
+
+    @Test
+    public void testJsonInvertedLimit() throws Exception {
+        generateJournal();
+        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            put("/js", createHandler());
+        }});
+        server.start();
+        try {
+            String query = "tab limit 10";
+            QueryResponse queryResponse = download(query, 10, 5);
+            Assert.assertEquals(0, queryResponse.result.length);
+            Assert.assertEquals(true, queryResponse.moreExist);
         } finally {
             factoryPool.close();
             server.halt();
@@ -472,16 +493,23 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testJsonPooling() throws Exception {
         generateJournal();
+        //todo: complete
+        final JsonHandler[] handler = new JsonHandler[1];
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", createHandler());
+            put("/js", handler[0] = createHandler());
         }});
+
         server.start();
         try {
-            QueryResponse queryResponse1 = download("select 1 z from tab limit 10");
-            QueryResponse queryResponse2 = download("select 1 z from tab limit 10");
+            QueryResponse queryResponse1 = download("tab limit 10");
+            QueryResponse queryResponse2 = download("tab limit 10");
+            QueryResponse queryResponse3 = download("tab limit 10");
+            QueryResponse queryResponse4 = download("tab limit 10");
 
             Assert.assertEquals(10, queryResponse1.result.length);
             Assert.assertEquals(10, queryResponse2.result.length);
+            Assert.assertEquals(10, queryResponse3.result.length);
+            Assert.assertEquals(10, queryResponse4.result.length);
         } finally {
             factoryPool.close();
             server.halt();
@@ -910,9 +938,7 @@ public class HttpServerTest extends AbstractJournalTest {
         download(clientBuilder(false), url, f);
         Gson gson = new GsonBuilder()
                 .setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").create();
-        String body = Files.readStringFromFile(f);
-        f.deleteOnExit();
-        return gson.fromJson(body, QueryResponse.class);
+        return gson.fromJson(Files.readStringFromFile(f), QueryResponse.class);
     }
 
     private void download(HttpClientBuilder b, String url, File out) throws IOException {
