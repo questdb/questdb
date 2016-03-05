@@ -48,7 +48,7 @@ import com.nfsdb.store.ColumnType;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
-import java.util.concurrent.atomic.LongAdder;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class JsonHandler implements ContextHandler {
     private static final ThreadLocal<QueryCompiler> COMPILER = new ThreadLocal<>(new ObjectFactory<QueryCompiler>() {
@@ -66,8 +66,8 @@ public class JsonHandler implements ContextHandler {
 
     private final JournalFactoryPool factoryPool;
     private final LocalValue<JsonHandlerContext> localContext = new LocalValue<>();
-    private final LongAdder cacheHits = new LongAdder();
-    private final LongAdder cacheMisses = new LongAdder();
+    private final AtomicLong cacheHits = new AtomicLong();
+    private final AtomicLong cacheMisses = new AtomicLong();
 
     public JsonHandler(JournalFactoryPool factoryPool) {
         this.factoryPool = factoryPool;
@@ -288,10 +288,10 @@ public class JsonHandler implements ContextHandler {
             ctx.recordSource = CACHE.get().poll(query);
             if (ctx.recordSource == null) {
                 ctx.recordSource = COMPILER.get().compileSource(factory, query);
-                cacheMisses.add(1);
+                cacheMisses.incrementAndGet();
             } else {
                 ctx.recordSource.reset();
-                cacheHits.add(1);
+                cacheHits.incrementAndGet();
             }
             RecordCursor cursor = ctx.cursor = ctx.recordSource.prepareCursor(factory);
 
