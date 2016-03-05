@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -91,7 +91,9 @@ public final class MapRecord extends AbstractRecord {
 
     @Override
     public CharSequence getFlyweightStr(int index) {
-        return charSequence.of(address0(index), address0(index + 1));
+        long address = address0(index);
+        int len = Unsafe.getUnsafe().getInt(address);
+        return charSequence.of(address + 4, address + 4 + len * 2);
     }
 
     @Override
@@ -117,18 +119,19 @@ public final class MapRecord extends AbstractRecord {
     @Override
     public String getStr(int index) {
         long address = address0(index);
-        int len = (int) (address0(index + 1) - address) >> 1;
+        int len = Unsafe.getUnsafe().getInt(address);
         if (strBuf == null || strBuf.length < len) {
             strBuf = new char[len];
         }
-        Unsafe.getUnsafe().copyMemory(null, address, strBuf, Unsafe.CHAR_OFFSET, ((long) len) << 1);
+        Unsafe.getUnsafe().copyMemory(null, address + 4, strBuf, Unsafe.CHAR_OFFSET, ((long) len) << 1);
         return new String(strBuf, 0, len);
     }
 
     @Override
     public void getStr(int index, CharSink sink) {
         long address = address0(index);
-        int len = (int) (address0(index + 1) - address) >> 1;
+        int len = Unsafe.getUnsafe().getInt(address);
+        address += 4;
         for (int i = 0; i < len; i++) {
             sink.put(Unsafe.getUnsafe().getChar(address));
             address += 2;
@@ -137,7 +140,7 @@ public final class MapRecord extends AbstractRecord {
 
     @Override
     public int getStrLen(int index) {
-        return (int) (address0(index + 1) - address0(index)) >> 1;
+        return Unsafe.getUnsafe().getInt(address0(index));
     }
 
     @Override

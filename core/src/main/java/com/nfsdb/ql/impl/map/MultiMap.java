@@ -29,6 +29,7 @@ import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.std.*;
+import com.nfsdb.store.VariableColumn;
 
 public class MultiMap extends DirectMemoryStructure implements Mutable {
 
@@ -369,17 +370,18 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
 
         public KeyWriter putStr(CharSequence value) {
             if (value == null) {
-                Unsafe.getUnsafe().putInt(nextColOffset, 0);
-                nextColOffset += 4;
-            } else {
-                int len = value.length();
-                checkSize(len << 1);
-                for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putChar(appendAddr + (i << 1), value.charAt(i));
-                }
-                appendAddr += len << 1;
-                writeOffset();
+                return putNull();
             }
+
+            int len = value.length();
+            checkSize((len << 1) + 4);
+            Unsafe.getUnsafe().putInt(appendAddr, len);
+            appendAddr += 4;
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putChar(appendAddr + (i << 1), value.charAt(i));
+            }
+            appendAddr += len << 1;
+            writeOffset();
             return this;
         }
 
@@ -387,6 +389,14 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
             if (appendAddr + size > kLimit) {
                 resize();
             }
+        }
+
+        private KeyWriter putNull() {
+            checkSize(4);
+            Unsafe.getUnsafe().putInt(appendAddr, VariableColumn.NULL_LEN);
+            appendAddr += 4;
+            writeOffset();
+            return this;
         }
 
         private void writeOffset() {

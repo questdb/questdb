@@ -239,7 +239,7 @@ public class JsonHandler implements ContextHandler {
             case INT:
                 final int i = rec.getInt(col);
                 if (i == Integer.MIN_VALUE) {
-                    sink.put("NaN");
+                    sink.put("null");
                     break;
                 }
                 Numbers.append(sink, i);
@@ -248,7 +248,7 @@ public class JsonHandler implements ContextHandler {
             case DATE:
                 final long l = rec.getLong(col);
                 if (l == Long.MIN_VALUE) {
-                    sink.put("NaN");
+                    sink.put("null");
                     break;
                 }
                 sink.put(l);

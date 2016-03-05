@@ -3389,5 +3389,4 @@ public class SingleJournalQueryTest extends AbstractTest {
         }
         return names;
     }
-
 }
