@@ -1995,6 +1995,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         // and one more time
         sink.clear();
         src = compiler.compileSource(factory, "select id, z from tab limit :xyz");
+        src.getParam(":xyz").set(10L);
         printer.printCursor(src.prepareCursor(factory), false);
         TestUtils.assertEquals(expected, sink);
 

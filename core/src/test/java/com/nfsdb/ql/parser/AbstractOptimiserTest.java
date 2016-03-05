@@ -27,6 +27,8 @@ import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.misc.Files;
 import com.nfsdb.model.configuration.ModelConfiguration;
+import com.nfsdb.ql.RecordSource;
+import com.nfsdb.std.AssociativeCache;
 import com.nfsdb.test.tools.JournalTestFactory;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.ClassRule;
@@ -40,6 +42,7 @@ public abstract class AbstractOptimiserTest {
     protected static final QueryCompiler compiler = new QueryCompiler();
     protected static final StringSink sink = new StringSink();
     protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+    private static final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 16);
 
     protected void assertPlan(String expected, String query) throws ParserException, JournalException {
         TestUtils.assertEquals(expected, compiler.plan(factory, query));
@@ -47,14 +50,18 @@ public abstract class AbstractOptimiserTest {
 
     protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
         sink.clear();
-        printer.printCursor(compiler.compile(factory, query), header);
+        RecordSource rs = cache.peek(query);
+        if (rs == null) {
+            cache.put(query, rs = compiler.compileSource(factory, query));
+        } else {
+            rs.reset();
+        }
+        printer.printCursor(rs.prepareCursor(factory), header);
         TestUtils.assertEquals(expected, sink);
     }
 
     protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
-        // todo: exercise cache
         assertThat(expected, query, false);
         assertThat(expected, query, false);
-        compiler.clearCache();
     }
 }

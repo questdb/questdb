@@ -72,7 +72,6 @@ public class QueryCompiler {
     private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L);
     private final static IntHashSet joinBarriers;
     private final QueryParser parser = new QueryParser();
-    private final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 1024);
     private final QueryFilterAnalyser queryFilterAnalyser = new QueryFilterAnalyser();
     private final StringSink columnNameAssembly = new StringSink();
     private final int columnNamePrefixLen;
@@ -124,10 +123,6 @@ public class QueryCompiler {
         columnNamePrefixLen = 3;
     }
 
-    public void clearCache() {
-        cache.clear();
-    }
-
     public <T> RecordCursor compile(JournalReaderFactory factory, Class<T> clazz) throws JournalException, ParserException {
         return compile(factory, clazz.getName());
     }
@@ -136,35 +131,14 @@ public class QueryCompiler {
         return compileSource(factory, query).prepareCursor(factory);
     }
 
-    public RecordSource compileAndRemoveFromCache(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
-        RecordSource rs = cache.poll(query);
-        if (rs == null) {
-            return resetAndCompile(factory, query);
-        }
-        rs.reset();
-        return rs;
-    }
-
     public RecordSource compileSource(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
-        RecordSource rs = cache.peek(query);
-        if (rs == null) {
-            cache.put(query.toString(), rs = resetAndCompile(factory, query));
-        } else {
-            rs.reset();
-        }
-        return rs;
+        return resetAndCompile(factory, query);
     }
 
     public CharSequence plan(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
         QueryModel model = parser.parse(query).getQueryModel();
         resetAndOptimise(model, factory);
         return model.plan();
-    }
-
-    public void reuse(CharSequence query, RecordSource rs) {
-        if (query != null) {
-            cache.put(query.toString(), rs);
-        }
     }
 
     private static Signature lbs(ColumnType master, boolean indexed, ColumnType lambda) {
@@ -830,14 +804,7 @@ public class QueryCompiler {
     }
 
     private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
-        RecordSource rs = cache.poll(query);
-        if (rs == null) {
-            rs = compile(parser.parseInternal(query).getQueryModel(), factory);
-            cache.put(query, rs);
-        } else {
-            rs.reset();
-        }
-        return rs;
+        return compile(parser.parseInternal(query).getQueryModel(), factory);
     }
 
     private RecordSource compileSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {

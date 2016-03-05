@@ -41,15 +41,14 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.ql.parser.QueryError;
-import com.nfsdb.std.LocalValue;
-import com.nfsdb.std.Mutable;
-import com.nfsdb.std.ObjectFactory;
+import com.nfsdb.std.*;
 import com.nfsdb.std.ThreadLocal;
 import com.nfsdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.concurrent.atomic.LongAdder;
 
 public class JsonHandler implements ContextHandler {
     private static final ThreadLocal<QueryCompiler> COMPILER = new ThreadLocal<>(new ObjectFactory<QueryCompiler>() {
@@ -58,12 +57,28 @@ public class JsonHandler implements ContextHandler {
             return new QueryCompiler();
         }
     });
+    private static final ThreadLocal<AssociativeCache<RecordSource>> CACHE = new ThreadLocal<>(new ObjectFactory<AssociativeCache<RecordSource>>() {
+        @Override
+        public AssociativeCache<RecordSource> newInstance() {
+            return new AssociativeCache<>(8, 128);
+        }
+    });
 
     private final JournalFactoryPool factoryPool;
     private final LocalValue<JsonHandlerContext> localContext = new LocalValue<>();
+    private final LongAdder cacheHits = new LongAdder();
+    private final LongAdder cacheMisses = new LongAdder();
 
     public JsonHandler(JournalFactoryPool factoryPool) {
         this.factoryPool = factoryPool;
+    }
+
+    public long getCacheHits() {
+        return cacheHits.longValue();
+    }
+
+    public long getCacheMisses() {
+        return cacheMisses.longValue();
     }
 
     @Override
@@ -224,7 +239,7 @@ public class JsonHandler implements ContextHandler {
             case INT:
                 final int i = rec.getInt(col);
                 if (i == Integer.MIN_VALUE) {
-                    sink.put("null");
+                    sink.put("NaN");
                     break;
                 }
                 Numbers.append(sink, i);
@@ -233,7 +248,7 @@ public class JsonHandler implements ContextHandler {
             case DATE:
                 final long l = rec.getLong(col);
                 if (l == Long.MIN_VALUE) {
-                    sink.put("null");
+                    sink.put("NaN");
                     break;
                 }
                 sink.put(l);
@@ -270,7 +285,14 @@ public class JsonHandler implements ContextHandler {
             // Prepare Context.
             JournalCachingFactory factory = factoryPool.get();
             ctx.factory = factory;
-            ctx.recordSource = COMPILER.get().compileAndRemoveFromCache(factory, query);
+            ctx.recordSource = CACHE.get().poll(query);
+            if (ctx.recordSource == null) {
+                ctx.recordSource = COMPILER.get().compileSource(factory, query);
+                cacheMisses.add(1);
+            } else {
+                ctx.recordSource.reset();
+                cacheHits.add(1);
+            }
             RecordCursor cursor = ctx.cursor = ctx.recordSource.prepareCursor(factory);
 
             r.status(200, "application/json; charset=utf-8");
@@ -348,7 +370,7 @@ public class JsonHandler implements ContextHandler {
             debug().$("Closing journal factory").$();
             factory = Misc.free(factory);
             if (recordSource != null) {
-                COMPILER.get().reuse(query, recordSource);
+                CACHE.get().put(query.toString(), recordSource);
                 recordSource = null;
             }
             query = null;

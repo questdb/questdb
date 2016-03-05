@@ -510,6 +510,9 @@ public class HttpServerTest extends AbstractJournalTest {
             Assert.assertEquals(10, queryResponse2.result.length);
             Assert.assertEquals(10, queryResponse3.result.length);
             Assert.assertEquals(10, queryResponse4.result.length);
+
+            Assert.assertTrue(handler[0].getCacheHits() > 0);
+            Assert.assertTrue(handler[0].getCacheMisses() > 0);
         } finally {
             factoryPool.close();
             server.halt();
