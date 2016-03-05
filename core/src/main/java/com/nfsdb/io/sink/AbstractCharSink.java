@@ -26,6 +26,7 @@ import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Numbers;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.std.ObjHashSet;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Set;
 
@@ -113,6 +114,7 @@ public abstract class AbstractCharSink implements CharSink {
         return this;
     }
 
+    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     @Override
     public CharSink putUtf8Escaped(CharSequence cs) {
         int hi = cs.length();

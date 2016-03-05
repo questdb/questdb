@@ -37,7 +37,7 @@ public class StrNotEqualsNullOperator extends AbstractBinaryOperator {
         }
     };
 
-    StrNotEqualsNullOperator() {
+    private StrNotEqualsNullOperator() {
         super(ColumnType.BOOLEAN);
     }
 

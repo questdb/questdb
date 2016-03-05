@@ -37,7 +37,7 @@ public class StrEqualsNullOperator extends AbstractBinaryOperator {
         }
     };
 
-    StrEqualsNullOperator() {
+    private StrEqualsNullOperator() {
         super(ColumnType.BOOLEAN);
     }
 

@@ -493,7 +493,6 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testJsonPooling() throws Exception {
         generateJournal();
-        //todo: complete
         final JsonHandler[] handler = new JsonHandler[1];
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/js", handler[0] = createHandler());

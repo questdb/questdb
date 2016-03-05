@@ -247,14 +247,14 @@ public class DelimitedTextParser implements TextParser {
         }
     }
 
-    void putToRollBuf(byte c) {
+    private void putToRollBuf(byte c) {
         if (lineRollBufCur - lineRollBufPtr == lineRollBufLen) {
             growRollBuf(lineRollBufLen << 2);
         }
         Unsafe.getUnsafe().putByte(lineRollBufCur++, c);
     }
 
-    void quote() {
+    private void quote() {
         if (inQuote) {
             delayedOutQuote = !delayedOutQuote;
             lastQuotePos = this.fieldHi;
@@ -264,7 +264,7 @@ public class DelimitedTextParser implements TextParser {
         }
     }
 
-    void rollLine(long lo, long hi) {
+    private void rollLine(long lo, long hi) {
         long l = hi - lo - lastLineStart;
         if (l >= lineRollBufLen) {
             growRollBuf(l << 2);
@@ -286,7 +286,7 @@ public class DelimitedTextParser implements TextParser {
         }
     }
 
-    void stashField() {
+    private void stashField() {
         if (calcFields) {
             calcField();
         }
@@ -310,7 +310,7 @@ public class DelimitedTextParser implements TextParser {
         this.fieldLo = this.fieldHi;
     }
 
-    void triggerLine(long ptr) {
+    private void triggerLine(long ptr) {
         if (calcFields) {
             calcFields = false;
             listener.onFieldCount(fields.size());
@@ -337,7 +337,7 @@ public class DelimitedTextParser implements TextParser {
         }
     }
 
-    void uneol(long lo) {
+    private void uneol(long lo) {
         eol = false;
         this.lastLineStart = this.fieldLo - lo;
     }
