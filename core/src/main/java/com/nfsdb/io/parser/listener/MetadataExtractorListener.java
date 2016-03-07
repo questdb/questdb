@@ -217,6 +217,13 @@ public class MetadataExtractorListener implements Listener, Mutable {
                 case '/':
                 case '\0':
                 case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '-':
+                case '*':
+                case '%':
+                case '~':
                     capNext = true;
                     break;
                 default:

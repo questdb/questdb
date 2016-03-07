@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql.parser;
 
+import com.nfsdb.misc.Chars;
 import com.nfsdb.std.AbstractCharSequence;
 import com.nfsdb.std.AbstractImmutableIterator;
 import com.nfsdb.std.CharSequenceHashSet;
@@ -161,9 +162,21 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
     }
 
     public CharSequence optionTok() {
+        int commentCount = 0;
         while (hasNext()) {
             CharSequence cs = next();
-            if (!whitespace.contains(cs)) {
+
+            if (Chars.equals("/*", cs)) {
+                commentCount++;
+                continue;
+            }
+
+            if (Chars.equals("*/", cs) && commentCount > 0) {
+                commentCount--;
+                continue;
+            }
+
+            if (commentCount == 0 && !whitespace.contains(cs)) {
                 return cs;
             }
         }

@@ -30,6 +30,25 @@ import java.util.Iterator;
 
 public class LexerTest {
     @Test
+    public void testBlockComments() throws Exception {
+        Lexer lex = new Lexer();
+        lex.defineSymbol("+");
+        lex.defineSymbol("++");
+        lex.defineSymbol("*");
+        lex.defineSymbol("/*");
+        lex.defineSymbol("*/");
+
+        lex.setContent("a + /* ok, this /* is a */ comment */ 'b' * abc");
+
+        StringSink sink = new StringSink();
+        while (lex.hasNext()) {
+            sink.put(lex.optionTok());
+        }
+
+        TestUtils.assertEquals("a+'b'*abc", sink);
+    }
+
+    @Test
     public void testEdgeSymbol() throws Exception {
         Lexer ts = new Lexer();
         ts.defineSymbol(" ");

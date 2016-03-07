@@ -46,6 +46,8 @@ public class ExprParser {
         lexer.defineSymbol("(");
         lexer.defineSymbol(")");
         lexer.defineSymbol(",");
+        lexer.defineSymbol("/*");
+        lexer.defineSymbol("*/");
         for (int i = 0, k = ExprOperator.operators.size(); i < k; i++) {
             ExprOperator op = ExprOperator.operators.getQuick(i);
             if (op.symbol) {
