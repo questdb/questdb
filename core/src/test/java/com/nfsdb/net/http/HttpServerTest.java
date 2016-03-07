@@ -21,29 +21,25 @@
 
 package com.nfsdb.net.http;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.nfsdb.Journal;
-import com.nfsdb.JournalEntryWriter;
-import com.nfsdb.JournalWriter;
 import com.nfsdb.ex.FatalError;
-import com.nfsdb.ex.JournalException;
 import com.nfsdb.ex.NumericException;
 import com.nfsdb.ex.ResponseContentBufferTooSmallException;
 import com.nfsdb.factory.JournalCachingFactory;
-import com.nfsdb.factory.JournalFactoryPool;
-import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.FileSink;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.iter.clock.Clock;
-import com.nfsdb.misc.*;
+import com.nfsdb.misc.ByteBuffers;
+import com.nfsdb.misc.Dates;
+import com.nfsdb.misc.Misc;
+import com.nfsdb.misc.Numbers;
 import com.nfsdb.net.ha.AbstractJournalTest;
 import com.nfsdb.net.http.handlers.ImportHandler;
-import com.nfsdb.net.http.handlers.JsonHandler;
 import com.nfsdb.net.http.handlers.StaticContentHandler;
 import com.nfsdb.net.http.handlers.UploadHandler;
 import com.nfsdb.ql.parser.QueryCompiler;
+import com.nfsdb.test.tools.HttpTestUtils;
 import com.nfsdb.test.tools.TestUtils;
 import org.apache.http.Header;
 import org.apache.http.HttpResponse;
@@ -63,7 +59,6 @@ import org.apache.http.impl.client.HttpClients;
 import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.apache.http.ssl.TrustStrategy;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -73,7 +68,10 @@ import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSession;
 import java.io.*;
-import java.net.*;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.SocketException;
+import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 import java.security.cert.CertificateException;
@@ -96,7 +94,6 @@ public class HttpServerTest extends AbstractJournalTest {
             "\r\n";
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
-    private JournalFactoryPool factoryPool;
 
     public static HttpResponse get(String url) throws IOException {
         HttpGet post = new HttpGet(url);
@@ -118,7 +115,7 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
 
         try {
-            download(clientBuilder(true), "https://localhost:9000/upload.html", new File(temp.getRoot(), "upload.html"));
+            HttpTestUtils.download(clientBuilder(true), "https://localhost:9000/upload.html", new File(temp.getRoot(), "upload.html"));
         } finally {
             server.halt();
         }
@@ -349,210 +346,6 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    public void testJsonChunkOverflow() throws Exception {
-        int count = (int) 1E4;
-        generateJournal(count);
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", createHandler());
-        }});
-        server.start();
-        try {
-            String query = "tab";
-            QueryResponse queryResponse = download(query);
-            Assert.assertEquals(count, queryResponse.result.length);
-        } finally {
-            factoryPool.close();
-            server.halt();
-        }
-    }
-
-    @Test
-    public void testJsonEmpty() throws Exception {
-        generateJournal();
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", createHandler());
-        }});
-        server.start();
-        try {
-            String query = "tab";
-            QueryResponse queryResponse = download(query, 0, 0);
-            Assert.assertEquals(0, queryResponse.result.length);
-        } finally {
-            factoryPool.close();
-            server.halt();
-        }
-    }
-
-    @Test
-    public void testJsonEmpty0() throws Exception {
-        generateJournal();
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", createHandler());
-        }});
-        server.start();
-        try {
-            String query = "tab where 1 = 2";
-            QueryResponse queryResponse = download(query, 0, 0);
-            Assert.assertEquals(0, queryResponse.result.length);
-        } finally {
-            factoryPool.close();
-            server.halt();
-        }
-    }
-
-    @Test
-    public void testJsonEncodeControlChars() throws Exception {
-        java.lang.StringBuilder allChars = new java.lang.StringBuilder();
-        for (char c = Character.MIN_VALUE; c < 0xD800; c++) { //
-            allChars.append(c);
-        }
-
-        String allCharString = allChars.toString();
-        generateJournal(allCharString, 1.900232E-10, 2.598E20, Long.MAX_VALUE, Integer.MIN_VALUE, -102023);
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", createHandler());
-        }});
-        server.start();
-        try {
-            String query = "select id from tab \n limit 1";
-            QueryResponse queryResponse = download(query);
-            Assert.assertEquals(query, queryResponse.query);
-            for (int i = 0; i < allCharString.length(); i++) {
-                Assert.assertTrue("result len is less than " + i, i < queryResponse.result[0].id.length());
-                Assert.assertEquals(i + "", allCharString.charAt(i), queryResponse.result[0].id.charAt(i));
-            }
-        } finally {
-            factoryPool.close();
-            server.halt();
-        }
-    }
-
-    @Test
-    public void testJsonEncodeNumbers() throws Exception {
-        generateJournal(null, 1.900232E-10, Double.MAX_VALUE, Long.MAX_VALUE, Integer.MIN_VALUE, 10);
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", createHandler());
-        }});
-        server.start();
-        try {
-            String query = "tab limit 20";
-            QueryResponse queryResponse = download(query);
-            Assert.assertEquals(1.900232E-10, queryResponse.result[0].x, 1E-6);
-            Assert.assertEquals(Double.MAX_VALUE, queryResponse.result[0].y, 1E-6);
-            Assert.assertEquals(Long.MAX_VALUE, queryResponse.result[0].z);
-            Assert.assertEquals(0, queryResponse.result[0].w);
-            Assert.assertEquals(10, queryResponse.result[0].timestamp);
-            Assert.assertEquals(false, queryResponse.moreExist);
-
-            Assert.assertEquals("id4", queryResponse.result[4].id);
-            Assert.assertTrue(Double.isNaN(queryResponse.result[4].y));
-        } finally {
-            factoryPool.close();
-            server.halt();
-        }
-    }
-
-    @Test
-    public void testJsonInvertedLimit() throws Exception {
-        generateJournal();
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", createHandler());
-        }});
-        server.start();
-        try {
-            String query = "tab limit 10";
-            QueryResponse queryResponse = download(query, 10, 5);
-            Assert.assertEquals(0, queryResponse.result.length);
-            Assert.assertEquals(true, queryResponse.moreExist);
-        } finally {
-            factoryPool.close();
-            server.halt();
-        }
-    }
-
-    @Test
-    public void testJsonLimits() throws Exception {
-        generateJournal();
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", createHandler());
-        }});
-        server.start();
-        try {
-            String query = "tab";
-            QueryResponse queryResponse = download(query, 2, 4);
-            Assert.assertEquals(2, queryResponse.result.length);
-            Assert.assertEquals(true, queryResponse.moreExist);
-            Assert.assertEquals("id2", queryResponse.result[0].id);
-            Assert.assertEquals("id3", queryResponse.result[1].id);
-        } finally {
-            factoryPool.close();
-            server.halt();
-        }
-    }
-
-    @Test
-    public void testJsonPooling() throws Exception {
-        generateJournal();
-        final JsonHandler[] handler = new JsonHandler[1];
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", handler[0] = createHandler());
-        }});
-
-        server.start();
-        try {
-            QueryResponse queryResponse1 = download("tab limit 10");
-            QueryResponse queryResponse2 = download("tab limit 10");
-            QueryResponse queryResponse3 = download("tab limit 10");
-            QueryResponse queryResponse4 = download("tab limit 10");
-
-            Assert.assertEquals(10, queryResponse1.result.length);
-            Assert.assertEquals(10, queryResponse2.result.length);
-            Assert.assertEquals(10, queryResponse3.result.length);
-            Assert.assertEquals(10, queryResponse4.result.length);
-
-            Assert.assertTrue(handler[0].getCacheHits() > 0);
-            Assert.assertTrue(handler[0].getCacheMisses() > 0);
-        } finally {
-            factoryPool.close();
-            server.halt();
-        }
-    }
-
-    @Test
-    public void testJsonSimple() throws Exception {
-        generateJournal();
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", createHandler());
-        }});
-        server.start();
-        try {
-            QueryResponse queryResponse = download("select 1 z from tab limit 10");
-            Assert.assertEquals(10, queryResponse.result.length);
-        } finally {
-            factoryPool.close();
-            server.halt();
-        }
-    }
-
-    @Test
-    public void testJsonTakeLimit() throws Exception {
-        generateJournal();
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/js", createHandler());
-        }});
-        server.start();
-        try {
-            String query = "tab limit 10";
-            QueryResponse queryResponse = download(query, 2, -1);
-            Assert.assertEquals(2, queryResponse.result.length);
-            Assert.assertEquals(true, queryResponse.moreExist);
-        } finally {
-            factoryPool.close();
-            server.halt();
-        }
-    }
-
-    @Test
     public void testLargeChunkedPlainDownload() throws Exception {
         final int count = 3;
         final int sz = 16 * 1026 * 1024 - 4;
@@ -773,7 +566,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/get.html", actual1);
+                        HttpTestUtils.download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/get.html", actual1);
                     } catch (Exception e) {
                         counter.incrementAndGet();
                         e.printStackTrace();
@@ -789,7 +582,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/post.html", actual2);
+                        HttpTestUtils.download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/post.html", actual2);
                     } catch (Exception e) {
                         counter.incrementAndGet();
                         e.printStackTrace();
@@ -804,7 +597,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/upload.html", actual3);
+                        HttpTestUtils.download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/upload.html", actual3);
                     } catch (Exception e) {
                         counter.incrementAndGet();
                         e.printStackTrace();
@@ -840,7 +633,7 @@ public class HttpServerTest extends AbstractJournalTest {
                         CloseableHttpResponse r = client.execute(get);
                         FileOutputStream fos = new FileOutputStream(out)
                 ) {
-                    copy(r.getEntity().getContent(), fos);
+                    HttpTestUtils.copy(r.getEntity().getContent(), fos);
                     Assert.assertEquals(200, r.getStatusLine().getStatusCode());
                     h = findHeader("ETag", r.getAllHeaders());
                 }
@@ -890,14 +683,14 @@ public class HttpServerTest extends AbstractJournalTest {
                     // first part
                     get.addHeader("Range", "bytes=0-" + part);
                     try (CloseableHttpResponse r = client.execute(get)) {
-                        copy(r.getEntity().getContent(), fos);
+                        HttpTestUtils.copy(r.getEntity().getContent(), fos);
                         Assert.assertEquals(206, r.getStatusLine().getStatusCode());
                     }
 
                     // second part
                     get.addHeader("Range", "bytes=" + part + "-");
                     try (CloseableHttpResponse r = client.execute(get)) {
-                        copy(r.getEntity().getContent(), fos);
+                        HttpTestUtils.copy(r.getEntity().getContent(), fos);
                         Assert.assertEquals(206, r.getStatusLine().getStatusCode());
                     }
                 }
@@ -907,49 +700,6 @@ public class HttpServerTest extends AbstractJournalTest {
         } finally {
             server.halt();
             new MimeTypes(configuration.getMimeTypes()).close();
-        }
-    }
-
-    private void copy(InputStream is, OutputStream os) throws IOException {
-        byte[] buf = new byte[4096];
-        int l;
-        while ((l = is.read(buf)) > 0) {
-            os.write(buf, 0, l);
-        }
-    }
-
-    @NotNull
-    private JsonHandler createHandler() {
-        factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
-        return new JsonHandler(factoryPool);
-    }
-
-    private QueryResponse download(String queryUrl) throws Exception {
-        return download(queryUrl, -1, -1);
-    }
-
-    private QueryResponse download(String queryUrl, int limitFrom, int limitTo) throws Exception {
-        File f = temp.newFile();
-        String url = "http://localhost:9000/js?query=" + URLEncoder.encode(queryUrl, "UTF-8");
-        if (limitFrom >= 0) {
-            url += "&limit=" + limitFrom;
-        }
-        if (limitTo >= 0) {
-            url += "," + limitTo;
-        }
-        download(clientBuilder(false), url, f);
-        Gson gson = new GsonBuilder()
-                .setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").create();
-        return gson.fromJson(Files.readStringFromFile(f), QueryResponse.class);
-    }
-
-    private void download(HttpClientBuilder b, String url, File out) throws IOException {
-        try (
-                CloseableHttpClient client = b.build();
-                CloseableHttpResponse r = client.execute(new HttpGet(url));
-                FileOutputStream fos = new FileOutputStream(out)
-        ) {
-            copy(r.getEntity().getContent(), fos);
         }
     }
 
@@ -994,74 +744,12 @@ public class HttpServerTest extends AbstractJournalTest {
         File out = temp.newFile();
         server.start();
         try {
-            download(clientBuilder(ssl), (ssl ? "https" : "http") + "://localhost:9000/test", out);
+            HttpTestUtils.download(clientBuilder(ssl), (ssl ? "https" : "http") + "://localhost:9000/test", out);
         } finally {
             server.halt();
         }
 
         return out;
-    }
-
-
-    private void generateJournal(String id, double x, double y, long z, int w, long timestamp) throws JournalException, NumericException {
-        QueryResponse.Tab record = new QueryResponse.Tab();
-        record.id = id;
-        record.x = x;
-        record.y = y;
-        record.z = z;
-        record.w = w;
-        record.timestamp = timestamp;
-        generateJournal(new QueryResponse.Tab[]{record}, 1000);
-    }
-
-    private void generateJournal() throws JournalException, NumericException {
-        generateJournal(new QueryResponse.Tab[0], 1000);
-    }
-
-    private void generateJournal(int count) throws JournalException, NumericException {
-        generateJournal(new QueryResponse.Tab[0], count);
-    }
-
-    private void generateJournal(QueryResponse.Tab[] recs, int count) throws JournalException, NumericException {
-        JournalWriter w = factory.writer(
-                new JournalStructure("tab").
-                        $sym("id").
-                        $double("x").
-                        $double("y").
-                        $long("z").
-                        $int("w").
-                        $ts()
-
-        );
-
-        Rnd rnd = new Rnd();
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-        for (int i = 0; i < count; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putSym(0, recs.length > i ? recs[i].id : "id" + i);
-            ew.putDouble(1, recs.length > i ? recs[i].x : rnd.nextDouble());
-            if (recs.length > i) {
-                ew.putDouble(2, recs[i].y);
-                ew.putLong(3, recs[i].z);
-            } else {
-                if (rnd.nextPositiveInt() % 10 == 0) {
-                    ew.putNull(2);
-                } else {
-                    ew.putDouble(2, rnd.nextDouble());
-                }
-                if (rnd.nextPositiveInt() % 10 == 0) {
-                    ew.putNull(3);
-                } else {
-                    ew.putLong(3, rnd.nextLong() % 500);
-                }
-            }
-            ew.putInt(4, recs.length > i ? recs[i].w : rnd.nextInt() % 500);
-            ew.putDate(5, recs.length > i ? recs[i].timestamp : t);
-            t += 10;
-            ew.append();
-        }
-        w.commit();
     }
 
     private File generateLarge(int count, int sz) throws IOException {

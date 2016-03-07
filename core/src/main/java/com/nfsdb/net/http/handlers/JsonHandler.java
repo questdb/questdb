@@ -47,7 +47,6 @@ import com.nfsdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class JsonHandler implements ContextHandler {
@@ -146,67 +145,127 @@ public class JsonHandler implements ContextHandler {
         resume(context);
     }
 
+    @SuppressWarnings("ConstantConditions")
     @Override
     public void resume(IOContext context) throws IOException {
         JsonHandlerContext ctx = localContext.get(context);
-        Iterator<Record> records;
-        if (ctx == null || (records = ctx.cursor) == null) {
+        if (ctx == null || ctx.cursor == null) {
             return;
         }
 
-        final RecordMetadata metadata = ctx.metadata;
-        final int columnCount = metadata.getColumnCount();
-
-        if (ctx.record == null && records.hasNext()) {
-            ctx.record = records.next();
-            ctx.count++;
-        }
-
         final ChunkedResponse r = context.chunkedResponse();
-        try {
-            while (ctx.record != null) {
-                if (ctx.count > ctx.skip) {
-                    r.bookmark();
-                    if (ctx.count > ctx.stop && !ctx.includeCount) {
-                        break;
-                    }
+        final int columnCount = ctx.metadata.getColumnCount();
 
-                    if (ctx.count <= ctx.stop) {
+        OUT:
+        while (true) {
+            try {
+                SWITCH:
+                switch (ctx.state) {
+                    case PREFIX:
+                        r.bookmark();
+                        r.put('{').putQuoted("query").put(':').putUtf8EscapedAndQuoted(ctx.query);
+                        r.put(',').putQuoted("columns").put(':').put('[');
+                        ctx.state = QueryState.METADATA;
+                        ctx.columnIndex = 0;
+                        // fall through
+                    case METADATA:
+                        for (; ctx.columnIndex < columnCount; ctx.columnIndex++) {
+                            RecordColumnMetadata column = ctx.metadata.getColumnQuick(ctx.columnIndex);
+
+                            r.bookmark();
+
+                            if (ctx.columnIndex > 0) {
+                                r.put(',');
+                            }
+                            r.put('{').
+                                    putQuoted("name").put(':').putQuoted(column.getName()).
+                                    put(',').
+                                    putQuoted("type").put(':').putQuoted(column.getType().name());
+                            r.put('}');
+                        }
+                        ctx.state = QueryState.META_SUFFIX;
+                        // fall through
+                    case META_SUFFIX:
+                        r.bookmark();
+                        r.put("],result:[");
+                        ctx.state = QueryState.RECORD_START;
+                        // fall through
+                    case RECORD_START:
+
+                        if (ctx.record == null) {
+                            // check if cursor has any records
+                            while (true) {
+                                if (ctx.cursor.hasNext()) {
+                                    ctx.record = ctx.cursor.next();
+                                    ctx.count++;
+
+                                    if (ctx.count > ctx.skip) {
+                                        break;
+                                    }
+                                } else {
+                                    ctx.state = QueryState.DATA_SUFFIX;
+                                    break SWITCH;
+                                }
+                            }
+                        }
+
+                        if (ctx.count > ctx.stop) {
+                            if (ctx.includeCount) {
+                                continue;
+                            }
+
+                            ctx.state = QueryState.DATA_SUFFIX;
+                            break;
+                        }
+
+                        r.bookmark();
                         if (ctx.count > ctx.skip + 1) {
-                            // Record separator.
                             r.put(',');
                         }
                         r.put('{');
-                        // Columns.
-                        for (int col = 0; col < columnCount; col++) {
-                            RecordColumnMetadata m = metadata.getColumnQuick(col);
-                            if (col > 0) {
+
+                        ctx.state = QueryState.RECORD_COLUMNS;
+                        ctx.columnIndex = 0;
+                        // fall through
+                    case RECORD_COLUMNS:
+
+                        for (; ctx.columnIndex < columnCount; ctx.columnIndex++) {
+                            RecordColumnMetadata m = ctx.metadata.getColumnQuick(ctx.columnIndex);
+                            r.bookmark();
+                            if (ctx.columnIndex > 0) {
                                 r.put(',');
                             }
                             r.putQuoted(m.getName()).put(':');
-                            putValue(r, m.getType(), ctx.record, col);
+                            putValue(r, m.getType(), ctx.record, ctx.columnIndex);
                         }
-                        r.put('}');
-                        r.sendChunk();
-                    }
-                }
 
-                if (records.hasNext()) {
-                    ctx.record = records.next();
-                    ctx.count++;
+                        ctx.state = QueryState.RECORD_SUFFIX;
+                        // fall through
+
+                    case RECORD_SUFFIX:
+                        r.bookmark();
+                        r.put('}');
+                        ctx.record = null;
+                        ctx.state = QueryState.RECORD_START;
+                        break;
+                    case DATA_SUFFIX:
+                        sendDone(r, ctx);
+                        break OUT;
+                    default:
+                        break OUT;
+                }
+            } catch (ResponseContentBufferTooSmallException ignored) {
+                if (r.resetToBookmark()) {
+                    r.sendChunk();
                 } else {
-                    ctx.record = null;
+                    // what we have here is out unit of data, column value or query
+                    // is larger that response content buffer
+                    // all we can do in this scenario is to log appropriately
+                    // and disconnect socket
+                    ctx.info().$("Response buffer is too small, state=").$(ctx.state).$();
+                    throw DisconnectedChannelException.INSTANCE;
                 }
             }
-            sendDone(r, ctx);
-        } catch (ResponseContentBufferTooSmallException ex) {
-            if (!r.resetToBookmark()) {
-                ctx.error().$("IO buffer overflown but no previous bookmark found. Record ").
-                        $(ctx.count - 1).$(". Aborting the query.").$();
-                throw ex;
-            }
-            ctx.debug().$("Buffer overflow on record ").$(ctx.count - 1).$();
-            r.sendChunk();
         }
     }
 
@@ -293,30 +352,12 @@ public class JsonHandler implements ContextHandler {
                 ctx.recordSource.reset();
                 cacheHits.incrementAndGet();
             }
-            RecordCursor cursor = ctx.cursor = ctx.recordSource.prepareCursor(factory);
+            ctx.cursor = ctx.recordSource.prepareCursor(factory);
+            ctx.metadata = ctx.cursor.getMetadata();
+            ctx.state = QueryState.PREFIX;
 
             r.status(200, "application/json; charset=utf-8");
             r.sendHeader();
-            r.put('{').putQuoted("query").put(':').putUtf8EscapedAndQuoted(query);
-            r.put(',').putQuoted("columns").put(':').put('[');
-
-            RecordMetadata metadata = cursor.getMetadata();
-            ctx.metadata = metadata;
-
-            // List columns.
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                RecordColumnMetadata column = metadata.getColumnQuick(i);
-                if (i > 0) {
-                    r.put(',');
-                }
-                r.put('{').
-                        putQuoted("name").put(':').putQuoted(column.getName()).
-                        put(',').
-                        putQuoted("type").put(':').putQuoted(column.getType().name());
-                r.put('}');
-            }
-            r.put(']').put(',');
-            r.putQuoted("result").put(':').put('[');
         } catch (ParserException pex) {
             ctx.info().$("Parser error executing query ").$(query).$(": at (").$(QueryError.getPosition()).$(") ").$(QueryError.getMessage()).$();
             sendException(r, query, QueryError.getPosition(), QueryError.getMessage(), 400);
@@ -347,9 +388,13 @@ public class JsonHandler implements ContextHandler {
         r.done();
     }
 
+    private enum QueryState {
+        PREFIX, METADATA, META_SUFFIX, RECORD_START, RECORD_COLUMNS, RECORD_SUFFIX, DATA_SUFFIX
+    }
+
     private static class JsonHandlerContext implements Mutable, Closeable {
         private static final Log LOG = LogFactory.getLog(JsonHandlerContext.class);
-        public RecordSource recordSource;
+        private RecordSource recordSource;
         private CharSequence query;
         private RecordMetadata metadata;
         private RecordCursor cursor;
@@ -360,6 +405,8 @@ public class JsonHandler implements ContextHandler {
         private boolean includeCount;
         private JournalCachingFactory factory;
         private long fd;
+        private QueryState state = QueryState.PREFIX;
+        private int columnIndex;
 
         @Override
         public void clear() {
@@ -374,6 +421,7 @@ public class JsonHandler implements ContextHandler {
                 recordSource = null;
             }
             query = null;
+            state = QueryState.PREFIX;
         }
 
         @Override

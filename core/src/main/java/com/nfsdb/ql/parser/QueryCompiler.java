@@ -132,7 +132,13 @@ public class QueryCompiler {
     }
 
     public RecordSource compileSource(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
-        return resetAndCompile(factory, query);
+        clearState();
+        final QueryModel model = parser.parse(query).getQueryModel();
+        final CharSequenceObjHashMap<Parameter> map = new CharSequenceObjHashMap<>();
+        model.setParameterMap(map);
+        RecordSource rs = compile(model, factory);
+        rs.setParameterMap(map);
+        return rs;
     }
 
     public CharSequence plan(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
@@ -1465,16 +1471,6 @@ public class QueryCompiler {
             return exprNodePool.next().of(ExprNode.NodeType.LITERAL, c.getAlias(), 0, 0);
         }
         return node;
-    }
-
-    private RecordSource resetAndCompile(JournalReaderFactory factory, CharSequence query) throws JournalException, ParserException {
-        clearState();
-        final QueryModel model = parser.parse(query).getQueryModel();
-        final CharSequenceObjHashMap<Parameter> map = new CharSequenceObjHashMap<>();
-        model.setParameterMap(map);
-        RecordSource rs = compile(model, factory);
-        rs.setParameterMap(map);
-        return rs;
     }
 
     private void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {

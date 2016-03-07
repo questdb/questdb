@@ -419,20 +419,16 @@ public class Response implements Closeable, Mutable {
     private class ChunkedResponseImpl extends ResponseSinkImpl implements ChunkedResponse {
 
         private long bookmark = outPtr;
-        private boolean bookmarked = false;
 
         @Override
         public void bookmark() {
             bookmark = _wPtr;
-            bookmarked = true;
         }
 
         @Override
         public boolean resetToBookmark() {
-            boolean sb = bookmarked;
-            bookmarked = false;
             _wPtr = bookmark;
-            return sb;
+            return bookmark != outPtr;
         }
 
         @Override
