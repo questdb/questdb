@@ -90,12 +90,10 @@ public class JournalFactoryPool implements Closeable {
     }
 
     void release(final JournalCachingFactory factory) {
-        if (running.get()) {
-            if (openCount.get() < capacity) {
-                factory.expireOpenFiles();
-                pool.addFirst(factory);
-                return;
-            }
+        if (running.get() && openCount.get() < capacity) {
+            factory.expireOpenFiles();
+            pool.addFirst(factory);
+            return;
         }
         openCount.decrementAndGet();
         factory.clearPool();

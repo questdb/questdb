@@ -340,14 +340,13 @@ public class JsonHandler implements ContextHandler {
     }
 
     private void executeQuery(ChunkedResponse r, JsonHandlerContext ctx) throws IOException {
-        CharSequence query = ctx.query;
         try {
             // Prepare Context.
             JournalCachingFactory factory = factoryPool.get();
             ctx.factory = factory;
-            ctx.recordSource = CACHE.get().poll(query);
+            ctx.recordSource = CACHE.get().poll(ctx.query);
             if (ctx.recordSource == null) {
-                ctx.recordSource = COMPILER.get().compileSource(factory, query);
+                ctx.recordSource = COMPILER.get().compileSource(factory, ctx.query);
                 cacheMisses.incrementAndGet();
             } else {
                 ctx.recordSource.reset();
@@ -359,15 +358,15 @@ public class JsonHandler implements ContextHandler {
 
             r.status(200, "application/json; charset=utf-8");
             r.sendHeader();
-        } catch (ParserException pex) {
-            ctx.info().$("Parser error executing query ").$(query).$(": at (").$(QueryError.getPosition()).$(") ").$(QueryError.getMessage()).$();
-            sendException(r, query, QueryError.getPosition(), QueryError.getMessage(), 400);
-        } catch (JournalException jex) {
-            ctx.error().$("Server error executing query ").$(query).$(jex).$();
-            sendException(r, query, 0, jex.getMessage(), 500);
-        } catch (InterruptedException ex) {
-            ctx.error().$("Error executing query. Server is shutting down. Query: ").$(query).$(ex).$();
-            sendException(r, query, 0, "Server is shutting down.", 500);
+        } catch (ParserException e) {
+            ctx.info().$("Parser error executing query ").$(ctx.query).$(": at (").$(QueryError.getPosition()).$(") ").$(QueryError.getMessage()).$();
+            sendException(r, ctx.query, QueryError.getPosition(), QueryError.getMessage(), 400);
+        } catch (JournalException e) {
+            ctx.error().$("Server error executing query ").$(ctx.query).$(e).$();
+            sendException(r, ctx.query, 0, e.getMessage(), 500);
+        } catch (InterruptedException e) {
+            ctx.error().$("Error executing query. Server is shutting down. Query: ").$(ctx.query).$(e).$();
+            sendException(r, ctx.query, 0, "Server is shutting down.", 500);
         }
     }
 
