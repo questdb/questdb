@@ -75,9 +75,9 @@ public class LexerTest {
         lex.defineSymbol("*");
         lex.defineSymbol("/*");
         lex.defineSymbol("*/");
-        lex.defineSymbol("//");
+        lex.defineSymbol("--");
 
-        lex.setContent("a + // ok, this is a comment \n 'b' * abc");
+        lex.setContent("a + -- ok, this is a comment \n 'b' * abc");
 
         StringSink sink = new StringSink();
         while (lex.hasNext()) {

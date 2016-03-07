@@ -174,7 +174,7 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
                 continue;
             }
 
-            if (Chars.equals("//", cs)) {
+            if (Chars.equals("--", cs)) {
                 lineComment = true;
                 continue;
             }

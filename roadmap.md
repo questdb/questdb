@@ -17,7 +17,7 @@ __lang__
 - [x] top x rows (select ... limit low,high can be used for paging)
 - [ ] bottom x rows
 - [x] query parameters
-- [x] support for comments (both block /* */ and line //)
+- [x] support for comments (both block /* */ and line --)
 - [ ] analytical clauses
 
 __server__
