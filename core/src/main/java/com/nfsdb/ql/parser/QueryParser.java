@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p/>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p/>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p/>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p/>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -77,7 +77,7 @@ final class QueryParser {
     }
 
     private ExprNode literal() {
-        CharSequence tok = optionTok();
+        CharSequence tok = lexer.optionTok();
         if (tok == null) {
             return null;
         }
@@ -92,10 +92,6 @@ final class QueryParser {
         return tok.toString();
     }
 
-    private CharSequence optionTok() {
-        return lexer.optionTok();
-    }
-
     Statement parse(CharSequence query) throws ParserException {
         queryModelPool.clear();
         queryColumnPool.clear();
@@ -106,7 +102,7 @@ final class QueryParser {
     private Statement parseCreateJournal() throws ParserException {
         JournalStructure structure = new JournalStructure(tok().toString());
         parseJournalFields(structure);
-        CharSequence tok = optionTok();
+        CharSequence tok = lexer.optionTok();
         if (tok != null) {
             expectTok(tok, "partition");
             expectTok(tok(), "by");
@@ -179,7 +175,7 @@ final class QueryParser {
             joinModel.setJournalName(expr());
         }
 
-        tok = optionTok();
+        tok = lexer.optionTok();
 
         if (tok != null && !aliasStopSet.contains(tok)) {
             lexer.unparse();
@@ -188,7 +184,7 @@ final class QueryParser {
             lexer.unparse();
         }
 
-        tok = optionTok();
+        tok = lexer.optionTok();
 
         if (type == QueryModel.JoinType.CROSS && tok != null && Chars.equals(tok, "on")) {
             throw QueryError.$(lexer.position(), "Cross joins cannot have join clauses");
@@ -311,14 +307,14 @@ final class QueryParser {
             // expect closing bracket
             expectTok(tok(), ")");
 
-            tok = optionTok();
+            tok = lexer.optionTok();
 
             // check if tok is not "where" - should be alias
 
             if (tok != null && !aliasStopSet.contains(tok)) {
                 lexer.unparse();
                 model.setAlias(literal());
-                tok = optionTok();
+                tok = lexer.optionTok();
             }
 
             // expect [timestamp(column)]
@@ -332,12 +328,12 @@ final class QueryParser {
 
             model.setJournalName(literal());
 
-            tok = optionTok();
+            tok = lexer.optionTok();
 
             if (tok != null && !aliasStopSet.contains(tok)) {
                 lexer.unparse();
                 model.setAlias(literal());
-                tok = optionTok();
+                tok = lexer.optionTok();
             }
 
             // expect [timestamp(column)]
@@ -348,7 +344,7 @@ final class QueryParser {
 
             if (tok != null && Chars.equals(tok, "latest")) {
                 parseLatestBy(model);
-                tok = optionTok();
+                tok = lexer.optionTok();
             }
         }
 
@@ -357,14 +353,14 @@ final class QueryParser {
         QueryModel.JoinType type;
         while (tok != null && (type = joinStartSet.get(tok)) != null) {
             model.addJoinModel(parseJoin(tok, type));
-            tok = optionTok();
+            tok = lexer.optionTok();
         }
 
         // expect [where]
 
         if (tok != null && Chars.equals(tok, "where")) {
             model.setWhereClause(expr());
-            tok = optionTok();
+            tok = lexer.optionTok();
         }
 
         // expect [group by]
@@ -372,7 +368,7 @@ final class QueryParser {
         if (tok != null && Chars.equals(tok, "sample")) {
             expectTok(tok(), "by");
             model.setSampleBy(expectExpr());
-            tok = optionTok();
+            tok = lexer.optionTok();
         }
 
         // expect [order by]
@@ -388,7 +384,7 @@ final class QueryParser {
 
                 lexer.unparse();
                 model.addOrderBy(expr());
-                tok = optionTok();
+                tok = lexer.optionTok();
             } while (tok != null && Chars.equals(tok, ","));
         }
 
@@ -397,10 +393,10 @@ final class QueryParser {
             ExprNode lo = expr();
             ExprNode hi = null;
 
-            tok = optionTok();
+            tok = lexer.optionTok();
             if (tok != null && Chars.equals(",", tok)) {
                 hi = expr();
-                tok = optionTok();
+                tok = lexer.optionTok();
             }
             model.setLimit(lo, hi);
         }
@@ -452,7 +448,7 @@ final class QueryParser {
             expectTok(tok(), "(");
             model.setTimestamp(expr());
             expectTok(tok(), ")");
-            return optionTok();
+            return lexer.optionTok();
         }
         return tok;
     }

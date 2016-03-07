@@ -29,6 +29,7 @@ import org.junit.Test;
 import java.util.Iterator;
 
 public class LexerTest {
+
     @Test
     public void testBlockComments() throws Exception {
         Lexer lex = new Lexer();
@@ -64,6 +65,26 @@ public class LexerTest {
             sink.put(cs);
         }
         TestUtils.assertEquals(content, sink);
+    }
+
+    @Test
+    public void testLineComment() throws Exception {
+        Lexer lex = new Lexer();
+        lex.defineSymbol("+");
+        lex.defineSymbol("++");
+        lex.defineSymbol("*");
+        lex.defineSymbol("/*");
+        lex.defineSymbol("*/");
+        lex.defineSymbol("//");
+
+        lex.setContent("a + // ok, this is a comment \n 'b' * abc");
+
+        StringSink sink = new StringSink();
+        while (lex.hasNext()) {
+            sink.put(lex.optionTok());
+        }
+
+        TestUtils.assertEquals("a+'b'*abc", sink);
     }
 
     @Test

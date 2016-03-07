@@ -162,21 +162,34 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
     }
 
     public CharSequence optionTok() {
-        int commentCount = 0;
+        int blockCount = 0;
+        boolean lineComment = false;
         while (hasNext()) {
             CharSequence cs = next();
 
+            if (lineComment) {
+                if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
+                    lineComment = false;
+                }
+                continue;
+            }
+
+            if (Chars.equals("//", cs)) {
+                lineComment = true;
+                continue;
+            }
+
             if (Chars.equals("/*", cs)) {
-                commentCount++;
+                blockCount++;
                 continue;
             }
 
-            if (Chars.equals("*/", cs) && commentCount > 0) {
-                commentCount--;
+            if (Chars.equals("*/", cs) && blockCount > 0) {
+                blockCount--;
                 continue;
             }
 
-            if (commentCount == 0 && !whitespace.contains(cs)) {
+            if (blockCount == 0 && !whitespace.contains(cs)) {
                 return cs;
             }
         }
