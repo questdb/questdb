@@ -26,6 +26,7 @@ public class QueryResponse {
     public String query;
     public Tab[] result;
     public boolean moreExist;
+    public int totalCount;
 
     public static class Tab {
         public String id;

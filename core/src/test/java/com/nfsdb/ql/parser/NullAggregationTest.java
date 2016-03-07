@@ -40,6 +40,12 @@ public class NullAggregationTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testNanCount() throws Exception {
+        assertThat("NaN\tVEZDYHDHRFEVHKK\t5\n" +
+                "NaN\t\t99\n", "(select z, a, count() from tab) where z = NaN and (a ~ 'VE' or a = null)");
+    }
+
+    @Test
     public void testNullStringCount() throws Exception {
         assertThat("\t321\t4\n", "(select a, z, count() from tab) where z = 321 and a = null");
     }

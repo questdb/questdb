@@ -187,7 +187,7 @@ public class JsonHandler implements ContextHandler {
                         // fall through
                     case META_SUFFIX:
                         r.bookmark();
-                        r.put("],result:[");
+                        r.put("],\"result\":[");
                         ctx.state = QueryState.RECORD_START;
                         // fall through
                     case RECORD_START:
@@ -211,6 +211,7 @@ public class JsonHandler implements ContextHandler {
 
                         if (ctx.count > ctx.stop) {
                             if (ctx.includeCount) {
+                                ctx.record = null;
                                 continue;
                             }
 
