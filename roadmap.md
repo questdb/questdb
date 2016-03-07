@@ -7,8 +7,6 @@ __lang__
         key fields names automatically, e.g. 'select x, sum(y) from A' is
         equivalent to 'select x, sum(y) from A group by x')
 - [x] simple resampling (where aggregation function produces single row of values)
-- [ ] multi-row aggregation
-- [ ] multi-row resampling
 - [x] classic sql joins (hash, nested loops)
 - [x] latest record by secondary entity attribute attribute
     (e.g. select latest order for all customers in group X, where
@@ -19,13 +17,15 @@ __lang__
 - [x] top x rows (select ... limit low,high can be used for paging)
 - [ ] bottom x rows
 - [x] query parameters
+- [ ] __support for comments (in-progress)__
+- [ ] analytical clauses
 
 __server__
 
 - [x] file upload handling (multipart form parsing)
 - [x] file upload handling from curl (100-continue recognition)
 - [x] query execution
-- [ ] __JSON result set serialization (in progress)__
+- [x] JSON result set serialization
 - [x] flow control on file upload (park upload if client is not sending file)
 - [x] flow control on query executions (do not execute until client is ready to read, park streaming if client is not ready to read)
 - [x] SSL support
@@ -45,7 +45,15 @@ __misc__
 __clients__
 
 - [ ] grafana integration
-- [ ] __web query UI (in progress)__
+
+__Web UI__
+
+- [x] query execution and result display
+- [x] grid styling
+- [ ] __error reporting and interaction with query editor (in-progress)__
+- [ ] grid virtualisation
+- [ ] file upload UI
+- [ ] charting UI
 
 __core__
 
