@@ -137,7 +137,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
+                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp"));
                         latch.countDown();
                     } catch (Exception e) {
                         Assert.fail(e.getMessage());
@@ -150,7 +150,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        Assert.assertEquals(200, upload("/csv/test-import-nan.csv", "http://localhost:9000/imp"));
+                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-nan.csv", "http://localhost:9000/imp"));
                         latch.countDown();
                     } catch (Exception e) {
                         Assert.fail(e.getMessage());
@@ -319,8 +319,8 @@ public class HttpServerTest extends AbstractJournalTest {
         try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
 
             try {
-                Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
-                Assert.assertEquals(200, upload("/csv/test-import.csv", "http://localhost:9000/imp"));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp"));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp"));
                 StringSink sink = new StringSink();
                 RecordSourcePrinter printer = new RecordSourcePrinter(sink);
                 QueryCompiler qc = new QueryCompiler();
@@ -339,7 +339,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }});
         server.start();
         try {
-            Assert.assertEquals(400, upload("/com/nfsdb/std/AssociativeCache.class", "http://localhost:9000/imp"));
+            Assert.assertEquals(400, HttpTestUtils.upload("/com/nfsdb/std/AssociativeCache.class", "http://localhost:9000/imp"));
         } finally {
             server.halt();
         }
@@ -518,9 +518,6 @@ public class HttpServerTest extends AbstractJournalTest {
         return b;
     }
 
-    private static int upload(String resource, String url) throws IOException {
-        return upload(resourceFile(resource), url);
-    }
 
     private static File resourceFile(String resource) {
         return new File(HttpServerTest.class.getResource(resource).getFile());
@@ -535,16 +532,6 @@ public class HttpServerTest extends AbstractJournalTest {
             HttpResponse r = client.execute(post);
             return r.getStatusLine().getStatusCode();
         }
-    }
-
-    private static Header findHeader(String name, Header[] headers) {
-        for (Header h : headers) {
-            if (name.equals(h.getName())) {
-                return h;
-            }
-        }
-
-        return null;
     }
 
     private void assertConcurrentDownload(MimeTypes mimeTypes, HttpServer server, final String proto) throws InterruptedException, IOException {
@@ -635,7 +622,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 ) {
                     HttpTestUtils.copy(r.getEntity().getContent(), fos);
                     Assert.assertEquals(200, r.getStatusLine().getStatusCode());
-                    h = findHeader("ETag", r.getAllHeaders());
+                    h = HttpTestUtils.findHeader("ETag", r.getAllHeaders());
                 }
 
                 Assert.assertNotNull(h);
@@ -655,7 +642,7 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
         try {
 
-            upload("/large.csv", "http://localhost:9000/upload");
+            HttpTestUtils.upload("/large.csv", "http://localhost:9000/upload");
 
             File out = new File(temp.getRoot(), "out.csv");
 

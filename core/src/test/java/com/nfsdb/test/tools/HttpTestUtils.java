@@ -49,6 +49,20 @@ public class HttpTestUtils {
         }
     }
 
+    public static Header findHeader(String name, Header[] headers) {
+        for (Header h : headers) {
+            if (name.equals(h.getName())) {
+                return h;
+            }
+        }
+
+        return null;
+    }
+
+    public static int upload(String resource, String url) throws IOException {
+        return upload(resourceFile(resource), url);
+    }
+
     private static HttpClientBuilder createHttpClient_AcceptsUntrustedCerts() throws Exception {
         HttpClientBuilder b = HttpClientBuilder.create();
 
@@ -84,10 +98,6 @@ public class HttpTestUtils {
         return b;
     }
 
-    private static int upload(String resource, String url) throws IOException {
-        return upload(resourceFile(resource), url);
-    }
-
     private static File resourceFile(String resource) {
         return new File(HttpTestUtils.class.getResource(resource).getFile());
     }
@@ -101,16 +111,6 @@ public class HttpTestUtils {
             HttpResponse r = client.execute(post);
             return r.getStatusLine().getStatusCode();
         }
-    }
-
-    private static Header findHeader(String name, Header[] headers) {
-        for (Header h : headers) {
-            if (name.equals(h.getName())) {
-                return h;
-            }
-        }
-
-        return null;
     }
 
 }
