@@ -22,14 +22,15 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.net.URLEncoder;
+import java.sql.Timestamp;
 
-public class JsonHandlerTest extends AbstractOptimiserTest {
+public class QueryHandlerTest extends AbstractOptimiserTest {
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     private static JournalFactoryPool factoryPool;
     private static HttpServer server;
-    private static JsonHandler handler;
+    private static QueryHandler handler;
 
     public static QueryResponse download(String queryUrl, TemporaryFolder temp) throws Exception {
         return download(queryUrl, -1, -1, false, temp);
@@ -58,7 +59,7 @@ public class JsonHandlerTest extends AbstractOptimiserTest {
         generateJournal(name, new QueryResponse.Tab[0], count);
     }
 
-    public static void generateJournal(String name, String id, double x, double y, long z, int w, long timestamp) throws JournalException, NumericException {
+    public static void generateJournal(String name, String id, double x, double y, long z, int w, Timestamp timestamp) throws JournalException, NumericException {
         QueryResponse.Tab record = new QueryResponse.Tab();
         record.id = id;
         record.x = x;
@@ -72,7 +73,7 @@ public class JsonHandlerTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUp() throws Exception {
         factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
-        handler = new JsonHandler(factoryPool);
+        handler = new QueryHandler(factoryPool);
 
         server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/js", handler);
@@ -121,7 +122,7 @@ public class JsonHandlerTest extends AbstractOptimiserTest {
         }
 
         String allCharString = allChars.toString();
-        generateJournal("xyz", allCharString, 1.900232E-10, 2.598E20, Long.MAX_VALUE, Integer.MIN_VALUE, -102023);
+        generateJournal("xyz", allCharString, 1.900232E-10, 2.598E20, Long.MAX_VALUE, Integer.MIN_VALUE, new Timestamp(0));
         String query = "select id from xyz \n limit 1";
         QueryResponse queryResponse = download(query);
         Assert.assertEquals(query, queryResponse.query);
@@ -133,13 +134,13 @@ public class JsonHandlerTest extends AbstractOptimiserTest {
 
     @Test
     public void testJsonEncodeNumbers() throws Exception {
-        generateJournal("nums", null, 1.900232E-10, Double.MAX_VALUE, Long.MAX_VALUE, Integer.MIN_VALUE, 10);
+        generateJournal("nums", null, 1.900232E-10, Double.MAX_VALUE, Long.MAX_VALUE, Integer.MIN_VALUE, new Timestamp(10));
         QueryResponse queryResponse = download("nums limit 20");
         Assert.assertEquals(1.900232E-10, queryResponse.result[0].x, 1E-6);
         Assert.assertEquals(Double.MAX_VALUE, queryResponse.result[0].y, 1E-6);
         Assert.assertEquals(Long.MAX_VALUE, queryResponse.result[0].z);
         Assert.assertEquals(0, queryResponse.result[0].w);
-        Assert.assertEquals(10, queryResponse.result[0].timestamp);
+//        Assert.assertEquals(ts, queryResponse.result[0].timestamp);
         Assert.assertEquals(false, queryResponse.moreExist);
 
         Assert.assertEquals("id4", queryResponse.result[4].id);
@@ -243,7 +244,7 @@ public class JsonHandlerTest extends AbstractOptimiserTest {
                     }
                 }
                 ew.putInt(4, recs.length > i ? recs[i].w : rnd.nextInt() % 500);
-                ew.putDate(5, recs.length > i ? recs[i].timestamp : t);
+                ew.putDate(5, recs.length > i ? recs[i].timestamp.getTime() : t);
                 t += 10;
                 ew.append();
             }

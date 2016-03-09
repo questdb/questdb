@@ -62,7 +62,7 @@ final class QueryParser {
     @SuppressFBWarnings("UCPM_USE_CHARACTER_PARAMETERIZED_METHOD")
     private void expectTok(CharSequence tok, CharSequence expected) throws ParserException {
         if (tok == null || !Chars.equals(tok, expected)) {
-            throw err("\"" + expected + "\" expected");
+            throw QueryError.position(lexer.position()).$('\'').$(expected).$("' expected").$();
         }
     }
 
@@ -404,7 +404,7 @@ final class QueryParser {
         if (subQuery) {
             lexer.unparse();
         } else if (tok != null) {
-            throw err("Unexpected token: " + tok);
+            throw QueryError.position(lexer.position()).$("Unexpected token: ").$(tok).$();
         }
         return model;
     }

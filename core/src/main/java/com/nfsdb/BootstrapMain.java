@@ -32,7 +32,7 @@ import com.nfsdb.net.http.HttpServerConfiguration;
 import com.nfsdb.net.http.MimeTypes;
 import com.nfsdb.net.http.SimpleUrlMatcher;
 import com.nfsdb.net.http.handlers.ImportHandler;
-import com.nfsdb.net.http.handlers.JsonHandler;
+import com.nfsdb.net.http.handlers.QueryHandler;
 import com.nfsdb.net.http.handlers.StaticContentHandler;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -75,7 +75,7 @@ class BootstrapMain {
         final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
         JournalFactory factory = new JournalFactory(configuration.getDbPath().getAbsolutePath());
         matcher.put("/imp", new ImportHandler(factory));
-        matcher.put("/js", new JsonHandler(new JournalFactoryPool(factory.getConfiguration(), configuration.getJournalPoolSize())));
+        matcher.put("/js", new QueryHandler(new JournalFactoryPool(factory.getConfiguration(), configuration.getJournalPoolSize())));
         matcher.setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
 
         HttpServer server = new HttpServer(configuration, matcher);

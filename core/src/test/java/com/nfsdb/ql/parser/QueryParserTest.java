@@ -174,7 +174,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(31, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "\"on\""));
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "'on'"));
         }
     }
 
@@ -218,7 +218,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(31, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "\"on\""));
+            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "'on'"));
         }
     }
 
@@ -295,6 +295,24 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals(2, statement.getQueryModel().getNestedModel().getNestedModel().getJoinModels().size());
         Assert.assertEquals("tab2", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getNestedModel().getJoinModels().getQuick(1).getJournalName()));
         Assert.assertEquals("tab.xtab2.x=", TestUtils.toRpn(statement.getQueryModel().getNestedModel().getNestedModel().getJoinModels().getQuick(1).getJoinCriteria()));
+    }
+
+    @Test
+    public void testLexerReset() throws Exception {
+
+        for (int i = 0; i < 10; i++) {
+            try {
+                parser.parse("select \n" +
+                        "-- ltod(Date)\n" +
+                        "count() \n" +
+                        "-- from acc\n" +
+                        "from acc(Date) sample by 1d\n" +
+                        "-- where x = 10\n");
+                Assert.fail();
+            } catch (ParserException e) {
+                TestUtils.assertEquals("Unexpected token: Date", QueryError.getMessage());
+            }
+        }
     }
 
     @Test

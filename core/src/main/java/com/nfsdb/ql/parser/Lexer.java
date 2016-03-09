@@ -204,6 +204,8 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
         this.content = cs;
         this._pos = 0;
         this._len = cs == null ? 0 : cs.length();
+        this.next = null;
+        this.unparsed = null;
     }
 
     public void unparse() {

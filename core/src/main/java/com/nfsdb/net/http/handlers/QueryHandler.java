@@ -49,7 +49,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class JsonHandler implements ContextHandler {
+public class QueryHandler implements ContextHandler {
     private static final ThreadLocal<QueryCompiler> COMPILER = new ThreadLocal<>(new ObjectFactory<QueryCompiler>() {
         @Override
         public QueryCompiler newInstance() {
@@ -68,7 +68,7 @@ public class JsonHandler implements ContextHandler {
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
 
-    public JsonHandler(JournalFactoryPool factoryPool) {
+    public QueryHandler(JournalFactoryPool factoryPool) {
         this.factoryPool = factoryPool;
     }
 
@@ -305,13 +305,20 @@ public class JsonHandler implements ContextHandler {
                 Numbers.append(sink, i);
                 break;
             case LONG:
-            case DATE:
                 final long l = rec.getLong(col);
                 if (l == Long.MIN_VALUE) {
                     sink.put("null");
                     break;
                 }
                 sink.put(l);
+                break;
+            case DATE:
+                final long d = rec.getDate(col);
+                if (d == Long.MIN_VALUE) {
+                    sink.put("null");
+                    break;
+                }
+                sink.put('"').putISODate(d).put('"');
                 break;
             case SHORT:
                 sink.put(rec.getShort(col));
