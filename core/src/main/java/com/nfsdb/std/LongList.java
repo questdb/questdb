@@ -133,10 +133,6 @@ public class LongList implements Mutable {
         Unsafe.arrayPut(buffer, index, value);
     }
 
-    public void fill(long value) {
-        Arrays.fill(buffer, value);
-    }
-
     public long get(int index) {
         if (index < pos) {
             return Unsafe.arrayGet(buffer, index);

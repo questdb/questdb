@@ -58,6 +58,7 @@ public class ResampledRecordSource extends AbstractRecordSource {
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ResampledRecordSource(
             RecordSource recordSource,
+            int timestampColumnIndex,
             @Transient ObjHashSet<String> keyColumns,
             ObjList<AggregatorFunction> aggregators,
             TimestampSampler sampler
@@ -69,7 +70,7 @@ public class ResampledRecordSource extends AbstractRecordSource {
         ObjHashSet<String> keyCols = new ObjHashSet<>();
 
         RecordMetadata rm = recordSource.getMetadata();
-        this.tsIndex = rm.getTimestampIndex();
+        this.tsIndex = timestampColumnIndex;
         keyCols.add(rm.getColumnName(tsIndex));
         for (int i = 0; i < keyColumnsSize; i++) {
             keyCols.add(keyColumns.get(i));
@@ -127,6 +128,7 @@ public class ResampledRecordSource extends AbstractRecordSource {
     public void reset() {
         recordSource.reset();
         map.clear();
+        nextRecord = null;
     }
 
     @Override

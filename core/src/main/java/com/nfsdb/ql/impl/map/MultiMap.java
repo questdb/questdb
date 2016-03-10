@@ -56,7 +56,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
             @Transient ObjList<RecordColumnMetadata> valueColumns,
             ObjList<MapRecordValueInterceptor> interceptors) {
         //todo: extract config
-        this(1024 * 1024, 4 * 1024 * 1024, 0.5f, keySourceMetadata, keyNames, valueColumns, interceptors);
+        this(16, 4 * 1024 * 1024, 0.5f, keySourceMetadata, keyNames, valueColumns, interceptors);
     }
 
     private MultiMap(int capacity,
@@ -118,7 +118,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         kPos = kStart;
         free = (int) (keyCapacity * loadFactor);
         size = 0;
-        offsets.fill(-1);
+        offsets.zero(-1);
     }
 
     public RecordCursor getCursor() {
@@ -239,8 +239,8 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         int capacity = keyCapacity << 1;
         mask = capacity - 1;
         LongList pointers = new LongList(capacity);
-        pointers.zero((byte) -1);
         pointers.setPos(capacity);
+        pointers.zero(-1);
 
         for (int i = 0, k = this.offsets.size(); i < k; i++) {
             long offset = this.offsets.get(i);

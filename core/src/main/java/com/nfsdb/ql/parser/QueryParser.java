@@ -167,7 +167,7 @@ final class QueryParser {
 
         tok = tok();
 
-        if (Chars.equals(tok, "(")) {
+        if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseQuery(true));
             expectTok(tok(), ")");
         } else {
@@ -209,17 +209,6 @@ final class QueryParser {
             default:
                 lexer.unparse();
         }
-//
-//        if (type != QueryModel.JoinType.INNER) {
-//            expectTok(tok, "on");
-//            ExprNode expr = expr();
-//            if (expr == null) {
-//                throw QueryError.INSTANCE.$(toks.position(), "Expression expected");
-//            }
-//            joinModel.setJoinCriteria(expr);
-//        } else {
-//            toks.unparse();
-//        }
 
         return joinModel;
     }
@@ -301,7 +290,7 @@ final class QueryParser {
 
         // expect "(" in case of sub-query
 
-        if (Chars.equals(tok, "(")) {
+        if (Chars.equals(tok, '(')) {
             model.setNestedModel(parseQuery(true));
 
             // expect closing bracket
@@ -378,14 +367,14 @@ final class QueryParser {
             do {
                 tok = tok();
 
-                if (Chars.equals(tok, ")")) {
+                if (Chars.equals(tok, ')')) {
                     throw err("Expression expected");
                 }
 
                 lexer.unparse();
                 model.addOrderBy(expr());
                 tok = lexer.optionTok();
-            } while (tok != null && Chars.equals(tok, ","));
+            } while (tok != null && Chars.equals(tok, ','));
         }
 
         // expect [limit]
@@ -394,7 +383,7 @@ final class QueryParser {
             ExprNode hi = null;
 
             tok = lexer.optionTok();
-            if (tok != null && Chars.equals(",", tok)) {
+            if (tok != null && Chars.equals(tok, ',')) {
                 hi = expr();
                 tok = lexer.optionTok();
             }
@@ -422,7 +411,7 @@ final class QueryParser {
                 break;
             }
 
-            if (Chars.equals(tok, ",")) {
+            if (Chars.equals(tok, ',')) {
                 model.addColumn(queryColumnPool.next().of(null, expr));
                 continue;
             }

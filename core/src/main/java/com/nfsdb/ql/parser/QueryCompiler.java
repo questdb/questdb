@@ -879,32 +879,8 @@ public class QueryCompiler {
         ExprNode slaveTimestampNode = model.getTimestamp();
         RecordMetadata masterMetadata = master.getMetadata();
         RecordMetadata slaveMetadata = slave.getMetadata();
-        int slaveTimestampIndex;
-        int masterTimestampIndex;
-
-        // check for explicit timestamp definition
-        if (slaveTimestampNode != null) {
-            slaveTimestampIndex = slaveMetadata.getColumnIndexQuiet(slaveTimestampNode.token);
-            if (slaveTimestampIndex == -1) {
-                throw QueryError.$(slaveTimestampNode.position, "Invalid column");
-            }
-        } else if (slaveMetadata.getTimestampIndex() == -1) {
-            throw QueryError.$(0, "Result set timestamp column is undefined");
-        } else {
-            slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-        }
-
-
-        if (masterTimestampNode != null) {
-            masterTimestampIndex = masterMetadata.getColumnIndexQuiet(masterTimestampNode.token);
-            if (masterTimestampIndex == -1) {
-                throw QueryError.$(masterTimestampNode.position, "Invalid column");
-            }
-        } else if (masterMetadata.getTimestampIndex() == -1) {
-            throw QueryError.$(0, "Result set timestamp column is undefined");
-        } else {
-            masterTimestampIndex = masterMetadata.getTimestampIndex();
-        }
+        int slaveTimestampIndex = getTimestampIndex(model, slaveTimestampNode, slaveMetadata);
+        int masterTimestampIndex = getTimestampIndex(model, masterTimestampNode, masterMetadata);
 
         if (jc == null) {
             return new AsOfJoinRecordSource(master, masterTimestampIndex, slave, slaveTimestampIndex);
@@ -982,6 +958,41 @@ public class QueryCompiler {
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
         return dot == -1 ? token : csPool.next().of(token, dot + 1, token.length() - dot - 1);
+    }
+
+    private int getTimestampIndex(QueryModel model, ExprNode node, RecordMetadata m) throws ParserException {
+        int pos = model.getJournalName() != null ? model.getJournalName().position : 0;
+        if (node != null) {
+            if (node.type != ExprNode.NodeType.LITERAL) {
+                throw QueryError.position(node.position).$("Literal expression expected").$();
+            }
+
+            int index = m.getColumnIndexQuiet(node.token);
+            if (index == -1) {
+                throw QueryError.position(node.position).$("Invalid column: ").$(node.token).$();
+            }
+            return index;
+        } else {
+            int index = m.getTimestampIndex();
+            if (index > -1) {
+                return index;
+            }
+
+            for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+                if (m.getColumnQuick(i).getType() == ColumnType.DATE) {
+                    if (index == -1) {
+                        index = i;
+                    } else {
+                        throw QueryError.position(pos).$("Ambiguous timestamp column").$();
+                    }
+                }
+            }
+
+            if (index == -1) {
+                throw QueryError.position(pos).$("Missing timestamp").$();
+            }
+            return index;
+        }
     }
 
     private void homogenizeCrossJoins(QueryModel parent) {
@@ -1649,7 +1660,7 @@ public class QueryCompiler {
                 if (sampler == null) {
                     throw QueryError.$(sampleBy.position, "Invalid sample");
                 }
-                rs = new ResampledRecordSource(rs, groupKeyColumns, af, sampler);
+                rs = new ResampledRecordSource(rs, getTimestampIndex(model, model.getTimestamp(), rs.getMetadata()), groupKeyColumns, af, sampler);
             }
         } else {
             if (sampleBy != null) {
