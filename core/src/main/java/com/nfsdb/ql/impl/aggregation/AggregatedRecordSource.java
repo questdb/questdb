@@ -33,7 +33,7 @@ import com.nfsdb.ql.impl.join.hash.KeyWriterHelper;
 import com.nfsdb.ql.impl.map.MapRecordValueInterceptor;
 import com.nfsdb.ql.impl.map.MapValues;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.ql.ops.AbstractRecordSource;
+import com.nfsdb.ql.ops.AbstractCombinedRecordSource;
 import com.nfsdb.std.*;
 import com.nfsdb.std.ThreadLocal;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -42,7 +42,7 @@ import java.io.Closeable;
 import java.io.IOException;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
-public class AggregatedRecordSource extends AbstractRecordSource implements Closeable {
+public class AggregatedRecordSource extends AbstractCombinedRecordSource implements Closeable {
 
     private static final ThreadLocal<ObjList<RecordColumnMetadata>> tlColumns = new ThreadLocal<>(new ObjectFactory<ObjList<RecordColumnMetadata>>() {
         @Override

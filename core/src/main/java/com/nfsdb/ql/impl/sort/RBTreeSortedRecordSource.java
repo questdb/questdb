@@ -22,7 +22,6 @@
 package com.nfsdb.ql.impl.sort;
 
 import com.nfsdb.ex.JournalException;
-import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Unsafe;
@@ -31,15 +30,14 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.impl.join.hash.RecordDequeue;
-import com.nfsdb.ql.ops.Parameter;
+import com.nfsdb.ql.ops.AbstractRecordSource;
 import com.nfsdb.std.AbstractImmutableIterator;
-import com.nfsdb.std.CharSequenceObjHashMap;
 import com.nfsdb.std.Mutable;
 import com.nfsdb.store.SequentialMemory;
 
 import java.io.Closeable;
 
-public class RBTreeSortedRecordSource implements Mutable, RecordSource, Closeable {
+public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mutable, RecordSource, Closeable {
     // P(8) + L + R + C(1) + REC
     private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8;
     private static final int O_LEFT = 8;
@@ -54,8 +52,6 @@ public class RBTreeSortedRecordSource implements Mutable, RecordSource, Closeabl
     private final RecordSource recordSource;
     private final AscendingCursor ascendingCursor = new AscendingCursor();
     private long root = 0;
-    // todo: remove duplication
-    private CharSequenceObjHashMap<Parameter> parameterMap;
 
     public RBTreeSortedRecordSource(int capacity, RecordSource recordSource, RecordComparator comparator) {
         this.recordSource = recordSource;
@@ -83,15 +79,6 @@ public class RBTreeSortedRecordSource implements Mutable, RecordSource, Closeabl
     }
 
     @Override
-    public Parameter getParam(CharSequence name) {
-        Parameter p = parameterMap.get(name);
-        if (p == null) {
-            throw new JournalRuntimeException("Parameter does not exist");
-        }
-        return p;
-    }
-
-    @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
         RecordCursor cursor = recordSource.prepareCursor(factory);
         records.setStorageFacade(cursor.getStorageFacade());
@@ -103,11 +90,6 @@ public class RBTreeSortedRecordSource implements Mutable, RecordSource, Closeabl
     @Override
     public void reset() {
         records.clear();
-    }
-
-    @Override
-    public void setParameterMap(CharSequenceObjHashMap<Parameter> map) {
-        this.parameterMap = map;
     }
 
     @Override

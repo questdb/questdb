@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl.join;
 
@@ -27,9 +27,9 @@ import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
-import com.nfsdb.ql.ops.AbstractRecordSource;
+import com.nfsdb.ql.ops.AbstractCombinedRecordSource;
 
-public class NestedLoopJoinRecordSource extends AbstractRecordSource {
+public class NestedLoopJoinRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource masterSource;
     private final RecordSource slaveSource;
     private final SplitRecordMetadata metadata;

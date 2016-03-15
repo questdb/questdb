@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl.join;
 
@@ -31,13 +31,13 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.impl.join.asof.*;
-import com.nfsdb.ql.ops.AbstractRecordSource;
+import com.nfsdb.ql.ops.AbstractCombinedRecordSource;
 import com.nfsdb.std.CharSequenceHashSet;
 
 import java.io.Closeable;
 import java.io.IOException;
 
-public class AsOfPartitionedJoinRecordSource extends AbstractRecordSource implements Closeable {
+public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSource implements Closeable {
     private final LastRecordMap map;
     private final RecordHolder holder;
     private final RecordSource master;

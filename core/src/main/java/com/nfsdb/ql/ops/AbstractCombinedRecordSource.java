@@ -21,24 +21,15 @@
 
 package com.nfsdb.ql.ops;
 
-import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
-import com.nfsdb.std.CharSequenceObjHashMap;
 
-public abstract class AbstractRecordSource implements RecordSource {
-    private CharSequenceObjHashMap<Parameter> parameterMap;
+import java.util.Iterator;
 
+public abstract class AbstractCombinedRecordSource extends AbstractRecordSource implements RecordSource, RecordCursor {
     @Override
-    public Parameter getParam(CharSequence name) {
-        Parameter p = parameterMap.get(name);
-        if (p == null) {
-            throw new JournalRuntimeException("Parameter does not exist");
-        }
-        return p;
-    }
-
-    @Override
-    public void setParameterMap(CharSequenceObjHashMap<Parameter> map) {
-        this.parameterMap = map;
+    public Iterator<Record> iterator() {
+        return this;
     }
 }

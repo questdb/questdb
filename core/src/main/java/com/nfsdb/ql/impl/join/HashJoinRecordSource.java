@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl.join;
 
@@ -34,7 +34,7 @@ import com.nfsdb.ql.impl.join.hash.MultiRecordMap;
 import com.nfsdb.ql.impl.join.hash.NullRecord;
 import com.nfsdb.ql.impl.join.hash.RowIdHolderRecord;
 import com.nfsdb.ql.impl.map.MultiMap;
-import com.nfsdb.ql.ops.AbstractRecordSource;
+import com.nfsdb.ql.ops.AbstractCombinedRecordSource;
 import com.nfsdb.std.IntList;
 import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.std.ObjList;
@@ -46,7 +46,7 @@ import java.io.IOException;
 import static com.nfsdb.ql.impl.join.hash.KeyWriterHelper.setKey;
 
 
-public class HashJoinRecordSource extends AbstractRecordSource implements Closeable {
+public class HashJoinRecordSource extends AbstractCombinedRecordSource implements Closeable {
     private final RecordSource master;
     private final RecordSource slave;
     private final SplitRecordMetadata metadata;

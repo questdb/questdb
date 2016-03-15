@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl.join;
 
@@ -34,12 +34,12 @@ import com.nfsdb.ql.impl.join.asof.FixRecordHolder;
 import com.nfsdb.ql.impl.join.asof.RecordHolder;
 import com.nfsdb.ql.impl.join.asof.RowidRecordHolder;
 import com.nfsdb.ql.impl.join.asof.VarRecordHolder;
-import com.nfsdb.ql.ops.AbstractRecordSource;
+import com.nfsdb.ql.ops.AbstractCombinedRecordSource;
 
 import java.io.Closeable;
 import java.io.IOException;
 
-public class AsOfJoinRecordSource extends AbstractRecordSource implements Closeable {
+public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implements Closeable {
     private final RecordSource master;
     private final RecordSource slave;
     private final SplitRecordMetadata metadata;
