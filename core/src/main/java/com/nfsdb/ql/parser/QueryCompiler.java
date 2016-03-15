@@ -1,17 +1,17 @@
 /*******************************************************************************
- * _  _ ___ ___     _ _
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ *
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- * <p/>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -51,6 +51,8 @@ import com.nfsdb.ql.impl.join.HashJoinRecordSource;
 import com.nfsdb.ql.impl.lambda.*;
 import com.nfsdb.ql.impl.latest.*;
 import com.nfsdb.ql.impl.select.SelectedColumnsRecordSource;
+import com.nfsdb.ql.impl.sort.ComparatorCompiler;
+import com.nfsdb.ql.impl.sort.RBTreeSortedRecordSource;
 import com.nfsdb.ql.impl.virtual.VirtualColumnRecordSource;
 import com.nfsdb.ql.model.*;
 import com.nfsdb.ql.ops.FunctionFactories;
@@ -61,6 +63,7 @@ import com.nfsdb.ql.ops.constant.LongConstant;
 import com.nfsdb.std.*;
 import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import sun.invoke.anon.AnonymousClassLoader;
 
 import java.util.ArrayDeque;
 
@@ -83,6 +86,7 @@ public class QueryCompiler {
     private final ObjectPool<JoinContext> contextPool = new ObjectPool<>(JoinContext.FACTORY, 16);
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final VirtualColumnBuilder virtualColumnBuilder = new VirtualColumnBuilder(traversalAlgo);
+    private final IntList orderColumnIndices = new IntList();
     private final IntList clausesToSteal = new IntList();
     private final IntList literalCollectorAIndexes = new IntList();
     private final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
@@ -114,6 +118,7 @@ public class QueryCompiler {
     private final ObjList<QueryColumn> aggregators = new ObjList<>();
     private final ObjList<QueryColumn> outerVirtualColumns = new ObjList<>();
     private final ObjHashSet<String> groupKeyColumns = new ObjHashSet<>();
+    private final ComparatorCompiler cc = new ComparatorCompiler();
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
 
@@ -518,6 +523,7 @@ public class QueryCompiler {
         constNameToIndex.clear();
         constNameToNode.clear();
         constNameToToken.clear();
+        orderColumnIndices.clear();
     }
 
     private void collectColumnNameFrequency(QueryModel model, RecordSource rs) {
@@ -551,11 +557,13 @@ public class QueryCompiler {
 
     private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         return limit(
-                selectColumns(
-                        model.getJoinModels().size() > 1 ?
-                                optimise(model, factory).compileJoins(model, factory) :
-                                optimise(model, factory).compileSingleOrSubQuery(model, factory),
-                        model
+                order(
+                        selectColumns(
+                                model.getJoinModels().size() > 1 ?
+                                        optimise(model, factory).compileJoins(model, factory) :
+                                        optimise(model, factory).compileSingleOrSubQuery(model, factory),
+                                model
+                        ), model
                 ), model
         );
     }
@@ -1254,6 +1262,32 @@ public class QueryCompiler {
 //            rewriteColumnsRemovedByJoins(parent);
         }
         return this;
+    }
+
+    private RecordSource order(RecordSource rs, QueryModel model) throws ParserException {
+        ObjList<ExprNode> orderBy = model.getOrderBy();
+        int n = orderBy.size();
+        if (n > 0) {
+            RecordMetadata m = rs.getMetadata();
+            for (int i = 0; i < n; i++) {
+                ExprNode tok = orderBy.getQuick(i);
+                int index = m.getColumnIndexQuiet(tok.token);
+                if (index == -1) {
+                    throw QueryError.invalidColumn(tok.position, tok.token);
+                }
+                orderColumnIndices.add(index);
+            }
+            return new RBTreeSortedRecordSource(
+                    rs,
+                    cc.compile(
+                            AnonymousClassLoader.make(Unsafe.getUnsafe(), RBTreeSortedRecordSource.class),
+                            m,
+                            orderColumnIndices
+                    )
+            );
+        } else {
+            return rs;
+        }
     }
 
     /**

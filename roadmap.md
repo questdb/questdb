@@ -13,7 +13,7 @@ __lang__
     orders is a time series and customers is dimension and "group" is a field of customer)
 - [ ] time joins (merge)
 - [x] as of joins (trade asof join quote on trade.ccy = quote.ccy)
-- [ ] __ordering (in-progress)__
+- [x] __ordering (testing)__
 - [x] top x rows (select ... limit low,high can be used for paging)
 - [ ] bottom x rows
 - [x] query parameters

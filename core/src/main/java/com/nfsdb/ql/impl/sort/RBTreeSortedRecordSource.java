@@ -53,10 +53,11 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private final AscendingCursor ascendingCursor = new AscendingCursor();
     private long root = 0;
 
-    public RBTreeSortedRecordSource(int capacity, RecordSource recordSource, RecordComparator comparator) {
+    public RBTreeSortedRecordSource(RecordSource recordSource, RecordComparator comparator) {
         this.recordSource = recordSource;
         this.comparator = comparator;
-        this.mem = new MemoryPages(capacity * BLOCK_SIZE);
+        // todo: extract config
+        this.mem = new MemoryPages(1024 * 1024);
         this.records = new RecordDequeue(recordSource.getMetadata(), 4 * 1024 * 1024);
     }
 

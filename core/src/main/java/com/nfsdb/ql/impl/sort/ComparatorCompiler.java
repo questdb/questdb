@@ -31,7 +31,7 @@ import com.nfsdb.std.Transient;
 import com.sun.tools.javac.jvm.ByteCodes;
 import sun.invoke.anon.AnonymousClassLoader;
 
-class ComparatorCompiler {
+public class ComparatorCompiler {
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final CharSequenceIntHashMap typeMap = new CharSequenceIntHashMap();
     private final CharSequenceIntHashMap methodMap = new CharSequenceIntHashMap();
