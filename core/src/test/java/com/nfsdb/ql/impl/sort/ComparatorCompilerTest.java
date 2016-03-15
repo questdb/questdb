@@ -19,7 +19,7 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.impl.map;
+package com.nfsdb.ql.impl.sort;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
@@ -27,7 +27,6 @@ import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.misc.Unsafe;
-import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractVirtualColumn;
@@ -35,8 +34,8 @@ import com.nfsdb.ql.parser.AbstractOptimiserTest;
 import com.nfsdb.std.IntList;
 import com.nfsdb.std.ObjList;
 import com.nfsdb.store.ColumnType;
+import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 import sun.invoke.anon.AnonymousClassLoader;
 
@@ -44,27 +43,11 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
 
     private final ComparatorCompiler cc = new ComparatorCompiler();
 
-    @Before
-    public void setUp() throws Exception {
-        cc.clear();
-    }
-
     @Test
-    public void testAllTypes() throws Exception {
-        TestRecordMetadata m = new TestRecordMetadata();
-        IntList indices = new IntList(m.getColumnCount());
-        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
-            indices.add(i);
-        }
-        RecordComparator rc = cc.compile(AnonymousClassLoader.make(Unsafe.getUnsafe(), ComparatorCompilerTest.class), m, indices);
-        Assert.assertNotNull(rc);
-    }
-
-    @Test
-    public void testJournal() throws Exception {
+    public void testAllGetters() throws Exception {
         JournalWriter w = factory.writer(new JournalStructure("xyz")
                 .$bool("bool")
-                // todo: add byte
+                .$byte("byte")
                 .$double("double")
                 .$float("float")
                 .$int("int")
@@ -78,26 +61,27 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         JournalEntryWriter ew = w.entryWriter();
 
         ew.putBool(0, true);
-        ew.putDouble(1, 20.12);
-        ew.putFloat(2, 10.15f);
-        ew.putInt(3, 4);
-        ew.putLong(4, 9988908080988890L);
-        ew.putDate(5, 88979879L);
-        ew.putShort(6, (short) 902);
-        ew.putStr(7, "complexity made simple");
-        ew.putSym(8, "nfsdb");
+        ew.put(1, (byte) 13);
+        ew.putDouble(2, 20.12);
+        ew.putFloat(3, 10.15f);
+        ew.putInt(4, 4);
+        ew.putLong(5, 9988908080988890L);
+        ew.putDate(6, 88979879L);
+        ew.putShort(7, (short) 902);
+        ew.putStr(8, "complexity made simple");
+        ew.putSym(9, "nfsdb");
         ew.append();
 
         ew = w.entryWriter();
-        ew.putBool(0, true);
-        ew.putDouble(1, 20.12);
-        ew.putFloat(2, 10.15f);
-        ew.putInt(3, 4);
-        ew.putLong(4, 9988908080988890L);
-        ew.putDate(5, 88979879L);
-        ew.putShort(6, (short) 902);
-        ew.putStr(7, "complexity made simple2");
-        ew.putSym(8, "appsicle");
+        ew.put(1, (byte) 13);
+        ew.putDouble(2, 20.12);
+        ew.putFloat(3, 10.15f);
+        ew.putInt(4, 4);
+        ew.putLong(5, 9988908080988890L);
+        ew.putDate(6, 88979879L);
+        ew.putShort(7, (short) 902);
+        ew.putStr(8, "complexity made simple");
+        ew.putSym(9, "appsicle");
         ew.append();
 
         w.commit();
@@ -109,12 +93,72 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         }
         RecordSource rs = compiler.compileSource(factory, "xyz");
         RecordComparator rc = cc.compile(AnonymousClassLoader.make(Unsafe.getUnsafe(), ComparatorCompilerTest.class), rs.getMetadata(), indices);
-        RedBlackTreeMap map = new RedBlackTreeMap(16 * 1024 * 1024, rs.getMetadata(), rc);
+        RBTreeSortedRecordSource map = new RBTreeSortedRecordSource(16 * 1024 * 1024, rs, rc);
 
-        RecordCursor cursor = rs.prepareCursor(factory);
-        while (cursor.hasNext()) {
-            map.put(cursor.next());
+        sink.clear();
+        printer.printCursor(map.prepareCursor(factory));
+        TestUtils.assertEquals(
+                "false\t13\t20.120000000000\t10.1500\t4\t9988908080988890\t1970-01-02T00:42:59.879Z\t902\tcomplexity made simple\tappsicle\n" +
+                        "true\t13\t20.120000000000\t10.1500\t4\t9988908080988890\t1970-01-02T00:42:59.879Z\t902\tcomplexity made simple\tnfsdb\n",
+                sink);
+    }
+
+    @Test
+    public void testCompileAll() throws Exception {
+        TestRecordMetadata m = new TestRecordMetadata().addDistinct();
+        IntList indices = new IntList(m.getColumnCount());
+        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+            indices.add(i);
         }
+        RecordComparator rc = cc.compile(AnonymousClassLoader.make(Unsafe.getUnsafe(), ComparatorCompilerTest.class), m, indices);
+        Assert.assertNotNull(rc);
+    }
+
+    @Test
+    public void testCompileLarge() throws Exception {
+        TestRecordMetadata m = new TestRecordMetadata();
+        for (int i = 0; i < 155; i++) {
+            m.addDistinct();
+        }
+        IntList indices = new IntList(m.getColumnCount());
+        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+            indices.add(i);
+        }
+        RecordComparator rc = cc.compile(AnonymousClassLoader.make(Unsafe.getUnsafe(), ComparatorCompilerTest.class), m, indices);
+        Assert.assertNotNull(rc);
+    }
+
+    @Test
+    public void testCompileMultipleOfSame() throws Exception {
+        TestRecordMetadata m = new TestRecordMetadata();
+        for (int i = 0; i < 155; i++) {
+            m._type(ColumnType.STRING);
+        }
+        IntList indices = new IntList(m.getColumnCount());
+        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+            indices.add(i);
+        }
+        RecordComparator rc = cc.compile(AnonymousClassLoader.make(Unsafe.getUnsafe(), ComparatorCompilerTest.class), m, indices);
+        Assert.assertNotNull(rc);
+    }
+
+    @Test
+    public void testTwoClassesSameClassloader() throws Exception {
+        TestRecordMetadata m = new TestRecordMetadata();
+        for (int i = 0; i < 155; i++) {
+            m._type(ColumnType.STRING);
+        }
+        IntList indices = new IntList(m.getColumnCount());
+        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+            indices.add(i);
+        }
+        AnonymousClassLoader cl = AnonymousClassLoader.make(Unsafe.getUnsafe(), ComparatorCompilerTest.class);
+        RecordComparator rc1 = cc.compile(cl, m, indices);
+        RecordComparator rc2 = cc.compile(cl, m, indices);
+
+        Assert.assertTrue(rc1 != rc2);
+        Assert.assertNotNull(rc1);
+        Assert.assertNotNull(rc2);
     }
 
     private static class TestColumnMetadata extends AbstractVirtualColumn {
@@ -138,6 +182,13 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         private final ObjList<TestColumnMetadata> columns = new ObjList<>();
 
         public TestRecordMetadata() {
+        }
+
+        public void _type(ColumnType t) {
+            columns.add(new TestColumnMetadata(t));
+        }
+
+        public TestRecordMetadata addDistinct() {
             _type(ColumnType.BOOLEAN);
             _type(ColumnType.BYTE);
             _type(ColumnType.DOUBLE);
@@ -148,6 +199,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
             _type(ColumnType.SHORT);
             _type(ColumnType.STRING);
             _type(ColumnType.SYMBOL);
+            return this;
         }
 
         @Override
@@ -173,10 +225,6 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         @Override
         public int getTimestampIndex() {
             return -1;
-        }
-
-        private void _type(ColumnType t) {
-            columns.add(new TestColumnMetadata(t));
         }
     }
 }

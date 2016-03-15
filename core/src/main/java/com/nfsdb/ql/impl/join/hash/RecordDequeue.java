@@ -31,7 +31,6 @@ import com.nfsdb.std.Mutable;
 import com.nfsdb.store.SequentialMemory;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class RecordDequeue extends AbstractImmutableIterator<Record> implements Closeable, RecordCursor, Mutable {
     private final SequentialMemory mem;
@@ -61,7 +60,7 @@ public class RecordDequeue extends AbstractImmutableIterator<Record> implements 
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         mem.close();
     }
 

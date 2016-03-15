@@ -21,19 +21,21 @@
 
 package com.nfsdb.misc;
 
-import com.nfsdb.ql.impl.map.RecordComparator;
+import com.nfsdb.io.sink.AbstractCharSink;
+import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.std.Mutable;
 import com.sun.tools.javac.jvm.ByteCodes;
 import sun.invoke.anon.AnonymousClassLoader;
 
 import java.io.FileOutputStream;
-import java.io.UnsupportedEncodingException;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 public class BytecodeAssembler implements Mutable {
 
     private static final int O_POOL_COUNT = 8;
+    private final Utf8Appender utf8Appender = new Utf8Appender();
     private ByteBuffer buf;
     private int poolCount;
     private int objectClassIndex;
@@ -45,38 +47,8 @@ public class BytecodeAssembler implements Mutable {
     private int methodCut2;
 
     public BytecodeAssembler() {
-        this.buf = ByteBuffer.allocate(4 * 1024).order(ByteOrder.BIG_ENDIAN);
+        this.buf = ByteBuffer.allocate(1024).order(ByteOrder.BIG_ENDIAN);
         this.poolCount = 1;
-    }
-
-    public static void main(String[] args) throws UnsupportedEncodingException, IllegalAccessException, InstantiationException {
-        AnonymousClassLoader l = AnonymousClassLoader.make(Unsafe.getUnsafe(), BytecodeAssembler.class);
-
-        BytecodeAssembler asm = new BytecodeAssembler();
-        asm.setupPool();
-        int thisClassIndex = asm.poolClass(asm.poolUtf8("cmp"));
-        int ifaceClassIndex = asm.poolClass(asm.poolUtf8("com/nfsdb/ql/impl/map/RecordComparator"));
-        asm.finishPool();
-        asm.defineClass(1, thisClassIndex);
-
-        // interface count
-        asm.putShort(1);
-        asm.putShort(ifaceClassIndex);
-        // field count
-        asm.putShort(0);
-        // method count
-        asm.putShort(1);
-        asm.defineDefaultConstructor();
-        // class attribute count
-        asm.putShort(0);
-
-        byte b[] = new byte[asm.position()];
-        System.arraycopy(asm.buf.array(), 0, b, 0, b.length);
-
-        Class<RecordComparator> clazz = asm.loadClass(l);
-        RecordComparator c = clazz.newInstance();
-        c.setLeft(null);
-//        System.out.println(clazz.newInstance() instanceof RecordComparator);
     }
 
     @Override
@@ -186,6 +158,14 @@ public class BytecodeAssembler implements Mutable {
         return poolRef(0x0C, nameIndex, typeIndex);
     }
 
+    public Utf8Appender poolUtf8() {
+        put(0x01);
+        utf8Appender.lenpos = position();
+        utf8Appender.utf8len = 0;
+        putShort(0);
+        return utf8Appender;
+    }
+
     public int poolUtf8(CharSequence cs) {
         put(0x01);
         int n;
@@ -201,6 +181,9 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void put(int b) {
+        if (buf.remaining() == 0) {
+            resize();
+        }
         buf.put((byte) b);
     }
 
@@ -220,6 +203,9 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void putInt(int v) {
+        if (buf.remaining() < 4) {
+            resize();
+        }
         buf.putInt(v);
     }
 
@@ -232,6 +218,9 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void putShort(short v) {
+        if (buf.remaining() < 2) {
+            resize();
+        }
         buf.putShort(v);
     }
 
@@ -307,5 +296,50 @@ public class BytecodeAssembler implements Mutable {
         putShort(name);
         putShort(type);
         return poolCount++;
+    }
+
+    private void resize() {
+        ByteBuffer b = ByteBuffer.allocate(buf.capacity() * 2).order(ByteOrder.BIG_ENDIAN);
+        System.arraycopy(buf.array(), 0, b.array(), 0, buf.capacity());
+        b.position(buf.position());
+        buf = b;
+    }
+
+    public class Utf8Appender extends AbstractCharSink implements CharSink {
+        private int utf8len = 0;
+        private int lenpos;
+
+        public int $() {
+            putShort(lenpos, utf8len);
+            return poolCount++;
+        }
+
+        @Override
+        public void flush() throws IOException {
+
+        }
+
+        @Override
+        public Utf8Appender put(CharSequence cs) {
+            int n = cs.length();
+            for (int i = 0; i < n; i++) {
+                BytecodeAssembler.this.put(cs.charAt(i));
+            }
+            utf8len += n;
+            return this;
+        }
+
+        @Override
+        public Utf8Appender put(char c) {
+            BytecodeAssembler.this.put(c);
+            utf8len++;
+            return this;
+        }
+
+        @Override
+        public Utf8Appender put(int value) {
+            super.put(value);
+            return this;
+        }
     }
 }

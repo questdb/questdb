@@ -19,7 +19,7 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.impl.map;
+package com.nfsdb.ql.impl.sort;
 
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Chars;
@@ -42,11 +42,6 @@ public class GenericRecordComparator implements RecordComparator {
         for (int i = 0, n = keyIndices.size(); i < n; i++) {
             types.add(metadata.getColumnQuick(keyIndices.getQuick(i)).getType());
         }
-    }
-
-    @Override
-    public void setLeft(Record record) {
-        this.record = record;
     }
 
     @Override
@@ -92,6 +87,11 @@ public class GenericRecordComparator implements RecordComparator {
             }
         }
         return 0;
+    }
+
+    @Override
+    public void setLeft(Record record) {
+        this.record = record;
     }
 
     private static int cmpBool(boolean b1, boolean b2) {

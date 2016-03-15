@@ -27,7 +27,6 @@ import com.nfsdb.std.LongList;
 import com.nfsdb.std.Mutable;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class SequentialMemory implements Closeable, Mutable {
     private final int pageSize;
@@ -62,7 +61,7 @@ public class SequentialMemory implements Closeable, Mutable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         for (int i = 0; i < pages.size(); i++) {
             long address = pages.getQuick(i);
             if (address != 0) {

@@ -27,24 +27,20 @@ import com.nfsdb.ex.JournalException;
 import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.ex.NumericException;
 import com.nfsdb.ex.ParserException;
-import com.nfsdb.factory.JournalCachingFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.misc.*;
+import com.nfsdb.misc.Chars;
+import com.nfsdb.misc.Dates;
+import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.Rnd;
 import com.nfsdb.model.Quote;
-import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
-import com.nfsdb.ql.impl.map.ComparatorCompiler;
-import com.nfsdb.ql.impl.map.RecordComparator;
-import com.nfsdb.ql.impl.map.RedBlackTreeMap;
-import com.nfsdb.std.IntList;
 import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-import sun.invoke.anon.AnonymousClassLoader;
 
 import java.io.IOException;
 
@@ -1760,39 +1756,6 @@ public class SingleJournalQueryTest extends AbstractTest {
                         "KJSMSSUQSRLTKVV\t10.140126943588\t0.000004704022\t2015-03-12T00:01:38.600Z\n";
 
         assertThat(expected, "select id, x, y, timestamp from tab where id in ('FZICFOQEVPXJYQR', 'UHUTMTRRNGCIPFZ', 'KJSMSSUQSRLTKVV')");
-    }
-
-    @Test
-    public void testName() throws Exception {
-        createTabNoNaNs();
-        JournalCachingFactory cf = new JournalCachingFactory(factory.getConfiguration());
-        RecordSource rs = compiler.compileSource(cf, "tab");
-
-        IntList indices = new IntList();
-        indices.add(0);
-
-        ComparatorCompiler cc = new ComparatorCompiler();
-        RecordComparator rc = cc.compile(AnonymousClassLoader.make(Unsafe.getUnsafe(), SingleJournalQueryTest.class), rs.getMetadata(), indices);
-
-
-        RedBlackTreeMap map = new RedBlackTreeMap(16 * 1024 * 1024, rs.getMetadata(), rc/*new GenericRecordComparator(rs.getMetadata(), indices)*/);
-
-        int n = 1;
-        long t = 0;
-        for (int i = -n; i < n; i++) {
-            if (i == 0) {
-                t = System.currentTimeMillis();
-            }
-            int max = 1000000;
-            rs.reset();
-            map.clear();
-            RecordCursor cursor = rs.prepareCursor(cf);
-            while (cursor.hasNext() && max-- > 0) {
-                map.put(cursor.next());
-            }
-        }
-
-        System.out.println(System.currentTimeMillis() - t);
     }
 
     @Test

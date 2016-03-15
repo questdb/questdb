@@ -19,18 +19,18 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.impl.map;
+package com.nfsdb.ql.impl.sort;
 
 import com.nfsdb.ex.JournalUnsupportedTypeException;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.BytecodeAssembler;
 import com.nfsdb.std.CharSequenceIntHashMap;
 import com.nfsdb.std.IntList;
-import com.nfsdb.std.Mutable;
+import com.nfsdb.std.Transient;
 import com.sun.tools.javac.jvm.ByteCodes;
 import sun.invoke.anon.AnonymousClassLoader;
 
-public class ComparatorCompiler implements Mutable {
+public class ComparatorCompiler {
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final CharSequenceIntHashMap typeMap = new CharSequenceIntHashMap();
     private final CharSequenceIntHashMap methodMap = new CharSequenceIntHashMap();
@@ -42,22 +42,14 @@ public class ComparatorCompiler implements Mutable {
     private final IntList comparatorAccessorIndices = new IntList();
     private final IntList branches = new IntList();
 
-    @Override
-    public void clear() {
-        asm.clear();
-    }
+    public RecordComparator compile(AnonymousClassLoader l, RecordMetadata m, @Transient IntList keyColumnIndices) {
 
-    //todo: test reusability of this compiler
-    //todo: test if very large number of column list is supported
-    //todo: test if multiple compiled classes can co-exist in the same classloader
-    //todo: test if all getters are working (mistakes in getter names etc)
-    //todo: fix string concatenation
-    //todo: test how this works on multiple fields of the same type
-    public RecordComparator compile(AnonymousClassLoader l, RecordMetadata m, IntList keyColumnIndices) {
+        assert keyColumnIndices.size() < 1560;
+        asm.clear();
         asm.setupPool();
         int stackMapTableIndex = asm.poolUtf8("StackMapTable");
         int thisClassIndex = asm.poolClass(asm.poolUtf8("nfsasm"));
-        int interfaceClassIndex = asm.poolClass(asm.poolUtf8("com/nfsdb/ql/impl/map/RecordComparator"));
+        int interfaceClassIndex = asm.poolClass(asm.poolUtf8("com/nfsdb/ql/impl/sort/RecordComparator"));
         int recordClassIndex = asm.poolClass(asm.poolUtf8("com/nfsdb/ql/Record"));
         // this is name re-use, it used on all static interfaces that compare values
         int compareNameIndex = asm.poolUtf8("compare");
@@ -263,7 +255,7 @@ public class ComparatorCompiler implements Mutable {
                 typeMap.put(fieldType, typeIndex = asm.poolUtf8(fieldType));
             }
             fieldTypeIndices.add(typeIndex);
-            fieldNameIndices.add(nameIndex = asm.poolUtf8("f" + i));
+            fieldNameIndices.add(nameIndex = asm.poolUtf8().put('f').put(i).$());
             fieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex)));
 
             int methodIndex = methodMap.get(getterName);
@@ -275,7 +267,7 @@ public class ComparatorCompiler implements Mutable {
             int comparatorIndex = comparatorMap.get(comparatorClass);
             if (comparatorIndex == -1) {
                 int cc = asm.poolClass(asm.poolUtf8(comparatorClass));
-                int nt = asm.poolNameAndType(compareMethodIndex, comparatorDesc == null ? asm.poolUtf8("(" + fieldType + fieldType + ")I") : asm.poolUtf8(comparatorDesc));
+                int nt = asm.poolNameAndType(compareMethodIndex, comparatorDesc == null ? asm.poolUtf8().put('(').put(fieldType).put(fieldType).put(")I").$() : asm.poolUtf8(comparatorDesc));
                 comparatorIndex = asm.poolMethod(cc, nt);
             }
             comparatorAccessorIndices.add(comparatorIndex);

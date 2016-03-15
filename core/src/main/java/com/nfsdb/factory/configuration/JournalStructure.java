@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.factory.configuration;
 
@@ -99,6 +99,10 @@ public class JournalStructure implements MetadataBuilder<Object> {
 
     public JournalStructure $bool(String name) {
         return $meta(name, ColumnType.BOOLEAN);
+    }
+
+    public JournalStructure $byte(String name) {
+        return $meta(name, ColumnType.BYTE);
     }
 
     public JournalStructure $date(String name) {

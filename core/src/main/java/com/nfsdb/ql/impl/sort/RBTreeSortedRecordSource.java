@@ -19,16 +19,27 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.impl.map;
+package com.nfsdb.ql.impl.sort;
 
+import com.nfsdb.ex.JournalException;
+import com.nfsdb.ex.JournalRuntimeException;
+import com.nfsdb.factory.JournalReaderFactory;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.Record;
+import com.nfsdb.ql.RecordCursor;
+import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.impl.join.hash.RecordDequeue;
+import com.nfsdb.ql.ops.Parameter;
+import com.nfsdb.std.AbstractImmutableIterator;
+import com.nfsdb.std.CharSequenceObjHashMap;
 import com.nfsdb.std.Mutable;
+import com.nfsdb.store.SequentialMemory;
 
-public class RedBlackTreeMap implements Mutable {
+import java.io.Closeable;
+
+public class RBTreeSortedRecordSource implements Mutable, RecordSource, Closeable {
     // P(8) + L + R + C(1) + REC
     private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8;
     private static final int O_LEFT = 8;
@@ -38,30 +49,70 @@ public class RedBlackTreeMap implements Mutable {
     private static final byte RED = 1;
     private static final byte BLACK = 0;
     private final RecordDequeue records;
+    private final SequentialMemory mem;
     private final RecordComparator comparator;
-    private final RecordMetadata metadata;
-    private long address;
-    private long wptr;
-    private long size;
-    private long capacity;
+    private final RecordSource recordSource;
+    private final AscendingCursor ascendingCursor = new AscendingCursor();
     private long root = 0;
+    // todo: remove duplication
+    private CharSequenceObjHashMap<Parameter> parameterMap;
 
-    public RedBlackTreeMap(long capacity, RecordMetadata metadata, RecordComparator comparator) {
-        this.metadata = metadata;
+    public RBTreeSortedRecordSource(int capacity, RecordSource recordSource, RecordComparator comparator) {
+        this.recordSource = recordSource;
         this.comparator = comparator;
-        this.address = Unsafe.getUnsafe().allocateMemory(capacity * BLOCK_SIZE);
-        this.capacity = capacity;
-        this.size = 0;
-        this.wptr = address;
-        this.records = new RecordDequeue(metadata, 4 * 1024 * 1024);
+        this.mem = new SequentialMemory(capacity * BLOCK_SIZE);
+        this.records = new RecordDequeue(recordSource.getMetadata(), 4 * 1024 * 1024);
     }
 
     @Override
     public void clear() {
         root = 0;
-        this.wptr = address;
-        this.size = 0;
+        this.mem.clear();
         records.clear();
+    }
+
+    @Override
+    public void close() {
+        records.close();
+        mem.close();
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return records.getMetadata();
+    }
+
+    @Override
+    public Parameter getParam(CharSequence name) {
+        Parameter p = parameterMap.get(name);
+        if (p == null) {
+            throw new JournalRuntimeException("Parameter does not exist");
+        }
+        return p;
+    }
+
+    @Override
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
+        RecordCursor cursor = recordSource.prepareCursor(factory);
+        records.setStorageFacade(cursor.getStorageFacade());
+        buildMap(cursor);
+        ascendingCursor.setup();
+        return ascendingCursor;
+    }
+
+    @Override
+    public void reset() {
+        records.clear();
+    }
+
+    @Override
+    public void setParameterMap(CharSequenceObjHashMap<Parameter> map) {
+        this.parameterMap = map;
+    }
+
+    @Override
+    public boolean supportsRowIdAccess() {
+        return false;
     }
 
     public void put(Record record) {
@@ -94,6 +145,7 @@ public class RedBlackTreeMap implements Mutable {
 
         p = allocateBlock();
         setParent(p, parent);
+        setRef(p, records.append(record, -1));
 
         if (cmp < 0) {
             setLeft(parent, p);
@@ -155,13 +207,17 @@ public class RedBlackTreeMap implements Mutable {
     }
 
     private long allocateBlock() {
-        long p = wptr;
-        wptr += BLOCK_SIZE;
-        size++;
+        long p = mem.addressOf(mem.allocate(BLOCK_SIZE));
         setLeft(p, 0);
         setRight(p, 0);
         setColor(p, BLACK);
         return p;
+    }
+
+    private void buildMap(RecordCursor cursor) {
+        while (cursor.hasNext()) {
+            put(cursor.next());
+        }
     }
 
     private void fix(long x) {
@@ -242,6 +298,62 @@ public class RedBlackTreeMap implements Mutable {
             }
             setRight(l, p);
             setParent(p, l);
+        }
+    }
+
+    private class AscendingCursor extends AbstractImmutableIterator<Record> implements RecordCursor {
+
+        private long current;
+
+        @Override
+        public Record getByRowId(long rowId) {
+            return null;
+        }
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return records.getMetadata();
+        }
+
+        @Override
+        public StorageFacade getStorageFacade() {
+            return records.getStorageFacade();
+        }
+
+        @Override
+        public boolean hasNext() {
+            return current != 0;
+        }
+
+        @Override
+        public Record next() {
+            long t = current;
+            long p = rightOf(t);
+            if (p != 0) {
+                long l;
+                while ((l = leftOf(p)) != 0) {
+                    p = l;
+                }
+            } else {
+                p = parentOf(t);
+                long ch = t;
+                while (p != 0 && ch == rightOf(p)) {
+                    ch = p;
+                    p = parentOf(p);
+                }
+            }
+            current = p;
+            return records.recordAt(refOf(t));
+        }
+
+        private void setup() {
+            long p = root;
+            if (p != 0) {
+                while (leftOf(p) != 0) {
+                    p = leftOf(p);
+                }
+            }
+            current = p;
         }
     }
 }

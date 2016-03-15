@@ -19,7 +19,7 @@
  * limitations under the License.
  ******************************************************************************/
 
-package com.nfsdb.ql.impl.map;
+package com.nfsdb.ql.impl.sort;
 
 import com.nfsdb.ql.Record;
 
