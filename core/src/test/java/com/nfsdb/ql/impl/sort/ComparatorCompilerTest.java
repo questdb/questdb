@@ -130,7 +130,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
     public void testCompileMultipleOfSame() throws Exception {
         TestRecordMetadata m = new TestRecordMetadata();
         for (int i = 0; i < 155; i++) {
-            m._type(ColumnType.STRING);
+            m.asType(ColumnType.STRING);
         }
         IntList indices = new IntList(m.getColumnCount());
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
@@ -144,7 +144,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
     public void testTwoClassesSameClassloader() throws Exception {
         TestRecordMetadata m = new TestRecordMetadata();
         for (int i = 0; i < 155; i++) {
-            m._type(ColumnType.STRING);
+            m.asType(ColumnType.STRING);
         }
         IntList indices = new IntList(m.getColumnCount());
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
@@ -153,7 +153,6 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         RecordComparator rc1 = cc.compile(ComparatorCompilerTest.class, m, indices);
         RecordComparator rc2 = cc.compile(ComparatorCompilerTest.class, m, indices);
 
-        Assert.assertTrue(rc1 != rc2);
         Assert.assertNotNull(rc1);
         Assert.assertNotNull(rc2);
     }
@@ -178,25 +177,22 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
     private static class TestRecordMetadata extends AbstractRecordMetadata {
         private final ObjList<TestColumnMetadata> columns = new ObjList<>();
 
-        public TestRecordMetadata() {
-        }
-
-        public void _type(ColumnType t) {
-            columns.add(new TestColumnMetadata(t));
-        }
-
         public TestRecordMetadata addDistinct() {
-            _type(ColumnType.BOOLEAN);
-            _type(ColumnType.BYTE);
-            _type(ColumnType.DOUBLE);
-            _type(ColumnType.FLOAT);
-            _type(ColumnType.INT);
-            _type(ColumnType.LONG);
-            _type(ColumnType.DATE);
-            _type(ColumnType.SHORT);
-            _type(ColumnType.STRING);
-            _type(ColumnType.SYMBOL);
+            asType(ColumnType.BOOLEAN);
+            asType(ColumnType.BYTE);
+            asType(ColumnType.DOUBLE);
+            asType(ColumnType.FLOAT);
+            asType(ColumnType.INT);
+            asType(ColumnType.LONG);
+            asType(ColumnType.DATE);
+            asType(ColumnType.SHORT);
+            asType(ColumnType.STRING);
+            asType(ColumnType.SYMBOL);
             return this;
+        }
+
+        public void asType(ColumnType t) {
+            columns.add(new TestColumnMetadata(t));
         }
 
         @Override
