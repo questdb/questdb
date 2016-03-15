@@ -26,7 +26,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
-public class SequentialMemoryTest {
+public class MemoryPagesTest {
     @Rule
     public final ExpectedException exception = ExpectedException.none();
 
@@ -34,7 +34,7 @@ public class SequentialMemoryTest {
     public void testGetWriteOffsetQuick() throws Exception {
         int pageLen = 128;
 
-        try (SequentialMemory mem = new SequentialMemory(127)) {
+        try (MemoryPages mem = new MemoryPages(127)) {
             Assert.assertEquals(0, mem.allocate(pageLen - 4));
             Assert.assertEquals(pageLen, mem.allocate(5));
             Assert.assertEquals(pageLen + 5, mem.allocate(8));

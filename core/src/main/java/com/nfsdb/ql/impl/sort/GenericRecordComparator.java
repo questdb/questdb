@@ -32,8 +32,8 @@ public class GenericRecordComparator implements RecordComparator {
     private static final double D_TOLERANCE = 1E-10;
     private static final float F_TOLERANCE = 1E-10f;
     private final ObjList<ColumnType> types;
+    private final IntList keyIndices;
     private Record record;
-    private IntList keyIndices;
 
 
     public GenericRecordComparator(RecordMetadata metadata, IntList keyIndices) {

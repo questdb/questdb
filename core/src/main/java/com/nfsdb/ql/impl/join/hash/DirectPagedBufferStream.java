@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,26 +17,26 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl.join.hash;
 
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.std.DirectInputStream;
-import com.nfsdb.store.SequentialMemory;
+import com.nfsdb.store.MemoryPages;
 
 import java.io.IOException;
 
 public class DirectPagedBufferStream extends DirectInputStream {
     private final long length;
-    private final SequentialMemory buffer;
+    private final MemoryPages buffer;
     private final long offset;
     private long blockStartAddress;
     private long blockEndOffset;
     private long blockStartOffset;
     private long position;
 
-    public DirectPagedBufferStream(SequentialMemory buffer, long offset, long length) {
+    public DirectPagedBufferStream(MemoryPages buffer, long offset, long length) {
         this.buffer = buffer;
         this.offset = offset;
         this.blockStartAddress = buffer.addressOf(offset);

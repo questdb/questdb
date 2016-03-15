@@ -21,6 +21,7 @@
 
 package com.nfsdb.ql.impl.sort;
 
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.ex.JournalUnsupportedTypeException;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.BytecodeAssembler;
@@ -30,7 +31,7 @@ import com.nfsdb.std.Transient;
 import com.sun.tools.javac.jvm.ByteCodes;
 import sun.invoke.anon.AnonymousClassLoader;
 
-public class ComparatorCompiler {
+class ComparatorCompiler {
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final CharSequenceIntHashMap typeMap = new CharSequenceIntHashMap();
     private final CharSequenceIntHashMap methodMap = new CharSequenceIntHashMap();
@@ -80,11 +81,9 @@ public class ComparatorCompiler {
         asm.putShort(0);
 
         try {
-            asm.dump("/Users/vlad/dev/nfsdb/core/target/classes/1.class");
             return (RecordComparator) asm.loadClass(l).newInstance();
         } catch (Exception e) {
-            e.printStackTrace();
-            return null;
+            throw new JournalRuntimeException("Cannot instantiate comparator: ", e);
         }
     }
 

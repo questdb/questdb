@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl;
 
@@ -34,7 +34,7 @@ import com.nfsdb.ql.impl.join.hash.MemoryRecordAccessor;
 import com.nfsdb.ql.parser.QueryCompiler;
 import com.nfsdb.std.DirectInputStream;
 import com.nfsdb.std.LongList;
-import com.nfsdb.store.SequentialMemory;
+import com.nfsdb.store.MemoryPages;
 import com.nfsdb.test.tools.JournalTestFactory;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -237,7 +237,7 @@ public class MemoryRecordAccessorTest {
         }
         journal.commit();
 
-        try (SequentialMemory buffer = new SequentialMemory(pageSize)) {
+        try (MemoryPages buffer = new MemoryPages(pageSize)) {
             MemoryRecordAccessor a = new MemoryRecordAccessor(journal.getMetadata(), buffer);
             LongList offsets = new LongList();
 

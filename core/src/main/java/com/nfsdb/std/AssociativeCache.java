@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.std;
 
@@ -56,15 +56,6 @@ public class AssociativeCache<V> implements Closeable {
         this.bshift = Numbers.msb(this.blocks);
     }
 
-    public void clear() {
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != null) {
-                keys[i] = null;
-                free(i);
-            }
-        }
-    }
-
     @Override
     public void close() {
         clear();
@@ -100,6 +91,15 @@ public class AssociativeCache<V> implements Closeable {
         Unsafe.arrayPut(keys, lo, key);
         Unsafe.arrayPut(values, lo, value);
         return ok;
+    }
+
+    private void clear() {
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != null) {
+                keys[i] = null;
+                free(i);
+            }
+        }
     }
 
     private void free(int lo) {

@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl.join.hash;
 
@@ -32,7 +32,7 @@ import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.std.DirectCharSequence;
 import com.nfsdb.std.DirectInputStream;
 import com.nfsdb.store.ColumnType;
-import com.nfsdb.store.SequentialMemory;
+import com.nfsdb.store.MemoryPages;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
@@ -41,7 +41,7 @@ import java.io.OutputStream;
 
 public class MemoryRecordAccessor extends AbstractRecord {
     private final DirectCharSequence charSequence = new DirectCharSequence();
-    private final SequentialMemory mem;
+    private final MemoryPages mem;
     private final int headerSize;
     private final int[] offsets;
     private final int fixedBlockLen;
@@ -49,7 +49,7 @@ public class MemoryRecordAccessor extends AbstractRecord {
     private long address;
     private StorageFacade storageFacade;
 
-    public MemoryRecordAccessor(RecordMetadata metadata, SequentialMemory mem) {
+    public MemoryRecordAccessor(RecordMetadata metadata, MemoryPages mem) {
         super(metadata);
         this.mem = mem;
         offsets = new int[metadata.getColumnCount()];

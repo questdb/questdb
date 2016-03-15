@@ -57,14 +57,13 @@ public class BytecodeAssembler implements Mutable {
         this.poolCount = 1;
     }
 
-    public BytecodeAssembler defineClass(int flags, int thisClassIndex) {
+    public void defineClass(int flags, int thisClassIndex) {
         // access flags
         putShort(flags);
         // this class index
         putShort(thisClassIndex);
         // super class
         putShort(objectClassIndex);
-        return this;
     }
 
     public void defineDefaultConstructor() {
@@ -104,14 +103,12 @@ public class BytecodeAssembler implements Mutable {
         }
     }
 
-    public BytecodeAssembler endMethod() {
+    public void endMethod() {
         putInt(methodCut1, position() - methodCut1 - 4);
-        return this;
     }
 
-    public BytecodeAssembler endMethodCode() {
+    public void endMethodCode() {
         putInt(methodCut2, position() - methodCut2 - 4);
-        return this;
     }
 
     public void finishPool() {
@@ -202,26 +199,8 @@ public class BytecodeAssembler implements Mutable {
         }
     }
 
-    public void putInt(int v) {
-        if (buf.remaining() < 4) {
-            resize();
-        }
-        buf.putInt(v);
-    }
-
-    public void putInt(int pos, int v) {
-        buf.putInt(pos, v);
-    }
-
     public void putShort(int v) {
         putShort((short) v);
-    }
-
-    public void putShort(short v) {
-        if (buf.remaining() < 2) {
-            resize();
-        }
-        buf.putShort(v);
     }
 
     public void putShort(int pos, int v) {
@@ -262,7 +241,7 @@ public class BytecodeAssembler implements Mutable {
         codeAttributeIndex = poolUtf8("Code");
     }
 
-    public BytecodeAssembler startMethod(int flags, int nameIndex, int descriptorIndex, int maxStack, int maxLocal) {
+    public void startMethod(int flags, int nameIndex, int descriptorIndex, int maxStack, int maxLocal) {
         // access flags
         putShort(flags);
         // name index
@@ -288,7 +267,6 @@ public class BytecodeAssembler implements Mutable {
         this.methodCut2 = position();
         putInt(0);
 
-        return this;
     }
 
     private int poolRef(int op, int name, int type) {
@@ -296,6 +274,24 @@ public class BytecodeAssembler implements Mutable {
         putShort(name);
         putShort(type);
         return poolCount++;
+    }
+
+    private void putInt(int pos, int v) {
+        buf.putInt(pos, v);
+    }
+
+    private void putInt(int v) {
+        if (buf.remaining() < 4) {
+            resize();
+        }
+        buf.putInt(v);
+    }
+
+    private void putShort(short v) {
+        if (buf.remaining() < 2) {
+            resize();
+        }
+        buf.putShort(v);
     }
 
     private void resize() {

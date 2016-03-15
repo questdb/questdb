@@ -28,7 +28,7 @@ import com.nfsdb.std.Mutable;
 
 import java.io.Closeable;
 
-public class SequentialMemory implements Closeable, Mutable {
+public class MemoryPages implements Closeable, Mutable {
     private final int pageSize;
     private final int mask;
     private final int bits;
@@ -36,7 +36,7 @@ public class SequentialMemory implements Closeable, Mutable {
     private long cachePageHi;
     private long cachePageLo;
 
-    public SequentialMemory(int pageSize) {
+    public MemoryPages(int pageSize) {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;

@@ -28,19 +28,19 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.std.AbstractImmutableIterator;
 import com.nfsdb.std.Mutable;
-import com.nfsdb.store.SequentialMemory;
+import com.nfsdb.store.MemoryPages;
 
 import java.io.Closeable;
 
 public class RecordDequeue extends AbstractImmutableIterator<Record> implements Closeable, RecordCursor, Mutable {
-    private final SequentialMemory mem;
+    private final MemoryPages mem;
     private final MemoryRecordAccessor accessor;
     private final RecordMetadata metadata;
     private long readOffset = -1;
 
     public RecordDequeue(RecordMetadata recordMetadata, int pageSize) {
         this.metadata = recordMetadata;
-        this.mem = new SequentialMemory(pageSize);
+        this.mem = new MemoryPages(pageSize);
         accessor = new MemoryRecordAccessor(recordMetadata, mem);
     }
 

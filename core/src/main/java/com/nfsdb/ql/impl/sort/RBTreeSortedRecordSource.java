@@ -33,7 +33,7 @@ import com.nfsdb.ql.impl.join.hash.RecordDequeue;
 import com.nfsdb.ql.ops.AbstractRecordSource;
 import com.nfsdb.std.AbstractImmutableIterator;
 import com.nfsdb.std.Mutable;
-import com.nfsdb.store.SequentialMemory;
+import com.nfsdb.store.MemoryPages;
 
 import java.io.Closeable;
 
@@ -47,7 +47,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private static final byte RED = 1;
     private static final byte BLACK = 0;
     private final RecordDequeue records;
-    private final SequentialMemory mem;
+    private final MemoryPages mem;
     private final RecordComparator comparator;
     private final RecordSource recordSource;
     private final AscendingCursor ascendingCursor = new AscendingCursor();
@@ -56,7 +56,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     public RBTreeSortedRecordSource(int capacity, RecordSource recordSource, RecordComparator comparator) {
         this.recordSource = recordSource;
         this.comparator = comparator;
-        this.mem = new SequentialMemory(capacity * BLOCK_SIZE);
+        this.mem = new MemoryPages(capacity * BLOCK_SIZE);
         this.records = new RecordDequeue(recordSource.getMetadata(), 4 * 1024 * 1024);
     }
 
@@ -95,46 +95,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     @Override
     public boolean supportsRowIdAccess() {
         return false;
-    }
-
-    public void put(Record record) {
-        if (root == 0) {
-            root = allocateBlock();
-            setRef(root, records.append(record, -1));
-            setParent(root, 0);
-            setLeft(root, 0);
-            setRight(root, 0);
-            return;
-        }
-
-        comparator.setLeft(record);
-
-        long p = root;
-        long parent;
-        int cmp;
-        do {
-            parent = p;
-            cmp = comparator.compare(records.recordAt(refOf(p)));
-            if (cmp < 0) {
-                p = leftOf(p);
-            } else if (cmp > 0) {
-                p = rightOf(p);
-            } else {
-                setRef(p, records.append(record, refOf(p)));
-                return;
-            }
-        } while (p > 0);
-
-        p = allocateBlock();
-        setParent(p, parent);
-        setRef(p, records.append(record, -1));
-
-        if (cmp < 0) {
-            setLeft(parent, p);
-        } else {
-            setRight(parent, p);
-        }
-        fix(p);
     }
 
     public void setStorageFacade(StorageFacade facade) {
@@ -241,6 +201,46 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             }
         }
         setColor(root, BLACK);
+    }
+
+    private void put(Record record) {
+        if (root == 0) {
+            root = allocateBlock();
+            setRef(root, records.append(record, -1));
+            setParent(root, 0);
+            setLeft(root, 0);
+            setRight(root, 0);
+            return;
+        }
+
+        comparator.setLeft(record);
+
+        long p = root;
+        long parent;
+        int cmp;
+        do {
+            parent = p;
+            cmp = comparator.compare(records.recordAt(refOf(p)));
+            if (cmp < 0) {
+                p = leftOf(p);
+            } else if (cmp > 0) {
+                p = rightOf(p);
+            } else {
+                setRef(p, records.append(record, refOf(p)));
+                return;
+            }
+        } while (p > 0);
+
+        p = allocateBlock();
+        setParent(p, parent);
+        setRef(p, records.append(record, -1));
+
+        if (cmp < 0) {
+            setLeft(parent, p);
+        } else {
+            setRight(parent, p);
+        }
+        fix(p);
     }
 
     private void rotateLeft(long p) {

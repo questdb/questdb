@@ -1,3 +1,24 @@
+/*******************************************************************************
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
+ *
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ ******************************************************************************/
+
 package com.nfsdb.net.http.handlers;
 
 import com.google.gson.Gson;
@@ -34,25 +55,6 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
 
     public static QueryResponse download(String queryUrl, TemporaryFolder temp) throws Exception {
         return download(queryUrl, -1, -1, false, temp);
-    }
-
-    public static QueryResponse download(String queryUrl, int limitFrom, int limitTo, boolean count, TemporaryFolder temp) throws Exception {
-        File f = temp.newFile();
-        String url = "http://localhost:9000/js?query=" + URLEncoder.encode(queryUrl, "UTF-8");
-        if (limitFrom >= 0) {
-            url += "&limit=" + limitFrom;
-        }
-        if (limitTo >= 0) {
-            url += "," + limitTo;
-        }
-
-        if (count) {
-            url += "&withCount=true";
-        }
-
-        HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        Gson gson = new GsonBuilder().setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").create();
-        return gson.fromJson(Files.readStringFromFile(f), QueryResponse.class);
     }
 
     public static void generateJournal(String name, int count) throws JournalException, NumericException {
@@ -203,6 +205,25 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         Assert.assertEquals("id2", r.result[0].id);
         Assert.assertEquals("id3", r.result[1].id);
         Assert.assertEquals(1000, r.totalCount);
+    }
+
+    private static QueryResponse download(String queryUrl, int limitFrom, int limitTo, boolean count, TemporaryFolder temp) throws Exception {
+        File f = temp.newFile();
+        String url = "http://localhost:9000/js?query=" + URLEncoder.encode(queryUrl, "UTF-8");
+        if (limitFrom >= 0) {
+            url += "&limit=" + limitFrom;
+        }
+        if (limitTo >= 0) {
+            url += "," + limitTo;
+        }
+
+        if (count) {
+            url += "&withCount=true";
+        }
+
+        HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
+        Gson gson = new GsonBuilder().setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").create();
+        return gson.fromJson(Files.readStringFromFile(f), QueryResponse.class);
     }
 
     private static void generateJournal() throws JournalException, NumericException {
