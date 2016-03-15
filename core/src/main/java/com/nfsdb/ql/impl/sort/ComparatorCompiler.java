@@ -28,7 +28,6 @@ import com.nfsdb.misc.BytecodeAssembler;
 import com.nfsdb.std.CharSequenceIntHashMap;
 import com.nfsdb.std.IntList;
 import com.nfsdb.std.Transient;
-import sun.invoke.anon.AnonymousClassLoader;
 
 public class ComparatorCompiler {
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -42,7 +41,7 @@ public class ComparatorCompiler {
     private final IntList comparatorAccessorIndices = new IntList();
     private final IntList branches = new IntList();
 
-    public RecordComparator compile(AnonymousClassLoader l, RecordMetadata m, @Transient IntList keyColumnIndices) {
+    public RecordComparator compile(Class host, RecordMetadata m, @Transient IntList keyColumnIndices) {
 
         assert keyColumnIndices.size() < 1560;
         asm.clear();
@@ -80,7 +79,7 @@ public class ComparatorCompiler {
         asm.putShort(0);
 
         try {
-            return (RecordComparator) asm.loadClass(l).newInstance();
+            return (RecordComparator) asm.loadClass(host).newInstance();
         } catch (Exception e) {
             throw new JournalRuntimeException("Cannot instantiate comparator: ", e);
         }

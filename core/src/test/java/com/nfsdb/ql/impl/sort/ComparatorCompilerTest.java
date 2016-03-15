@@ -26,7 +26,6 @@ import com.nfsdb.JournalWriter;
 import com.nfsdb.factory.configuration.AbstractRecordMetadata;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.factory.configuration.RecordColumnMetadata;
-import com.nfsdb.misc.Unsafe;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.ops.AbstractVirtualColumn;
@@ -37,7 +36,6 @@ import com.nfsdb.store.ColumnType;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-import sun.invoke.anon.AnonymousClassLoader;
 
 public class ComparatorCompilerTest extends AbstractOptimiserTest {
 
@@ -92,7 +90,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
             indices.add(i);
         }
         RecordSource rs = compiler.compileSource(factory, "xyz");
-        RecordComparator rc = cc.compile(AnonymousClassLoader.make(Unsafe.getUnsafe(), ComparatorCompilerTest.class), rs.getMetadata(), indices);
+        RecordComparator rc = cc.compile(ComparatorCompilerTest.class, rs.getMetadata(), indices);
         RBTreeSortedRecordSource map = new RBTreeSortedRecordSource(rs, rc);
 
         sink.clear();
@@ -110,7 +108,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
             indices.add(i);
         }
-        RecordComparator rc = cc.compile(AnonymousClassLoader.make(Unsafe.getUnsafe(), ComparatorCompilerTest.class), m, indices);
+        RecordComparator rc = cc.compile(ComparatorCompilerTest.class, m, indices);
         Assert.assertNotNull(rc);
     }
 
@@ -124,7 +122,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
             indices.add(i);
         }
-        RecordComparator rc = cc.compile(AnonymousClassLoader.make(Unsafe.getUnsafe(), ComparatorCompilerTest.class), m, indices);
+        RecordComparator rc = cc.compile(ComparatorCompilerTest.class, m, indices);
         Assert.assertNotNull(rc);
     }
 
@@ -138,7 +136,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
             indices.add(i);
         }
-        RecordComparator rc = cc.compile(AnonymousClassLoader.make(Unsafe.getUnsafe(), ComparatorCompilerTest.class), m, indices);
+        RecordComparator rc = cc.compile(ComparatorCompilerTest.class, m, indices);
         Assert.assertNotNull(rc);
     }
 
@@ -152,9 +150,8 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
             indices.add(i);
         }
-        AnonymousClassLoader cl = AnonymousClassLoader.make(Unsafe.getUnsafe(), ComparatorCompilerTest.class);
-        RecordComparator rc1 = cc.compile(cl, m, indices);
-        RecordComparator rc2 = cc.compile(cl, m, indices);
+        RecordComparator rc1 = cc.compile(ComparatorCompilerTest.class, m, indices);
+        RecordComparator rc2 = cc.compile(ComparatorCompilerTest.class, m, indices);
 
         Assert.assertTrue(rc1 != rc2);
         Assert.assertNotNull(rc1);

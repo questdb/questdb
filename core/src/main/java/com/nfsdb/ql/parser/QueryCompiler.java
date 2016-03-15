@@ -63,7 +63,6 @@ import com.nfsdb.ql.ops.constant.LongConstant;
 import com.nfsdb.std.*;
 import com.nfsdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import sun.invoke.anon.AnonymousClassLoader;
 
 import java.util.ArrayDeque;
 
@@ -1279,11 +1278,7 @@ public class QueryCompiler {
             }
             return new RBTreeSortedRecordSource(
                     rs,
-                    cc.compile(
-                            AnonymousClassLoader.make(Unsafe.getUnsafe(), RBTreeSortedRecordSource.class),
-                            m,
-                            orderColumnIndices
-                    )
+                    cc.compile(RBTreeSortedRecordSource.class, m, orderColumnIndices)
             );
         } else {
             return rs;

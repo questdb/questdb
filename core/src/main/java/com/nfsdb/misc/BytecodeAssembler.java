@@ -24,7 +24,6 @@ package com.nfsdb.misc;
 import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.std.Mutable;
-import sun.invoke.anon.AnonymousClassLoader;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -142,10 +141,10 @@ public class BytecodeAssembler implements Mutable {
     }
 
     @SuppressWarnings("unchecked")
-    public <T> Class<T> loadClass(AnonymousClassLoader l) {
+    public <T> Class<T> loadClass(Class host) {
         byte b[] = new byte[position()];
         System.arraycopy(buf.array(), 0, b, 0, b.length);
-        return (Class<T>) l.loadClass(b);
+        return Unsafe.getUnsafe().defineAnonymousClass(host, b, null);
     }
 
     public int poolClass(int classIndex) {
