@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.misc;
 
@@ -29,7 +29,25 @@ public final class Chars {
     private Chars() {
     }
 
-    public static boolean containts(CharSequence _this, CharSequence that) {
+    public static int compare(CharSequence l, CharSequence r) {
+        if (l == r) {
+            return 0;
+        }
+
+        int ll = l.length();
+        int rl = r.length();
+
+        for (int i = 0, n = ll < rl ? ll : rl; i < n; i++) {
+            int k = l.charAt(i) - r.charAt(i);
+            if (k != 0) {
+                return k;
+            }
+        }
+
+        return ll < rl ? -1 : ll == rl ? 0 : 1;
+    }
+
+    public static boolean contains(CharSequence _this, CharSequence that) {
         int m = that.length();
         if (m == 0) {
             return false;

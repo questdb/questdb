@@ -230,7 +230,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
             compile("select timestamp from y asof join x on x.ccy = y.ccy");
         } catch (ParserException e) {
             Assert.assertEquals(7, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Ambiguous"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Ambiguous"));
         }
     }
 
@@ -240,7 +240,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
             compile("select sum(timestamp) from y asof join x on x.ccy = y.ccy");
         } catch (ParserException e) {
             Assert.assertEquals(11, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Ambiguous"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Ambiguous"));
         }
     }
 

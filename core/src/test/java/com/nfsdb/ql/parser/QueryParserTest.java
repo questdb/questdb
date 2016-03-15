@@ -1,17 +1,17 @@
 /*******************************************************************************
- * _  _ ___ ___     _ _
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p/>
+ *
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- * <p/>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p/>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p/>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -63,7 +63,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(31, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "cannot"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "cannot"));
         }
     }
 
@@ -122,7 +122,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(27, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "end of input"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "end of input"));
         }
     }
 
@@ -143,7 +143,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(33, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Unexpected"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Unexpected"));
         }
     }
 
@@ -174,7 +174,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(31, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "'on'"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "'on'"));
         }
     }
 
@@ -185,7 +185,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(33, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Expression"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Expression"));
         }
     }
 
@@ -196,7 +196,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(32, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "end of input"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "end of input"));
         }
     }
 
@@ -207,7 +207,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(33, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Expression expected"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Expression expected"));
         }
     }
 
@@ -218,7 +218,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(31, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "'on'"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "'on'"));
         }
     }
 
@@ -229,7 +229,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(33, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Expression"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Expression"));
         }
     }
 
@@ -240,7 +240,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(36, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "latest"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "latest"));
         }
 
     }
@@ -555,7 +555,7 @@ public class QueryParserTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(32, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "expected"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "expected"));
         }
     }
 

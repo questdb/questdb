@@ -27,20 +27,24 @@ import com.nfsdb.ex.JournalException;
 import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.ex.NumericException;
 import com.nfsdb.ex.ParserException;
+import com.nfsdb.factory.JournalCachingFactory;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.misc.Chars;
-import com.nfsdb.misc.Dates;
-import com.nfsdb.misc.Numbers;
-import com.nfsdb.misc.Rnd;
+import com.nfsdb.misc.*;
 import com.nfsdb.model.Quote;
+import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
+import com.nfsdb.ql.impl.map.ComparatorCompiler;
+import com.nfsdb.ql.impl.map.RecordComparator;
+import com.nfsdb.ql.impl.map.RedBlackTreeMap;
+import com.nfsdb.std.IntList;
 import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.test.tools.AbstractTest;
 import com.nfsdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import sun.invoke.anon.AnonymousClassLoader;
 
 import java.io.IOException;
 
@@ -880,7 +884,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(49, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "nvalid column"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "nvalid column"));
         }
     }
 
@@ -892,7 +896,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(49, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "symbol or string column"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "symbol or string column"));
         }
     }
 
@@ -904,7 +908,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(49, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "not indexed"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "not indexed"));
         }
     }
 
@@ -916,7 +920,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(22, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "nvalid column"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "nvalid column"));
         }
     }
 
@@ -960,7 +964,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             Assert.fail("Expected exception");
         } catch (ParserException e) {
             Assert.assertEquals(32, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "does not exist"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "does not exist"));
         }
     }
 
@@ -1023,7 +1027,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(46, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "column expected"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "column expected"));
         }
     }
 
@@ -1035,7 +1039,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(46, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Only SYM columns"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Only SYM columns"));
         }
     }
 
@@ -1756,6 +1760,39 @@ public class SingleJournalQueryTest extends AbstractTest {
                         "KJSMSSUQSRLTKVV\t10.140126943588\t0.000004704022\t2015-03-12T00:01:38.600Z\n";
 
         assertThat(expected, "select id, x, y, timestamp from tab where id in ('FZICFOQEVPXJYQR', 'UHUTMTRRNGCIPFZ', 'KJSMSSUQSRLTKVV')");
+    }
+
+    @Test
+    public void testName() throws Exception {
+        createTabNoNaNs();
+        JournalCachingFactory cf = new JournalCachingFactory(factory.getConfiguration());
+        RecordSource rs = compiler.compileSource(cf, "tab");
+
+        IntList indices = new IntList();
+        indices.add(0);
+
+        ComparatorCompiler cc = new ComparatorCompiler();
+        RecordComparator rc = cc.compile(AnonymousClassLoader.make(Unsafe.getUnsafe(), SingleJournalQueryTest.class), rs.getMetadata(), indices);
+
+
+        RedBlackTreeMap map = new RedBlackTreeMap(16 * 1024 * 1024, rs.getMetadata(), rc/*new GenericRecordComparator(rs.getMetadata(), indices)*/);
+
+        int n = 1;
+        long t = 0;
+        for (int i = -n; i < n; i++) {
+            if (i == 0) {
+                t = System.currentTimeMillis();
+            }
+            int max = 1000000;
+            rs.reset();
+            map.clear();
+            RecordCursor cursor = rs.prepareCursor(cf);
+            while (cursor.hasNext() && max-- > 0) {
+                map.put(cursor.next());
+            }
+        }
+
+        System.out.println(System.currentTimeMillis() - t);
     }
 
     @Test
@@ -2705,7 +2742,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(28, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "No such function"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "No such function"));
         }
     }
 
@@ -2919,7 +2956,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(11, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Invalid column"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Invalid column"));
         }
     }
 

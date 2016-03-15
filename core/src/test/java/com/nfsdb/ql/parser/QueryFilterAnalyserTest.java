@@ -73,7 +73,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
             modelOf("timestamp in (\"2014-01-02T12:30:00.000Z\", \"2014-01Z\")");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Unknown date format"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Unknown date format"));
         }
     }
 
@@ -83,7 +83,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
             modelOf("timestamp in (\"2014-01Z\", \"2014-01-02T12:30:00.000Z\")");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Unknown date format"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Unknown date format"));
         }
     }
 
@@ -283,7 +283,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
             modelOf("sym in ()");
             Assert.fail("exception expected");
         } catch (ParserException e) {
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Too few arguments"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Too few arguments"));
         }
     }
 
@@ -444,7 +444,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
             modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\")");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Too few arg"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Too few arg"));
         }
     }
 
@@ -454,7 +454,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
             modelOf("timestamp in ()");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Too few arg"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Too few arg"));
         }
     }
 
@@ -464,7 +464,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
             modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\", \"2014-01-03T12:30:00.000Z\")");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Too many arg"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Too many arg"));
         }
     }
 
@@ -587,7 +587,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
             modelOf("10 in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Column name expected"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Column name expected"));
         }
     }
 
@@ -730,7 +730,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
             Assert.fail("exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(4, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Multiple lambda"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Multiple lambda"));
         }
     }
 

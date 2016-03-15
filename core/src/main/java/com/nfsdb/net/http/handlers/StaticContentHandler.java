@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
 
@@ -53,7 +53,7 @@ public class StaticContentHandler implements ContextHandler {
     @Override
     public void handle(IOContext context) throws IOException {
         CharSequence url = context.request.getUrl();
-        if (Chars.containts(url, "..")) {
+        if (Chars.contains(url, "..")) {
             context.simpleResponse().send(404);
         } else {
             PrefixedPath path = tlPrefixedPath.get();

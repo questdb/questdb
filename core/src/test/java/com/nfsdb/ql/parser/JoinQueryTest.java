@@ -69,7 +69,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(25, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Ambiguous"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Ambiguous"));
         }
     }
 
@@ -203,7 +203,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(30, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Duplicate"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Duplicate"));
         }
     }
 
@@ -243,7 +243,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(17, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Only SYM columns"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Only SYM columns"));
         }
     }
 
@@ -334,7 +334,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(45, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "alias"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "alias"));
         }
     }
 
@@ -345,7 +345,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(25, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Invalid column"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Invalid column"));
         }
     }
 
@@ -360,7 +360,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(21, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Invalid column"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Invalid column"));
         }
 
         try {
@@ -372,7 +372,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(30, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Invalid column"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Invalid column"));
         }
 
         try {
@@ -384,7 +384,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(30, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Invalid column"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Invalid column"));
         }
     }
 
@@ -395,7 +395,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(12, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Journal does not exist"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Journal does not exist"));
         }
     }
 
@@ -672,7 +672,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(45, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Ambiguous"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Ambiguous"));
         }
     }
 
@@ -804,7 +804,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(17, QueryError.getPosition());
-            Assert.assertTrue(Chars.containts(QueryError.getMessage(), "Filter on int"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Filter on int"));
         }
     }
 
