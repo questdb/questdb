@@ -24,7 +24,6 @@ package com.nfsdb.misc;
 import com.nfsdb.io.sink.AbstractCharSink;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.std.Mutable;
-import com.sun.tools.javac.jvm.ByteCodes;
 import sun.invoke.anon.AnonymousClassLoader;
 
 import java.io.FileOutputStream;
@@ -34,7 +33,23 @@ import java.nio.ByteOrder;
 
 public class BytecodeAssembler implements Mutable {
 
+    public static final int iconst_0 = 3;
+    public static final int bipush = 16;
+    public static final int sipush = 17;
+    public static final int iload_2 = 28;
+    public static final int aload_0 = 42;
+    public static final int aload_1 = 43;
+    public static final int istore_2 = 61;
+    public static final int ifne = 154;
+    public static final int ireturn = 172;
+    public static final int return_ = 177;
+    public static final int getfield = 180;
+    public static final int putfield = 181;
+    public static final int invokespecial = 183;
+    public static final int invokestatic = 184;
+    public static final int invokeinterface = 185;
     private static final int O_POOL_COUNT = 8;
+
     private final Utf8Appender utf8Appender = new Utf8Appender();
     private ByteBuffer buf;
     private int poolCount;
@@ -70,10 +85,10 @@ public class BytecodeAssembler implements Mutable {
         // constructor method entry
         startMethod(1, defaultConstructorNameIndex, defaultConstructorDescIndex, 1, 1);
         // code
-        put(ByteCodes.aload_0);
-        put(ByteCodes.invokespecial);
+        put(aload_0);
+        put(invokespecial);
         putShort(defaultConstructorMethodIndex);
-        put(ByteCodes.return_);
+        put(return_);
         endMethodCode();
         // exceptions
         putShort(0);
@@ -120,7 +135,7 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void invokeInterface(int interfaceIndex) {
-        put(ByteCodes.invokeinterface);
+        put(invokeinterface);
         putShort(interfaceIndex);
         put(0x02);
         put(0);
@@ -186,15 +201,15 @@ public class BytecodeAssembler implements Mutable {
 
     public void putConstant(int v) {
         if (v > -1 && v < 6) {
-            put(ByteCodes.iconst_0 + v);
+            put(iconst_0 + v);
         } else if (v < 0) {
-            put(ByteCodes.sipush);
+            put(sipush);
             putShort(v);
         } else if (v < 128) {
-            put(ByteCodes.bipush);
+            put(bipush);
             put(v);
         } else {
-            put(ByteCodes.sipush);
+            put(sipush);
             putShort(v);
         }
     }

@@ -28,7 +28,6 @@ import com.nfsdb.misc.BytecodeAssembler;
 import com.nfsdb.std.CharSequenceIntHashMap;
 import com.nfsdb.std.IntList;
 import com.nfsdb.std.Transient;
-import com.sun.tools.javac.jvm.ByteCodes;
 import sun.invoke.anon.AnonymousClassLoader;
 
 public class ComparatorCompiler {
@@ -95,25 +94,25 @@ public class ComparatorCompiler {
         int codeStart = asm.position();
         for (int i = 0; i < sz; i++) {
             if (i > 0) {
-                asm.put(ByteCodes.iload_2);
+                asm.put(BytecodeAssembler.iload_2);
                 // last one does not jump
                 branches.add(asm.position());
-                asm.put(ByteCodes.ifne);
+                asm.put(BytecodeAssembler.ifne);
                 asm.putShort(0);
             }
-            asm.put(ByteCodes.aload_0);
-            asm.put(ByteCodes.getfield);
+            asm.put(BytecodeAssembler.aload_0);
+            asm.put(BytecodeAssembler.getfield);
             asm.putShort(fieldIndices.getQuick(i));
-            asm.put(ByteCodes.aload_1);
+            asm.put(BytecodeAssembler.aload_1);
             asm.putConstant(keyColumns.getQuick(i));
             asm.invokeInterface(fieldRecordAccessorIndices.getQuick(i));
-            asm.put(ByteCodes.invokestatic);
+            asm.put(BytecodeAssembler.invokestatic);
             asm.putShort(comparatorAccessorIndices.getQuick(i));
-            asm.put(ByteCodes.istore_2);
+            asm.put(BytecodeAssembler.istore_2);
         }
         int p = asm.position();
-        asm.put(ByteCodes.iload_2);
-        asm.put(ByteCodes.ireturn);
+        asm.put(BytecodeAssembler.iload_2);
+        asm.put(BytecodeAssembler.ireturn);
 
 
         // update ifne jumps to jump to "p" position
@@ -166,14 +165,14 @@ public class ComparatorCompiler {
     private void instrumentSetLeftMethod(int nameIndex, int descIndex, IntList keyColumns) {
         asm.startMethod(0x01, nameIndex, descIndex, 3, 2);
         for (int i = 0, n = keyColumns.size(); i < n; i++) {
-            asm.put(ByteCodes.aload_0);
-            asm.put(ByteCodes.aload_1);
+            asm.put(BytecodeAssembler.aload_0);
+            asm.put(BytecodeAssembler.aload_1);
             asm.putConstant(keyColumns.getQuick(i));
             asm.invokeInterface(fieldRecordAccessorIndices.getQuick(i));
-            asm.put(ByteCodes.putfield);
+            asm.put(BytecodeAssembler.putfield);
             asm.putShort(fieldIndices.getQuick(i));
         }
-        asm.put(ByteCodes.return_);
+        asm.put(BytecodeAssembler.return_);
         asm.endMethodCode();
         // exceptions
         asm.putShort(0);

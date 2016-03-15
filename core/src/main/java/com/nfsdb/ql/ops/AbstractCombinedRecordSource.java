@@ -32,4 +32,8 @@ public abstract class AbstractCombinedRecordSource extends AbstractRecordSource 
     public Iterator<Record> iterator() {
         return this;
     }
+
+    @Override
+    public void remove() {
+    }
 }
