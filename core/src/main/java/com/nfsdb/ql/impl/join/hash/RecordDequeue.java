@@ -90,17 +90,17 @@ public class RecordDequeue extends AbstractImmutableIterator<Record> implements 
 
     @Override
     public Record next() {
-        accessor.init(readOffset + 8);
+        accessor.of(readOffset + 8);
         readOffset = Unsafe.getUnsafe().getLong(mem.addressOf(readOffset));
         return accessor;
     }
 
-    public void init(long offset) {
+    public void of(long offset) {
         this.readOffset = offset;
     }
 
     public Record recordAt(long offset) {
-        accessor.init(offset + 8);
+        accessor.of(offset + 8);
         return accessor;
     }
 }

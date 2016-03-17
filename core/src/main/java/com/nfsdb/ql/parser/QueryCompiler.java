@@ -85,7 +85,6 @@ public class QueryCompiler {
     private final ObjectPool<JoinContext> contextPool = new ObjectPool<>(JoinContext.FACTORY, 16);
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final VirtualColumnBuilder virtualColumnBuilder = new VirtualColumnBuilder(traversalAlgo);
-    private final IntList orderColumnIndices = new IntList();
     private final IntList clausesToSteal = new IntList();
     private final IntList literalCollectorAIndexes = new IntList();
     private final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
@@ -522,7 +521,6 @@ public class QueryCompiler {
         constNameToIndex.clear();
         constNameToNode.clear();
         constNameToToken.clear();
-        orderColumnIndices.clear();
     }
 
     private void collectColumnNameFrequency(QueryModel model, RecordSource rs) {
@@ -1258,13 +1256,13 @@ public class QueryCompiler {
             assignFilters(parent);
             alignJoinClauses(parent);
             addTransitiveFilters(parent);
-//            rewriteColumnsRemovedByJoins(parent);
         }
         return this;
     }
 
     private RecordSource order(RecordSource rs, QueryModel model) throws ParserException {
         ObjList<ExprNode> orderBy = model.getOrderBy();
+        IntList indices = model.getOrderColumnIndices();
         int n = orderBy.size();
         if (n > 0) {
             RecordMetadata m = rs.getMetadata();
@@ -1274,11 +1272,12 @@ public class QueryCompiler {
                 if (index == -1) {
                     throw QueryError.invalidColumn(tok.position, tok.token);
                 }
-                orderColumnIndices.add(index);
+
+                indices.add(index);
             }
             return new RBTreeSortedRecordSource(
                     rs,
-                    cc.compile(RBTreeSortedRecordSource.class, m, orderColumnIndices)
+                    cc.compile(RBTreeSortedRecordSource.class, m, indices)
             );
         } else {
             return rs;

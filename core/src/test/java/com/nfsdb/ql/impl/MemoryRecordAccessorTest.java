@@ -246,7 +246,7 @@ public class MemoryRecordAccessorTest {
             }
 
             for (int i = 0; i < count; i++) {
-                a.init(offsets.getQuick(i));
+                a.of(offsets.getQuick(i));
                 generator.assertRecord(a, i);
             }
         }

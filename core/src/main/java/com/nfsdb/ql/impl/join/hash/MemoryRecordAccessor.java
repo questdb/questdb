@@ -255,7 +255,7 @@ public class MemoryRecordAccessor extends AbstractRecord {
         return fixedBlockLen;
     }
 
-    public void init(long offset) {
+    public void of(long offset) {
         this.address = mem.addressOf(offset) + headerSize;
     }
 

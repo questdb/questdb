@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl.join.hash;
 
@@ -80,7 +80,7 @@ public class MultiRecordMap implements Closeable, Mutable {
 
     public RecordCursor get(MultiMap.KeyWriter key) {
         MapValues values = map.getValues(key);
-        records.init(values == null ? -1 : values.getLong(0));
+        records.of(values == null ? -1 : values.getLong(0));
         return records;
     }
 

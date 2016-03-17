@@ -38,12 +38,14 @@ import com.nfsdb.store.MemoryPages;
 import java.io.Closeable;
 
 public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mutable, RecordSource, Closeable {
-    // P(8) + L + R + C(1) + REC
-    private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8;
+    // P(8) + L + R + C(1) + REF + TOP
+    private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8 + 8;
     private static final int O_LEFT = 8;
     private static final int O_RIGHT = 16;
     private static final int O_COLOUR = 24;
     private static final int O_REF = 25;
+    private static final int O_TOP = 33;
+
     private static final byte RED = 1;
     private static final byte BLACK = 0;
     private final RecordDequeue records;
@@ -90,7 +92,8 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     @Override
     public void reset() {
-        records.clear();
+        recordSource.reset();
+        clear();
     }
 
     @Override
@@ -122,8 +125,16 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         return blockAddress == 0 ? 0 : Unsafe.getUnsafe().getLong(blockAddress + O_REF);
     }
 
+    private static long topOf(long blockAddress) {
+        return blockAddress == 0 ? 0 : Unsafe.getUnsafe().getLong(blockAddress + O_TOP);
+    }
+
     private static void setRef(long blockAddress, long recRef) {
         Unsafe.getUnsafe().putLong(blockAddress + O_REF, recRef);
+    }
+
+    private static void setTop(long blockAddress, long recRef) {
+        Unsafe.getUnsafe().putLong(blockAddress + O_TOP, recRef);
     }
 
     private static void setRight(long blockAddress, long right) {
@@ -147,6 +158,24 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     private static byte colorOf(long blockAddress) {
         return blockAddress == 0 ? BLACK : Unsafe.getUnsafe().getByte(blockAddress + O_COLOUR);
+    }
+
+    private static long successor(long current) {
+        long p = rightOf(current);
+        if (p != 0) {
+            long l;
+            while ((l = leftOf(p)) != 0) {
+                p = l;
+            }
+        } else {
+            p = parentOf(current);
+            long ch = current;
+            while (p != 0 && ch == rightOf(p)) {
+                ch = p;
+                p = parentOf(p);
+            }
+        }
+        return p;
     }
 
     private long allocateBlock() {
@@ -207,7 +236,9 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private void put(Record record) {
         if (root == 0) {
             root = allocateBlock();
-            setRef(root, records.append(record, -1));
+            long r = records.append(record, -1);
+            setTop(root, r);
+            setRef(root, r);
             setParent(root, 0);
             setLeft(root, 0);
             setRight(root, 0);
@@ -234,7 +265,9 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
         p = allocateBlock();
         setParent(p, parent);
-        setRef(p, records.append(record, -1));
+        long r = records.append(record, -1);
+        setTop(p, r);
+        setRef(p, r);
 
         if (cmp < 0) {
             setLeft(parent, p);
@@ -305,28 +338,22 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
         @Override
         public boolean hasNext() {
-            return current != 0;
+            if (records.hasNext()) {
+                return true;
+            }
+
+            current = successor(current);
+            if (current == 0) {
+                return false;
+            }
+
+            records.of(topOf(current));
+            return true;
         }
 
         @Override
         public Record next() {
-            long t = current;
-            long p = rightOf(t);
-            if (p != 0) {
-                long l;
-                while ((l = leftOf(p)) != 0) {
-                    p = l;
-                }
-            } else {
-                p = parentOf(t);
-                long ch = t;
-                while (p != 0 && ch == rightOf(p)) {
-                    ch = p;
-                    p = parentOf(p);
-                }
-            }
-            current = p;
-            return records.recordAt(refOf(t));
+            return records.next();
         }
 
         private void setup() {
@@ -336,7 +363,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
                     p = leftOf(p);
                 }
             }
-            current = p;
+            records.of(topOf(current = p));
         }
     }
 }

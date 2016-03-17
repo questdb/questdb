@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.model;
 
@@ -39,6 +39,7 @@ public class QueryModel implements Mutable {
     private final IntHashSet dependencies = new IntHashSet();
     private final IntList orderedJoinModels1 = new IntList();
     private final IntList orderedJoinModels2 = new IntList();
+    private final IntList orderColumnIndices = new IntList();
     private final StringSink planSink = new StringSink();
     private final CharSequenceIntHashMap aliasIndexes = new CharSequenceIntHashMap();
     // collect frequency of column names from each join model
@@ -132,6 +133,7 @@ public class QueryModel implements Mutable {
         columnNameFrequencyMap.clear();
         parameterMap.clear();
         timestamp = null;
+        orderColumnIndices.clear();
     }
 
     public ExprNode getAlias() {
@@ -236,6 +238,10 @@ public class QueryModel implements Mutable {
 
     public ObjList<ExprNode> getOrderBy() {
         return orderBy;
+    }
+
+    public IntList getOrderColumnIndices() {
+        return orderColumnIndices;
     }
 
     public IntList getOrderedJoinModels() {

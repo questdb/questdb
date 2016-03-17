@@ -186,6 +186,7 @@ public class ComparatorCompiler {
         fieldNameIndices.clear();
         fieldTypeIndices.clear();
         fieldRecordAccessorIndices.clear();
+        comparatorAccessorIndices.clear();
         methodMap.clear();
 
         // define names and types
