@@ -32,7 +32,7 @@ public class MemoryPages implements Closeable, Mutable {
     private final int pageSize;
     private final int mask;
     private final int bits;
-    private final LongList pages;
+    private final LongList pages = new LongList();
     private long cachePageHi;
     private long cachePageLo;
 
@@ -40,7 +40,6 @@ public class MemoryPages implements Closeable, Mutable {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
-        pages = new LongList();
         allocateAddress(0);
     }
 
@@ -84,7 +83,7 @@ public class MemoryPages implements Closeable, Mutable {
             throw new OutOfMemoryError();
         }
 
-        if (index <= pages.size()) {
+        if (index >= pages.size()) {
             pages.extendAndSet((int) index, Unsafe.getUnsafe().allocateMemory(pageSize));
         }
 
