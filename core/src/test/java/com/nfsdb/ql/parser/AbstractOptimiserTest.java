@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.parser;
 
@@ -26,6 +26,7 @@ import com.nfsdb.ex.ParserException;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.misc.Files;
+import com.nfsdb.misc.Misc;
 import com.nfsdb.model.configuration.ModelConfiguration;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.std.AssociativeCache;
@@ -63,5 +64,6 @@ public abstract class AbstractOptimiserTest {
     protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
         assertThat(expected, query, false);
         assertThat(expected, query, false);
+        Misc.free(cache.poll(query));
     }
 }

@@ -341,7 +341,7 @@ public class ConcurrentTest {
         private final CountDownLatch latch;
         private volatile int finalIndex = 0;
 
-        public BusyConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch) {
+        BusyConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch) {
             this.sequence = sequence;
             this.buf = new int[cycle];
             this.queue = queue;
@@ -384,7 +384,7 @@ public class ConcurrentTest {
         private final FanOut fanOut;
         private final Sequence publisher;
 
-        public BusySubscriber(RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch, FanOut fanOut, Sequence publisher) {
+        BusySubscriber(RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch, FanOut fanOut, Sequence publisher) {
             this.buf = new int[20];
             this.queue = queue;
             this.barrier = barrier;
@@ -435,7 +435,7 @@ public class ConcurrentTest {
         private final CountDownLatch latch;
         private volatile int finalIndex = 0;
 
-        public WaitingConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch) {
+        WaitingConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch) {
             this.sequence = sequence;
             this.buf = new int[cycle];
             this.queue = queue;

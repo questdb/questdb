@@ -30,6 +30,7 @@ import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
 import com.nfsdb.ql.impl.join.hash.RecordDequeue;
+import com.nfsdb.ql.impl.join.hash.RowIdRecord;
 import com.nfsdb.ql.ops.AbstractRecordSource;
 import com.nfsdb.std.AbstractImmutableIterator;
 import com.nfsdb.std.Mutable;
@@ -52,15 +53,20 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private final MemoryPages mem;
     private final RecordComparator comparator;
     private final RecordSource recordSource;
-    private final AscendingCursor ascendingCursor = new AscendingCursor();
+    private final TreeCursor cursor = new TreeCursor();
+    private final RowIdRecord rowIdRecord = new RowIdRecord();
+    private final boolean byRowId;
     private long root = 0;
+    private RecordCursor sourceCursor;
+
 
     public RBTreeSortedRecordSource(RecordSource recordSource, RecordComparator comparator) {
         this.recordSource = recordSource;
         this.comparator = comparator;
         // todo: extract config
         this.mem = new MemoryPages(1024 * 1024);
-        this.records = new RecordDequeue(recordSource.getMetadata(), 4 * 1024 * 1024);
+        this.byRowId = recordSource.supportsRowIdAccess();
+        this.records = new RecordDequeue(byRowId ? rowIdRecord.getMetadata() : recordSource.getMetadata(), 4 * 1024 * 1024);
     }
 
     @Override
@@ -78,16 +84,20 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     @Override
     public RecordMetadata getMetadata() {
-        return records.getMetadata();
+        return recordSource.getMetadata();
     }
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        RecordCursor cursor = recordSource.prepareCursor(factory);
-        records.setStorageFacade(cursor.getStorageFacade());
-        buildMap(cursor);
-        ascendingCursor.setup();
-        return ascendingCursor;
+        sourceCursor = recordSource.prepareCursor(factory);
+        records.setStorageFacade(sourceCursor.getStorageFacade());
+        if (byRowId) {
+            buildMapByRowId(sourceCursor);
+        } else {
+            buildMap(sourceCursor);
+        }
+        cursor.setup();
+        return cursor;
     }
 
     @Override
@@ -192,6 +202,12 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         }
     }
 
+    private void buildMapByRowId(RecordCursor cursor) {
+        while (cursor.hasNext()) {
+            put(cursor.next().getRowId());
+        }
+    }
+
     private void fix(long x) {
         setColor(x, RED);
 
@@ -260,7 +276,46 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
         p = allocateBlock();
         setParent(p, parent);
-        long r = records.append(record, -1);
+        long r = records.append(record, (long) -1);
+        setTop(p, r);
+        setRef(p, r);
+
+        if (cmp < 0) {
+            setLeft(parent, p);
+        } else {
+            setRight(parent, p);
+        }
+        fix(p);
+    }
+
+    private void put(long rowId) {
+        if (root == 0) {
+            putParent(rowIdRecord.of(rowId));
+            return;
+        }
+
+        comparator.setLeft(sourceCursor.getByRowId(rowId));
+
+        long p = root;
+        long parent;
+        int cmp;
+        do {
+            parent = p;
+            long r = refOf(p);
+            cmp = comparator.compare(sourceCursor.getByRowId(records.recordAt(r).getLong(0)));
+            if (cmp < 0) {
+                p = leftOf(p);
+            } else if (cmp > 0) {
+                p = rightOf(p);
+            } else {
+                setRef(p, records.append(rowIdRecord.of(rowId), r));
+                return;
+            }
+        } while (p > 0);
+
+        p = allocateBlock();
+        setParent(p, parent);
+        long r = records.append(rowIdRecord.of(rowId), (long) -1);
         setTop(p, r);
         setRef(p, r);
 
@@ -274,7 +329,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     private void putParent(Record record) {
         root = allocateBlock();
-        long r = records.append(record, -1);
+        long r = records.append(record, -1L);
         setTop(root, r);
         setRef(root, r);
         setParent(root, 0);
@@ -322,7 +377,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         }
     }
 
-    private class AscendingCursor extends AbstractImmutableIterator<Record> implements RecordCursor {
+    private class TreeCursor extends AbstractImmutableIterator<Record> implements RecordCursor {
 
         private long current;
 
@@ -333,7 +388,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
         @Override
         public RecordMetadata getMetadata() {
-            return records.getMetadata();
+            return RBTreeSortedRecordSource.this.getMetadata();
         }
 
         @Override
@@ -358,7 +413,8 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
         @Override
         public Record next() {
-            return records.next();
+            final Record underlying = records.next();
+            return byRowId ? sourceCursor.getByRowId(underlying.getLong(0)) : underlying;
         }
 
         private void setup() {

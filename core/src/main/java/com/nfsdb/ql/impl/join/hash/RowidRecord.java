@@ -29,12 +29,12 @@ import com.nfsdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 
-public class RowIdHolderRecord extends AbstractRecord {
+public class RowIdRecord extends AbstractRecord {
 
     private static final CollectionRecordMetadata metadata = new CollectionRecordMetadata().add(LongMetadata.INSTANCE);
     private long rowId;
 
-    public RowIdHolderRecord() {
+    public RowIdRecord() {
         super(metadata);
     }
 
@@ -123,8 +123,8 @@ public class RowIdHolderRecord extends AbstractRecord {
         throw new UnsupportedOperationException();
     }
 
-    public RowIdHolderRecord init(long rowid) {
-        this.rowId = rowid;
+    public RowIdRecord of(long rowId) {
+        this.rowId = rowId;
         return this;
     }
 }
