@@ -32,12 +32,12 @@ import com.nfsdb.std.ObjList;
 
 import java.io.OutputStream;
 
-public class VirtualRecord extends AbstractRecord {
+class VirtualRecord extends AbstractRecord {
     private final int split;
     private final ObjList<VirtualColumn> virtualColumns;
     private Record base;
 
-    public VirtualRecord(RecordMetadata metadata, int split, ObjList<VirtualColumn> virtualColumns) {
+    VirtualRecord(RecordMetadata metadata, int split, ObjList<VirtualColumn> virtualColumns) {
         super(metadata);
         this.split = split;
         this.virtualColumns = virtualColumns;
@@ -104,7 +104,7 @@ public class VirtualRecord extends AbstractRecord {
 
     @Override
     public long getRowId() {
-        return 0;
+        return base.getRowId();
     }
 
     @Override

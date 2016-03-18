@@ -29,8 +29,8 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.ql.impl.join.hash.FakeRecord;
 import com.nfsdb.ql.impl.join.hash.RecordDequeue;
-import com.nfsdb.ql.impl.join.hash.RowIdRecord;
 import com.nfsdb.ql.ops.AbstractRecordSource;
 import com.nfsdb.std.AbstractImmutableIterator;
 import com.nfsdb.std.Mutable;
@@ -54,7 +54,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private final RecordComparator comparator;
     private final RecordSource recordSource;
     private final TreeCursor cursor = new TreeCursor();
-    private final RowIdRecord rowIdRecord = new RowIdRecord();
+    private final FakeRecord fakeRecord = new FakeRecord();
     private final boolean byRowId;
     private long root = 0;
     private RecordCursor sourceCursor;
@@ -66,7 +66,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         // todo: extract config
         this.mem = new MemoryPages(1024 * 1024);
         this.byRowId = recordSource.supportsRowIdAccess();
-        this.records = new RecordDequeue(byRowId ? rowIdRecord.getMetadata() : recordSource.getMetadata(), 4 * 1024 * 1024);
+        this.records = new RecordDequeue(byRowId ? fakeRecord.getMetadata() : recordSource.getMetadata(), 4 * 1024 * 1024);
     }
 
     @Override
@@ -290,7 +290,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     private void put(long rowId) {
         if (root == 0) {
-            putParent(rowIdRecord.of(rowId));
+            putParent(fakeRecord.of(rowId));
             return;
         }
 
@@ -308,14 +308,14 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             } else if (cmp > 0) {
                 p = rightOf(p);
             } else {
-                setRef(p, records.append(rowIdRecord.of(rowId), r));
+                setRef(p, records.append(fakeRecord.of(rowId), r));
                 return;
             }
         } while (p > 0);
 
         p = allocateBlock();
         setParent(p, parent);
-        long r = records.append(rowIdRecord.of(rowId), (long) -1);
+        long r = records.append(fakeRecord.of(rowId), (long) -1);
         setTop(p, r);
         setRef(p, r);
 

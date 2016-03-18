@@ -30,9 +30,9 @@ import com.nfsdb.ql.Record;
 import com.nfsdb.ql.RecordCursor;
 import com.nfsdb.ql.RecordSource;
 import com.nfsdb.ql.StorageFacade;
+import com.nfsdb.ql.impl.join.hash.FakeRecord;
 import com.nfsdb.ql.impl.join.hash.MultiRecordMap;
 import com.nfsdb.ql.impl.join.hash.NullRecord;
-import com.nfsdb.ql.impl.join.hash.RowIdRecord;
 import com.nfsdb.ql.impl.map.MultiMap;
 import com.nfsdb.ql.ops.AbstractCombinedRecordSource;
 import com.nfsdb.std.IntList;
@@ -56,7 +56,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private final ObjList<RecordColumnMetadata> slaveColumns = new ObjList<>();
     private final IntList masterColIndex;
     private final IntList slaveColIndex;
-    private final RowIdRecord rowIdRecord = new RowIdRecord();
+    private final FakeRecord fakeRecord = new FakeRecord();
     private final boolean byRowId;
     private final boolean outer;
     private final NullRecord nullRecord;
@@ -152,7 +152,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
                 setKey(key, r, slaveColIndex.getQuick(i), slaveColumns.getQuick(i).getType());
             }
             if (byRowId) {
-                recordMap.add(key, rowIdRecord.of(r.getRowId()));
+                recordMap.add(key, fakeRecord.of(r.getRowId()));
             } else {
                 recordMap.add(key, r);
             }
@@ -173,7 +173,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             this.slaveColumns.add(sm.getColumnQuick(index));
             keyCols.add(sm.getColumnName(index));
         }
-        return byRowId ? new MultiRecordMap(sm, keyCols, rowIdRecord.getMetadata()) : new MultiRecordMap(sm, keyCols, slaveSource.getMetadata());
+        return byRowId ? new MultiRecordMap(sm, keyCols, fakeRecord.getMetadata()) : new MultiRecordMap(sm, keyCols, slaveSource.getMetadata());
     }
 
     private boolean hasNext0() {
