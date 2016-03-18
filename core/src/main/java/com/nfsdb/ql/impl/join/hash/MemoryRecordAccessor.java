@@ -251,10 +251,6 @@ public class MemoryRecordAccessor extends AbstractRecord {
         return storageFacade.getSymbolTable(col).value(getInt(col));
     }
 
-    public int getFixedBlockLength() {
-        return fixedBlockLen;
-    }
-
     public void of(long offset) {
         this.address = mem.addressOf(offset) + headerSize;
     }
@@ -265,6 +261,10 @@ public class MemoryRecordAccessor extends AbstractRecord {
 
     private long addressOf(int index) {
         return mem.addressOf(offsetOf(index));
+    }
+
+    int getFixedBlockLength() {
+        return fixedBlockLen;
     }
 
     private long offsetOf(int index) {

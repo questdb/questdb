@@ -22,7 +22,7 @@
 package com.nfsdb.mp;
 
 @SuppressWarnings("ThrowableInstanceNeverThrown")
-public final class AlertedException extends RuntimeException {
+final class AlertedException extends RuntimeException {
     public final static AlertedException INSTANCE = new AlertedException();
 
     private AlertedException() {

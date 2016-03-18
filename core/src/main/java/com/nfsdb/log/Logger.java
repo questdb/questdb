@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.log;
 
@@ -29,7 +29,7 @@ import com.nfsdb.mp.Sequence;
 
 import java.io.File;
 
-public class Logger implements LogRecord, Log {
+class Logger implements LogRecord, Log {
     private final CharSequence name;
     private final RingQueue<LogRecordSink> debugRing;
     private final Sequence debugSeq;
@@ -39,7 +39,7 @@ public class Logger implements LogRecord, Log {
     private final Sequence errorSeq;
     private final ThreadLocalCursor tl = new ThreadLocalCursor();
 
-    public Logger(
+    Logger(
             CharSequence name,
             RingQueue<LogRecordSink> debugRing,
             Sequence debugSeq,

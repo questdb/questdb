@@ -30,13 +30,13 @@ import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.std.ObjList;
 import com.nfsdb.std.Transient;
 
-public final class MapMetadata extends AbstractRecordMetadata {
+final class MapMetadata extends AbstractRecordMetadata {
 
     private final CharSequenceIntHashMap nameCache;
     private final int columnCount;
     private final RecordColumnMetadata[] columns;
 
-    public MapMetadata(
+    MapMetadata(
             @Transient RecordMetadata keySourceMetadata,
             @Transient ObjHashSet<String> keyNames,
             @Transient ObjList<RecordColumnMetadata> valueColumns) {

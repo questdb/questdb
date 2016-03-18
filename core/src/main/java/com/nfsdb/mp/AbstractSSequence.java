@@ -21,7 +21,7 @@
 
 package com.nfsdb.mp;
 
-public abstract class AbstractSSequence implements Sequence {
+abstract class AbstractSSequence implements Sequence {
     private final WaitStrategy waitStrategy;
     Barrier barrier = OpenBarrier.INSTANCE;
 

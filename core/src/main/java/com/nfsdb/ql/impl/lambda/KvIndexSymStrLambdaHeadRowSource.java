@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl.lambda;
 
@@ -39,7 +39,7 @@ public class KvIndexSymStrLambdaHeadRowSource extends KvIndexSymLambdaHeadRowSou
         return r.getFlyweightStr(col);
     }
 
-    public static class Factory implements LatestByLambdaRowSourceFactory {
+    private static class Factory implements LatestByLambdaRowSourceFactory {
         @Override
         public RowSource newInstance(String column, RecordSource recordSource, int recordSourceColumn, VirtualColumn filter) {
             return new KvIndexSymStrLambdaHeadRowSource(column, recordSource, recordSourceColumn, filter);

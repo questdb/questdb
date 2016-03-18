@@ -32,7 +32,7 @@ public class LogRecordSink extends AbstractCharSink {
     private long _wptr;
     private int level;
 
-    public LogRecordSink(int capacity) {
+    LogRecordSink(int capacity) {
         int c = Numbers.ceilPow2(capacity);
         this.address = _wptr = Unsafe.getUnsafe().allocateMemory(c);
         this.lim = address + c;

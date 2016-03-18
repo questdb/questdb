@@ -26,14 +26,14 @@ import com.nfsdb.factory.configuration.RecordColumnMetadata;
 import com.nfsdb.factory.configuration.RecordMetadata;
 import com.nfsdb.misc.Unsafe;
 
-public class SplitRecordMetadata extends AbstractRecordMetadata {
+class SplitRecordMetadata extends AbstractRecordMetadata {
     private final int columnCount;
     private final RecordColumnMetadata[] columns;
     private final RecordMetadata a;
     private final RecordMetadata b;
     private final int split;
 
-    public SplitRecordMetadata(RecordMetadata a, RecordMetadata b) {
+    SplitRecordMetadata(RecordMetadata a, RecordMetadata b) {
         this.a = a;
         this.b = b;
 

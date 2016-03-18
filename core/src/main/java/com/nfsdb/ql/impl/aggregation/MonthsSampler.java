@@ -23,10 +23,10 @@ package com.nfsdb.ql.impl.aggregation;
 
 import com.nfsdb.misc.Dates;
 
-public class MonthsSampler implements TimestampSampler {
+class MonthsSampler implements TimestampSampler {
     private final int bucket;
 
-    public MonthsSampler(int bucket) {
+    MonthsSampler(int bucket) {
         this.bucket = bucket;
     }
 

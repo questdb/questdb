@@ -21,7 +21,7 @@
 
 package com.nfsdb.mp;
 
-public abstract class AbstractWaitStrategy implements WaitStrategy {
+abstract class AbstractWaitStrategy implements WaitStrategy {
 
     volatile boolean alerted = false;
 

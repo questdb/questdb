@@ -30,12 +30,12 @@ import com.nfsdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 
-public class SplitRecord extends AbstractRecord {
+class SplitRecord extends AbstractRecord {
     private final int split;
     private Record a;
     private Record b;
 
-    public SplitRecord(RecordMetadata metadata, int split) {
+    SplitRecord(RecordMetadata metadata, int split) {
         super(metadata);
         this.split = split;
     }
@@ -189,10 +189,6 @@ public class SplitRecord extends AbstractRecord {
         } else {
             return b == null ? null : b.getSym(col - split);
         }
-    }
-
-    public boolean hasB() {
-        return b != null;
     }
 
     public void setA(Record a) {

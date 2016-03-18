@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.mp;
 
@@ -26,7 +26,7 @@ import com.nfsdb.misc.Unsafe;
 
 import java.util.Arrays;
 
-public abstract class AbstractMSequence extends AbstractSSequence {
+abstract class AbstractMSequence extends AbstractSSequence {
     final PLong index = new PLong();
     final PLong cache = new PLong();
     private final int flags[];

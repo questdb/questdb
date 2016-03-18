@@ -23,7 +23,7 @@ package com.nfsdb.ql.impl.aggregation;
 
 import com.nfsdb.misc.Dates;
 
-public class YearSampler implements TimestampSampler {
+class YearSampler implements TimestampSampler {
 
     public static final YearSampler INSTANCE = new YearSampler();
 

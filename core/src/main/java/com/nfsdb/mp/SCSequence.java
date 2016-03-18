@@ -38,7 +38,7 @@ public class SCSequence extends AbstractSSequence {
     public SCSequence() {
     }
 
-    public SCSequence(long index) {
+    SCSequence(long index) {
         this.index = index;
     }
 

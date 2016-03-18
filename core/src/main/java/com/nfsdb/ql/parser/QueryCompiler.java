@@ -144,12 +144,6 @@ public class QueryCompiler {
         return rs;
     }
 
-    public CharSequence plan(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
-        QueryModel model = parser.parse(query).getQueryModel();
-        resetAndOptimise(model, factory);
-        return model.plan();
-    }
-
     private static Signature lbs(ColumnType master, boolean indexed, ColumnType lambda) {
         return new Signature().setName("").setParamCount(2).paramType(0, master, indexed).paramType(1, lambda, false);
     }
@@ -1282,6 +1276,12 @@ public class QueryCompiler {
         } else {
             return rs;
         }
+    }
+
+    CharSequence plan(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
+        QueryModel model = parser.parse(query).getQueryModel();
+        resetAndOptimise(model, factory);
+        return model.plan();
     }
 
     /**

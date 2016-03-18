@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.ql.impl.lambda;
 
@@ -39,7 +39,7 @@ import com.nfsdb.store.KVIndex;
 import com.nfsdb.store.VariableColumn;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
+abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
     private final String column;
     private final VirtualColumn filter;
     private final RecordSource recordSource;

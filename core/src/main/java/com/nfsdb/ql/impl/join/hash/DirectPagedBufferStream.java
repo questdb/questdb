@@ -27,7 +27,7 @@ import com.nfsdb.store.MemoryPages;
 
 import java.io.IOException;
 
-public class DirectPagedBufferStream extends DirectInputStream {
+class DirectPagedBufferStream extends DirectInputStream {
     private final long length;
     private final MemoryPages buffer;
     private final long offset;
@@ -36,7 +36,7 @@ public class DirectPagedBufferStream extends DirectInputStream {
     private long blockStartOffset;
     private long position;
 
-    public DirectPagedBufferStream(MemoryPages buffer, long offset, long length) {
+    DirectPagedBufferStream(MemoryPages buffer, long offset, long length) {
         this.buffer = buffer;
         this.offset = offset;
         this.blockStartAddress = buffer.addressOf(offset);

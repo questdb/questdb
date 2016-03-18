@@ -26,12 +26,12 @@ import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Unsafe;
 import com.nfsdb.std.DirectCharSequence;
 
-public abstract class AbstractVarMemRecord extends AbstractMemRecord {
+abstract class AbstractVarMemRecord extends AbstractMemRecord {
 
     private final DirectCharSequence cs = new DirectCharSequence();
     private char[] strBuf;
 
-    public AbstractVarMemRecord(RecordMetadata metadata) {
+    AbstractVarMemRecord(RecordMetadata metadata) {
         super(metadata);
     }
 

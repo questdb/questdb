@@ -30,9 +30,9 @@ import com.nfsdb.store.SymbolTable;
 
 import java.io.OutputStream;
 
-public abstract class AbstractMemRecord extends AbstractRecord {
+abstract class AbstractMemRecord extends AbstractRecord {
 
-    public AbstractMemRecord(RecordMetadata metadata) {
+    AbstractMemRecord(RecordMetadata metadata) {
         super(metadata);
     }
 

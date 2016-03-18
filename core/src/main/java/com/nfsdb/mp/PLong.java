@@ -28,7 +28,7 @@ class PLong {
     private final static long VALUE_OFFSET = Unsafe.LONG_OFFSET + 4 * Unsafe.LONG_SCALE;
     private final long value[] = new long[7];
 
-    public PLong() {
+    PLong() {
         this(INITIAL_VALUE);
     }
 
@@ -36,20 +36,20 @@ class PLong {
         Unsafe.getUnsafe().putOrderedLong(value, VALUE_OFFSET, initialValue);
     }
 
-    public boolean cas(final long expected, final long value) {
-        return Unsafe.getUnsafe().compareAndSwapLong(this.value, VALUE_OFFSET, expected, value);
-    }
-
-    public long fencedGet() {
-        return Unsafe.getUnsafe().getLongVolatile(value, VALUE_OFFSET);
-    }
-
-    public void fencedSet(final long value) {
-        Unsafe.getUnsafe().putLongVolatile(this.value, VALUE_OFFSET, value);
-    }
-
     @Override
     public String toString() {
         return Long.toString(fencedGet());
+    }
+
+    boolean cas(final long expected, final long value) {
+        return Unsafe.getUnsafe().compareAndSwapLong(this.value, VALUE_OFFSET, expected, value);
+    }
+
+    long fencedGet() {
+        return Unsafe.getUnsafe().getLongVolatile(value, VALUE_OFFSET);
+    }
+
+    void fencedSet(final long value) {
+        Unsafe.getUnsafe().putLongVolatile(this.value, VALUE_OFFSET, value);
     }
 }

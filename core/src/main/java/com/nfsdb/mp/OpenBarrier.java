@@ -21,7 +21,7 @@
 
 package com.nfsdb.mp;
 
-public final class OpenBarrier implements Barrier {
+final class OpenBarrier implements Barrier {
     public final static OpenBarrier INSTANCE = new OpenBarrier();
 
     private OpenBarrier() {

@@ -21,10 +21,10 @@
 
 package com.nfsdb.ql.impl.aggregation;
 
-public class MillisSampler implements TimestampSampler {
+class MillisSampler implements TimestampSampler {
     private final long bucket;
 
-    public MillisSampler(long bucket) {
+    MillisSampler(long bucket) {
         this.bucket = bucket;
     }
 

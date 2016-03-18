@@ -33,7 +33,7 @@ import com.nfsdb.store.ColumnType;
 
 import java.util.Arrays;
 
-public class SelectedColumnsMetadata extends AbstractRecordMetadata {
+class SelectedColumnsMetadata extends AbstractRecordMetadata {
     private final RecordMetadata delegate;
     private final RecordColumnMetadata columnMetadata[];
     private final CharSequenceIntHashMap nameIndex;
@@ -52,7 +52,7 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
      * @param names    list of column names to select
      * @param aliases  set of column aliases
      */
-    public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names, CharSequenceHashSet aliases) {
+    SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names, CharSequenceHashSet aliases) {
         this.delegate = delegate;
         int k = names.size();
         this.nameIndex = new CharSequenceIntHashMap(k);
@@ -70,7 +70,7 @@ public class SelectedColumnsMetadata extends AbstractRecordMetadata {
         }
     }
 
-    public SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names) {
+    SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names) {
         this(delegate, names, null);
     }
 

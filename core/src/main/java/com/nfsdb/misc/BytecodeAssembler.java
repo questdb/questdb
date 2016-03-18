@@ -32,9 +32,6 @@ import java.nio.ByteOrder;
 
 public class BytecodeAssembler implements Mutable {
 
-    public static final int iconst_0 = 3;
-    public static final int bipush = 16;
-    public static final int sipush = 17;
     public static final int iload_2 = 28;
     public static final int aload_0 = 42;
     public static final int aload_1 = 43;
@@ -44,9 +41,12 @@ public class BytecodeAssembler implements Mutable {
     public static final int return_ = 177;
     public static final int getfield = 180;
     public static final int putfield = 181;
-    public static final int invokespecial = 183;
     public static final int invokestatic = 184;
-    public static final int invokeinterface = 185;
+    private static final int iconst_0 = 3;
+    private static final int bipush = 16;
+    private static final int sipush = 17;
+    private static final int invokespecial = 183;
+    private static final int invokeinterface = 185;
     private static final int O_POOL_COUNT = 8;
 
     private final Utf8Appender utf8Appender = new Utf8Appender();
