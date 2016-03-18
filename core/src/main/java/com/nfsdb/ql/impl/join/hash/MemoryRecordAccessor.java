@@ -314,21 +314,29 @@ public class MemoryRecordAccessor extends AbstractRecord {
         } while (len > 0);
     }
 
-    private void writeString(long headerAddress, CharSequence item) {
-        if (item != null) {
-            // Allocate.
-            int k = item.length();
-            if (k > mem.pageSize()) {
-                throw new JournalRuntimeException("String larger than pageSize");
-            }
-            long offset = mem.allocate(k * 2 + 4);
-            // Save the address in the header.
-            Unsafe.getUnsafe().putLong(headerAddress, offset);
-            Chars.put(mem.addressOf(offset), item);
-        } else {
-            long offset = mem.allocate(4);
-            Unsafe.getUnsafe().putLong(headerAddress, offset);
-            Unsafe.getUnsafe().putInt(mem.addressOf(offset), -1);
-        }
+    private void writeNullString(long headerAddress) {
+        long offset = mem.allocate(4);
+        Unsafe.getUnsafe().putLong(headerAddress, offset);
+        Unsafe.getUnsafe().putInt(mem.addressOf(offset), -1);
     }
+
+    private void writeString(long headerAddress, CharSequence item) {
+
+        if (item == null) {
+            writeNullString(headerAddress);
+            return;
+        }
+
+        // Allocate.
+        final int k = item.length();
+        if (k > mem.pageSize()) {
+            throw new JournalRuntimeException("String larger than pageSize");
+        }
+        long offset = mem.allocate(k * 2 + 4);
+        // Save the address in the header.
+        Unsafe.getUnsafe().putLong(headerAddress, offset);
+        Chars.put(mem.addressOf(offset), item);
+    }
+
+
 }

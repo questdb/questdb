@@ -235,13 +235,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     private void put(Record record) {
         if (root == 0) {
-            root = allocateBlock();
-            long r = records.append(record, -1);
-            setTop(root, r);
-            setRef(root, r);
-            setParent(root, 0);
-            setLeft(root, 0);
-            setRight(root, 0);
+            putParent(record);
             return;
         }
 
@@ -252,13 +246,14 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         int cmp;
         do {
             parent = p;
-            cmp = comparator.compare(records.recordAt(refOf(p)));
+            long r = refOf(p);
+            cmp = comparator.compare(records.recordAt(r));
             if (cmp < 0) {
                 p = leftOf(p);
             } else if (cmp > 0) {
                 p = rightOf(p);
             } else {
-                setRef(p, records.append(record, refOf(p)));
+                setRef(p, records.append(record, r));
                 return;
             }
         } while (p > 0);
@@ -275,6 +270,16 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             setRight(parent, p);
         }
         fix(p);
+    }
+
+    private void putParent(Record record) {
+        root = allocateBlock();
+        long r = records.append(record, -1);
+        setTop(root, r);
+        setRef(root, r);
+        setParent(root, 0);
+        setLeft(root, 0);
+        setRight(root, 0);
     }
 
     private void rotateLeft(long p) {

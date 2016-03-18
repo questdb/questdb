@@ -132,7 +132,6 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
                 "-6941891\tYZUZYJIHZBWWXFQ\n" +
                 "-1424393416\tZUDJGNNDESHYUME\n";
 
-//        assertThat("", "xyz where str = 'YZUZYJIHZBWWXFQ'");
         assertThat(expected, "(xyz where i < 100 order by i) order by str, i");
     }
 }
