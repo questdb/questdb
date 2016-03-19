@@ -1,17 +1,17 @@
 /*******************************************************************************
- * _  _ ___ ___     _ _
+ *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- * <p>
+ *
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- * <p>
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * <p>
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -159,7 +159,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
 
     private static class TestColumnMetadata extends AbstractVirtualColumn {
 
-        public TestColumnMetadata(ColumnType type) {
+        TestColumnMetadata(ColumnType type) {
             super(type);
         }
 
@@ -176,24 +176,6 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
 
     private static class TestRecordMetadata extends AbstractRecordMetadata {
         private final ObjList<TestColumnMetadata> columns = new ObjList<>();
-
-        public TestRecordMetadata addDistinct() {
-            asType(ColumnType.BOOLEAN);
-            asType(ColumnType.BYTE);
-            asType(ColumnType.DOUBLE);
-            asType(ColumnType.FLOAT);
-            asType(ColumnType.INT);
-            asType(ColumnType.LONG);
-            asType(ColumnType.DATE);
-            asType(ColumnType.SHORT);
-            asType(ColumnType.STRING);
-            asType(ColumnType.SYMBOL);
-            return this;
-        }
-
-        public void asType(ColumnType t) {
-            columns.add(new TestColumnMetadata(t));
-        }
 
         @Override
         public RecordColumnMetadata getColumn(int index) {
@@ -218,6 +200,24 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         @Override
         public int getTimestampIndex() {
             return -1;
+        }
+
+        TestRecordMetadata addDistinct() {
+            asType(ColumnType.BOOLEAN);
+            asType(ColumnType.BYTE);
+            asType(ColumnType.DOUBLE);
+            asType(ColumnType.FLOAT);
+            asType(ColumnType.INT);
+            asType(ColumnType.LONG);
+            asType(ColumnType.DATE);
+            asType(ColumnType.SHORT);
+            asType(ColumnType.STRING);
+            asType(ColumnType.SYMBOL);
+            return this;
+        }
+
+        void asType(ColumnType t) {
+            columns.add(new TestColumnMetadata(t));
         }
     }
 }
