@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -87,7 +87,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
 
         IntList indices = new IntList();
         for (int i = 0, n = w.getMetadata().getColumnCount(); i < n; i++) {
-            indices.add(i);
+            indices.add(i + 1);
         }
         RecordSource rs = compiler.compileSource(factory, "xyz");
         RecordComparator rc = cc.compile(ComparatorCompilerTest.class, rs.getMetadata(), indices);
@@ -106,7 +106,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         TestRecordMetadata m = new TestRecordMetadata().addDistinct();
         IntList indices = new IntList(m.getColumnCount());
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
-            indices.add(i);
+            indices.add(i + 1);
         }
         RecordComparator rc = cc.compile(ComparatorCompilerTest.class, m, indices);
         Assert.assertNotNull(rc);
@@ -120,7 +120,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         }
         IntList indices = new IntList(m.getColumnCount());
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
-            indices.add(i);
+            indices.add(i + 1);
         }
         RecordComparator rc = cc.compile(ComparatorCompilerTest.class, m, indices);
         Assert.assertNotNull(rc);
@@ -134,7 +134,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         }
         IntList indices = new IntList(m.getColumnCount());
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
-            indices.add(i);
+            indices.add(i + 1);
         }
         RecordComparator rc = cc.compile(ComparatorCompilerTest.class, m, indices);
         Assert.assertNotNull(rc);
@@ -148,7 +148,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         }
         IntList indices = new IntList(m.getColumnCount());
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
-            indices.add(i);
+            indices.add(i + 1);
         }
         RecordComparator rc1 = cc.compile(ComparatorCompilerTest.class, m, indices);
         RecordComparator rc2 = cc.compile(ComparatorCompilerTest.class, m, indices);

@@ -545,6 +545,34 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testDoubleOrderByNaN() throws Exception {
+        createTabWithNaNs2();
+
+        final String expected = "-338.665039062500\tNaN\tNaN\tNaN\n" +
+                "0.000183005621\tNaN\tNaN\tNaN\n" +
+                "-807.692016601563\tNaN\tNaN\tNaN\n" +
+                "384.000000000000\tNaN\tNaN\tNaN\n" +
+                "240.000000000000\tNaN\tNaN\tNaN\n" +
+                "0.059096898884\tNaN\tNaN\tNaN\n" +
+                "0.036795516498\tNaN\tNaN\tNaN\n" +
+                "5.404115438461\t-79\t-784.595884561539\t-395\n" +
+                "0.000000136839\t-73\t-729.999999863161\t-365\n" +
+                "0.000013659448\t-57\t-569.999986340552\t-285\n" +
+                "-512.000000000000\t-51\t-1022.000000000000\t-255\n" +
+                "-436.000000000000\t-27\t-706.000000000000\t-135\n" +
+                "5.540870904922\t-14\t-134.459129095078\t-70\n" +
+                "-481.765014648438\t-11\t-591.765014648438\t-55\n" +
+                "0.003575030481\t2\t20.003575030481\t10\n" +
+                "0.000000343896\t12\t120.000000343896\t60\n" +
+                "35.019264221191\t39\t425.019264221191\t195\n" +
+                "0.000001200607\t53\t530.000001200607\t265\n" +
+                "-256.000000000000\t57\t314.000000000000\t285\n" +
+                "-612.000000000000\t72\t108.000000000000\t360\n";
+
+        assertThat(expected, "select x,z,x+(z*10),z*5 from tab where id~'KKUSI' and ((z > -100 and z < 100) or z = NaN) order by z");
+    }
+
+    @Test
     public void testInAsColumn() throws Exception {
         JournalWriter<Quote> w = factory.writer(Quote.class, "q");
         TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);

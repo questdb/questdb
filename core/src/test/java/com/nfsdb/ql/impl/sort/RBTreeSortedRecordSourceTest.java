@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -23,9 +23,12 @@ package com.nfsdb.ql.impl.sort;
 
 import com.nfsdb.JournalEntryWriter;
 import com.nfsdb.JournalWriter;
+import com.nfsdb.ex.ParserException;
 import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.misc.Rnd;
 import com.nfsdb.ql.parser.AbstractOptimiserTest;
+import com.nfsdb.ql.parser.QueryError;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -43,7 +46,7 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
             for (int i = 0; i < n; i++) {
                 JournalEntryWriter ew = w.entryWriter();
                 ew.putInt(0, rnd.nextInt());
-                ew.putStr(1, rnd.nextChars(15));
+                ew.putStr(1, rnd.nextChars(2));
                 ew.append();
             }
             w.commit();
@@ -83,55 +86,217 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testFirstColumnOrderDescending() throws Exception {
+        assertThat("-10505757\tCC\n" +
+                        "-27395319\tOJ\n" +
+                        "-120660220\tQE\n" +
+                        "-147343840\tLD\n" +
+                        "-230430837\tZZ\n" +
+                        "-235358133\tMY\n" +
+                        "-246923735\tGL\n" +
+                        "-283321892\tJO\n" +
+                        "-292438036\tPG\n" +
+                        "-370796356\tNZ\n" +
+                        "-409854405\tZS\n" +
+                        "-422941535\tPD\n" +
+                        "-483853667\tHR\n" +
+                        "-530317703\tTJ\n" +
+                        "-623471113\tQM\n" +
+                        "-636975106\tZE\n" +
+                        "-661194722\tZO\n" +
+                        "-720881601\tQC\n" +
+                        "-727724771\tCP\n" +
+                        "-731466113\tLY\n" +
+                        "-847531048\tRX\n" +
+                        "-876466531\tOL\n" +
+                        "-907794648\tSS\n" +
+                        "-916132123\tYC\n" +
+                        "-942999384\tVV\n" +
+                        "-1121895896\tVD\n" +
+                        "-1125169127\tEY\n" +
+                        "-1148479920\tTJ\n" +
+                        "-1153445279\tYU\n" +
+                        "-1165635863\tMV\n" +
+                        "-1172180184\tYL\n" +
+                        "-1204245663\tPJ\n" +
+                        "-1234141625\tND\n" +
+                        "-1252906348\tQE\n" +
+                        "-1269042121\tEK\n" +
+                        "-1270731285\tEO\n" +
+                        "-1271909747\tYS\n" +
+                        "-1272693194\tED\n" +
+                        "-1311366306\tML\n" +
+                        "-1418341054\tJG\n" +
+                        "-1424048819\tVS\n" +
+                        "-1436881714\tEH\n" +
+                        "-1465751763\tUS\n" +
+                        "-1515787781\tGO\n" +
+                        "-1533414895\tTM\n" +
+                        "-1538602195\tDZ\n" +
+                        "-1613687261\tBE\n" +
+                        "-1768335227\tSW\n" +
+                        "-1810676855\tLO\n" +
+                        "-1844391305\tWF\n" +
+                        "-1870444467\tRY\n" +
+                        "-1871994006\tZS\n" +
+                        "-1960168360\tUO\n" +
+                        "-2002373666\tQQ\n" +
+                        "-2043803188\tVI\n" +
+                        "-2088317486\tSS\n" +
+                        "-2108151088\tXP\n" +
+                        "-2119387831\tBH\n" +
+                        "-2132716300\tEO\n",
+                "xyz where i < 100 order by i desc");
+    }
+
+    @Test
     public void testNestedOrderBy() throws Exception {
-        final String expected = "-623522984\tCDNZNLCNGZTOYTO\n" +
-                "-240272352\tCQSCMONRCXNUZFN\n" +
-                "-485950131\tDILELRUMMZSCJOU\n" +
-                "-111411421\tDSWLUVDRHFBCZIO\n" +
-                "-1538602195\tDZJMYICCXZOUICW\n" +
-                "-1885508206\tEISQHNOJIGFINKG\n" +
-                "-1798281915\tFNPOYNNCTFSNSXH\n" +
-                "-1980222246\tFOQKYHQQUWQOEEN\n" +
-                "-1101822104\tFYUDEYYQEHBHFOW\n" +
-                "-1871096754\tGPPRGSXBHYSBQYM\n" +
-                "-772867311\tIGQZVKHTLQZSLQV\n" +
-                "-618037497\tIOVIKJSMSSUQSRL\n" +
-                "-2143484802\tJTHMHZNVZHCNXZE\n" +
-                "-873768107\tJUHCLQCMZCCYVBD\n" +
-                "-1129894630\tKFDONPWUVJWXEQX\n" +
-                "-1201923128\tKGHVUVSDOTSEDYY\n" +
-                "-1559759819\tKVZIEBSQCNSFFLT\n" +
-                "-230310857\tLFWZSGDIRDLRKIW\n" +
-                "-712888431\tLNEJRMDIKDISGQF\n" +
-                "-1078921487\tLRHWQXYPOVFDBZW\n" +
-                "-2105201404\tMBEZGHWVDKFLOPJ\n" +
-                "-1234141625\tNDCQCEHNOMVELLK\n" +
-                "-996446838\tNFCLTJCKFMQNTOG\n" +
-                "-1023667478\tOYPHRIPZIMNZZRM\n" +
-                "-422941535\tPDXYSBEOUOJSHRU\n" +
-                "-1599598676\tPMOOUHWUDVIKRPC\n" +
-                "-1440731932\tPRMDBDBFDDFCSRE\n" +
-                "-1380922973\tQPZGPZNYVLTPKBB\n" +
-                "-1895669864\tQYTEWHUWZOOVPPL\n" +
-                "-1182156192\tSMPGLUOHNZHZSQL\n" +
-                "-667031149\tSRYRFBVTMHGOOZZ\n" +
-                "-1768335227\tSWUGSHOLNVTIQBZ\n" +
-                "-46850431\tTDCEBYWXBBZVRLP\n" +
-                "-1148479920\tTJWCPSWHYRXPEHN\n" +
-                "-1119345664\tTTKIBWFCKDHBQJP\n" +
-                "-780111957\tTWGLFCYQWPKLHTI\n" +
-                "-76702538\tUIGENFELWWRSLBM\n" +
-                "-670048539\tVFUUTOMFUIOXLQL\n" +
-                "-447593202\tVRVNGSTEQODRZEI\n" +
-                "-1650060090\tVZWEVQTQOZKXTPN\n" +
-                "-1204896732\tWHPZRHHMGZJYYFL\n" +
-                "-2108151088\tXPKRGIIHYHBOQMY\n" +
-                "-485549586\tXUKLGMXSLUQDYOP\n" +
-                "-1534034235\tYLPGZHITQJLKTRD\n" +
-                "-388575268\tYXYGYFUXCDKDWOM\n" +
-                "-6941891\tYZUZYJIHZBWWXFQ\n" +
-                "-1424393416\tZUDJGNNDESHYUME\n";
+        final String expected = "-1613687261\tBE\n" +
+                "-2119387831\tBH\n" +
+                "-10505757\tCC\n" +
+                "-727724771\tCP\n" +
+                "-1538602195\tDZ\n" +
+                "-1272693194\tED\n" +
+                "-1436881714\tEH\n" +
+                "-1269042121\tEK\n" +
+                "-2132716300\tEO\n" +
+                "-1270731285\tEO\n" +
+                "-1125169127\tEY\n" +
+                "-246923735\tGL\n" +
+                "-1515787781\tGO\n" +
+                "-483853667\tHR\n" +
+                "-1418341054\tJG\n" +
+                "-283321892\tJO\n" +
+                "-147343840\tLD\n" +
+                "-1810676855\tLO\n" +
+                "-731466113\tLY\n" +
+                "-1311366306\tML\n" +
+                "-1165635863\tMV\n" +
+                "-235358133\tMY\n" +
+                "-1234141625\tND\n" +
+                "-370796356\tNZ\n" +
+                "-27395319\tOJ\n" +
+                "-876466531\tOL\n" +
+                "-422941535\tPD\n" +
+                "-292438036\tPG\n" +
+                "-1204245663\tPJ\n" +
+                "-720881601\tQC\n" +
+                "-1252906348\tQE\n" +
+                "-120660220\tQE\n" +
+                "-623471113\tQM\n" +
+                "-2002373666\tQQ\n" +
+                "-847531048\tRX\n" +
+                "-1870444467\tRY\n" +
+                "-2088317486\tSS\n" +
+                "-907794648\tSS\n" +
+                "-1768335227\tSW\n" +
+                "-1148479920\tTJ\n" +
+                "-530317703\tTJ\n" +
+                "-1533414895\tTM\n" +
+                "-1960168360\tUO\n" +
+                "-1465751763\tUS\n" +
+                "-1121895896\tVD\n" +
+                "-2043803188\tVI\n" +
+                "-1424048819\tVS\n" +
+                "-942999384\tVV\n" +
+                "-1844391305\tWF\n" +
+                "-2108151088\tXP\n" +
+                "-916132123\tYC\n" +
+                "-1172180184\tYL\n" +
+                "-1271909747\tYS\n" +
+                "-1153445279\tYU\n" +
+                "-636975106\tZE\n" +
+                "-661194722\tZO\n" +
+                "-1871994006\tZS\n" +
+                "-409854405\tZS\n" +
+                "-230430837\tZZ\n";
 
         assertThat(expected, "(xyz where i < 100 order by i) order by str, i");
     }
+
+    @Test
+    public void testNestedOrderByDescending() throws Exception {
+        final String expected = "-1613687261\tBE\n" +
+                "-2119387831\tBH\n" +
+                "-10505757\tCC\n" +
+                "-727724771\tCP\n" +
+                "-1538602195\tDZ\n" +
+                "-1272693194\tED\n" +
+                "-1436881714\tEH\n" +
+                "-1269042121\tEK\n" +
+                "-1270731285\tEO\n" +
+                "-2132716300\tEO\n" +
+                "-1125169127\tEY\n" +
+                "-246923735\tGL\n" +
+                "-1515787781\tGO\n" +
+                "-483853667\tHR\n" +
+                "-1418341054\tJG\n" +
+                "-283321892\tJO\n" +
+                "-147343840\tLD\n" +
+                "-1810676855\tLO\n" +
+                "-731466113\tLY\n" +
+                "-1311366306\tML\n" +
+                "-1165635863\tMV\n" +
+                "-235358133\tMY\n" +
+                "-1234141625\tND\n" +
+                "-370796356\tNZ\n" +
+                "-27395319\tOJ\n" +
+                "-876466531\tOL\n" +
+                "-422941535\tPD\n" +
+                "-292438036\tPG\n" +
+                "-1204245663\tPJ\n" +
+                "-720881601\tQC\n" +
+                "-120660220\tQE\n" +
+                "-1252906348\tQE\n" +
+                "-623471113\tQM\n" +
+                "-2002373666\tQQ\n" +
+                "-847531048\tRX\n" +
+                "-1870444467\tRY\n" +
+                "-907794648\tSS\n" +
+                "-2088317486\tSS\n" +
+                "-1768335227\tSW\n" +
+                "-530317703\tTJ\n" +
+                "-1148479920\tTJ\n" +
+                "-1533414895\tTM\n" +
+                "-1960168360\tUO\n" +
+                "-1465751763\tUS\n" +
+                "-1121895896\tVD\n" +
+                "-2043803188\tVI\n" +
+                "-1424048819\tVS\n" +
+                "-942999384\tVV\n" +
+                "-1844391305\tWF\n" +
+                "-2108151088\tXP\n" +
+                "-916132123\tYC\n" +
+                "-1172180184\tYL\n" +
+                "-1271909747\tYS\n" +
+                "-1153445279\tYU\n" +
+                "-636975106\tZE\n" +
+                "-661194722\tZO\n" +
+                "-409854405\tZS\n" +
+                "-1871994006\tZS\n" +
+                "-230430837\tZZ\n";
+
+        assertThat(expected, "(xyz where i < 100 order by i) order by str, i desc");
+    }
+
+    @Test
+    public void testOrderByExpression() throws Exception {
+        try {
+            assertThat("", "(xyz where i < 100 order by i) order by str, i+i");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(47, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testOrderByString() throws Exception {
+        try {
+            assertThat("", "(xyz where i < 100 order by i) order by str, 'i+i'");
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(45, QueryError.getPosition());
+        }
+    }
+
 }

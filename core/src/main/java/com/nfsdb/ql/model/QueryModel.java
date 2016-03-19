@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -32,10 +32,13 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class QueryModel implements Mutable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
+    public static final int ORDER_DIRECTION_ASCENDING = 0;
+    public static final int ORDER_DIRECTION_DESCENDING = 1;
 
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
+    private final IntList orderByDirection = new IntList();
     private final IntHashSet dependencies = new IntHashSet();
     private final IntList orderedJoinModels1 = new IntList();
     private final IntList orderedJoinModels2 = new IntList();
@@ -90,8 +93,9 @@ public class QueryModel implements Mutable {
         joinModels.add(model);
     }
 
-    public void addOrderBy(ExprNode node) {
+    public void addOrderBy(ExprNode node, int direction) {
         orderBy.add(node);
+        orderByDirection.add(direction);
     }
 
     public void addParsedWhereConst(int index) {
@@ -108,6 +112,7 @@ public class QueryModel implements Mutable {
         joinModels.add(this);
         sampleBy = null;
         orderBy.clear();
+        orderByDirection.clear();
         dependencies.clear();
         parsedWhere.clear();
         whereClause = null;
@@ -240,6 +245,10 @@ public class QueryModel implements Mutable {
         return orderBy;
     }
 
+    public IntList getOrderByDirection() {
+        return orderByDirection;
+    }
+
     public IntList getOrderColumnIndices() {
         return orderColumnIndices;
     }
@@ -316,7 +325,7 @@ public class QueryModel implements Mutable {
      * Every time ordering takes place optimiser will keep at most two lists:
      * one is last known order the other is new order. If new order cost is better
      * optimiser will replace last known order with new one.
-     * <p/>
+     * <p>
      * To facilitate this behaviour the function will always return non-current list.
      *
      * @return non current order list.

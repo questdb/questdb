@@ -34,6 +34,7 @@ public class BytecodeAssembler implements Mutable {
 
     public static final int iload_2 = 28;
     public static final int aload_0 = 42;
+    public static final int ineg = 0x74;
     public static final int aload_1 = 43;
     public static final int istore_2 = 61;
     public static final int ifne = 154;

@@ -1,17 +1,17 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
+ * _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
  * |_|\_|_| |___/\__,_|_.__/
- *
+ * <p>
  * Copyright (c) 2014-2016. The NFSdb project and its contributors.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -103,10 +103,14 @@ public class ComparatorCompiler {
             asm.put(BytecodeAssembler.getfield);
             asm.putShort(fieldIndices.getQuick(i));
             asm.put(BytecodeAssembler.aload_1);
-            asm.putConstant(keyColumns.getQuick(i));
+            int index = keyColumns.getQuick(i);
+            asm.putConstant((index > 0 ? index : -index) - 1);
             asm.invokeInterface(fieldRecordAccessorIndices.getQuick(i));
             asm.put(BytecodeAssembler.invokestatic);
             asm.putShort(comparatorAccessorIndices.getQuick(i));
+            if (index < 0) {
+                asm.put(BytecodeAssembler.ineg);
+            }
             asm.put(BytecodeAssembler.istore_2);
         }
         int p = asm.position();
@@ -166,7 +170,9 @@ public class ComparatorCompiler {
         for (int i = 0, n = keyColumns.size(); i < n; i++) {
             asm.put(BytecodeAssembler.aload_0);
             asm.put(BytecodeAssembler.aload_1);
-            asm.putConstant(keyColumns.getQuick(i));
+            int index = keyColumns.getQuick(i);
+            // make sure column index is valid in case of "descending sort" flag
+            asm.putConstant((index > 0 ? index : -index) - 1);
             asm.invokeInterface(fieldRecordAccessorIndices.getQuick(i));
             asm.put(BytecodeAssembler.putfield);
             asm.putShort(fieldIndices.getQuick(i));
@@ -195,7 +201,16 @@ public class ComparatorCompiler {
             String getterName;
             String comparatorClass;
             String comparatorDesc = null;
-            switch (m.getColumn(keyColumnIndices.getQuick(i)).getType()) {
+            int index = keyColumnIndices.getQuick(i);
+
+            if (index < 0) {
+                index = -index;
+            }
+
+            // decrement to get real column index
+            index--;
+
+            switch (m.getColumn(index).getType()) {
                 case BOOLEAN:
                     fieldType = "Z";
                     getterName = "getBool";
@@ -209,12 +224,12 @@ public class ComparatorCompiler {
                 case DOUBLE:
                     fieldType = "D";
                     getterName = "getDouble";
-                    comparatorClass = "java/lang/Double";
+                    comparatorClass = "com/nfsdb/misc/Numbers";
                     break;
                 case FLOAT:
                     fieldType = "F";
                     getterName = "getFloat";
-                    comparatorClass = "java/lang/Float";
+                    comparatorClass = "com/nfsdb/misc/Numbers";
                     break;
                 case INT:
                     fieldType = "I";
@@ -244,7 +259,7 @@ public class ComparatorCompiler {
                     comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
                     break;
                 default:
-                    throw new JournalUnsupportedTypeException(m.getColumn(keyColumnIndices.getQuick(i)).getType());
+                    throw new JournalUnsupportedTypeException(m.getColumn(index).getType());
             }
 
             int nameIndex;

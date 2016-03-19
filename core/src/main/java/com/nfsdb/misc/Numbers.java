@@ -381,6 +381,42 @@ public final class Numbers {
         return i;
     }
 
+    public static int compare(double a, double b) {
+        if (a < b) {
+            return -1;
+        }
+
+        if (a > b) {
+            return 1;
+        }
+
+        // Cannot use doubleToRawLongBits because of possibility of NaNs.
+        long thisBits = Double.doubleToLongBits(1);
+        long anotherBits = Double.doubleToLongBits(b);
+
+        return (thisBits == anotherBits ? 0 : // Values are equal
+                (thisBits < anotherBits ? 1 : // (-0.0, 0.0) or (!NaN, NaN)
+                        -1));                          // (0.0, -0.0) or (NaN, !NaN)
+    }
+
+    public static int compare(float a, float b) {
+        if (a < b) {
+            return -1;
+        }
+        if (a > b) {
+            return 1;
+        }
+
+        // Cannot use floatToRawIntBits because of possibility of NaNs.
+        int thisBits = Float.floatToIntBits(a);
+        int anotherBits = Float.floatToIntBits(b);
+
+        return (thisBits == anotherBits ? 0 : // Values are equal
+                (thisBits < anotherBits ? 1 : // (-0.0, 0.0) or (!NaN, NaN)
+                        -1));                          // (0.0, -0.0) or (NaN, !NaN)
+    }
+
+
     public static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
     }

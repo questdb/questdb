@@ -372,8 +372,27 @@ final class QueryParser {
                 }
 
                 lexer.unparse();
-                model.addOrderBy(expr());
+                ExprNode n = expectExpr();
+
+                if (n.type != ExprNode.NodeType.LITERAL) {
+                    throw err("Column name expected");
+                }
+
                 tok = lexer.optionTok();
+
+                if (tok != null && Chars.equalsIgnoreCase(tok, "desc")) {
+
+                    model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
+                    tok = lexer.optionTok();
+
+                } else {
+
+                    model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
+
+                    if (tok != null && Chars.equalsIgnoreCase(tok, "asc")) {
+                        tok = lexer.optionTok();
+                    }
+                }
             } while (tok != null && Chars.equals(tok, ','));
         }
 
