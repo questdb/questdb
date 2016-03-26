@@ -1,0 +1,88 @@
+/*******************************************************************************
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
+ *
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ ******************************************************************************/
+
+
+.label {
+  background-color: $light-gray;
+  color: $label-badget-color;
+  font-family: 'Open Sans';
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  text-shadow: none;
+}
+
+.badge {
+  background-color: $light-gray;
+  color: $label-badget-color;
+  font-family: 'Open Sans';
+  font-size: 11px;
+  font-weight: 600;
+  padding-bottom: 4px;
+  padding-left: 6px;
+  padding-right: 6px;
+  text-shadow: none;
+}
+
+.label-primary, .badge-primary {
+  background-color: $navy;
+  color: #FFFFFF;
+}
+
+.label-success, .badge-success {
+  background-color: $blue;
+  color: #FFFFFF;
+}
+
+.label-warning, .badge-warning {
+  background-color: $yellow;
+  color: #FFFFFF;
+}
+
+.label-warning-light, .badge-warning-light {
+  background-color: $yellow;
+  color: #ffffff;
+}
+
+.label-danger, .badge-danger {
+  background-color: $red;
+  color: #FFFFFF;
+}
+
+.label-info, .badge-info {
+  background-color: $lazur;
+  color: #FFFFFF;
+}
+
+.label-inverse, .badge-inverse {
+  background-color: #262626;
+  color: #FFFFFF;
+}
+
+.label-white, .badge-white {
+  background-color: #FFFFFF;
+  color: #5E5E5E;
+}
+
+.label-white, .badge-disable {
+  background-color: #2A2E36;
+  color: #8B91A0;
+}

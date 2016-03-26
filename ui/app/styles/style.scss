@@ -1,0 +1,82 @@
+/*******************************************************************************
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
+ *
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ ******************************************************************************/
+
+/*
+ *
+ *   INSPINIA - Responsive Admin Theme
+ *   version 2.4
+ *
+*/
+// Google Fonts
+@import url("https://fonts.googleapis.com/css?family=Open+Sans:300,400,600,700");
+// Variables, Mixins
+@import "variables";
+@import "mixins";
+// INSPINIA Theme Elements
+@import "typography";
+@import "navigation";
+@import "top_navigation";
+@import "buttons";
+@import "badgets_labels";
+@import "elements";
+@import "sidebar";
+@import "base";
+@import "pages";
+@import "chat";
+@import "metismenu";
+@import "spinners";
+// Landing page styles
+@import "landing";
+// RTL Support
+@import "rtl";
+// For demo only - config box style
+@import "theme-config";
+// INSPINIA Skins
+@import "skins";
+@import "md-skin";
+// Media query style
+@import "media";
+// Custom style
+// Your custom style to override base style
+@import "custom";
+
+// Clear layout on print mode
+@media print {
+  nav.navbar-static-side {
+    display: none;
+  }
+
+  #page-wrapper {
+    margin: 0;
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
