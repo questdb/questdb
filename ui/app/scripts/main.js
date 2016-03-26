@@ -20,6 +20,8 @@
  ******************************************************************************/
 
 /*globals $:false */
+/*globals ace:false */
+/*globals Slick:false */
 
 /*
  *
@@ -34,6 +36,35 @@ function localStorageSupport() {
     return (('localStorage' in window) && window.localStorage !== null);
 }
 
+// Full height of sidebar
+function fixHeight() {
+    'use strict';
+
+    var heightWithoutNavbar = $('body > #wrapper').height() - 61;
+    $('.sidebard-panel').css('min-height', heightWithoutNavbar + 'px');
+
+    var navbarHeigh = $('nav.navbar-default').height();
+    var pw = $('#page-wrapper');
+    var wrapperHeigh = pw.height();
+
+    if (navbarHeigh > wrapperHeigh) {
+        pw.css('min-height', navbarHeigh + 'px');
+    }
+
+    if (navbarHeigh < wrapperHeigh) {
+        pw.css('min-height', $(window).height() + 'px');
+    }
+
+    if ($('body').hasClass('fixed-nav')) {
+        if (navbarHeigh > wrapperHeigh) {
+            pw.css('min-height', navbarHeigh - 60 + 'px');
+        } else {
+            pw.css('min-height', $(window).height() - 60 + 'px');
+        }
+    }
+}
+
+// Configure layout items
 $(document).ready(function () {
     'use strict';
 
@@ -44,7 +75,6 @@ $(document).ready(function () {
         $('body').removeClass('body-small');
     }
 
-    // MetsiMenu
     $('#side-menu').metisMenu();
 
     // Collapse ibox function
@@ -80,7 +110,8 @@ $(document).ready(function () {
     });
 
     function smoothlyMenu() {
-        if (!$('body').hasClass('mini-navbar') || $('body').hasClass('body-small')) {
+        var b = $('body');
+        if (!b.hasClass('mini-navbar') || b.hasClass('body-small')) {
             // Hide menu in order to smoothly turn on when maximize menu
             $('#side-menu').hide();
             // For smoothly turn on menu
@@ -88,7 +119,7 @@ $(document).ready(function () {
                 function () {
                     $('#side-menu').fadeIn(400);
                 }, 200);
-        } else if ($('body').hasClass('fixed-sidebar')) {
+        } else if (b.hasClass('fixed-sidebar')) {
             $('#side-menu').hide();
             setTimeout(
                 function () {
@@ -155,7 +186,6 @@ $(document).ready(function () {
     $('.navbar-minimalize').click(function () {
         $('body').toggleClass('mini-navbar');
         smoothlyMenu();
-
     });
 
     // Tooltips demo
@@ -167,32 +197,6 @@ $(document).ready(function () {
     // Move modal to body
     // Fix Bootstrap backdrop issu with animation.css
     $('.modal').appendTo('body');
-
-    // Full height of sidebar
-    function fixHeight() {
-        var heightWithoutNavbar = $('body > #wrapper').height() - 61;
-        $('.sidebard-panel').css('min-height', heightWithoutNavbar + 'px');
-
-        var navbarHeigh = $('nav.navbar-default').height();
-        var wrapperHeigh = $('#page-wrapper').height();
-
-        if (navbarHeigh > wrapperHeigh) {
-            $('#page-wrapper').css('min-height', navbarHeigh + 'px');
-        }
-
-        if (navbarHeigh < wrapperHeigh) {
-            $('#page-wrapper').css('min-height', $(window).height() + 'px');
-        }
-
-        if ($('body').hasClass('fixed-nav')) {
-            if (navbarHeigh > wrapperHeigh) {
-                $('#page-wrapper').css('min-height', navbarHeigh - 60 + 'px');
-            } else {
-                $('#page-wrapper').css('min-height', $(window).height() - 60 + 'px');
-            }
-        }
-
-    }
 
     fixHeight();
 
@@ -221,15 +225,14 @@ $(document).ready(function () {
         }
     });
 
-    $('[data-toggle=popover]')
-        .popover();
+    $('[data-toggle=popover]').popover();
+    $('[data-toggle=tooltip]').tooltip();
 
     // Add slimscroll to element
     $('.full-height-scroll').slimscroll({
         height: '100%'
     });
 });
-
 
 // Minimalize menu when screen is less than 768px
 $(window).bind('resize', function () {
@@ -289,4 +292,34 @@ $(document).ready(function () {
             $('.footer').addClass('fixed');
         }
     }
+});
+
+// Configure SQL Editor items
+$(document).ready(function () {
+    'use strict';
+
+    var e = ace.edit('sqlEditor');
+    e.getSession().setMode('ace/mode/sql');
+    e.setTheme('ace/theme/merbivore_soft');
+    e.setShowPrintMargin(false);
+    e.setDisplayIndentGuides(false);
+    e.setHighlightActiveLine(false);
+
+    // read editor contents from local storage
+    if (typeof (Storage) !== 'undefined' && localStorage.getItem('lastQuery')) {
+        e.setValue(localStorage.getItem('lastQuery'));
+    }
+
+    e.focus();
+
+    var container = $('#grid');
+    container.css('height', '430px');
+
+    var grid = new Slick.Grid(container, [], [], {
+        enableCellNavigation: true,
+        enableColumnReorder: false,
+        enableTextSelectionOnCells: true
+    });
+
+    grid.resizeCanvas();
 });

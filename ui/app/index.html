@@ -187,6 +187,9 @@
 <script src="/bower_components/ace-builds/src-noconflict/ace.js"></script>
 <script src="/bower_components/ace-builds/src-noconflict/mode-sql.js"></script>
 <script src="/bower_components/ace-builds/src-noconflict/theme-merbivore_soft.js"></script>
+<script src="/bower_components/slickgrid/lib/jquery.event.drag-2.2.js"></script>
+<script src="/bower_components/slickgrid/slick.core.js"></script>
+<script src="/bower_components/slickgrid/slick.grid.js"></script>
 
 <!-- endbower -->
 <!-- endbuild -->
@@ -209,36 +212,6 @@
 <!-- build:js scripts/main.js -->
 <script src="scripts/main.js"></script>
 <!-- endbuild -->
-
-
-<script>
-    $(document).ready(function () {
-        var e = ace.edit('sqlEditor');
-        e.getSession().setMode('ace/mode/sql');
-        e.setTheme('ace/theme/merbivore_soft');
-        e.setShowPrintMargin(false);
-        e.setDisplayIndentGuides(false);
-        e.setHighlightActiveLine(false);
-
-        if (typeof (Storage) !== "undefined" && localStorage.getItem("lastQuery")) {
-            e.setValue(localStorage.getItem("lastQuery"));
-        }
-        e.focus();
-
-        $('[data-toggle="tooltip"]').tooltip();
-
-        var grid = new Slick.Grid($('grid'), [], [], {
-            enableCellNavigation: true,
-            enableColumnReorder: false,
-            enableTextSelectionOnCells: true
-        });
-
-        grid.resizeCanvas();
-
-//    $('grid').css('height', '430px');
-
-    });
-</script>
 
 </body>
 </html>

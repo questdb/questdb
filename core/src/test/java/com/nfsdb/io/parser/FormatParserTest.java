@@ -57,7 +57,7 @@ public class FormatParserTest {
 
     @Test
     public void testRandomText() throws Exception {
-        open("/upload.html");
+        open("/site/public/upload.html");
         p.of(this.address, this.len);
         Assert.assertTrue(p.getStdDev() > 1d);
     }
