@@ -298,6 +298,21 @@ $(document).ready(function () {
 $(document).ready(function () {
     'use strict';
 
+    var sqlEditorStyle = $('.sql-editor');
+    var fileUploadStyle = $('.file-upload');
+
+    $('a#sql-editor').click(function () {
+        sqlEditorStyle.css('display', 'block');
+        fileUploadStyle.css('display', 'none');
+        $('#sqlEditor').css('height', '240px');
+    });
+
+    $('a#file-upload').click(function () {
+        sqlEditorStyle.css('display', 'none');
+        fileUploadStyle.css('display', 'block');
+    });
+
+
     var e = ace.edit('sqlEditor');
     e.getSession().setMode('ace/mode/sql');
     e.setTheme('ace/theme/merbivore_soft');

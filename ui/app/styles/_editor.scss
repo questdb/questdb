@@ -19,6 +19,14 @@
  * limitations under the License.
  ******************************************************************************/
 
-.editor {
+.sql-editor {
+  display: block;
+}
+
+.file-upload {
+  display: none;
+}
+
+#sqlEditor {
   height: 240px;
 }

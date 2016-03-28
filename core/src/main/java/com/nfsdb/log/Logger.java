@@ -66,7 +66,11 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord $(CharSequence sequence) {
-        sink().put(sequence);
+        if (sequence == null) {
+            sink().put("null");
+        } else {
+            sink().put(sequence);
+        }
         return this;
     }
 

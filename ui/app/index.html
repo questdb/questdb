@@ -35,11 +35,11 @@
     <!-- endbower -->
     <!-- endbuild -->
 
-    <!-- build:css styles/main.css -->
+    <!-- build:css styles/nfsdb.css -->
     <link rel="stylesheet" href="styles/main.css">
     <!-- endbuild -->
 
-    <!-- build:js scripts/vendor/modernizr.js -->
+    <!-- build:js scripts/modernizr.js -->
     <script src="/bower_components/modernizr/modernizr.js"></script>
     <!-- endbuild -->
 </head>
@@ -63,10 +63,11 @@
                     </div>
                 </li>
                 <li>
-                    <a href="#"><i class="fa fa-table"></i> <span class="nav-label">SQL Editor</span></a>
+                    <a id="sql-editor" href="#"><i class="fa fa-table"></i> <span
+                            class="nav-label">SQL Console</span></a>
                 </li>
                 <li>
-                    <a href="#"><i class="fa fa-upload"></i> <span class="nav-label">Data upload</span></a>
+                    <a id="file-upload" href="#"><i class="fa fa-upload"></i> <span class="nav-label">Data import</span></a>
                 </li>
                 <li>
                     <a href="#"><i class="fa fa-pie-chart"></i> <span class="nav-label">Analytics</span> </a>
@@ -81,7 +82,7 @@
                 <div class="navbar-header">
                     <a class="navbar-minimalize minimalize-styl-2 btn btn-primary " href="#"><i class="fa fa-bars"></i>
                     </a>
-                    <form role="search" class="navbar-form-custom" action="search_results.html">
+                    <form class="navbar-form-custom" action="#">
                         <div class="form-group">
                             <input type="text" placeholder="Search for something..." class="form-control"
                                    name="top-search"
@@ -94,7 +95,7 @@
                         <span class="m-r-sm text-muted welcome-message">Welcome to NFSdb Console</span>
                     </li>
                     <li>
-                        <a href="login.html">
+                        <a href="#">
                             <i class="fa fa-sign-out"></i> Log out
                         </a>
                     </li>
@@ -102,12 +103,12 @@
 
             </nav>
         </div>
-        <div class="row wrapper border-bottom white-bg page-heading">
+        <div class="row wrapper border-bottom white-bg page-heading sql-editor">
             <div class="col-lg-10">
-                <h2>SQL Editor</h2>
+                <h2>SQL Console</h2>
             </div>
         </div>
-        <div class="wrapper wrapper-content animated fadeInRight">
+        <div class="wrapper wrapper-content animated fadeInRight sql-editor">
             <div class="row">
                 <div class="col-lg-12">
                     <div class="ibox">
@@ -147,12 +148,40 @@
                 </div>
             </div>
         </div>
-        <div class="footer">
-            <div class="pull-right">
-                10GB of <strong>250GB</strong> Free.
+        <div class="row wrapper border-bottom white-bg page-heading file-upload">
+            <div class="col-lg-10">
+                <h2>Data import</h2>
             </div>
+        </div>
+        <div class="wrapper wrapper-content animated fadeInRight file-upload">
+            <div class="row">
+                <div class="col-lg-12">
+                    <div class="ibox">
+                        <div class="ibox-content">
+                            <div id="dragTarget" class="drag-target drag-idle">
+                                <h2>Drag files here to import them into NFSdb</h2>
+                            </div>
+                            <table id="uploadTable" class="table table-hover">
+                                <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Size</th>
+                                    <th>Progress</th>
+                                    <th>Status</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="footer">
             <div>
-                <strong>Copyright</strong> Example Company &copy; 2014-2015
+                <strong>Copyright</strong> Appsicle Ltd. &copy; 2014-2016
             </div>
         </div>
 
@@ -190,26 +219,14 @@
 <script src="/bower_components/slickgrid/lib/jquery.event.drag-2.2.js"></script>
 <script src="/bower_components/slickgrid/slick.core.js"></script>
 <script src="/bower_components/slickgrid/slick.grid.js"></script>
-
+<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/tooltip.js"></script>
+<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/popover.js"></script>
 <!-- endbower -->
 <!-- endbuild -->
 
-<!-- build:js scripts/plugins.js -->
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/affix.js"></script>
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/alert.js"></script>
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/dropdown.js"></script>
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/tooltip.js"></script>
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/modal.js"></script>
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/transition.js"></script>
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/button.js"></script>
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/popover.js"></script>
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/carousel.js"></script>
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/scrollspy.js"></script>
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/collapse.js"></script>
-<script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/tab.js"></script>
-<!-- endbuild -->
-
-<!-- build:js scripts/main.js -->
+<!-- build:js scripts/nfsdb.js -->
+<script src="scripts/UploadController.js"></script>
+<script src="scripts/GridController.js"></script>
 <script src="scripts/main.js"></script>
 <!-- endbuild -->
 

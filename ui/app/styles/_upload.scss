@@ -19,12 +19,18 @@
  * limitations under the License.
  ******************************************************************************/
 
-$icon-font-path: '../fonts/';
+.drag-target {
+  background-color: #e8e8e8;
+  text-align: center;
+  margin-bottom: 30px;
+}
 
-// bower:scss
-@import "bower_components/bootstrap-sass/assets/stylesheets/_bootstrap.scss";
-// endbower
+.drag-idle {
+  border: 1px solid #c6c6c6;
+  padding: 30px;
+}
 
-@import "style";
-@import "_editor";
-@import "_upload";
+.drag-drop {
+  border: 4px dashed #c6c6c6;
+  padding: 27px;
+}
