@@ -44,16 +44,25 @@ function numberWithCommas(x) {
     return parts.join('.');
 }
 
+function nopropagation(e) {
+    'use strict';
+
+    e.stopPropagation();
+    if (e.preventDefault) {
+        e.preventDefault();
+    }
+}
+
 (function ($) {
     'use strict';
 
     function UploadController(div) {
-        var data = [];
+        var dict = {};
         var container = div;
         var canvas;
         var top = 0;
         var uploadQueue = [];
-        var uploading = false;
+        var uploaded = null;
 
         function init() {
             container.append('<div class="ud-header-row"><div class="ud-header ud-h0">File name</div><div class="ud-header ud-h1">Size</div><div class="ud-header ud-h2">Status</div></div>');
@@ -61,17 +70,42 @@ function numberWithCommas(x) {
             canvas = container.find('> .ud-canvas');
         }
 
+        function toggleRow() {
+            var id = $(this).parent().parent().attr('id');
+            var btn = $('#' + id).find('.fa');
+            var e = dict[id];
+
+            e.selected = !e.selected;
+
+            if (e.selected) {
+                btn.removeClass('fa-square-o');
+                btn.addClass('fa-check-square-o');
+            } else {
+                btn.removeClass('fa-check-square-o');
+                btn.addClass('fa-square-o');
+            }
+        }
+
+        function showDetail(e) {
+            var id = $(this).parent().attr('id');
+            console.log('showing ' + id);
+            $('#upload-detail').html(dict[id].response);
+            nopropagation(e);
+        }
+
         function render(e) {
-            canvas.append('<div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;"><div class="ud-cell ud-c0">' + e.name + '</div><div class="ud-cell ud-c1">' + e.size + '</div><div class="ud-cell ud-c2"><span class="label">pending</span></div></div>');
+            canvas.append('<div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;"><div class="ud-cell ud-c0"><i class="fa fa-square-o">&nbsp;&nbsp;</i>' + e.name + '</div><div class="ud-cell ud-c1">' + e.size + '</div><div class="ud-cell ud-c2"><span class="label">pending</span></div></div>');
+            var row = $('#' + e.id);
+            row.find('.fa').click(toggleRow);
+            row.find('.ud-c0').click(showDetail);
             top += 35;
         }
 
-        function updateProgress(e, uploaded) {
-            e.uploaded = uploaded;
-            var row = $('#' + e.id);
-            var uploadedFmt = uploaded < e.size ? numberWithCommas(uploaded) : e.sizeFmt;
-            row.find(' > .ud-c1').html(uploadedFmt + '<strong>/</strong>' + e.sizeFmt);
-            row.find(' > .ud-progress').css('width', (uploaded * 100 / e.size) + '%');
+        function updateProgress(event) {
+            if (event.lengthComputable) {
+                var pos = event.loaded || event.position;
+                $('#' + uploaded.id).find(' > .ud-progress').css('width', (pos * 100 / uploaded.size) + '%');
+            }
         }
 
         function status(e, html, processNext) {
@@ -84,56 +118,53 @@ function numberWithCommas(x) {
                 if (next) {
                     upload(next);
                 } else {
-                    uploading = false;
+                    uploaded = null;
                 }
             }
-        }
-
-        function success(e) {
-            status(e, '<span class="label label-success">success</span>', true);
         }
 
         function failure(e) {
             status(e, '<span class="label label-danger">failed</span>', true);
         }
 
+        function setupUploadProgressCallback() {
+            var xhrobj = $.ajaxSettings.xhr();
+            if (xhrobj.upload) {
+                xhrobj.upload.addEventListener('progress', updateProgress, false);
+            }
+            return xhrobj;
+        }
+
+        function success(r) {
+            uploaded.response = r;
+            console.log(uploaded.id);
+            console.log(uploaded.response);
+            status(uploaded, '<span class="label label-success">success</span>', true);
+        }
+
+        function error(xhr) {
+            uploaded.response = xhr.responseText;
+            failure(uploaded);
+        }
+
         function upload(e) {
 
-            uploading = true;
-
+            uploaded = e;
             status(e, '<span class="label label-info">uploading</span>', false);
-
-            var row = $('#' + e.id);
-            row.append('<div class="ud-progress"></div>');
+            $('#' + e.id).append('<div class="ud-progress"></div>');
 
             var fd = new FormData();
             fd.append('data', e.file);
             $.ajax({
-                xhr: function () {
-                    var xhrobj = $.ajaxSettings.xhr();
-                    if (xhrobj.upload) {
-                        xhrobj.upload.addEventListener('progress', function (event) {
-                            if (event.lengthComputable) {
-                                updateProgress(e, event.loaded || event.position);
-                            }
-                        }, false);
-                    }
-                    return xhrobj;
-                },
+                xhr: setupUploadProgressCallback,
                 url: '/imp',
                 type: 'POST',
                 contentType: false,
                 processData: false,
                 cache: false,
                 data: fd,
-                success: function (d) {
-                    e.response = d;
-                    success(e);
-                },
-                error: function (jqXHR) {
-                    e.response = jqXHR.responseText;
-                    failure(e);
-                }
+                success: success,
+                error: error
             });
         }
 
@@ -144,13 +175,13 @@ function numberWithCommas(x) {
                     id: guid(),
                     name: f.name,
                     size: f.size,
-                    uploaded: 0,
                     file: f,
-                    sizeFmt: numberWithCommas(f.size)
+                    sizeFmt: numberWithCommas(f.size),
+                    selected: false
                 };
-                data.push(e);
+                dict[e.id] = e;
                 render(e);
-                if (uploading) {
+                if (uploaded != null) {
                     uploadQueue.push(e);
                 } else {
                     upload(e);
@@ -178,14 +209,7 @@ $(document).ready(function () {
 
     var target = $('#dragTarget');
     var collection = $();
-    var controller = new nfsdb.UploadController($('#upload-detail'));
-
-    function nopropagation(e) {
-        e.stopPropagation();
-        if (e.preventDefault) {
-            e.preventDefault();
-        }
-    }
+    var controller = new nfsdb.UploadController($('#upload-list'));
 
     function dragDrop(e) {
         // clear in-out collection for drop box
