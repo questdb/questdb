@@ -1,0 +1,145 @@
+<!DOCTYPE html><!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ~  _  _ ___ ___     _ _
+  ~ | \| | __/ __| __| | |__
+  ~ | .` | _|\__ \/ _` | '_ \
+  ~ |_|\_|_| |___/\__,_|_.__/
+  ~
+  ~ Copyright (c) 2014-2016. The NFSdb project and its contributors.
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~ http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>NFSdb - Console</title>
+    <link rel="apple-touch-icon" href="apple-touch-icon.png"><!-- Place favicon.ico in the root directory -->
+    <link rel="stylesheet" href="styles/vendor.css">
+    <link rel="stylesheet" href="styles/nfsdb.css">
+    <script src="scripts/modernizr.js"></script>
+</head>
+<body class="pace-done">
+<div id="wrapper">
+    <nav class="navbar-default navbar-static-side" role="navigation">
+        <div class="sidebar-collapse">
+            <ul class="nav metismenu" id="side-menu">
+                <li class="nav-header">
+                    <div class="dropdown profile-element"><a data-toggle="dropdown" class="dropdown-toggle"
+                                                             href="#"><span class="clear"><h3>NFSdb Console</h3></span></a>
+                    </div>
+                    <div class="logo-element">NFSdb</div>
+                </li>
+                <li><a id="sql-editor" href="#"><i class="fa fa-table"></i> <span
+                        class="nav-label">SQL Console</span></a></li>
+                <li><a id="file-upload" href="#"><i class="fa fa-upload"></i> <span class="nav-label">Data import</span></a>
+                </li>
+                <li><a href="#"><i class="fa fa-pie-chart"></i> <span class="nav-label">Analytics</span></a></li>
+            </ul>
+        </div>
+    </nav>
+    <div id="page-wrapper" class="gray-bg">
+        <div class="row border-bottom">
+            <nav class="navbar navbar-static-top" role="navigation" style="margin-bottom: 0">
+                <div class="navbar-header"><a class="navbar-minimalize minimalize-styl-2 btn btn-primary" href="#"><i
+                        class="fa fa-bars"></i></a>
+                    <form class="navbar-form-custom" action="#">
+                        <div class="form-group"><input type="text" placeholder="Search for something..."
+                                                       class="form-control" name="top-search" id="top-search"></div>
+                    </form>
+                </div>
+                <ul class="nav navbar-top-links navbar-right">
+                    <li><span class="m-r-sm text-muted welcome-message">Welcome to NFSdb Console</span></li>
+                    <li><a href="#"><i class="fa fa-sign-out"></i> Log out</a></li>
+                </ul>
+            </nav>
+        </div>
+        <div class="row wrapper border-bottom white-bg page-heading sql-editor">
+            <div class="col-lg-10"><h2>SQL Console</h2></div>
+        </div>
+        <div class="wrapper wrapper-content animated fadeInRight sql-editor">
+            <div class="row">
+                <div class="col-lg-12">
+                    <div class="ibox">
+                        <div class="ibox-content">
+                            <div class="m-b-sm" id="editor-toolbar">
+                                <div class="btn-group pull-right">
+                                    <button class="btn btn-white btn-sm"><i class="fa fa-arrow-left"></i></button>
+                                </div>
+                                <button class="btn btn-white btn-sm m-r-sm" data-toggle="tooltip" data-placement="top"
+                                        title data-original-title="Execute query"><i class="fa fa-play"></i>&nbsp;&nbsp;Run
+                                </button>
+                                <button class="btn btn-white btn-sm" data-toggle="tooltip" data-placement="top" title
+                                        data-original-title="Copy to clipboard"><i class="fa fa-copy"></i></button>
+                                <button class="btn btn-white btn-sm" data-toggle="tooltip" data-placement="top" title
+                                        data-original-title="Cut clipboard"><i class="fa fa-scissors"></i></button>
+                                <button class="btn btn-white btn-sm m-r-sm" data-toggle="tooltip" data-placement="top"
+                                        title data-original-title="Paste"><i class="fa fa-clipboard"></i></button>
+                                <button class="btn btn-white btn-sm" data-toggle="tooltip" data-placement="top" title
+                                        data-original-title="Show invisible characters"><i class="fa fa-paragraph"></i>
+                                </button>
+                            </div>
+                            <div id="sqlEditor" class="editor"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-lg-12">
+                    <div class="ibox">
+                        <div class="ibox-content">
+                            <div id="grid"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row wrapper border-bottom white-bg page-heading file-upload">
+            <div class="col-lg-10"><h2>Data import</h2></div>
+        </div>
+        <div class="wrapper wrapper-content animated fadeInRight file-upload">
+            <div class="row">
+                <div class="col-lg-12">
+                    <div class="ibox">
+                        <div class="ibox-content">
+                            <div id="dragTarget" class="drag-target drag-idle"><h2>Drag files here to import them into
+                                NFSdb</h2></div>
+                            <div id="upload-detail"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="footer">
+            <div><strong>Copyright</strong> Appsicle Ltd. &copy; 2014-2016</div>
+        </div>
+    </div>
+</div><!-- Google Analytics: change UA-XXXXX-X to be your site's ID. -->
+<script>(function (b, o, i, l, e, r) {
+    b.GoogleAnalyticsObject = l;
+    b[l] || (b[l] =
+            function () {
+                (b[l].q = b[l].q || []).push(arguments)
+            });
+    b[l].l = +new Date;
+    e = o.createElement(i);
+    r = o.getElementsByTagName(i)[0];
+    e.src = 'https://www.google-analytics.com/analytics.js';
+    r.parentNode.insertBefore(e, r)
+}(window, document, 'script', 'ga'));
+ga('create', 'UA-XXXXX-X');
+ga('send', 'pageview');</script>
+<script src="scripts/vendor.js"></script>
+<script src="scripts/nfsdb.js"></script>
+</body>
+</html>

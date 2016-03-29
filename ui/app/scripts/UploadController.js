@@ -20,13 +20,165 @@
  ******************************************************************************/
 
 /*globals $:false */
+/*globals jQuery:false */
+/*globals nfsdb:false */
+
+/**
+ * @return {string}
+ */
+function s4() {
+    'use strict';
+    return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1);
+}
+
+function guid() {
+    'use strict';
+    return (s4() + s4() + '-' + s4() + '-' + s4() + '-' + s4() + '-' + s4() + s4() + s4());
+}
+
+function numberWithCommas(x) {
+    'use strict';
+
+    var parts = x.toString().split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return parts.join('.');
+}
+
+(function ($) {
+    'use strict';
+
+    function UploadController(div) {
+        var data = [];
+        var container = div;
+        var canvas;
+        var top = 0;
+        var uploadQueue = [];
+        var uploading = false;
+
+        function init() {
+            container.append('<div class="ud-header-row"><div class="ud-header ud-h0">File name</div><div class="ud-header ud-h1">Size</div><div class="ud-header ud-h2">Status</div></div>');
+            container.append('<div class="ud-canvas"></div>');
+            canvas = container.find('> .ud-canvas');
+        }
+
+        function render(e) {
+            canvas.append('<div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;"><div class="ud-cell ud-c0">' + e.name + '</div><div class="ud-cell ud-c1">' + e.size + '</div><div class="ud-cell ud-c2"><span class="label">pending</span></div></div>');
+            top += 35;
+        }
+
+        function updateProgress(e, uploaded) {
+            e.uploaded = uploaded;
+            var row = $('#' + e.id);
+            var uploadedFmt = uploaded < e.size ? numberWithCommas(uploaded) : e.sizeFmt;
+            row.find(' > .ud-c1').html(uploadedFmt + '<strong>/</strong>' + e.sizeFmt);
+            row.find(' > .ud-progress').css('width', (uploaded * 100 / e.size) + '%');
+        }
+
+        function status(e, html, processNext) {
+            var row = $('#' + e.id);
+            row.find(' > .ud-c2').html(html);
+            row.find(' > .ud-progress').remove();
+
+            if (processNext) {
+                var next = uploadQueue.shift();
+                if (next) {
+                    upload(next);
+                } else {
+                    uploading = false;
+                }
+            }
+        }
+
+        function success(e) {
+            status(e, '<span class="label label-success">success</span>', true);
+        }
+
+        function failure(e) {
+            status(e, '<span class="label label-danger">failed</span>', true);
+        }
+
+        function upload(e) {
+
+            uploading = true;
+
+            status(e, '<span class="label label-info">uploading</span>', false);
+
+            var row = $('#' + e.id);
+            row.append('<div class="ud-progress"></div>');
+
+            var fd = new FormData();
+            fd.append('data', e.file);
+            $.ajax({
+                xhr: function () {
+                    var xhrobj = $.ajaxSettings.xhr();
+                    if (xhrobj.upload) {
+                        xhrobj.upload.addEventListener('progress', function (event) {
+                            if (event.lengthComputable) {
+                                updateProgress(e, event.loaded || event.position);
+                            }
+                        }, false);
+                    }
+                    return xhrobj;
+                },
+                url: '/imp',
+                type: 'POST',
+                contentType: false,
+                processData: false,
+                cache: false,
+                data: fd,
+                success: function (d) {
+                    e.response = d;
+                    success(e);
+                },
+                error: function (jqXHR) {
+                    e.response = jqXHR.responseText;
+                    failure(e);
+                }
+            });
+        }
+
+        function add(files) {
+            for (var i = 0; i < files.length; i++) {
+                var f = files[i];
+                var e = {
+                    id: guid(),
+                    name: f.name,
+                    size: f.size,
+                    uploaded: 0,
+                    file: f,
+                    sizeFmt: numberWithCommas(f.size)
+                };
+                data.push(e);
+                render(e);
+                if (uploading) {
+                    uploadQueue.push(e);
+                } else {
+                    upload(e);
+                }
+            }
+        }
+
+        init();
+
+        return {
+            'add': add
+        };
+    }
+
+    $.extend(true, window, {
+        nfsdb: {
+            UploadController: UploadController
+        }
+    });
+
+}(jQuery));
 
 $(document).ready(function () {
     'use strict';
 
-    var tab = $('#uploadTable');
     var target = $('#dragTarget');
     var collection = $();
+    var controller = new nfsdb.UploadController($('#upload-detail'));
 
     function nopropagation(e) {
         e.stopPropagation();
@@ -35,19 +187,13 @@ $(document).ready(function () {
         }
     }
 
-    function addFilesToTable(files) {
-        for (var i = 0; i < files.length; i++) {
-            var f = files[i];
-            tab.find('> tbody:last-child').append('<tr><td>' + f.name + '</td><td>' + f.size + '</td><td>0</td><td>uploading</td></tr>');
-        }
-    }
-
     function dragDrop(e) {
+        // clear in-out collection for drop box
         collection = $();
         target.removeClass('drag-drop');
         target.addClass('drag-idle');
         e.preventDefault();
-        addFilesToTable(e.originalEvent.dataTransfer.files);
+        controller.add(e.originalEvent.dataTransfer.files);
     }
 
     target.on('drop', dragDrop);
@@ -85,21 +231,15 @@ $(document).ready(function () {
 
     target.dndhover().on({
         'dndHoverStart': function (event) {
-
             target.addClass('drag-drop');
             target.removeClass('drag-idle');
-
-            event.stopPropagation();
-            event.preventDefault();
+            nopropagation(event);
             return false;
         },
         'dndHoverEnd': function (event) {
-
             target.removeClass('drag-drop');
             target.addClass('drag-idle');
-
-            event.stopPropagation();
-            event.preventDefault();
+            nopropagation(event);
             return false;
         }
     });

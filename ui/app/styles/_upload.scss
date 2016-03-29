@@ -19,6 +19,9 @@
  * limitations under the License.
  ******************************************************************************/
 
+$detail-border: 1px solid #e6e6e6;
+$drag-drop-border: #c6c6c6;
+
 .drag-target {
   background-color: #e8e8e8;
   text-align: center;
@@ -26,11 +29,84 @@
 }
 
 .drag-idle {
-  border: 1px solid #c6c6c6;
+  border: 1px solid $drag-drop-border;
   padding: 30px;
 }
 
 .drag-drop {
-  border: 4px dashed #c6c6c6;
+  border: 4px dashed $drag-drop-border;
   padding: 27px;
+}
+
+.ud-canvas {
+  position: relative;
+  height: 240px;
+  overflow: auto;
+}
+
+.ud-row {
+  position: absolute;
+  width: 100%;
+  line-height: 31px;
+  height: 35px;
+  border-bottom: $detail-border;
+}
+
+$transparent-border: 1px solid transparent;
+
+.ud-cell, .ud-header {
+  vertical-align: middle;
+}
+
+.ud-cell {
+  position: absolute;
+  border: $transparent-border;
+  padding: 1px 4px 2px 4px;
+  text-overflow: ellipsis;
+}
+
+.ud-progress {
+  position: absolute;
+  height: 4px;
+  width: 0;
+  background-color: $navy;
+  opacity: 0.4;
+  top: 30px;
+}
+
+.ud-c0 {
+  right: 100%;
+  left: 0;
+  width: 70%;
+}
+
+.ud-c1 {
+  right: 30%;
+  left: 70%;
+  width: 20%;
+}
+
+.ud-c2 {
+  right: 10%;
+  left: 90%;
+  width: 10%;
+}
+
+.ud-header {
+  display: inline-block;
+  padding: 5px 4px 7px 4px;
+  font-weight: bold;
+  border-bottom: $detail-border;
+}
+
+.ud-h0 {
+  width: 70%;
+}
+
+.ud-h1 {
+  width: 20%;
+}
+
+.ud-h2 {
+  width: 10%;
 }
