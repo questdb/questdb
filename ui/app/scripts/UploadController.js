@@ -38,10 +38,19 @@ function guid() {
 
 function numberWithCommas(x) {
     'use strict';
+    if (x < 1024) {
+        return x;
+    }
 
-    var parts = x.toString().split('.');
-    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    return parts.join('.');
+    if (x < 1024 * 1024) {
+        return Math.round(x / 1024) + 'KB';
+    }
+
+    if (x < 1024 * 1024 * 1024) {
+        return Math.round(x / 1024 / 1024) + 'MB';
+    }
+
+    return Math.round(x / 1024 / 1024 / 1024) + 'GB';
 }
 
 function nopropagation(e) {
@@ -94,7 +103,7 @@ function nopropagation(e) {
         }
 
         function render(e) {
-            canvas.append('<div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;"><div class="ud-cell ud-c0"><i class="fa fa-square-o">&nbsp;&nbsp;</i>' + e.name + '</div><div class="ud-cell ud-c1">' + e.size + '</div><div class="ud-cell ud-c2"><span class="label">pending</span></div></div>');
+            canvas.append('<div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;"><div class="ud-cell ud-c0"><i class="fa fa-square-o">&nbsp;&nbsp;</i>' + e.name + '</div><div class="ud-cell ud-c1">' + e.sizeFmt + '</div><div class="ud-cell ud-c2"><span class="label">pending</span></div></div>');
             var row = $('#' + e.id);
             row.find('.fa').click(toggleRow);
             row.find('.ud-c0').click(showDetail);
@@ -150,7 +159,7 @@ function nopropagation(e) {
         function upload(e) {
 
             uploaded = e;
-            status(e, '<span class="label label-info">uploading</span>', false);
+            status(e, '<span class="label label-info">importing</span>', false);
             $('#' + e.id).append('<div class="ud-progress"></div>');
 
             var fd = new FormData();
