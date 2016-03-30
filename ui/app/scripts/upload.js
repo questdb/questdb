@@ -21,7 +21,6 @@
 
 /*globals $:false */
 /*globals jQuery:false */
-/*globals nfsdb:false */
 
 /**
  * @return {string}
@@ -65,22 +64,16 @@ function nopropagation(e) {
 (function ($) {
     'use strict';
 
-    function UploadController(div) {
+    $.fn.importManager = function () {
         var dict = {};
-        var container = div;
+        var container = this;
         var canvas;
         var top = 0;
         var uploadQueue = [];
         var uploaded = null;
 
-        function init() {
-            container.append('<div class="ud-header-row"><div class="ud-header ud-h0">File name</div><div class="ud-header ud-h1">Size</div><div class="ud-header ud-h2">Status</div></div>');
-            container.append('<div class="ud-canvas"></div>');
-            canvas = container.find('> .ud-canvas');
-        }
-
         function toggleRow() {
-            var id = $(this).parent().parent().attr('id');
+            var id = $(this).parent().attr('id');
             var btn = $('#' + id).find('.fa');
             var e = dict[id];
 
@@ -97,16 +90,17 @@ function nopropagation(e) {
 
         function showDetail(e) {
             var id = $(this).parent().attr('id');
-            console.log('showing ' + id);
             $('#upload-detail').html(dict[id].response);
             nopropagation(e);
         }
 
         function render(e) {
-            canvas.append('<div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;"><div class="ud-cell ud-c0"><i class="fa fa-square-o">&nbsp;&nbsp;</i>' + e.name + '</div><div class="ud-cell ud-c1">' + e.sizeFmt + '</div><div class="ud-cell ud-c2"><span class="label">pending</span></div></div>');
+            canvas.append('<div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;"><div class="ud-cell ud-c0"><i class="fa fa-square-o"></i></div><div class="ud-cell ud-c1">' + e.name + '</div><div class="ud-cell ud-c2">' + e.sizeFmt + '</div><div class="ud-cell ud-c3"><span class="label">pending</span></div></div>');
             var row = $('#' + e.id);
-            row.find('.fa').click(toggleRow);
-            row.find('.ud-c0').click(showDetail);
+            row.find('.ud-c0').click(toggleRow);
+            row.find('.ud-c1').click(showDetail);
+            row.find('.ud-c2').click(showDetail);
+            row.find('.ud-c3').click(showDetail);
             top += 35;
         }
 
@@ -119,7 +113,7 @@ function nopropagation(e) {
 
         function status(e, html, processNext) {
             var row = $('#' + e.id);
-            row.find(' > .ud-c2').html(html);
+            row.find(' > .ud-c3').html(html);
             row.find(' > .ud-progress').remove();
 
             if (processNext) {
@@ -132,10 +126,6 @@ function nopropagation(e) {
             }
         }
 
-        function failure(e) {
-            status(e, '<span class="label label-danger">failed</span>', true);
-        }
-
         function setupUploadProgressCallback() {
             var xhrobj = $.ajaxSettings.xhr();
             if (xhrobj.upload) {
@@ -146,35 +136,32 @@ function nopropagation(e) {
 
         function success(r) {
             uploaded.response = r;
-            console.log(uploaded.id);
-            console.log(uploaded.response);
             status(uploaded, '<span class="label label-success">success</span>', true);
         }
 
         function error(xhr) {
             uploaded.response = xhr.responseText;
-            failure(uploaded);
+            status(uploaded, '<span class="label label-danger">failed</span>', true);
         }
 
-        function upload(e) {
+        var request = {
+            xhr: setupUploadProgressCallback,
+            url: '/imp',
+            type: 'POST',
+            contentType: false,
+            processData: false,
+            cache: false,
+            success: success,
+            error: error
+        };
 
+        function upload(e) {
             uploaded = e;
             status(e, '<span class="label label-info">importing</span>', false);
             $('#' + e.id).append('<div class="ud-progress"></div>');
-
-            var fd = new FormData();
-            fd.append('data', e.file);
-            $.ajax({
-                xhr: setupUploadProgressCallback,
-                url: '/imp',
-                type: 'POST',
-                contentType: false,
-                processData: false,
-                cache: false,
-                data: fd,
-                success: success,
-                error: error
-            });
+            request.data = new FormData();
+            request.data.append('data', e.file);
+            $.ajax(request);
         }
 
         function add(files) {
@@ -198,84 +185,81 @@ function nopropagation(e) {
             }
         }
 
+        container.append('<div class="ud-header-row"><div class="ud-header ud-h0">&nbsp;</div><div class="ud-header ud-h1">File name</div><div class="ud-header ud-h2">Size</div><div class="ud-header ud-h3">Status</div></div>');
+        container.append('<div class="ud-canvas"></div>');
+        canvas = container.find('> .ud-canvas');
+        // subscribe to document event
+        $(document).on('dropbox.files', function (x, dataTransfer) {
+            add(dataTransfer.files);
+        });
+
+        return this;
+    };
+
+    // this class will manage drag&drop into dropbox element and
+    // broadcast file readiness to document via custom event 'dropbox.files'
+    $.fn.dropbox = function () {
+
+        var collection = $();
+        var target = this;
+
+        function startDrag() {
+            target.addClass('drag-drop').removeClass('drag-idle');
+        }
+
+        function endDrag() {
+            target.removeClass('drag-drop').addClass('drag-idle');
+        }
+
+        function init() {
+            target.on('drop', function (evt) {
+                endDrag();
+                collection = $();
+                $(document).trigger('dropbox.files', evt.originalEvent.dataTransfer);
+            });
+
+            // deal with event propagation to child elements
+            // http://stackoverflow.com/questions/10867506/dragleave-of-parent-element-fires-when-dragging-over-children-elements
+
+            target.each(function () {
+
+                var self = $(this);
+
+                self.on('dragenter', function (event) {
+                    if (collection.size() === 0) {
+                        nopropagation(event);
+                        startDrag();
+                    }
+                    collection = collection.add(event.target);
+                });
+
+                self.on('dragleave', function (event) {
+                    /*
+                     * Firefox 3.6 fires the dragleave event on the previous element
+                     * before firing dragenter on the next one so we introduce a delay
+                     */
+                    setTimeout(function () {
+                        collection = collection.not(event.target);
+                        if (collection.size() === 0) {
+                            endDrag();
+                        }
+                    }, 1);
+                });
+            });
+
+        }
+
         init();
 
-        return {
-            'add': add
-        };
-    }
-
-    $.extend(true, window, {
-        nfsdb: {
-            UploadController: UploadController
-        }
-    });
-
+        return this;
+    };
 }(jQuery));
 
 $(document).ready(function () {
     'use strict';
 
-    var target = $('#dragTarget');
-    var collection = $();
-    var controller = new nfsdb.UploadController($('#upload-list'));
-
-    function dragDrop(e) {
-        // clear in-out collection for drop box
-        collection = $();
-        target.removeClass('drag-drop');
-        target.addClass('drag-idle');
-        e.preventDefault();
-        controller.add(e.originalEvent.dataTransfer.files);
-    }
-
-    target.on('drop', dragDrop);
-
-    // deal with event propagation to child elements
-    // http://stackoverflow.com/questions/10867506/dragleave-of-parent-element-fires-when-dragging-over-children-elements
-
-    $.fn.dndhover = function () {
-
-        return this.each(function () {
-
-            var self = $(this);
-
-            self.on('dragenter', function (event) {
-                if (collection.size() === 0) {
-                    self.trigger('dndHoverStart');
-                }
-                collection = collection.add(event.target);
-            });
-
-            self.on('dragleave', function (event) {
-                /*
-                 * Firefox 3.6 fires the dragleave event on the previous element
-                 * before firing dragenter on the next one so we introduce a delay
-                 */
-                setTimeout(function () {
-                    collection = collection.not(event.target);
-                    if (collection.size() === 0) {
-                        self.trigger('dndHoverEnd');
-                    }
-                }, 1);
-            });
-        });
-    };
-
-    target.dndhover().on({
-        'dndHoverStart': function (event) {
-            target.addClass('drag-drop');
-            target.removeClass('drag-idle');
-            nopropagation(event);
-            return false;
-        },
-        'dndHoverEnd': function (event) {
-            target.removeClass('drag-drop');
-            target.addClass('drag-idle');
-            nopropagation(event);
-            return false;
-        }
-    });
+    $('#dragTarget').dropbox();
+    $('#upload-list').importManager();
 
     //
     // prevent dropping files into rest of document

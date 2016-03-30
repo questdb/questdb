@@ -52,6 +52,10 @@ $drag-drop-border: #c6c6c6;
   border-bottom: $detail-border;
 }
 
+.ud-row:hover {
+  background-color: #f6f6f6;
+}
+
 $transparent-border: 1px solid transparent;
 
 .ud-cell, .ud-header {
@@ -77,16 +81,23 @@ $transparent-border: 1px solid transparent;
 .ud-c0 {
   right: 100%;
   left: 0;
-  width: 70%;
+  width: 5%;
 }
 
 .ud-c1 {
+  right: 95%;
+  left: 5%;
+  width: 65%;
+  cursor: pointer;
+}
+
+.ud-c2 {
   right: 30%;
   left: 70%;
   width: 20%;
 }
 
-.ud-c2 {
+.ud-c3 {
   right: 10%;
   left: 90%;
   width: 10%;
@@ -100,21 +111,25 @@ $transparent-border: 1px solid transparent;
 }
 
 .ud-h0 {
-  width: 70%;
+  width: 5%;
 }
 
 .ud-h1 {
-  width: 20%;
+  width: 65%;
 }
 
 .ud-h2 {
+  width: 20%;
+}
+
+.ud-h3 {
   width: 10%;
 }
 
 .ud-row i.fa {
   font-size: 160%;
   vertical-align: middle;
-  cursor: hand;
+  cursor: pointer;
 }
 
 #upload-detail {
