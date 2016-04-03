@@ -1,0 +1,120 @@
+/*******************************************************************************
+ *  _  _ ___ ___     _ _
+ * | \| | __/ __| __| | |__
+ * | .` | _|\__ \/ _` | '_ \
+ * |_|\_|_| |___/\__,_|_.__/
+ *
+ * Copyright (c) 2014-2016. The NFSdb project and its contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ ******************************************************************************/
+
+$stats-height: 35px;
+
+.stats-switcher-viewport {
+  height: $stats-height;
+  overflow: hidden;
+}
+
+.stats-switcher {
+  position: relative;
+  top: 0;
+  -webkit-transition: top 0.25s ease-in-out;
+  transition: top 0.25s ease-in-out;
+}
+
+.stats-visible {
+  top: -$stats-height;
+}
+
+.import-stats-chart {
+  border-radius: $boder-radius;
+}
+
+.import-stats, .import-imported-table, .import-imported-stats {
+  height: $stats-height;
+}
+
+.import-imported-stats {
+  width: 50%;
+  text-align: center;
+  padding: 5px 0;
+}
+
+.import-imported, .import-rejected {
+  height: 8px;
+  cursor: pointer;
+}
+
+.import-rejected {
+  width: 10%;
+  background-color: $red;
+}
+
+.import-imported {
+  width: 90%;
+  background-color: $blue;
+}
+
+// grid
+
+.grid {
+  height: 400px;
+  padding-top: 15px;
+}
+
+.gh-1 {
+  width: 25%;
+}
+
+.gh-2 {
+  width: 25%;
+}
+
+.gh-3 {
+  width: 20%;
+}
+
+.gh-4 {
+  width: 30%;
+}
+
+.gc-1 {
+  left: 0;
+  width: 25%;
+}
+
+.gc-2 {
+  left: 25%;
+  width: 25%;
+}
+
+.gc-3 {
+  left: 50%;
+  width: 20%;
+}
+
+.gc-4 {
+  left: 70%;
+  width: 30%;
+}
+
+.g-dynamic-select {
+  position: absolute;
+  display: none;
+  padding: 0;
+}
+
+.g-type {
+  cursor: pointer;
+}

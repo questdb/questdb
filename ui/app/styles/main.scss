@@ -27,4 +27,5 @@ $icon-font-path: '../fonts/';
 
 @import "style";
 @import "_editor";
-@import "_upload";
+@import "import";
+@import "import-detail";

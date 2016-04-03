@@ -71,6 +71,7 @@ function nopropagation(e) {
         var top = 0;
         var uploadQueue = [];
         var uploaded = null;
+        var rowHeight = 35;
 
         function toggleRow() {
             var id = $(this).parent().attr('id');
@@ -80,17 +81,15 @@ function nopropagation(e) {
             e.selected = !e.selected;
 
             if (e.selected) {
-                btn.removeClass('fa-square-o');
-                btn.addClass('fa-check-square-o');
+                btn.removeClass('fa-square-o').addClass('fa-check-square-o');
             } else {
-                btn.removeClass('fa-check-square-o');
-                btn.addClass('fa-square-o');
+                btn.removeClass('fa-check-square-o').addClass('fa-square-o');
             }
         }
 
         function showDetail(e) {
             var id = $(this).parent().attr('id');
-            $('#upload-detail').html(dict[id].response);
+            $('#upload-detail').html(dict[id].response.location);
             nopropagation(e);
         }
 
@@ -101,7 +100,7 @@ function nopropagation(e) {
             row.find('.ud-c1').click(showDetail);
             row.find('.ud-c2').click(showDetail);
             row.find('.ud-c3').click(showDetail);
-            top += 35;
+            top += rowHeight;
         }
 
         function updateProgress(event) {
@@ -134,8 +133,8 @@ function nopropagation(e) {
             return xhrobj;
         }
 
-        function success(r) {
-            uploaded.response = r;
+        function success(data) {
+            uploaded.response = data;
             status(uploaded, '<span class="label label-success">success</span>', true);
         }
 
@@ -146,7 +145,7 @@ function nopropagation(e) {
 
         var request = {
             xhr: setupUploadProgressCallback,
-            url: '/imp',
+            url: '/imp?fmt=json',
             type: 'POST',
             contentType: false,
             processData: false,
@@ -164,9 +163,14 @@ function nopropagation(e) {
             $.ajax(request);
         }
 
-        function add(files) {
-            for (var i = 0; i < files.length; i++) {
-                var f = files[i];
+        container.append('<div class="ud-header-row"><div class="ud-header ud-h0">&nbsp;</div><div class="ud-header ud-h1">File name</div><div class="ud-header ud-h2">Size</div><div class="ud-header ud-h3">Status</div></div>');
+        container.append('<div class="ud-canvas"></div>');
+        canvas = container.find('> .ud-canvas');
+
+        // subscribe to document event
+        $(document).on('dropbox.files', function (x, dataTransfer) {
+            for (var i = 0; i < dataTransfer.files.length; i++) {
+                var f = dataTransfer.files[i];
                 var e = {
                     id: guid(),
                     name: f.name,
@@ -183,14 +187,23 @@ function nopropagation(e) {
                     upload(e);
                 }
             }
-        }
+        });
 
-        container.append('<div class="ud-header-row"><div class="ud-header ud-h0">&nbsp;</div><div class="ud-header ud-h1">File name</div><div class="ud-header ud-h2">Size</div><div class="ud-header ud-h3">Status</div></div>');
-        container.append('<div class="ud-canvas"></div>');
-        canvas = container.find('> .ud-canvas');
-        // subscribe to document event
-        $(document).on('dropbox.files', function (x, dataTransfer) {
-            add(dataTransfer.files);
+        $(document).on('import.clearSelected', function () {
+            for (var id in dict) {
+                if (dict.hasOwnProperty(id) && dict[id].selected) {
+                    $('#' + id).remove();
+                    delete dict[id];
+                }
+            }
+
+            // rejig remaining rows
+            top = 0;
+            var rows = canvas.find('.ud-row');
+            for (var i = 0; i < rows.length; i++) {
+                $(rows[i]).css('top', top);
+                top += rowHeight;
+            }
         });
 
         return this;
@@ -258,8 +271,16 @@ function nopropagation(e) {
 $(document).ready(function () {
     'use strict';
 
+    $('#btnClearSelected').click(function () {
+        $(document).trigger('import.clearSelected');
+    });
+
+    $('#btnRetry').click(function () {
+        $(document).trigger('import.retry');
+    });
+
     $('#dragTarget').dropbox();
-    $('#upload-list').importManager();
+    $('#import-file-list').importManager();
 
     //
     // prevent dropping files into rest of document

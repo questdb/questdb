@@ -32,6 +32,9 @@
     <!-- build:css styles/vendor.css -->
     <!-- bower:css -->
     <link rel="stylesheet" href="../bower_components/fontawesome/css/font-awesome.css">
+    <link rel="stylesheet" href="../bower_components/morris.js/morris.css">
+    <link rel="stylesheet" href="../bower_components/animate.css/animate.css">
+    <link rel="stylesheet" href="../bower_components/slickgrid/slick.grid.css">
     <!-- endbower -->
     <!-- endbuild -->
 
@@ -153,7 +156,7 @@
                 <h2>Data import</h2>
             </div>
         </div>
-        <div class="wrapper wrapper-content animated fadeInRight file-upload">
+        <div class="wrapper wrapper-content file-upload">
             <div class="row">
                 <div class="col-lg-12">
                     <div class="ibox">
@@ -162,14 +165,92 @@
                                 <h2>Drag files here to import</h2>
                             </div>
                             <div class="m-b-sm">
-                                <button class="btn btn-white btn-sm m-r-sm" data-toggle="tooltip" data-placement="top"
+                                <button id="btnClearSelected" class="btn btn-white btn-sm m-r-sm" data-toggle="tooltip"
+                                        data-placement="top"
                                         title data-original-title="Clear selected"><i class="fa fa-remove"></i>&nbsp;&nbsp;Clear
                                 </button>
-                                <button class="btn btn-white btn-sm" data-toggle="tooltip" data-placement="top" title
+                                <button id="btnRetry" class="btn btn-white btn-sm" data-toggle="tooltip"
+                                        data-placement="top" title
                                         data-original-title="Import selected"><i class="fa fa-upload"></i></button>
                             </div>
-                            <div id="upload-list"></div>
-                            <div id="upload-detail"></div>
+                            <div id="import-file-list"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-lg-12">
+                    <div class="ibox">
+                        <div class="ibox-title">
+                            <h5>
+                                Import details
+                                <small class="m-l-sm">Feedback, configuration and re-try options</small>
+                            </h5>
+                        </div>
+                        <div class="ibox-content">
+                            <div id="upload-detail">
+                                <div class="row">
+                                    <div class="col-lg-12">
+                                        <div class="stats-switcher-viewport">
+                                            <div class="stats-switcher">
+                                                <div class="row vertical-align import-imported-table">
+                                                    <div class="col-xs-3">
+                                                        <i class="fa fa-table fa-2x"></i>
+                                                    </div>
+                                                    <div class="col-xs-9 text-right">
+                                                        <h3 class="font-bold">ABCD</h3>
+                                                    </div>
+                                                </div>
+                                                <div class="import-stats">
+                                                    <div class="import-imported-stats pull-right"><i
+                                                            class="fa fa-thumbs-o-down fa-2x"></i>&nbsp;<span
+                                                            class="row-count">1023003</span>
+                                                        rows
+                                                    </div>
+                                                    <div class="import-imported-stats"><i
+                                                            class="fa fa-thumbs-o-up fa-2x"></i>&nbsp;<span
+                                                            class="row-count">15000000</span> rows
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-lg-12">
+                                        <div class="import-stats-chart">
+                                            <div class="import-rejected pull-right"></div>
+                                            <div class="import-imported"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-lg-12">
+                                        <div id="import-detail-grid" class="grid">
+                                            <div class="ud-header-row">
+                                                <div class="ud-header gh-1">Column name</div>
+                                                <div class="ud-header gh-2">Type</div>
+                                                <div class="ud-header gh-3">Size</div>
+                                                <div class="ud-header gh-4">Errors</div>
+                                            </div>
+                                            <div class="ud-canvas">
+                                                <div class="ud-row" style="top: 0">
+                                                    <div class="ud-cell gc-1 g-other">location</div>
+                                                    <div class="ud-cell gc-2 g-type">STRING</div>
+                                                    <div class="ud-cell gc-3 g-other">10</div>
+                                                    <div class="ud-cell gc-4 g-other">0</div>
+                                                </div>
+                                                <div class="ud-row" style="top: 35px">
+                                                    <div class="ud-cell gc-1 g-other">price</div>
+                                                    <div class="ud-cell gc-2 g-type">DOUBLE</div>
+                                                    <div class="ud-cell gc-3 g-other">8</div>
+                                                    <div class="ud-cell gc-4 g-other">1400</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -205,10 +286,10 @@
 
 <!-- build:js scripts/vendor.js -->
 <!-- bower:js -->
-<script src="/bower_components/jquery/dist/jquery.js"></script>
-<script src="/bower_components/metisMenu/dist/metisMenu.js"></script>
-<script src="/bower_components/jquery-slimscroll/jquery.slimscroll.js"></script>
-<script src="/bower_components/PACE/pace.js"></script>
+<script src="/bower_components/jquery/dist/jquery.min.js"></script>
+<script src="/bower_components/metisMenu/dist/metisMenu.min.js"></script>
+<script src="/bower_components/jquery-slimscroll/jquery.slimscroll.min.js"></script>
+<script src="/bower_components/PACE/pace.min.js"></script>
 <script src="/bower_components/ace-builds/src-noconflict/ace.js"></script>
 <script src="/bower_components/ace-builds/src-noconflict/mode-sql.js"></script>
 <script src="/bower_components/ace-builds/src-noconflict/theme-merbivore_soft.js"></script>
@@ -221,7 +302,8 @@
 <!-- endbuild -->
 
 <!-- build:js scripts/nfsdb.js -->
-<script src="scripts/upload.js"></script>
+<script src="scripts/import.js"></script>
+<script src="scripts/import-detail.js"></script>
 <script src="scripts/GridController.js"></script>
 <script src="scripts/main.js"></script>
 <!-- endbuild -->

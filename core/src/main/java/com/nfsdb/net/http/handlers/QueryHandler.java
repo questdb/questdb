@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
 
@@ -70,14 +70,6 @@ public class QueryHandler implements ContextHandler {
 
     public QueryHandler(JournalFactoryPool factoryPool) {
         this.factoryPool = factoryPool;
-    }
-
-    public long getCacheHits() {
-        return cacheHits.longValue();
-    }
-
-    public long getCacheMisses() {
-        return cacheMisses.longValue();
     }
 
     @Override
@@ -163,6 +155,7 @@ public class QueryHandler implements ContextHandler {
                 switch (ctx.state) {
                     case PREFIX:
                         r.bookmark();
+                        // todo: this may get stuck if query is too large, // FIXME: 31/03/2016 
                         r.put('{').putQuoted("query").put(':').putUtf8EscapedAndQuoted(ctx.query);
                         r.put(',').putQuoted("columns").put(':').put('[');
                         ctx.state = QueryState.METADATA;
@@ -375,6 +368,14 @@ public class QueryHandler implements ContextHandler {
             ctx.error().$("Error executing query. Server is shutting down. Query: ").$(ctx.query).$(e).$();
             sendException(r, ctx.query, 0, "Server is shutting down.", 500);
         }
+    }
+
+    long getCacheHits() {
+        return cacheHits.longValue();
+    }
+
+    long getCacheMisses() {
+        return cacheMisses.longValue();
     }
 
     private void sendDone(ChunkedResponse r, JsonHandlerContext ctx) throws DisconnectedChannelException, SlowWritableChannelException {

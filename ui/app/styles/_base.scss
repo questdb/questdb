@@ -542,6 +542,7 @@ code {
   border-image: none;
   border-style: solid solid none;
   border-width: 3px 0 0;
+  border-radius: $boder-radius;
   color: inherit;
   margin-bottom: 0;
   padding: 14px 15px 7px;
@@ -557,6 +558,7 @@ code {
   border-image: none;
   border-style: solid solid none;
   border-width: 1px 0;
+  border-radius: $boder-radius;
 }
 
 .ibox-footer {

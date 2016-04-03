@@ -19,13 +19,14 @@
  * limitations under the License.
  ******************************************************************************/
 
-$detail-border: 1px solid #e6e6e6;
+$grid-border: 1px solid #e6e6e6;
 $drag-drop-border: #c6c6c6;
 
 .drag-target {
   background-color: #e8e8e8;
   text-align: center;
   margin-bottom: 30px;
+  border-radius: $boder-radius;
 }
 
 .drag-idle {
@@ -38,9 +39,11 @@ $drag-drop-border: #c6c6c6;
   padding: 27px;
 }
 
+// file list
+
 .ud-canvas {
   position: relative;
-  height: 240px;
+  height: 200px;
   overflow: auto;
 }
 
@@ -49,7 +52,7 @@ $drag-drop-border: #c6c6c6;
   width: 100%;
   line-height: 31px;
   height: 35px;
-  border-bottom: $detail-border;
+  border-bottom: $grid-border;
 }
 
 .ud-row:hover {
@@ -79,26 +82,22 @@ $transparent-border: 1px solid transparent;
 }
 
 .ud-c0 {
-  right: 100%;
   left: 0;
   width: 5%;
 }
 
 .ud-c1 {
-  right: 95%;
   left: 5%;
   width: 65%;
   cursor: pointer;
 }
 
 .ud-c2 {
-  right: 30%;
   left: 70%;
   width: 20%;
 }
 
 .ud-c3 {
-  right: 10%;
   left: 90%;
   width: 10%;
 }
@@ -107,7 +106,7 @@ $transparent-border: 1px solid transparent;
   display: inline-block;
   padding: 5px 4px 7px 4px;
   font-weight: bold;
-  border-bottom: $detail-border;
+  border-bottom: $grid-border;
 }
 
 .ud-h0 {
@@ -130,8 +129,4 @@ $transparent-border: 1px solid transparent;
   font-size: 160%;
   vertical-align: middle;
   cursor: pointer;
-}
-
-#upload-detail {
-  height: 400px;
 }

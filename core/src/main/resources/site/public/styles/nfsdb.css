@@ -11003,6 +11003,7 @@ code {
     border-image: none;
     border-style: solid solid none;
     border-width: 3px 0 0;
+    border-radius: 3px;
     margin-bottom: 0;
     padding: 14px 15px 7px;
     min-height: 48px
@@ -11019,7 +11020,8 @@ code {
     border-color: #e7eaec;
     border-image: none;
     border-style: solid solid none;
-    border-width: 1px 0
+    border-width: 1px 0;
+    border-radius: 3px
 }
 
 .ibox-footer {
@@ -15902,13 +15904,15 @@ body.md-skin {
 }
 
 #sqlEditor {
-    height: 240px
+    height: 240px;
+    border-radius: 3px
 }
 
 .drag-target {
     background-color: #e8e8e8;
     text-align: center;
-    margin-bottom: 30px
+    margin-bottom: 30px;
+    border-radius: 3px
 }
 
 .drag-idle {
@@ -15923,7 +15927,7 @@ body.md-skin {
 
 .ud-canvas {
     position: relative;
-    height: 240px;
+    height: 200px;
     overflow: auto
 }
 
@@ -15960,26 +15964,22 @@ body.md-skin {
 }
 
 .ud-c0 {
-    right: 100%;
     left: 0;
     width: 5%
 }
 
 .ud-c1 {
-    right: 95%;
     left: 5%;
     width: 65%;
     cursor: pointer
 }
 
 .ud-c2 {
-    right: 30%;
     left: 70%;
     width: 20%
 }
 
 .ud-c3 {
-    right: 10%;
     left: 90%;
     width: 10%
 }
@@ -16013,6 +16013,94 @@ body.md-skin {
     cursor: pointer
 }
 
-#upload-detail {
-    height: 400px
+.stats-switcher-viewport {
+    height: 35px;
+    overflow: hidden
+}
+
+.stats-switcher {
+    position: relative;
+    top: 0;
+    -webkit-transition: top .25s ease-in-out;
+    transition: top .25s ease-in-out
+}
+
+.stats-visible {
+    top: -35px
+}
+
+.import-stats-chart {
+    border-radius: 3px
+}
+
+.import-imported-stats, .import-imported-table, .import-stats {
+    height: 35px
+}
+
+.import-imported-stats {
+    width: 50%;
+    text-align: center;
+    padding: 5px 0
+}
+
+.import-imported, .import-rejected {
+    height: 8px;
+    cursor: pointer
+}
+
+.import-rejected {
+    width: 10%;
+    background-color: #ed5565
+}
+
+.import-imported {
+    width: 90%;
+    background-color: #1c84c6
+}
+
+.grid {
+    height: 400px;
+    padding-top: 15px
+}
+
+.gh-1, .gh-2 {
+    width: 25%
+}
+
+.gh-3 {
+    width: 20%
+}
+
+.gh-4 {
+    width: 30%
+}
+
+.gc-1 {
+    left: 0;
+    width: 25%
+}
+
+.gc-2 {
+    left: 25%;
+    width: 25%
+}
+
+.gc-3 {
+    left: 50%;
+    width: 20%
+}
+
+.gc-4 {
+    left: 70%;
+    width: 30%
+}
+
+.g-dynamic-select {
+    position: absolute;
+    display: none;
+    padding: 0
+}
+
+.g-type {
+    cursor: pointer
 }

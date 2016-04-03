@@ -1,4 +1,4 @@
-/*
+/*******************************************************************************
  *  _  _ ___ ___     _ _
  * | \| | __/ __| __| | |__
  * | .` | _|\__ \/ _` | '_ \
@@ -17,7 +17,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
+ ******************************************************************************/
 
 package com.nfsdb.net.http.handlers;
 
@@ -34,6 +34,7 @@ import com.nfsdb.io.parser.listener.JournalImportListener;
 import com.nfsdb.io.sink.CharSink;
 import com.nfsdb.misc.Chars;
 import com.nfsdb.misc.Misc;
+import com.nfsdb.net.http.ChunkedResponse;
 import com.nfsdb.net.http.IOContext;
 import com.nfsdb.net.http.RequestHeaderBuffer;
 import com.nfsdb.net.http.ResponseSink;
@@ -122,47 +123,74 @@ public class ImportHandler extends AbstractMultipartHandler {
     private static void sendSummary(IOContext context, ImportHandlerContext h) throws IOException {
         if (h.importer != null && h.textParser != null) {
 
-            ResponseSink r = context.responseSink();
-
-            r.status(200, "text/plain; charset=utf-8");
-
-            JournalMetadata m = h.importer.getMetadata();
-            LongList errors = h.importer.getErrors();
-
-            sep(r);
-            r.put('|');
-            pad(r, TO_STRING_COL1_PAD, "Location:");
-            pad(r, TO_STRING_COL2_PAD, m.getLocation());
-            pad(r, TO_STRING_COL3_PAD, "Errors").put(Misc.EOL);
-
-
-            r.put('|');
-            pad(r, TO_STRING_COL1_PAD, "Partition by");
-            pad(r, TO_STRING_COL2_PAD, m.getPartitionType().name());
-            pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
-            sep(r);
-
-            r.put('|');
-            pad(r, TO_STRING_COL1_PAD, "Rows handled");
-            pad(r, TO_STRING_COL2_PAD, h.textParser.getLineCount());
-            pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
-
-            r.put('|');
-            pad(r, TO_STRING_COL1_PAD, "Rows imported");
-            pad(r, TO_STRING_COL2_PAD, h.importer.getImportedRowCount());
-            pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
-            sep(r);
-
-            for (int i = 0, n = m.getColumnCount(); i < n; i++) {
-                r.put('|');
-                pad(r, TO_STRING_COL1_PAD, i);
-                col(r, m.getColumnQuick(i));
-                pad(r, TO_STRING_COL3_PAD, errors.getQuick(i));
-                r.put(Misc.EOL);
+            CharSequence fmt = context.request.getUrlParam("fmt");
+            if (fmt != null && Chars.equals("json", fmt)) {
+                sendJsonSummary(context, h);
+            } else {
+                sendTextSummary(context, h);
             }
-            sep(r);
-            r.flush();
         }
+    }
+
+    private static void sendJsonSummary(IOContext context, ImportHandlerContext h) throws IOException {
+        ChunkedResponse r = context.chunkedResponse();
+
+        r.status(200, "application/json; charset=utf-8");
+        r.sendHeader();
+
+        JournalMetadata m = h.importer.getMetadata();
+        LongList errors = h.importer.getErrors();
+
+        r.put('{')
+                .putQuoted("location").put(':').putUtf8EscapedAndQuoted(m.getLocation()).put(',')
+                .putQuoted("rowsProcessed").put(':').put(h.textParser.getLineCount()).put(',')
+                .putQuoted("rowsImported").put(':').put(h.importer.getImportedRowCount())
+                .put('}');
+        r.flush();
+        r.done();
+    }
+
+    private static void sendTextSummary(IOContext context, ImportHandlerContext h) throws IOException {
+        ResponseSink r = context.responseSink();
+
+        r.status(200, "text/plain; charset=utf-8");
+
+        JournalMetadata m = h.importer.getMetadata();
+        LongList errors = h.importer.getErrors();
+
+        sep(r);
+        r.put('|');
+        pad(r, TO_STRING_COL1_PAD, "Location:");
+        pad(r, TO_STRING_COL2_PAD, m.getLocation());
+        pad(r, TO_STRING_COL3_PAD, "Errors").put(Misc.EOL);
+
+
+        r.put('|');
+        pad(r, TO_STRING_COL1_PAD, "Partition by");
+        pad(r, TO_STRING_COL2_PAD, m.getPartitionType().name());
+        pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
+        sep(r);
+
+        r.put('|');
+        pad(r, TO_STRING_COL1_PAD, "Rows handled");
+        pad(r, TO_STRING_COL2_PAD, h.textParser.getLineCount());
+        pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
+
+        r.put('|');
+        pad(r, TO_STRING_COL1_PAD, "Rows imported");
+        pad(r, TO_STRING_COL2_PAD, h.importer.getImportedRowCount());
+        pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
+        sep(r);
+
+        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+            r.put('|');
+            pad(r, TO_STRING_COL1_PAD, i);
+            col(r, m.getColumnQuick(i));
+            pad(r, TO_STRING_COL3_PAD, errors.getQuick(i));
+            r.put(Misc.EOL);
+        }
+        sep(r);
+        r.flush();
     }
 
     private void analyseFormat(ImportHandlerContext context, long address, int len) {
