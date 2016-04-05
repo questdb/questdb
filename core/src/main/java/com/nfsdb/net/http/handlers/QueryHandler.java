@@ -155,7 +155,6 @@ public class QueryHandler implements ContextHandler {
                 switch (ctx.state) {
                     case PREFIX:
                         r.bookmark();
-                        // todo: this may get stuck if query is too large, // FIXME: 31/03/2016 
                         r.put('{').putQuoted("query").put(':').putUtf8EscapedAndQuoted(ctx.query);
                         r.put(',').putQuoted("columns").put(':').put('[');
                         ctx.state = QueryState.METADATA;

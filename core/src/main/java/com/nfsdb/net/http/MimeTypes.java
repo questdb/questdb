@@ -98,7 +98,7 @@ public final class MimeTypes extends CharSequenceObjHashMap<CharSequence> implem
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         buf = ByteBuffers.release(buf);
     }
 }

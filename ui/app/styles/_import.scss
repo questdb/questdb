@@ -41,9 +41,13 @@ $drag-drop-border: #c6c6c6;
 
 // file list
 
+#btnImportClearSelected > i {
+  padding-right: 5px;
+}
+
 .ud-canvas {
   position: relative;
-  height: 200px;
+  height: 180px;
   overflow: auto;
 }
 
@@ -79,6 +83,7 @@ $transparent-border: 1px solid transparent;
   background-color: $navy;
   opacity: 0.4;
   top: 30px;
+  transition: 0.05s ease-in-out;
 }
 
 .ud-c0 {
@@ -125,7 +130,7 @@ $transparent-border: 1px solid transparent;
   width: 10%;
 }
 
-.ud-row i.fa {
+.ud-checkbox {
   font-size: 160%;
   vertical-align: middle;
   cursor: pointer;

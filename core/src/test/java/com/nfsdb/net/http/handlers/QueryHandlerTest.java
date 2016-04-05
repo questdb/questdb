@@ -53,25 +53,6 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     private static HttpServer server;
     private static QueryHandler handler;
 
-    public static QueryResponse download(String queryUrl, TemporaryFolder temp) throws Exception {
-        return download(queryUrl, -1, -1, false, temp);
-    }
-
-    public static void generateJournal(String name, int count) throws JournalException, NumericException {
-        generateJournal(name, new QueryResponse.Tab[0], count);
-    }
-
-    public static void generateJournal(String name, String id, double x, double y, long z, int w, Timestamp timestamp) throws JournalException, NumericException {
-        QueryResponse.Tab record = new QueryResponse.Tab();
-        record.id = id;
-        record.x = x;
-        record.y = y;
-        record.z = z;
-        record.w = w;
-        record.timestamp = timestamp;
-        generateJournal(name, new QueryResponse.Tab[]{record}, 1000);
-    }
-
     @BeforeClass
     public static void setUp() throws Exception {
         factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
@@ -205,6 +186,25 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         Assert.assertEquals("id2", r.result[0].id);
         Assert.assertEquals("id3", r.result[1].id);
         Assert.assertEquals(1000, r.totalCount);
+    }
+
+    static QueryResponse download(String queryUrl, TemporaryFolder temp) throws Exception {
+        return download(queryUrl, -1, -1, false, temp);
+    }
+
+    static void generateJournal(String name, int count) throws JournalException, NumericException {
+        generateJournal(name, new QueryResponse.Tab[0], count);
+    }
+
+    static void generateJournal(String name, String id, double x, double y, long z, int w, Timestamp timestamp) throws JournalException, NumericException {
+        QueryResponse.Tab record = new QueryResponse.Tab();
+        record.id = id;
+        record.x = x;
+        record.y = y;
+        record.z = z;
+        record.w = w;
+        record.timestamp = timestamp;
+        generateJournal(name, new QueryResponse.Tab[]{record}, 1000);
     }
 
     private static QueryResponse download(String queryUrl, int limitFrom, int limitTo, boolean count, TemporaryFolder temp) throws Exception {

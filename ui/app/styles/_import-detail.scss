@@ -19,18 +19,23 @@
  * limitations under the License.
  ******************************************************************************/
 
-$stats-height: 35px;
+$stats-height: 40px;
+
+#import-detail, .js-import-editor, .js-import-error {
+  display: none;
+}
 
 .stats-switcher-viewport {
   height: $stats-height;
   overflow: hidden;
 }
 
+$stats-transition: top 0.25s ease-in-out;
 .stats-switcher {
   position: relative;
   top: 0;
-  -webkit-transition: top 0.25s ease-in-out;
-  transition: top 0.25s ease-in-out;
+  -webkit-transition: $stats-transition;
+  transition: $stats-transition;
 }
 
 .stats-visible {
@@ -48,7 +53,7 @@ $stats-height: 35px;
 .import-imported-stats {
   width: 50%;
   text-align: center;
-  padding: 5px 0;
+  padding: 0;
 }
 
 .import-imported, .import-rejected {
@@ -69,44 +74,53 @@ $stats-height: 35px;
 // grid
 
 .grid {
-  height: 400px;
   padding-top: 15px;
 }
 
 .gh-1 {
-  width: 25%;
+  width: 5%;
 }
 
 .gh-2 {
-  width: 25%;
+  width: 50%;
 }
 
 .gh-3 {
-  width: 20%;
+  width: 25%;
 }
 
 .gh-4 {
-  width: 30%;
+  width: 5%;
 }
+
+.gh-5 {
+  width: 15%;
+}
+
 
 .gc-1 {
   left: 0;
-  width: 25%;
+  width: 5%;
 }
 
 .gc-2 {
-  left: 25%;
-  width: 25%;
+  left: 5%;
+  width: 50%;
 }
 
 .gc-3 {
-  left: 50%;
-  width: 20%;
+  left: 55%;
+  width: 25%;
 }
 
 .gc-4 {
-  left: 70%;
-  width: 30%;
+  left: 80%;
+  width: 5%;
+}
+
+.gc-5 {
+  left: 85%;
+  width: 15%;
 }
 
 .g-dynamic-select {
@@ -117,4 +131,15 @@ $stats-height: 35px;
 
 .g-type {
   cursor: pointer;
+}
+
+.g-warning {
+  color: #f8ac59;
+  padding: 0 5px;
+  font-size: 110%;
+}
+
+.g-type-separator {
+  padding: 0 5px;
+  font-size: 110%;
 }

@@ -165,30 +165,33 @@
                                 <h2>Drag files here to import</h2>
                             </div>
                             <div class="m-b-sm">
-                                <button id="btnClearSelected" class="btn btn-white btn-sm m-r-sm" data-toggle="tooltip"
-                                        data-placement="top"
-                                        title data-original-title="Clear selected"><i class="fa fa-remove"></i>&nbsp;&nbsp;Clear
+                                <button id="btnImportClearSelected" class="btn btn-white btn-sm" data-toggle="tooltip"
+                                        data-placement="top" disabled
+                                        title data-original-title="Clear selected"><i class="fa fa-remove"></i>Clear
                                 </button>
                                 <button id="btnRetry" class="btn btn-white btn-sm" data-toggle="tooltip"
-                                        data-placement="top" title
+                                        data-placement="top" title disabled
                                         data-original-title="Import selected"><i class="fa fa-upload"></i></button>
+                                <button id="btnImportCancel" class="btn btn-white btn-sm" data-toggle="tooltip"
+                                        data-placement="top" title disabled
+                                        data-original-title="Stop current import"><i class="fa fa-stop"></i></button>
                             </div>
                             <div id="import-file-list"></div>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="row">
+            <div class="row" id="import-detail">
                 <div class="col-lg-12">
-                    <div class="ibox">
-                        <div class="ibox-title">
-                            <h5>
-                                Import details
-                                <small class="m-l-sm">Feedback, configuration and re-try options</small>
-                            </h5>
-                        </div>
-                        <div class="ibox-content">
-                            <div id="upload-detail">
+                    <div class="js-import-editor">
+                        <div class="ibox">
+                            <div class="ibox-title">
+                                <h5>
+                                    Import details
+                                    <small class="m-l-sm">Feedback, configuration and re-try options</small>
+                                </h5>
+                            </div>
+                            <div class="ibox-content">
                                 <div class="row">
                                     <div class="col-lg-12">
                                         <div class="stats-switcher-viewport">
@@ -198,59 +201,74 @@
                                                         <i class="fa fa-table fa-2x"></i>
                                                     </div>
                                                     <div class="col-xs-9 text-right">
-                                                        <h3 class="font-bold">ABCD</h3>
+                                                        <h3 class="font-bold js-import-tab-name">ABCD</h3>
                                                     </div>
                                                 </div>
                                                 <div class="import-stats">
                                                     <div class="import-imported-stats pull-right"><i
-                                                            class="fa fa-thumbs-o-down fa-2x"></i>&nbsp;<span
-                                                            class="row-count">1023003</span>
+                                                            class="fa fa-thumbs-o-down"></i>&nbsp;<span
+                                                            class="js-rejected-row-count">1023003</span>
                                                         rows
                                                     </div>
                                                     <div class="import-imported-stats"><i
-                                                            class="fa fa-thumbs-o-up fa-2x"></i>&nbsp;<span
-                                                            class="row-count">15000000</span> rows
+                                                            class="fa fa-thumbs-o-up"></i>&nbsp;<span
+                                                            class="js-imported-row-count">15000000</span> rows
                                                     </div>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                                <div class="row">
-                                    <div class="col-lg-12">
-                                        <div class="import-stats-chart">
-                                            <div class="import-rejected pull-right"></div>
-                                            <div class="import-imported"></div>
+                                    <div class="row">
+                                        <div class="col-lg-12">
+                                            <div class="import-stats-chart">
+                                                <div class="import-rejected pull-right"></div>
+                                                <div class="import-imported"></div>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                                <div class="row">
-                                    <div class="col-lg-12">
-                                        <div id="import-detail-grid" class="grid">
-                                            <div class="ud-header-row">
-                                                <div class="ud-header gh-1">Column name</div>
-                                                <div class="ud-header gh-2">Type</div>
-                                                <div class="ud-header gh-3">Size</div>
-                                                <div class="ud-header gh-4">Errors</div>
-                                            </div>
-                                            <div class="ud-canvas">
-                                                <div class="ud-row" style="top: 0">
-                                                    <div class="ud-cell gc-1 g-other">location</div>
-                                                    <div class="ud-cell gc-2 g-type">STRING</div>
-                                                    <div class="ud-cell gc-3 g-other">10</div>
-                                                    <div class="ud-cell gc-4 g-other">0</div>
+                                    <div class="row">
+                                        <div class="col-lg-12">
+                                            <div class="grid">
+                                                <div class="ud-header-row">
+                                                    <div class="ud-header gh-1"><i class="fa fa-hashtag"></i></div>
+                                                    <div class="ud-header gh-2">Column name</div>
+                                                    <div class="ud-header gh-3">Type</div>
+                                                    <div class="ud-header gh-4">Size</div>
+                                                    <div class="ud-header gh-5">Errors</div>
                                                 </div>
-                                                <div class="ud-row" style="top: 35px">
-                                                    <div class="ud-cell gc-1 g-other">price</div>
-                                                    <div class="ud-cell gc-2 g-type">DOUBLE</div>
-                                                    <div class="ud-cell gc-3 g-other">8</div>
-                                                    <div class="ud-cell gc-4 g-other">1400</div>
+                                                <div class="ud-canvas">
+                                                    <div class="ud-row" style="top: 0">
+                                                        <div class="ud-cell gc-1 g-other js-g-row">1</div>
+                                                        <div class="ud-cell gc-2 g-other">location</div>
+                                                        <div class="ud-cell gc-3 g-type">STRING</div>
+                                                        <div class="ud-cell gc-4 g-other">10</div>
+                                                        <div class="ud-cell gc-5 g-other">0</div>
+                                                    </div>
+                                                    <div class="ud-row" style="top: 35px">
+                                                        <div class="ud-cell gc-1 g-other">2</div>
+                                                        <div class="ud-cell gc-2 g-other"><i
+                                                                class="fa fa-exclamation-triangle g-warning"></i>price
+                                                        </div>
+                                                        <div class="ud-cell gc-3 g-type">DOUBLE</div>
+                                                        <div class="ud-cell gc-4 g-other">8</div>
+                                                        <div class="ud-cell gc-5 g-other">1400</div>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                    <div class="panel panel-danger js-import-error">
+                        <div class="panel-heading">
+                            Import failed
+                        </div>
+                        <div class="panel-body">
+                            <p>
+                                Server rejected file due to unsupported file format.
+                            </p>
                         </div>
                     </div>
                 </div>

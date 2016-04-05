@@ -29,3 +29,7 @@ $icon-font-path: '../fonts/';
 @import "_editor";
 @import "import";
 @import "import-detail";
+
+.btn:disabled {
+  cursor: default;
+}

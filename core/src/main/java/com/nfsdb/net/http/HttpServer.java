@@ -57,10 +57,6 @@ public class HttpServer {
         this.configuration = configuration;
     }
 
-    public int getConnectionCount() {
-        return this.dispatcher.getConnectionCount();
-    }
-
     public void halt() throws IOException, InterruptedException {
         if (running) {
             running = false;
@@ -134,5 +130,9 @@ public class HttpServer {
             default:
                 throw new FatalError("Unsupported operating system");
         }
+    }
+
+    int getConnectionCount() {
+        return this.dispatcher.getConnectionCount();
     }
 }

@@ -69,6 +69,11 @@ public class IOContext implements Closeable, Mutable, Locality {
         }
     }
 
+    public SimpleResponse emergencyResponse() {
+        response.clear();
+        return response.asSimple();
+    }
+
     public FixedSizeResponse fixedSizeResponse() {
         return response.asFixedSize();
     }
@@ -76,10 +81,6 @@ public class IOContext implements Closeable, Mutable, Locality {
     @Override
     public LocalValueMap getMap() {
         return map;
-    }
-
-    public int getResponseCode() {
-        return response.getCode();
     }
 
     public ResponseSink responseSink() {
@@ -92,5 +93,9 @@ public class IOContext implements Closeable, Mutable, Locality {
 
     public SimpleResponse simpleResponse() {
         return response.asSimple();
+    }
+
+    int getResponseCode() {
+        return response.getCode();
     }
 }

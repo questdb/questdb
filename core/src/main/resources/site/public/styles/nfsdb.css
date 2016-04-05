@@ -15925,9 +15925,13 @@ body.md-skin {
     padding: 27px
 }
 
+#btnImportClearSelected > i {
+    padding-right: 5px
+}
+
 .ud-canvas {
     position: relative;
-    height: 200px;
+    height: 180px;
     overflow: auto
 }
 
@@ -15960,7 +15964,9 @@ body.md-skin {
     width: 0;
     background-color: #1ab394;
     opacity: .4;
-    top: 30px
+    top: 30px;
+    -webkit-transition: .05s ease-in-out;
+    transition: .05s ease-in-out
 }
 
 .ud-c0 {
@@ -16007,14 +16013,18 @@ body.md-skin {
     width: 10%
 }
 
-.ud-row i.fa {
+.ud-checkbox {
     font-size: 160%;
     vertical-align: middle;
     cursor: pointer
 }
 
+#import-detail, .js-import-editor, .js-import-error {
+    display: none
+}
+
 .stats-switcher-viewport {
-    height: 35px;
+    height: 40px;
     overflow: hidden
 }
 
@@ -16026,7 +16036,7 @@ body.md-skin {
 }
 
 .stats-visible {
-    top: -35px
+    top: -40px
 }
 
 .import-stats-chart {
@@ -16034,13 +16044,13 @@ body.md-skin {
 }
 
 .import-imported-stats, .import-imported-table, .import-stats {
-    height: 35px
+    height: 40px
 }
 
 .import-imported-stats {
     width: 50%;
     text-align: center;
-    padding: 5px 0
+    padding: 0
 }
 
 .import-imported, .import-rejected {
@@ -16059,40 +16069,52 @@ body.md-skin {
 }
 
 .grid {
-    height: 400px;
     padding-top: 15px
 }
 
-.gh-1, .gh-2 {
-    width: 25%
+.gh-1 {
+    width: 5%
+}
+
+.gh-2 {
+    width: 50%
 }
 
 .gh-3 {
-    width: 20%
+    width: 25%
 }
 
 .gh-4 {
-    width: 30%
+    width: 5%
+}
+
+.gh-5 {
+    width: 15%
 }
 
 .gc-1 {
     left: 0;
-    width: 25%
+    width: 5%
 }
 
 .gc-2 {
-    left: 25%;
-    width: 25%
+    left: 5%;
+    width: 50%
 }
 
 .gc-3 {
-    left: 50%;
-    width: 20%
+    left: 55%;
+    width: 25%
 }
 
 .gc-4 {
-    left: 70%;
-    width: 30%
+    left: 80%;
+    width: 5%
+}
+
+.gc-5 {
+    left: 85%;
+    width: 15%
 }
 
 .g-dynamic-select {
@@ -16103,4 +16125,17 @@ body.md-skin {
 
 .g-type {
     cursor: pointer
+}
+
+.g-warning {
+    color: #f8ac59
+}
+
+.g-type-separator, .g-warning {
+    padding: 0 5px;
+    font-size: 110%
+}
+
+.btn:disabled {
+    cursor: default
 }

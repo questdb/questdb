@@ -78,13 +78,13 @@
         init();
 
         return {
-            'sendQuery': sendQuery
+            sendQuery
         };
     }
 
     $.extend(true, window, {
         nfsdb: {
-            GridController: GridController
+            GridController
         }
     });
 

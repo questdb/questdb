@@ -66,13 +66,6 @@ public class IOHttpJob implements Job {
         return true;
     }
 
-    private static void silent(SimpleResponse sr, int code, CharSequence msg) {
-        try {
-            sr.send(code, msg);
-        } catch (IOException ignore) {
-        }
-    }
-
     private static void logAccess(IOContext context) {
         ACCESS.xinfo().
                 $ip(Net.getPeerIP(context.channel.getFd())).
@@ -142,7 +135,7 @@ public class IOHttpJob implements Job {
             context.clear();
             result = ChannelStatus.READ;
         } catch (HeadersTooLargeException ignored) {
-            silent(sr, 431, null);
+            silent(context, 431, null);
             LOG.info().$("Headers too large").$();
             logAccess(context);
             result = ChannelStatus.READ;
@@ -157,11 +150,18 @@ public class IOHttpJob implements Job {
             LOG.debug().$("Slow write").$();
             result = ChannelStatus.WRITE;
         } catch (Throwable e) {
-            silent(sr, 500, e.getMessage());
+            silent(context, 500, e.getMessage());
             result = ChannelStatus.DISCONNECTED;
             LOG.error().$("Internal error: ").$(e).$();
             logAccess(context);
         }
         ioDispatcher.registerChannel(context, result);
+    }
+
+    private void silent(IOContext context, int code, CharSequence msg) {
+        try {
+            context.emergencyResponse().send(code, msg);
+        } catch (IOException ignore) {
+        }
     }
 }

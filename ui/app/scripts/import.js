@@ -27,7 +27,7 @@
  */
 function s4() {
     'use strict';
-    return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1);
+    return ((1 + Math.random()) * 0x10000).toString(16).substring(1);
 }
 
 function guid() {
@@ -35,7 +35,7 @@ function guid() {
     return (s4() + s4() + '-' + s4() + '-' + s4() + '-' + s4() + '-' + s4() + s4() + s4());
 }
 
-function numberWithCommas(x) {
+function toSize(x) {
     'use strict';
     if (x < 1024) {
         return x;
@@ -72,6 +72,23 @@ function nopropagation(e) {
         var uploadQueue = [];
         var uploaded = null;
         var rowHeight = 35;
+        var xhr = null;
+
+        function updateBtnClear() {
+            var selected = false;
+
+            for (var id in dict) {
+                if (dict.hasOwnProperty(id) && dict[id].selected) {
+                    selected = true;
+                    break;
+                }
+            }
+            $('#btnImportClearSelected').attr('disabled', !selected);
+        }
+
+        function updateBtnImportCancel() {
+            $('#btnImportCancel').attr('disabled', uploaded === null);
+        }
 
         function toggleRow() {
             var id = $(this).parent().attr('id');
@@ -85,16 +102,20 @@ function nopropagation(e) {
             } else {
                 btn.removeClass('fa-check-square-o').addClass('fa-square-o');
             }
+
+            updateBtnClear();
         }
 
         function showDetail(e) {
-            var id = $(this).parent().attr('id');
-            $('#upload-detail').html(dict[id].response.location);
+            var item = dict[$(this).parent().attr('id')];
+            if (item.responseStatus) {
+                $(document).trigger('import.detail', item);
+            }
             nopropagation(e);
         }
 
         function render(e) {
-            canvas.append('<div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;"><div class="ud-cell ud-c0"><i class="fa fa-square-o"></i></div><div class="ud-cell ud-c1">' + e.name + '</div><div class="ud-cell ud-c2">' + e.sizeFmt + '</div><div class="ud-cell ud-c3"><span class="label">pending</span></div></div>');
+            canvas.append('<div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;"><div class="ud-cell ud-c0"><i class="fa fa-square-o ud-checkbox"></i></div><div class="ud-cell ud-c1">' + e.name + '</div><div class="ud-cell ud-c2">' + e.sizeFmt + '</div><div class="ud-cell ud-c3"><span class="label">pending</span></div></div>');
             var row = $('#' + e.id);
             row.find('.ud-c0').click(toggleRow);
             row.find('.ud-c1').click(showDetail);
@@ -121,8 +142,10 @@ function nopropagation(e) {
                     upload(next);
                 } else {
                     uploaded = null;
+                    xhr = null;
                 }
             }
+            updateBtnImportCancel();
         }
 
         function setupUploadProgressCallback() {
@@ -135,12 +158,18 @@ function nopropagation(e) {
 
         function success(data) {
             uploaded.response = data;
-            status(uploaded, '<span class="label label-success">success</span>', true);
+            uploaded.responseStatus = 200;
+            status(uploaded, '<span class="label label-success">imported</span>', true);
         }
 
-        function error(xhr) {
-            uploaded.response = xhr.responseText;
-            status(uploaded, '<span class="label label-danger">failed</span>', true);
+        function error(r) {
+            uploaded.response = r.responseText;
+            uploaded.responseStatus = r.status;
+            if (r.statusText !== 'abort') {
+                status(uploaded, '<span class="label label-danger">failed</span>', true);
+            } else {
+                status(uploaded, '<span class="label label-warning">aborted</span>', true);
+            }
         }
 
         var request = {
@@ -150,8 +179,8 @@ function nopropagation(e) {
             contentType: false,
             processData: false,
             cache: false,
-            success: success,
-            error: error
+            success,
+            error
         };
 
         function upload(e) {
@@ -160,15 +189,11 @@ function nopropagation(e) {
             $('#' + e.id).append('<div class="ud-progress"></div>');
             request.data = new FormData();
             request.data.append('data', e.file);
-            $.ajax(request);
+            xhr = $.ajax(request);
+            updateBtnImportCancel();
         }
 
-        container.append('<div class="ud-header-row"><div class="ud-header ud-h0">&nbsp;</div><div class="ud-header ud-h1">File name</div><div class="ud-header ud-h2">Size</div><div class="ud-header ud-h3">Status</div></div>');
-        container.append('<div class="ud-canvas"></div>');
-        canvas = container.find('> .ud-canvas');
-
-        // subscribe to document event
-        $(document).on('dropbox.files', function (x, dataTransfer) {
+        function add(x, dataTransfer) {
             for (var i = 0; i < dataTransfer.files.length; i++) {
                 var f = dataTransfer.files[i];
                 var e = {
@@ -176,8 +201,9 @@ function nopropagation(e) {
                     name: f.name,
                     size: f.size,
                     file: f,
-                    sizeFmt: numberWithCommas(f.size),
-                    selected: false
+                    sizeFmt: toSize(f.size),
+                    selected: false,
+                    imported: false
                 };
                 dict[e.id] = e;
                 render(e);
@@ -187,13 +213,21 @@ function nopropagation(e) {
                     upload(e);
                 }
             }
-        });
+        }
 
-        $(document).on('import.clearSelected', function () {
+        function clearSelected() {
             for (var id in dict) {
-                if (dict.hasOwnProperty(id) && dict[id].selected) {
-                    $('#' + id).remove();
-                    delete dict[id];
+                if (dict.hasOwnProperty(id)) {
+                    var e = dict[id];
+                    if (e.selected && e !== uploaded) {
+                        var uploadQueueIndex = uploadQueue.indexOf(e);
+                        if (uploadQueueIndex > -1) {
+                            delete uploadQueue[uploadQueueIndex];
+                        }
+                        $('#' + id).remove();
+                        delete dict[id];
+                        $(document).trigger('import.cleared', e);
+                    }
                 }
             }
 
@@ -204,7 +238,23 @@ function nopropagation(e) {
                 $(rows[i]).css('top', top);
                 top += rowHeight;
             }
-        });
+            updateBtnClear();
+        }
+
+        function abortImport() {
+            if (xhr !== null) {
+                xhr.abort();
+            }
+        }
+
+        container.append('<div class="ud-header-row"><div class="ud-header ud-h0">&nbsp;</div><div class="ud-header ud-h1">File name</div><div class="ud-header ud-h2">Size</div><div class="ud-header ud-h3">Status</div></div>');
+        container.append('<div class="ud-canvas"></div>');
+        canvas = container.find('> .ud-canvas');
+
+        // subscribe to document event
+        $(document).on('dropbox.files', add);
+        $(document).on('import.clearSelected', clearSelected);
+        $(document).on('import.cancel', abortImport);
 
         return this;
     };
@@ -271,8 +321,12 @@ function nopropagation(e) {
 $(document).ready(function () {
     'use strict';
 
-    $('#btnClearSelected').click(function () {
+    $('#btnImportClearSelected').click(function () {
         $(document).trigger('import.clearSelected');
+    });
+
+    $('#btnImportCancel').click(function () {
+        $(document).trigger('import.cancel');
     });
 
     $('#btnRetry').click(function () {
