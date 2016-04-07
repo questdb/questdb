@@ -38,7 +38,7 @@ public final class PrefixedPath extends AbstractCharSequence implements Closeabl
         this(prefix, 128);
     }
 
-    public PrefixedPath(CharSequence prefix, int minCapacity) {
+    PrefixedPath(CharSequence prefix, int minCapacity) {
 
         int l = prefix.length();
 

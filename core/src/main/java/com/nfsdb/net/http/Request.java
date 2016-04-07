@@ -95,7 +95,7 @@ public class Request implements Closeable, Mutable {
     }
 
     public boolean isMultipart() {
-        return hb.getContentType() != null && Chars.equals("multipart/form-data", hb.getContentType());
+        return Chars.equalsNc("multipart/form-data", hb.getContentType());
     }
 
     public void parseMultipart(IOContext context, MultipartListener handler)

@@ -116,6 +116,10 @@ public final class Chars {
         return true;
     }
 
+    public static boolean equalsNc(CharSequence l, CharSequence r) {
+        return r != null && equals(l, r);
+    }
+
     public static String getFileName(CharSequence path) {
         int pos = -1;
         for (int i = 0, k = path.length(); i < k; i++) {

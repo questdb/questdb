@@ -34,7 +34,7 @@ public interface JournalConfiguration {
 
     <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
 
-    JournalExistenceCheck exists(String location);
+    JournalExistenceCheck exists(CharSequence location);
 
     File getJournalBase();
 

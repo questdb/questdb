@@ -25,7 +25,10 @@ import com.nfsdb.JournalKey;
 import com.nfsdb.JournalMode;
 import com.nfsdb.ex.JournalException;
 import com.nfsdb.ex.JournalMetadataException;
+import com.nfsdb.misc.Files;
+import com.nfsdb.std.CompositePath;
 import com.nfsdb.std.ObjObjHashMap;
+import com.nfsdb.std.ThreadLocal;
 import com.nfsdb.store.TxLog;
 import com.nfsdb.store.UnstructuredFile;
 
@@ -33,12 +36,13 @@ import javax.annotation.concurrent.Immutable;
 import java.io.File;
 
 @Immutable
-public class JournalConfigurationImpl implements JournalConfiguration {
+class JournalConfigurationImpl implements JournalConfiguration {
 
+    private final static ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath.FACTORY);
     private final ObjObjHashMap<String, JournalMetadata> journalMetadata;
     private final File journalBase;
 
-    public JournalConfigurationImpl(File journalBase, ObjObjHashMap<String, JournalMetadata> journalMetadata) {
+    JournalConfigurationImpl(File journalBase, ObjObjHashMap<String, JournalMetadata> journalMetadata) {
         this.journalBase = journalBase;
         this.journalMetadata = journalMetadata;
     }
@@ -113,13 +117,15 @@ public class JournalConfigurationImpl implements JournalConfiguration {
         }
     }
 
-    public JournalExistenceCheck exists(String location) {
-        File base = new File(getJournalBase(), location);
-        if (!base.exists()) {
+    public JournalExistenceCheck exists(CharSequence location) {
+        CompositePath path = tlPath.get();
+
+        if (!Files.exists(path.of(getJournalBase().getAbsolutePath()).concat(location).$())) {
             return JournalExistenceCheck.DOES_NOT_EXIST;
         }
 
-        if (new File(base, TxLog.FILE_NAME).exists() && new File(base, JournalConfiguration.FILE_NAME).exists()) {
+        if (Files.exists(path.of(path.of(getJournalBase().getAbsolutePath()).concat(location).concat(TxLog.FILE_NAME).$()))
+                && Files.exists(path.of(path.of(getJournalBase().getAbsolutePath()).concat(location).concat(JournalConfiguration.FILE_NAME).$()))) {
             return JournalExistenceCheck.EXISTS;
         }
 

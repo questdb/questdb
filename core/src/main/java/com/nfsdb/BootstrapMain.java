@@ -31,6 +31,7 @@ import com.nfsdb.net.http.HttpServer;
 import com.nfsdb.net.http.HttpServerConfiguration;
 import com.nfsdb.net.http.MimeTypes;
 import com.nfsdb.net.http.SimpleUrlMatcher;
+import com.nfsdb.net.http.handlers.ExistenceCheckHandler;
 import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.QueryHandler;
 import com.nfsdb.net.http.handlers.StaticContentHandler;
@@ -76,6 +77,7 @@ class BootstrapMain {
         JournalFactory factory = new JournalFactory(configuration.getDbPath().getAbsolutePath());
         matcher.put("/imp", new ImportHandler(factory));
         matcher.put("/js", new QueryHandler(new JournalFactoryPool(factory.getConfiguration(), configuration.getJournalPoolSize())));
+        matcher.put("/chk", new ExistenceCheckHandler(factory));
         matcher.setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
 
         HttpServer server = new HttpServer(configuration, matcher);

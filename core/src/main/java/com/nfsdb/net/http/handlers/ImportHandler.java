@@ -334,8 +334,7 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     private void sendResponse(IOContext context) throws IOException {
         ImportHandlerContext h = lvContext.get(context);
-        CharSequence fmt = context.request.getUrlParam("fmt");
-        h.json = fmt != null && Chars.equals("json", fmt);
+        h.json = Chars.equalsNc("json", context.request.getUrlParam("fmt"));
         ChunkedResponse r = context.chunkedResponse();
 
         if (h.json) {

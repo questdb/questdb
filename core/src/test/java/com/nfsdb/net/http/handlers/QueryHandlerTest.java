@@ -38,6 +38,7 @@ import com.nfsdb.net.http.QueryResponse;
 import com.nfsdb.net.http.SimpleUrlMatcher;
 import com.nfsdb.ql.parser.AbstractOptimiserTest;
 import com.nfsdb.test.tools.HttpTestUtils;
+import com.nfsdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
@@ -60,6 +61,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
 
         server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/js", handler);
+            put("/chk", new ExistenceCheckHandler(factory));
         }});
 
         server.start();
@@ -70,6 +72,30 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public static void tearDown() throws Exception {
         server.halt();
         factoryPool.close();
+    }
+
+    @Test
+    public void testJournalDoesNotExist() throws Exception {
+        File f = temp.newFile();
+        String url = "http://localhost:9000/chk?j=tab2";
+        HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
+        TestUtils.assertEquals("DOES_NOT_EXIST\r\n", Files.readStringFromFile(f));
+    }
+
+    @Test
+    public void testJournalExist() throws Exception {
+        File f = temp.newFile();
+        String url = "http://localhost:9000/chk?j=tab";
+        HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
+        TestUtils.assertEquals("EXISTS\r\n", Files.readStringFromFile(f));
+    }
+
+    @Test
+    public void testJournalExistJson() throws Exception {
+        File f = temp.newFile();
+        String url = "http://localhost:9000/chk?j=tab&f=json";
+        HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
+        TestUtils.assertEquals("{\"status\":\"EXISTS\"}", Files.readStringFromFile(f));
     }
 
     @Test

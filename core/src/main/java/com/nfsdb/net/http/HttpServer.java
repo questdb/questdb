@@ -22,8 +22,11 @@
 package com.nfsdb.net.http;
 
 import com.nfsdb.ex.FatalError;
+import com.nfsdb.ex.NetworkError;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.iter.clock.MilliClock;
+import com.nfsdb.log.Log;
+import com.nfsdb.log.LogFactory;
 import com.nfsdb.misc.Misc;
 import com.nfsdb.misc.Os;
 import com.nfsdb.mp.*;
@@ -35,6 +38,7 @@ import java.net.InetSocketAddress;
 import java.util.concurrent.CountDownLatch;
 
 public class HttpServer {
+    private final static Log LOG = LogFactory.getLog(HttpServer.class);
     private final static int ioQueueSize = 1024;
     private final InetSocketAddress address;
     private final ObjList<Worker> workers;
@@ -88,7 +92,14 @@ public class HttpServer {
         ioPubSequence.followedBy(ioSubSequence);
         ioSubSequence.followedBy(ioPubSequence);
 
-        this.dispatcher = createDispatcher("0.0.0.0", address.getPort(), ioQueue, ioPubSequence, clock, configuration);
+        try {
+            this.dispatcher = createDispatcher("0.0.0.0", address.getPort(), ioQueue, ioPubSequence, clock, configuration);
+        } catch (NetworkError e) {
+            LOG.error().$("Server failed to start: ").$(e.getMessage()).$();
+            running = false;
+            return;
+        }
+
         IOHttpJob ioHttp = new IOHttpJob(ioQueue, ioSubSequence, this.dispatcher, urlMatcher);
 
         ObjHashSet<Job> jobs = new ObjHashSet<>();

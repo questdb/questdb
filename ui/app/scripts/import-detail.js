@@ -125,10 +125,10 @@
                 // records
                 if (e.response.columns) {
                     var top = 0;
-                    for (i = 0; i < e.response.columns.length; i++) {
-                        var col = e.response.columns[i];
+                    for (var k = 0; k < e.response.columns.length; k++) {
+                        var col = e.response.columns[k];
                         divCanvas.append('<div class="ud-row" style="top: ' + top + 'px">' +
-                            '<div class="ud-cell gc-1 g-other js-g-row">' + (i + 1) + '</div>' +
+                            '<div class="ud-cell gc-1 g-other js-g-row">' + (k + 1) + '</div>' +
                             '<div class="ud-cell gc-2 g-other">' + (col.errors > 0 ? '<i class="fa fa-exclamation-triangle g-warning"></i>' : '') + col.name + '</div>' +
                             '<div class="ud-cell gc-3 g-type">' + getTypeHtml(col) + '</div>' +
                             '<div class="ud-cell gc-4 g-other">' + col.size + '</div>' +
