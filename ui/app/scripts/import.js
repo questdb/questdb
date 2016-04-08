@@ -190,6 +190,7 @@ function nopropagation(e) {
             request.data = new FormData();
             request.data.append('data', e.file);
             xhr = $.ajax(request);
+            console.log('ajax is in flight');
             updateBtnImportCancel();
         }
 
