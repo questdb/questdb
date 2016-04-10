@@ -31,13 +31,14 @@
         var statsSwitcher = $('.stats-switcher');
         var divEditor = $(this).find('.js-import-editor');
         var msgPanel = $(this).find('.js-import-error');
-        var divMessage = msgPanel.find('p');
+        var divMessage = $(this).find('.js-message');
         var divTabName = $(this).find('.js-import-tab-name');
         var divRejectedPct = $(this).find('.import-rejected');
         var divImportedPct = $(this).find('.import-imported');
         var divRejectedCount = $(this).find('.js-rejected-row-count');
         var divImportedCount = $(this).find('.js-imported-row-count');
         var divCanvas = $(this).find('.ud-canvas');
+        var divBtnGroup = $(this).find('.js-import-error-btn-group');
         var lineHeight = 35;
         var select;
         var types = [
@@ -93,9 +94,23 @@
             }
         }
 
+        function calcModifiedFlag() {
+            var modified = false;
+            for (var i = 0; i < current.response.columns.length; i++) {
+                var col = current.response.columns[i];
+                if (col.altType && col.type !== col.altType) {
+                    modified = true;
+                    break;
+                }
+            }
+
+            $(document).trigger(modified ? 'import.line.overwrite' : 'import.line.cancel', current.id);
+        }
+
         function selectChange() {
             select.changeTargetCol.altType = $(this).find('option:selected').text();
             select.changeTargetDiv.html(getTypeHtml(select.changeTargetCol));
+            calcModifiedFlag();
             selectHide();
         }
 
@@ -106,7 +121,7 @@
         }
 
         function render(e) {
-            if (e.response && e.responseStatus === 200) {
+            if (e.response && e.importState === 0) {
                 divTabName.html(e.response.location);
 
                 // update "chart"
@@ -131,8 +146,7 @@
                             '<div class="ud-cell gc-1 g-other js-g-row">' + (k + 1) + '</div>' +
                             '<div class="ud-cell gc-2 g-other">' + (col.errors > 0 ? '<i class="fa fa-exclamation-triangle g-warning"></i>' : '') + col.name + '</div>' +
                             '<div class="ud-cell gc-3 g-type">' + getTypeHtml(col) + '</div>' +
-                            '<div class="ud-cell gc-4 g-other">' + col.size + '</div>' +
-                            '<div class="ud-cell gc-5 g-other">' + col.errors + '</div>' +
+                            '<div class="ud-cell gc-4 g-other">' + col.errors + '</div>' +
                             '</div>');
 
                         top += lineHeight;
@@ -145,24 +159,44 @@
                 divEditor.show();
                 msgPanel.hide();
             } else {
-                switch (e.responseStatus) {
-                    case 0:
+                switch (e.importState) {
+                    case 1:
+                        divMessage.html('Journal <strong>' + e.name + '</strong> already exists on server');
+                        divBtnGroup.show();
+                        break;
+                    case 2:
+                        divMessage.html('Journal name <strong>' + e.name + '</strong> is reserved');
+                        divBtnGroup.hide();
+                        break;
+                    case 3:
                         divMessage.html('Server is not responding...');
+                        divBtnGroup.hide();
                         break;
-                    case 400:
+                    case 4:
                         divMessage.html('Server rejected file due to unsupported file format.');
+                        divBtnGroup.hide();
                         break;
-                    case 500:
+                    case 5:
                         divMessage.html('Server encountered internal problem. Check server logs for more details.');
+                        divBtnGroup.hide();
                         break;
                     default:
                         divMessage.html('Unknown error: ' + e.responseStatus);
+                        divBtnGroup.hide();
                         break;
                 }
                 divEditor.hide();
                 msgPanel.show();
             }
             container.show();
+        }
+
+        function setupSelect() {
+            select = $('<select class="g-dynamic-select form-control m-b"/>');
+            for (var i = 0; i < types.length; i++) {
+                var val = types[i];
+                $('<option />', {value: val, text: val}).appendTo(select);
+            }
         }
 
         $(document).on('import.detail', function (x, e) {
@@ -177,12 +211,7 @@
             }
         });
 
-        select = $('<select class="g-dynamic-select form-control m-b"/>');
-
-        for (var i = 0; i < types.length; i++) {
-            var val = types[i];
-            $('<option />', {value: val, text: val}).appendTo(select);
-        }
+        setupSelect();
 
         $('.import-stats-chart').click(function () {
             if (statsSwitcher.hasClass('stats-visible')) {
@@ -190,6 +219,23 @@
             } else {
                 statsSwitcher.addClass('stats-visible');
             }
+        });
+
+        $('input:radio[name="importAction"]').on('ifClicked', function () {
+
+            var msg;
+            switch (this.value) {
+                case 'append':
+                    msg = 'import.line.append';
+                    break;
+                case 'overwrite':
+                    msg = 'import.line.overwrite';
+                    break;
+                default:
+                    msg = 'import.line.cancel';
+                    break;
+            }
+            $(document).trigger(msg, current.id);
         });
     };
 }(jQuery));

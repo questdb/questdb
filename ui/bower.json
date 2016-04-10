@@ -19,12 +19,10 @@
     "jquery": "^2.2.2",
     "modernizr": "~2.8.1",
     "fontawesome": "~4.5.0",
-    "animate.css": "~3.4.0",
     "metisMenu": "^2.4.3",
-    "jquery-slimscroll": "^1.3.7",
     "PACE": "pace#^1.0.2",
     "ace-builds": "^1.2.3",
-    "slickgrid": "https://github.com/6pac/SlickGrid.git"
+    "iCheck": "^1.0.2"
   },
   "overrides": {
     "bootstrap-sass": {
@@ -38,16 +36,6 @@
       "main": [
         "css/font-awesome.css",
         "fonts/*"
-      ]
-    },
-    "slickgrid": {
-      "main": [
-        "./slick.grid.css",
-        "./css/smoothness/jquery-ui-1.11.3.custom.css",
-        "./lib/jquery-1.11.2.min.js",
-        "./lib/jquery.event.drag-2.2.js",
-        "./slick.core.js",
-        "./slick.grid.js"
       ]
     }
   },

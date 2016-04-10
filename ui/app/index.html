@@ -32,8 +32,7 @@
     <!-- build:css styles/vendor.css -->
     <!-- bower:css -->
     <link rel="stylesheet" href="../bower_components/fontawesome/css/font-awesome.css">
-    <link rel="stylesheet" href="../bower_components/animate.css/animate.css">
-    <link rel="stylesheet" href="../bower_components/slickgrid/slick.grid.css">
+    <link rel="stylesheet" href="../bower_components/iCheck/skins/square/red.css">
     <!-- endbower -->
     <!-- endbuild -->
 
@@ -184,12 +183,6 @@
                 <div class="col-lg-12">
                     <div class="js-import-editor">
                         <div class="ibox">
-                            <div class="ibox-title">
-                                <h5>
-                                    Import details
-                                    <small class="m-l-sm">Feedback, configuration and re-try options</small>
-                                </h5>
-                            </div>
                             <div class="ibox-content">
                                 <div class="row">
                                     <div class="col-lg-12">
@@ -232,26 +225,25 @@
                                                     <div class="ud-header gh-1"><i class="fa fa-hashtag"></i></div>
                                                     <div class="ud-header gh-2">Column name</div>
                                                     <div class="ud-header gh-3">Type</div>
-                                                    <div class="ud-header gh-4">Size</div>
-                                                    <div class="ud-header gh-5">Errors</div>
+                                                    <div class="ud-header gh-4">Errors</div>
                                                 </div>
                                                 <div class="ud-canvas">
-                                                    <div class="ud-row" style="top: 0">
-                                                        <div class="ud-cell gc-1 g-other js-g-row">1</div>
-                                                        <div class="ud-cell gc-2 g-other">location</div>
-                                                        <div class="ud-cell gc-3 g-type">STRING</div>
-                                                        <div class="ud-cell gc-4 g-other">10</div>
-                                                        <div class="ud-cell gc-5 g-other">0</div>
-                                                    </div>
-                                                    <div class="ud-row" style="top: 35px">
-                                                        <div class="ud-cell gc-1 g-other">2</div>
-                                                        <div class="ud-cell gc-2 g-other"><i
-                                                                class="fa fa-exclamation-triangle g-warning"></i>price
-                                                        </div>
-                                                        <div class="ud-cell gc-3 g-type">DOUBLE</div>
-                                                        <div class="ud-cell gc-4 g-other">8</div>
-                                                        <div class="ud-cell gc-5 g-other">1400</div>
-                                                    </div>
+                                                    <!--<div class="ud-row" style="top: 0">-->
+                                                    <!--<div class="ud-cell gc-1 g-other js-g-row">1</div>-->
+                                                    <!--<div class="ud-cell gc-2 g-other">location</div>-->
+                                                    <!--<div class="ud-cell gc-3 g-type">STRING</div>-->
+                                                    <!--<div class="ud-cell gc-4 g-other">10</div>-->
+                                                    <!--<div class="ud-cell gc-5 g-other">0</div>-->
+                                                    <!--</div>-->
+                                                    <!--<div class="ud-row" style="top: 35px">-->
+                                                    <!--<div class="ud-cell gc-1 g-other">2</div>-->
+                                                    <!--<div class="ud-cell gc-2 g-other"><i-->
+                                                    <!--class="fa fa-exclamation-triangle g-warning"></i>price-->
+                                                    <!--</div>-->
+                                                    <!--<div class="ud-cell gc-3 g-type">DOUBLE</div>-->
+                                                    <!--<div class="ud-cell gc-4 g-other">8</div>-->
+                                                    <!--<div class="ud-cell gc-5 g-other">1400</div>-->
+                                                    <!--</div>-->
                                                 </div>
                                             </div>
                                         </div>
@@ -265,9 +257,25 @@
                             Import failed
                         </div>
                         <div class="panel-body">
-                            <p>
+                            <div class="col-sm-7 js-message">
                                 Server rejected file due to unsupported file format.
-                            </p>
+                            </div>
+                            <div class="col-sm-5 ud-btn-group js-import-error-btn-group">
+                                <form method="get">
+                                    <label>
+                                        <input type="radio" name="importAction" value="append" class="js-btn-append">
+                                        Append
+                                    </label>
+                                    <label>
+                                        <input type="radio" name="importAction" value="overwrite"
+                                               class="js-btn-overwrite"> Overwrite
+                                    </label>
+                                    <label>
+                                        <input type="radio" name="importAction" value="cancel" class="js-btn-cancel">
+                                        Cancel
+                                    </label>
+                                </form>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -282,39 +290,17 @@
     </div>
 </div>
 
-<!-- Google Analytics: change UA-XXXXX-X to be your site's ID. -->
-<script>
-    (function (b, o, i, l, e, r) {
-        b.GoogleAnalyticsObject = l;
-        b[l] || (b[l] =
-                function () {
-                    (b[l].q = b[l].q || []).push(arguments)
-                });
-        b[l].l = +new Date;
-        e = o.createElement(i);
-        r = o.getElementsByTagName(i)[0];
-        e.src = 'https://www.google-analytics.com/analytics.js';
-        r.parentNode.insertBefore(e, r)
-    }(window, document, 'script', 'ga'));
-    ga('create', 'UA-XXXXX-X');
-    ga('send', 'pageview');
-</script>
-
-
 <!-- build:js scripts/vendor.js -->
 <!-- bower:js -->
 <script src="/bower_components/jquery/dist/jquery.min.js"></script>
 <script src="/bower_components/metisMenu/dist/metisMenu.min.js"></script>
-<script src="/bower_components/jquery-slimscroll/jquery.slimscroll.min.js"></script>
 <script src="/bower_components/PACE/pace.min.js"></script>
 <script src="/bower_components/ace-builds/src-noconflict/ace.js"></script>
 <script src="/bower_components/ace-builds/src-noconflict/mode-sql.js"></script>
 <script src="/bower_components/ace-builds/src-noconflict/theme-merbivore_soft.js"></script>
-<script src="/bower_components/slickgrid/lib/jquery.event.drag-2.2.js"></script>
-<script src="/bower_components/slickgrid/slick.core.js"></script>
-<script src="/bower_components/slickgrid/slick.grid.js"></script>
 <script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/tooltip.js"></script>
 <script src="/bower_components/bootstrap-sass/assets/javascripts/bootstrap/popover.js"></script>
+<script src="/bower_components/iCheck/icheck.js"></script>
 <!-- endbower -->
 <!-- endbuild -->
 

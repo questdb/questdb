@@ -70,9 +70,40 @@ function nopropagation(e) {
         var canvas;
         var top = 0;
         var uploadQueue = [];
-        var uploaded = null;
+        var current = null;
         var rowHeight = 35;
         var xhr = null;
+
+        function updateProgress(event) {
+            if (event.lengthComputable) {
+                var pos = event.loaded || event.position;
+                $('#' + current.id).find(' > .ud-progress').css('width', (pos * 100 / current.size) + '%');
+            }
+        }
+
+        function setupUploadProgressCallback() {
+            var xhrobj = $.ajaxSettings.xhr();
+            if (xhrobj.upload) {
+                xhrobj.upload.addEventListener('progress', updateProgress, false);
+            }
+            return xhrobj;
+        }
+
+        var importRequest = {
+            xhr: setupUploadProgressCallback,
+            url: '/imp?fmt=json',
+            type: 'POST',
+            contentType: false,
+            processData: false,
+            cache: false
+        };
+
+        var existenceCheckRequest = {
+            type: 'GET',
+            contentType: false,
+            processData: false,
+            cache: false
+        };
 
         function updateBtnClear() {
             var selected = false;
@@ -87,7 +118,7 @@ function nopropagation(e) {
         }
 
         function updateBtnImportCancel() {
-            $('#btnImportCancel').attr('disabled', uploaded === null);
+            $('#btnImportCancel').attr('disabled', current === null);
         }
 
         function toggleRow() {
@@ -108,7 +139,7 @@ function nopropagation(e) {
 
         function showDetail(e) {
             var item = dict[$(this).parent().attr('id')];
-            if (item.responseStatus) {
+            if (item.importState > -1) {
                 $(document).trigger('import.detail', item);
             }
             nopropagation(e);
@@ -124,13 +155,6 @@ function nopropagation(e) {
             top += rowHeight;
         }
 
-        function updateProgress(event) {
-            if (event.lengthComputable) {
-                var pos = event.loaded || event.position;
-                $('#' + uploaded.id).find(' > .ud-progress').css('width', (pos * 100 / uploaded.size) + '%');
-            }
-        }
-
         function status(e, html, processNext) {
             var row = $('#' + e.id);
             row.find(' > .ud-c3').html(html);
@@ -139,62 +163,87 @@ function nopropagation(e) {
             if (processNext) {
                 var next = uploadQueue.shift();
                 if (next) {
-                    upload(next);
+                    checkRemoteExists(next);
                 } else {
-                    uploaded = null;
+                    current = null;
                     xhr = null;
                 }
             }
             updateBtnImportCancel();
         }
 
-        function setupUploadProgressCallback() {
-            var xhrobj = $.ajaxSettings.xhr();
-            if (xhrobj.upload) {
-                xhrobj.upload.addEventListener('progress', updateProgress, false);
+        function importDone(data) {
+            current.response = data;
+            current.importState = 0; // ok
+            status(current, '<span class="label label-success">imported</span>', true);
+        }
+
+        function httpStatusToImportState(s) {
+            switch (s) {
+                case 0:
+                    return 3; // server not responding
+                case 400:
+                    return 4; // bad format
+                case 500:
+                    return 5; // internal error
+                default:
+                    return 101; // unknown
             }
-            return xhrobj;
         }
 
-        function success(data) {
-            uploaded.response = data;
-            uploaded.responseStatus = 200;
-            status(uploaded, '<span class="label label-success">imported</span>', true);
-        }
-
-        function error(r) {
-            uploaded.response = r.responseText;
-            uploaded.responseStatus = r.status;
+        function importFailed(r) {
+            current.response = r.responseText;
             if (r.statusText !== 'abort') {
-                status(uploaded, '<span class="label label-danger">failed</span>', true);
+                current.importState = httpStatusToImportState(r.status);
+                status(current, '<span class="label label-danger">failed</span>', true);
             } else {
-                status(uploaded, '<span class="label label-warning">aborted</span>', true);
+                current.importState = -2; // abort
+                status(current, '<span class="label label-warning">aborted</span>', true);
             }
         }
 
-        var request = {
-            xhr: setupUploadProgressCallback,
-            url: '/imp?fmt=json',
-            type: 'POST',
-            contentType: false,
-            processData: false,
-            cache: false,
-            success,
-            error
-        };
+        function setupImportRequest() {
+            importRequest.xhr = setupUploadProgressCallback;
+            importRequest.data = new FormData();
+            importRequest.data.append('data', current.file);
+            return importRequest;
+        }
 
-        function upload(e) {
-            uploaded = e;
-            status(e, '<span class="label label-info">importing</span>', false);
-            $('#' + e.id).append('<div class="ud-progress"></div>');
-            request.data = new FormData();
-            request.data.append('data', e.file);
-            xhr = $.ajax(request);
-            console.log('ajax is in flight');
+        function importFile() {
+            status(current, '<span class="label label-info">importing</span>', false);
+            $('#' + current.id).append('<div class="ud-progress"></div>');
+            xhr = $.ajax(setupImportRequest()).done(importDone).fail(importFailed);
             updateBtnImportCancel();
         }
 
-        function add(x, dataTransfer) {
+        function existenceCheckFork(e) {
+            switch (e.status) {
+                case 'EXISTS':
+                    current.importState = 1; // exists
+                    status(current, '<span class="label label-danger">exists</span>', true);
+                    break;
+                case 'DOES_NOT_EXIST':
+                    current.importState = 0; // ok
+                    importFile();
+                    break;
+                case 'EXISTS_FOREIGN':
+                    current.importState = 2; // exists foreign (reserved)
+                    status(current, '<span class="label label-danger">reserved</span>', true);
+                    break;
+                default:
+                    current.importState = 101; // unknown
+                    status(current, '<span class="label label-danger">failed</span>', true);
+                    break;
+            }
+        }
+
+        function checkRemoteExists(e) {
+            current = e;
+            existenceCheckRequest.url = '/chk?f=json&j=' + e.name;
+            $.ajax(existenceCheckRequest).then(existenceCheckFork).fail(importFailed);
+        }
+
+        function addFile(x, dataTransfer) {
             for (var i = 0; i < dataTransfer.files.length; i++) {
                 var f = dataTransfer.files[i];
                 var e = {
@@ -208,10 +257,10 @@ function nopropagation(e) {
                 };
                 dict[e.id] = e;
                 render(e);
-                if (uploaded != null) {
+                if (current != null) {
                     uploadQueue.push(e);
                 } else {
-                    upload(e);
+                    checkRemoteExists(e);
                 }
             }
         }
@@ -220,7 +269,7 @@ function nopropagation(e) {
             for (var id in dict) {
                 if (dict.hasOwnProperty(id)) {
                     var e = dict[id];
-                    if (e.selected && e !== uploaded) {
+                    if (e.selected && e !== current) {
                         var uploadQueueIndex = uploadQueue.indexOf(e);
                         if (uploadQueueIndex > -1) {
                             delete uploadQueue[uploadQueueIndex];
@@ -248,14 +297,30 @@ function nopropagation(e) {
             }
         }
 
+        function renderRowAsOverwrite(x, id) {
+            $('#' + id + ' > .ud-c1').html(dict[id].name + '<span class="label label-danger m-l-lg">overwrite</span>');
+        }
+
+        function renderRowAsAppend(x, id) {
+            $('#' + id + ' > .ud-c1').html(dict[id].name + '<span class="label label-primary m-l-lg">append</span>');
+        }
+
+        function renderRowAsCancel(x, id) {
+            $('#' + id + ' > .ud-c1').html(dict[id].name);
+        }
+
         container.append('<div class="ud-header-row"><div class="ud-header ud-h0">&nbsp;</div><div class="ud-header ud-h1">File name</div><div class="ud-header ud-h2">Size</div><div class="ud-header ud-h3">Status</div></div>');
         container.append('<div class="ud-canvas"></div>');
         canvas = container.find('> .ud-canvas');
 
         // subscribe to document event
-        $(document).on('dropbox.files', add);
+        $(document).on('dropbox.files', addFile);
         $(document).on('import.clearSelected', clearSelected);
         $(document).on('import.cancel', abortImport);
+
+        $(document).on('import.line.overwrite', renderRowAsOverwrite);
+        $(document).on('import.line.append', renderRowAsAppend);
+        $(document).on('import.line.cancel', renderRowAsCancel);
 
         return this;
     };
@@ -343,4 +408,11 @@ $(document).ready(function () {
     $(document).on('dragenter', nopropagation);
     $(document).on('dragover', nopropagation);
     $(document).on('drop', nopropagation);
+
+    $(document).ready(function () {
+        $('input').iCheck({
+            checkboxClass: 'icheckbox_square-red',
+            radioClass: 'iradio_square-red'
+        });
+    });
 });

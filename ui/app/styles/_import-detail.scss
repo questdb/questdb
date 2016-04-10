@@ -43,7 +43,7 @@ $stats-transition: top 0.25s ease-in-out;
 }
 
 .import-stats-chart {
-  border-radius: $boder-radius;
+  border-radius: $border-radius;
 }
 
 .import-stats, .import-imported-table, .import-imported-stats {
@@ -90,13 +90,8 @@ $stats-transition: top 0.25s ease-in-out;
 }
 
 .gh-4 {
-  width: 5%;
+  width: 20%;
 }
-
-.gh-5 {
-  width: 15%;
-}
-
 
 .gc-1 {
   left: 0;
@@ -115,12 +110,7 @@ $stats-transition: top 0.25s ease-in-out;
 
 .gc-4 {
   left: 80%;
-  width: 5%;
-}
-
-.gc-5 {
-  left: 85%;
-  width: 15%;
+  width: 20%;
 }
 
 .g-dynamic-select {

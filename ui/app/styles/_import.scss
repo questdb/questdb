@@ -26,7 +26,7 @@ $drag-drop-border: #c6c6c6;
   background-color: #e8e8e8;
   text-align: center;
   margin-bottom: 30px;
-  border-radius: $boder-radius;
+  border-radius: $border-radius;
 }
 
 .drag-idle {
@@ -134,4 +134,12 @@ $transparent-border: 1px solid transparent;
   font-size: 160%;
   vertical-align: middle;
   cursor: pointer;
+}
+
+.ud-btn-group {
+  text-align: center;
+
+  label {
+    padding-right: 15px;
+  }
 }

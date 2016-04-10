@@ -83,7 +83,17 @@ gulp.task('html', ['styles', 'scripts'], () => {
         .pipe(gulp.dest(dist));
 });
 
-gulp.task('images', () => {
+gulp.task('css_patterns', () => {
+    return gulp.src('app/styles/patterns/**/*')
+        .pipe(gulp.dest(path.join(dist, 'styles/patterns')));
+});
+
+gulp.task('icheck_images', () => {
+    return gulp.src('bower_components/iCheck/skins/square/red*.png')
+        .pipe(gulp.dest(path.join(dist, 'styles')));
+});
+
+gulp.task('images', ['css_patterns', 'icheck_images'], () => {
     return gulp.src('app/images/**/*')
         .pipe($.cache($.imagemin({
             progressive: true,
@@ -93,18 +103,6 @@ gulp.task('images', () => {
             svgoPlugins: [{cleanupIDs: false}]
         })))
         .pipe(gulp.dest(path.join(dist, 'images')));
-});
-
-gulp.task('css_patterns', () => {
-    return gulp.src('app/styles/patterns/**/*')
-        .pipe($.cache($.imagemin({
-            progressive: true,
-            interlaced: true,
-            // don't remove IDs from SVGs, they are often used
-            // as hooks for embedding and styling
-            svgoPlugins: [{cleanupIDs: false}]
-        })))
-        .pipe(gulp.dest(path.join(dist, 'styles/patterns')));
 });
 
 gulp.task('fonts', () => {
@@ -195,7 +193,7 @@ gulp.task('wiredep', () => {
         .pipe(gulp.dest('app'));
 });
 
-gulp.task('build', ['lint', 'html', 'images', 'css_patterns', 'fonts', 'extras'], () => {
+gulp.task('build', ['lint', 'html', 'images', 'fonts', 'extras'], () => {
     return gulp.src(path.join(dist, '**/*')).pipe($.size({title: 'build', gzip: true}));
 });
 

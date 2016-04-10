@@ -21,7 +21,6 @@
 
 /*globals $:false */
 /*globals ace:false */
-/*globals Slick:false */
 
 /*
  *
@@ -138,10 +137,10 @@ $(document).ready(function () {
     });
 
     // Run menu of canvas
-    $('body.canvas-menu .sidebar-collapse').slimScroll({
-        height: '100%',
-        railOpacity: 0.9
-    });
+    // $('body.canvas-menu .sidebar-collapse').slimScroll({
+    //     height: '100%',
+    //     railOpacity: 0.9
+    // });
 
     // Open close right sidebar
     $('.right-sidebar-toggle').click(function () {
@@ -149,11 +148,11 @@ $(document).ready(function () {
     });
 
     // Initialize slimscroll for right sidebar
-    $('.sidebar-container').slimScroll({
-        height: '100%',
-        railOpacity: 0.4,
-        wheelStep: 10
-    });
+    // $('.sidebar-container').slimScroll({
+    //     height: '100%',
+    //     railOpacity: 0.4,
+    //     wheelStep: 10
+    // });
 
     // Open close small chat
     $('.open-small-chat').click(function () {
@@ -162,10 +161,10 @@ $(document).ready(function () {
     });
 
     // Initialize slimscroll for small chat
-    $('.small-chat-box .content').slimScroll({
-        height: '234px',
-        railOpacity: 0.4
-    });
+    // $('.small-chat-box .content').slimScroll({
+    //     height: '234px',
+    //     railOpacity: 0.4
+    // });
 
     $('.check-link').click(function () {
         var button = $(this).find('i');
@@ -201,14 +200,14 @@ $(document).ready(function () {
     fixHeight();
 
     // Fixed Sidebar
-    $(window).bind('load', function () {
-        if ($('body').hasClass('fixed-sidebar')) {
-            $('.sidebar-collapse').slimScroll({
-                height: '100%',
-                railOpacity: 0.9
-            });
-        }
-    });
+    // $(window).bind('load', function () {
+    //     if ($('body').hasClass('fixed-sidebar')) {
+    //         $('.sidebar-collapse').slimScroll({
+    //             height: '100%',
+    //             railOpacity: 0.9
+    //         });
+    //     }
+    // });
 
     // Move right sidebar top after scroll
     $(window).scroll(function () {
@@ -229,9 +228,9 @@ $(document).ready(function () {
     $('[data-toggle=tooltip]').tooltip();
 
     // Add slimscroll to element
-    $('.full-height-scroll').slimscroll({
-        height: '100%'
-    });
+    // $('.full-height-scroll').slimscroll({
+    //     height: '100%'
+    // });
 });
 
 // Minimalize menu when screen is less than 768px
@@ -260,10 +259,10 @@ $(document).ready(function () {
 
         if (fixedsidebar === 'on') {
             body.addClass('fixed-sidebar');
-            $('.sidebar-collapse').slimScroll({
-                height: '100%',
-                railOpacity: 0.9
-            });
+            // $('.sidebar-collapse').slimScroll({
+            //     height: '100%',
+            //     railOpacity: 0.9
+            // });
         }
 
         if (collapse === 'on') {
@@ -329,12 +328,4 @@ $(document).ready(function () {
 
     var container = $('#grid');
     container.css('height', '430px');
-
-    var grid = new Slick.Grid(container, [], [], {
-        enableCellNavigation: true,
-        enableColumnReorder: false,
-        enableTextSelectionOnCells: true
-    });
-
-    grid.resizeCanvas();
 });
