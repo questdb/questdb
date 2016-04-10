@@ -36,6 +36,7 @@ import java.util.Properties;
 @SuppressFBWarnings("PATH_TRAVERSAL_IN")
 public class HttpServerConfiguration {
     private final SslConfig sslConfig = new SslConfig();
+    private String httpIP = "0.0.0.0";
     private int httpPort = 9000;
     private int httpBufReqHeader = 64 * 1024;
     private int httpBufReqContent = 4 * 1024 * 1024;
@@ -67,6 +68,11 @@ public class HttpServerConfiguration {
         }
 
         int n;
+        String s;
+
+        if ((s = props.getProperty("http.ip")) != null) {
+            this.httpIP = s;
+        }
 
         if ((n = parseInt(props, "http.port")) > -1) {
             this.httpPort = n;
@@ -103,8 +109,6 @@ public class HttpServerConfiguration {
         if ((n = parseSize(props, "http.buf.resp.content")) > -1) {
             this.httpBufRespContent = n;
         }
-
-        String s;
 
         if ((s = props.getProperty("db.path")) != null) {
             this.dbPath = mkdirs(normalize(root, new File(s)));
@@ -204,6 +208,10 @@ public class HttpServerConfiguration {
 
     public int getHttpBufRespHeader() {
         return httpBufRespHeader;
+    }
+
+    public String getHttpIP() {
+        return httpIP;
     }
 
     public int getHttpMaxConnections() {

@@ -81,6 +81,47 @@ function nopropagation(e) {
             }
         }
 
+        function updateButtons() {
+            var selected = false;
+            var retry = false;
+
+            for (var id in dict) {
+                if (dict.hasOwnProperty(id)) {
+                    var e = dict[id];
+                    if (e.selected) {
+                        selected = true;
+                        if (e.retry) {
+                            retry = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            $('#btnImportClearSelected').attr('disabled', !selected);
+            $('#btnRetry').attr('disabled', !retry);
+        }
+
+        function renderRowAsOverwrite(x, id) {
+            var item = dict[id];
+            item.retry = 2; // overwrite
+            $('#' + id + ' > .ud-c1').html(item.name + '<span class="label label-danger m-l-lg">overwrite</span>');
+            updateButtons();
+        }
+
+        function renderRowAsAppend(x, id) {
+            var item = dict[id];
+            item.retry = 1; // append
+            $('#' + id + ' > .ud-c1').html(item.name + '<span class="label label-primary m-l-lg">append</span>');
+            updateButtons();
+        }
+
+        function renderRowAsCancel(x, id) {
+            var item = dict[id];
+            item.retry = 0; // cancel
+            $('#' + id + ' > .ud-c1').html(item.name);
+            updateButtons();
+        }
+
         function setupUploadProgressCallback() {
             var xhrobj = $.ajaxSettings.xhr();
             if (xhrobj.upload) {
@@ -105,18 +146,6 @@ function nopropagation(e) {
             cache: false
         };
 
-        function updateBtnClear() {
-            var selected = false;
-
-            for (var id in dict) {
-                if (dict.hasOwnProperty(id) && dict[id].selected) {
-                    selected = true;
-                    break;
-                }
-            }
-            $('#btnImportClearSelected').attr('disabled', !selected);
-        }
-
         function updateBtnImportCancel() {
             $('#btnImportCancel').attr('disabled', current === null);
         }
@@ -134,7 +163,7 @@ function nopropagation(e) {
                 btn.removeClass('fa-check-square-o').addClass('fa-square-o');
             }
 
-            updateBtnClear();
+            updateButtons();
         }
 
         function showDetail(e) {
@@ -163,18 +192,20 @@ function nopropagation(e) {
             if (processNext) {
                 var next = uploadQueue.shift();
                 if (next) {
-                    checkRemoteExists(next);
+                    processFile(next);
                 } else {
                     current = null;
                     xhr = null;
                 }
             }
             updateBtnImportCancel();
+            $(document).trigger('import.detail.updated', e);
         }
 
         function importDone(data) {
             current.response = data;
             current.importState = 0; // ok
+            renderRowAsCancel(null, current.id);
             status(current, '<span class="label label-success">imported</span>', true);
         }
 
@@ -203,6 +234,10 @@ function nopropagation(e) {
         }
 
         function setupImportRequest() {
+            importRequest.url = '/imp?fmt=json';
+            if (current.retry === 2) {
+                importRequest.url += '&o=true';
+            }
             importRequest.xhr = setupUploadProgressCallback;
             importRequest.data = new FormData();
             importRequest.data.append('data', current.file);
@@ -237,10 +272,15 @@ function nopropagation(e) {
             }
         }
 
-        function checkRemoteExists(e) {
+        function processFile(e) {
             current = e;
-            existenceCheckRequest.url = '/chk?f=json&j=' + e.name;
-            $.ajax(existenceCheckRequest).then(existenceCheckFork).fail(importFailed);
+            if (e.retry) {
+                current.importState = 0;
+                importFile();
+            } else {
+                existenceCheckRequest.url = '/chk?f=json&j=' + e.name;
+                $.ajax(existenceCheckRequest).then(existenceCheckFork).fail(importFailed);
+            }
         }
 
         function addFile(x, dataTransfer) {
@@ -260,7 +300,7 @@ function nopropagation(e) {
                 if (current != null) {
                     uploadQueue.push(e);
                 } else {
-                    checkRemoteExists(e);
+                    processFile(e);
                 }
             }
         }
@@ -288,7 +328,22 @@ function nopropagation(e) {
                 $(rows[i]).css('top', top);
                 top += rowHeight;
             }
-            updateBtnClear();
+            updateButtons();
+        }
+
+        function retrySelected() {
+            for (var id in dict) {
+                if (dict.hasOwnProperty(id)) {
+                    var e = dict[id];
+                    if (e.selected && e.retry) {
+                        if (current === null) {
+                            processFile(e);
+                        } else {
+                            uploadQueue.push(e);
+                        }
+                    }
+                }
+            }
         }
 
         function abortImport() {
@@ -297,30 +352,26 @@ function nopropagation(e) {
             }
         }
 
-        function renderRowAsOverwrite(x, id) {
-            $('#' + id + ' > .ud-c1').html(dict[id].name + '<span class="label label-danger m-l-lg">overwrite</span>');
+        function subscribe() {
+            // subscribe to document event
+            $(document).on('dropbox.files', addFile);
+            $(document).on('import.clearSelected', clearSelected);
+            $(document).on('import.cancel', abortImport);
+            $(document).on('import.retry', retrySelected);
+
+            $(document).on('import.line.overwrite', renderRowAsOverwrite);
+            $(document).on('import.line.append', renderRowAsAppend);
+            $(document).on('import.line.cancel', renderRowAsCancel);
         }
 
-        function renderRowAsAppend(x, id) {
-            $('#' + id + ' > .ud-c1').html(dict[id].name + '<span class="label label-primary m-l-lg">append</span>');
+        function init() {
+            container.append('<div class="ud-header-row"><div class="ud-header ud-h0">&nbsp;</div><div class="ud-header ud-h1">File name</div><div class="ud-header ud-h2">Size</div><div class="ud-header ud-h3">Status</div></div>');
+            container.append('<div class="ud-canvas"></div>');
+            canvas = container.find('> .ud-canvas');
+            subscribe();
         }
 
-        function renderRowAsCancel(x, id) {
-            $('#' + id + ' > .ud-c1').html(dict[id].name);
-        }
-
-        container.append('<div class="ud-header-row"><div class="ud-header ud-h0">&nbsp;</div><div class="ud-header ud-h1">File name</div><div class="ud-header ud-h2">Size</div><div class="ud-header ud-h3">Status</div></div>');
-        container.append('<div class="ud-canvas"></div>');
-        canvas = container.find('> .ud-canvas');
-
-        // subscribe to document event
-        $(document).on('dropbox.files', addFile);
-        $(document).on('import.clearSelected', clearSelected);
-        $(document).on('import.cancel', abortImport);
-
-        $(document).on('import.line.overwrite', renderRowAsOverwrite);
-        $(document).on('import.line.append', renderRowAsAppend);
-        $(document).on('import.line.cancel', renderRowAsCancel);
+        init();
 
         return this;
     };

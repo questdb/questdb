@@ -53,7 +53,7 @@ public class HttpServer {
     private RingQueue<IOEvent> ioQueue;
 
     public HttpServer(HttpServerConfiguration configuration, UrlMatcher urlMatcher) {
-        this.address = new InetSocketAddress(configuration.getHttpPort());
+        this.address = new InetSocketAddress(configuration.getHttpIP(), configuration.getHttpPort());
         this.urlMatcher = urlMatcher;
         this.workerCount = configuration.getHttpThreads();
         this.haltLatch = new CountDownLatch(workerCount);

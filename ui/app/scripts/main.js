@@ -187,11 +187,11 @@ $(document).ready(function () {
         smoothlyMenu();
     });
 
-    // Tooltips demo
-    $('.tooltip-demo').tooltip({
-        selector: '[data-toggle=tooltip]',
-        container: 'body'
-    });
+    // // Tooltips demo
+    // $('.tooltip-demo').tooltip({
+    //     selector: '[data-toggle=tooltip]',
+    //     container: 'body'
+    // });
 
     // Move modal to body
     // Fix Bootstrap backdrop issu with animation.css
@@ -223,14 +223,6 @@ $(document).ready(function () {
             fixHeight();
         }
     });
-
-    $('[data-toggle=popover]').popover();
-    $('[data-toggle=tooltip]').tooltip();
-
-    // Add slimscroll to element
-    // $('.full-height-scroll').slimscroll({
-    //     height: '100%'
-    // });
 });
 
 // Minimalize menu when screen is less than 768px

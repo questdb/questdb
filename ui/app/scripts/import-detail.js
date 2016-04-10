@@ -39,6 +39,7 @@
         var divImportedCount = $(this).find('.js-imported-row-count');
         var divCanvas = $(this).find('.ud-canvas');
         var divBtnGroup = $(this).find('.js-import-error-btn-group');
+        var btnRadio = $('input:radio[name="importAction"]');
         var lineHeight = 35;
         var select;
         var types = [
@@ -187,6 +188,8 @@
                 }
                 divEditor.hide();
                 msgPanel.show();
+                // reset button group option
+                btnRadio.iCheck('uncheck');
             }
             container.show();
         }
@@ -204,10 +207,17 @@
             render(e);
         });
 
+        $(document).on('import.detail.updated', function (x, e) {
+            if (current === e && e.response) {
+                render(e);
+            }
+        });
+
         $(document).on('import.cleared', function (x, e) {
             if (e === current) {
                 current = null;
                 divEditor.hide();
+                msgPanel.hide();
             }
         });
 
@@ -221,7 +231,7 @@
             }
         });
 
-        $('input:radio[name="importAction"]').on('ifClicked', function () {
+        btnRadio.on('ifClicked', function () {
 
             var msg;
             switch (this.value) {

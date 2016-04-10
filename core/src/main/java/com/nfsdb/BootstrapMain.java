@@ -52,7 +52,9 @@ class BootstrapMain {
 
     @SuppressFBWarnings("PATH_TRAVERSAL_IN")
     public static void main(String[] args) throws Exception {
+        System.out.printf("NFSdb Server v3.0.0 Copyright (C) Appsicle 2014-2016\n\n");
         if (args.length < 1) {
+            System.out.println("Root directory name expected");
             return;
         }
 
@@ -84,9 +86,11 @@ class BootstrapMain {
         server.start(LogFactory.INSTANCE.getJobs());
 
         StringBuilder welcome = new StringBuilder();
-        welcome.append("Server started on port: ").append(configuration.getHttpPort());
+        welcome.append("Listening on ").append(configuration.getHttpIP()).append(':').append(configuration.getHttpPort());
         if (configuration.getSslConfig().isSecure()) {
             welcome.append(" [HTTPS]");
+        } else {
+            welcome.append(" [HTTP plain]");
         }
 
         System.out.println(welcome);
