@@ -3,6 +3,12 @@
 [![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/NFSdb/nfsdb?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 ## News
+__11 April 2016__ Change of licence
+
+License changed from Apache 2.0 to AGPLv3. Please see LICENSE.txt for full details.
+
+I feel very passionate about this project and I spend crazy amount of time to make it the best it can be. Yet I am having a day job, which is in no way helpful to my passion. AGPLv3 is a stepping stone to enable me to work on NFSdb full time and bring you guys the best database you have ever seen.
+
 __9 June 2015__   Release roadmap
 
 I realise that it has been a while since last release, but I would like to reassure the reader that this project is very much alive. The [roadmap for next](roadmap.md) release is quite large but we are chipping away from this list quite steadily. So stay with us!
