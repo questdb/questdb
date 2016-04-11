@@ -52,7 +52,7 @@ __Web UI__
 - [x] grid styling
 - [x] error reporting and interaction with query editor
 - [ ] __grid virtualisation (in-progress)__
-- [ ] __file upload UI (in-progress)__
+- [x] file import UI
 - [ ] charting UI
 
 __core__

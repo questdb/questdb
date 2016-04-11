@@ -46,6 +46,7 @@
         var divRejectedCount = $(this).find('.js-rejected-row-count');
         var divImportedCount = $(this).find('.js-imported-row-count');
         var divCanvas = $(this).find('.ud-canvas');
+        var footerHeight = $('.footer')[0].offsetHeight;
         var divBtnGroup = $(this).find('.js-import-error-btn-group');
         var btnRadio = $('input:radio[name="importAction"]');
         var lineHeight = 35;
@@ -64,6 +65,13 @@
         ];
 
         var current = null;
+
+        function resizeCanvas() {
+            var top = divCanvas[0].getBoundingClientRect().top;
+            var h = Math.round((window.innerHeight - top));
+            h = h - footerHeight - 45;
+            divCanvas[0].style.height = h + 'px';
+        }
 
         function selectClick() {
             var div = $(this);
@@ -167,6 +175,7 @@
                 // display component
                 divEditor.show();
                 msgPanel.hide();
+                resizeCanvas();
             } else {
                 switch (e.importState) {
                     case 1:
@@ -255,6 +264,8 @@
             }
             $(document).trigger(msg, current.id);
         });
+
+        $(window).resize(resizeCanvas);
     };
 }(jQuery));
 
