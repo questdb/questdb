@@ -218,6 +218,9 @@ public class MetadataExtractorListener implements Listener, Mutable {
         tempSink.clear();
         for (int i = 0, l = seq.length(); i < l; i++) {
             char c = seq.charAt(i);
+            if (c > 2047) {
+                continue;
+            }
             switch (c) {
                 case ' ':
                 case '_':

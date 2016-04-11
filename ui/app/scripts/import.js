@@ -253,6 +253,21 @@ function nopropagation(e) {
             }
             importRequest.xhr = setupUploadProgressCallback;
             importRequest.data = new FormData();
+
+            // encode type overrides
+            if (current.response && current.response.columns) {
+                var schema = '';
+                for (var i = 0; i < current.response.columns.length; i++) {
+                    var c = current.response.columns[i];
+
+                    if (c.altType && c.type !== c.altType) {
+                        schema += c.name + '=' + c.altType + '&';
+                    }
+                }
+                console.log('schema: ' + schema);
+                importRequest.data.append('schema', schema);
+            }
+
             importRequest.data.append('data', current.file);
             return importRequest;
         }
