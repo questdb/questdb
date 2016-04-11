@@ -61,6 +61,8 @@ public interface CharSink {
 
     CharSink putTrim(double value, int scale);
 
+    CharSink putUtf8(CharSequence cs);
+
     CharSink putUtf8Escaped(CharSequence cs);
 
     CharSink putUtf8EscapedAndQuoted(CharSequence cs);

@@ -35,18 +35,19 @@
 package com.nfsdb.net.http;
 
 import com.nfsdb.Journal;
+import com.nfsdb.JournalEntryWriter;
+import com.nfsdb.JournalWriter;
 import com.nfsdb.ex.FatalError;
 import com.nfsdb.ex.NumericException;
 import com.nfsdb.ex.ResponseContentBufferTooSmallException;
 import com.nfsdb.factory.JournalCachingFactory;
+import com.nfsdb.factory.JournalFactory;
+import com.nfsdb.factory.configuration.JournalStructure;
 import com.nfsdb.io.RecordSourcePrinter;
 import com.nfsdb.io.sink.FileSink;
 import com.nfsdb.io.sink.StringSink;
 import com.nfsdb.iter.clock.Clock;
-import com.nfsdb.misc.ByteBuffers;
-import com.nfsdb.misc.Dates;
-import com.nfsdb.misc.Misc;
-import com.nfsdb.misc.Numbers;
+import com.nfsdb.misc.*;
 import com.nfsdb.net.ha.AbstractJournalTest;
 import com.nfsdb.net.http.handlers.ImportHandler;
 import com.nfsdb.net.http.handlers.StaticContentHandler;
@@ -150,7 +151,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp"));
+                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null));
                         latch.countDown();
                     } catch (Exception e) {
                         Assert.fail(e.getMessage());
@@ -163,7 +164,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-nan.csv", "http://localhost:9000/imp"));
+                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-nan.csv", "http://localhost:9000/imp", null));
                         latch.countDown();
                     } catch (Exception e) {
                         Assert.fail(e.getMessage());
@@ -330,10 +331,9 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
 
         try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
-
             try {
-                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp"));
-                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp"));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", null));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null));
                 StringSink sink = new StringSink();
                 RecordSourcePrinter printer = new RecordSourcePrinter(sink);
                 QueryCompiler qc = new QueryCompiler();
@@ -346,13 +346,60 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testImportIntoBusyJournal() throws Exception {
+        try (JournalWriter w = factory.writer(new JournalStructure("test-import.csv").$int("x").$())) {
+            HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+                put("/imp", new ImportHandler(factory));
+            }});
+            server.start();
+
+            StringBuilder response = new StringBuilder();
+            try {
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", response));
+                TestUtils.assertEquals("{\"status\":\"Journal exists and column count does not mismatch\"}", response);
+            } finally {
+                server.halt();
+            }
+        }
+    }
+
+    @Test
+    public void testImportIntoBusyJournal2() throws Exception {
+        JournalFactory f = new JournalFactory(factory.getConfiguration().getJournalBase().getAbsolutePath());
+
+        try (JournalWriter w = f.writer(new JournalStructure("small.csv").$int("X").$int("Y").$())) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putInt(0, 3);
+            ew.putInt(1, 30);
+            ew.append();
+            w.commit();
+
+            HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+                put("/imp", new ImportHandler(factory));
+            }});
+            server.start();
+
+            StringBuilder response = new StringBuilder();
+            try {
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/small.csv", "http://localhost:9000/imp?fmt=json", response));
+                Assert.assertTrue(Chars.startsWith(response, "{\"status\":\"com.nfsdb.ex.JournalException: Journal is already open for APPEND"));
+            } finally {
+                server.halt();
+            }
+        }
+    }
+
+    @Test
     public void testImportUnknownFormat() throws Exception {
         HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(factory));
         }});
+
         server.start();
+        StringBuilder response = new StringBuilder();
         try {
-            Assert.assertEquals(400, HttpTestUtils.upload("/com/nfsdb/std/AssociativeCache.class", "http://localhost:9000/imp"));
+            Assert.assertEquals(200, HttpTestUtils.upload("/com/nfsdb/std/AssociativeCache.class", "http://localhost:9000/imp", response));
+            TestUtils.assertEquals("Unsupported data format", response);
         } finally {
             server.halt();
         }
@@ -655,7 +702,7 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
         try {
 
-            HttpTestUtils.upload("/large.csv", "http://localhost:9000/upload");
+            HttpTestUtils.upload("/large.csv", "http://localhost:9000/upload", null);
 
             File out = new File(temp.getRoot(), "out.csv");
 

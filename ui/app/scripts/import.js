@@ -8,22 +8,22 @@
  *
  * Copyright (C) 2016 Appsicle
  *
- * Permission is hereby granted, free of charge, to any person obtaining a 
- * copy of this software and associated documentation files (the "Software"), 
- * to deal in the Software without restriction, including without limitation 
- * the rights to use, copy, modify, merge, publish, distribute, sublicense, 
- * and/or sell copies of the Software, and to permit persons to whom the 
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
  * Software is furnished to do so, subject to the following conditions:
  *
- * The above copyright notice and this permission notice shall be included in 
+ * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, 
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR 
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF 
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
@@ -211,18 +211,22 @@ function nopropagation(e) {
         }
 
         function importDone(data) {
-            current.response = data;
-            current.importState = 0; // ok
-            renderRowAsCancel(null, current.id);
-            status(current, '<span class="label label-success">imported</span>', true);
+            if (data.status === 'OK') {
+                current.response = data;
+                current.importState = 0; // ok
+                renderRowAsCancel(null, current.id);
+                status(current, '<span class="label label-success">imported</span>', true);
+            } else {
+                current.importState = 4;
+                current.response = data.status;
+                status(current, '<span class="label label-danger">failed</span>', true);
+            }
         }
 
         function httpStatusToImportState(s) {
             switch (s) {
                 case 0:
                     return 3; // server not responding
-                case 400:
-                    return 4; // bad format
                 case 500:
                     return 5; // internal error
                 default:
@@ -232,6 +236,7 @@ function nopropagation(e) {
 
         function importFailed(r) {
             current.response = r.responseText;
+            renderRowAsCancel(null, current.id);
             if (r.statusText !== 'abort') {
                 current.importState = httpStatusToImportState(r.status);
                 status(current, '<span class="label label-danger">failed</span>', true);

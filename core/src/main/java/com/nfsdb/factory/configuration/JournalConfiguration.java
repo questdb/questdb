@@ -47,6 +47,8 @@ public interface JournalConfiguration {
 
     <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
 
+    void delete(CharSequence location) throws JournalException;
+
     JournalExistenceCheck exists(CharSequence location);
 
     File getJournalBase();

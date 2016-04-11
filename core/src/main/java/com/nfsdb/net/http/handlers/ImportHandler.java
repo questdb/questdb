@@ -35,6 +35,7 @@
 package com.nfsdb.net.http.handlers;
 
 import com.nfsdb.ex.DisconnectedChannelException;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.ex.ResponseContentBufferTooSmallException;
 import com.nfsdb.ex.SlowWritableChannelException;
 import com.nfsdb.factory.JournalFactory;
@@ -52,6 +53,7 @@ import com.nfsdb.misc.Misc;
 import com.nfsdb.net.http.ChunkedResponse;
 import com.nfsdb.net.http.IOContext;
 import com.nfsdb.net.http.RequestHeaderBuffer;
+import com.nfsdb.net.http.ResponseSink;
 import com.nfsdb.std.*;
 import com.nfsdb.std.ThreadLocal;
 
@@ -63,6 +65,8 @@ public class ImportHandler extends AbstractMultipartHandler {
     private static final int TO_STRING_COL2_PAD = 50;
     private static final int TO_STRING_COL3_PAD = 10;
     private final static ThreadLocal<FileNameExtractorCharSequence> nameExtractor = new ThreadLocal<>(FileNameExtractorCharSequence.FACTORY);
+    private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
+    private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private final JournalFactory factory;
     private final ThreadLocal<FormatParser> tlFormatParser = new ThreadLocal<>(FormatParser.FACTORY);
     private final LocalValue<ImportHandlerContext> lvContext = new LocalValue<>();
@@ -103,7 +107,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     @Override
-    protected void onData(IOContext context, ByteSequence data) throws DisconnectedChannelException, SlowWritableChannelException {
+    protected void onData(IOContext context, ByteSequence data) throws IOException {
         int len;
 
         ImportHandlerContext h = lvContext.get(context);
@@ -117,7 +121,11 @@ public class ImportHandler extends AbstractMultipartHandler {
                 if (!h.analysed) {
                     analyseFormat(h, lo, len);
                     if (h.dataFormatValid) {
-                        h.textParser.analyseStructure(lo, len, 100, h.importer);
+                        try {
+                            h.textParser.analyseStructure(lo, len, 100, h.importer);
+                        } catch (JournalRuntimeException e) {
+                            sendError(context, e.getMessage());
+                        }
                         h.analysed = true;
                     }
                 }
@@ -125,8 +133,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                 if (h.dataFormatValid) {
                     h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
                 } else {
-                    context.simpleResponse().send(400, "Invalid data format");
-                    throw DisconnectedChannelException.INSTANCE;
+                    sendError(context, "Unsupported data format");
                 }
                 break;
             case SCHEMA:
@@ -148,7 +155,8 @@ public class ImportHandler extends AbstractMultipartHandler {
                 throw DisconnectedChannelException.INSTANCE;
             }
             h.analysed = false;
-            h.importer.of(nameExtractor.get().of(hb.getContentDispositionFilename()).toString());
+            h.importer.of(nameExtractor.get().of(hb.getContentDispositionFilename()).toString(),
+                    Chars.equalsNc("true", context.request.getUrlParam("o")));
             h.part = MessagePart.DATA;
         } else if (Chars.equals("schema", hb.getContentDispositionName())) {
             h.part = MessagePart.SCHEMA;
@@ -191,6 +199,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                 long totalRows = ctx.textParser.getLineCount();
                 long importedRows = ctx.importer.getImportedRowCount();
                 r.put('{')
+                        .putQuoted("status").put(':').putQuoted("OK").put(',')
                         .putQuoted("location").put(':').putUtf8EscapedAndQuoted(nameExtractor.get().of(m.getLocation())).put(',')
                         .putQuoted("rowsRejected").put(':').put(totalRows - importedRows).put(',')
                         .putQuoted("rowsImported").put(':').put(importedRows).put(',')
@@ -345,15 +354,28 @@ public class ImportHandler extends AbstractMultipartHandler {
         }
     }
 
+    private void sendError(IOContext context, String message) throws IOException {
+        ResponseSink sink = context.responseSink();
+        if (Chars.equalsNc("json", context.request.getUrlParam("fmt"))) {
+            sink.status(200, CONTENT_TYPE_JSON);
+            sink.put('{').putQuoted("status").put(':').putUtf8EscapedAndQuoted(message).put('}');
+        } else {
+            sink.status(200, CONTENT_TYPE_TEXT);
+            sink.putUtf8(message);
+        }
+        sink.flush();
+        throw DisconnectedChannelException.INSTANCE;
+    }
+
     private void sendResponse(IOContext context) throws IOException {
         ImportHandlerContext h = lvContext.get(context);
         h.json = Chars.equalsNc("json", context.request.getUrlParam("fmt"));
         ChunkedResponse r = context.chunkedResponse();
 
         if (h.json) {
-            r.status(200, "application/json; charset=utf-8");
+            r.status(200, CONTENT_TYPE_JSON);
         } else {
-            r.status(200, "text/plain; charset=utf-8");
+            r.status(200, CONTENT_TYPE_TEXT);
         }
         r.sendHeader();
         resume(context);

@@ -34,8 +34,6 @@
 
 package com.nfsdb.net.http.handlers;
 
-import com.nfsdb.ex.DisconnectedChannelException;
-import com.nfsdb.ex.SlowWritableChannelException;
 import com.nfsdb.net.http.ContextHandler;
 import com.nfsdb.net.http.IOContext;
 import com.nfsdb.net.http.MultipartListener;
@@ -83,7 +81,7 @@ public abstract class AbstractMultipartHandler implements ContextHandler, Multip
 
     protected abstract void onComplete0(IOContext context) throws IOException;
 
-    protected abstract void onData(IOContext context, ByteSequence data) throws DisconnectedChannelException, SlowWritableChannelException;
+    protected abstract void onData(IOContext context, ByteSequence data) throws IOException;
 
     protected abstract void onPartBegin(IOContext context, RequestHeaderBuffer hb) throws IOException;
 

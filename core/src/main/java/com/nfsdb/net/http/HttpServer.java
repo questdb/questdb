@@ -35,6 +35,7 @@
 package com.nfsdb.net.http;
 
 import com.nfsdb.ex.FatalError;
+import com.nfsdb.ex.JournalRuntimeException;
 import com.nfsdb.ex.NetworkError;
 import com.nfsdb.iter.clock.Clock;
 import com.nfsdb.iter.clock.MilliClock;
@@ -46,7 +47,6 @@ import com.nfsdb.mp.*;
 import com.nfsdb.std.ObjHashSet;
 import com.nfsdb.std.ObjList;
 
-import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.concurrent.CountDownLatch;
 
@@ -74,15 +74,19 @@ public class HttpServer {
         this.configuration = configuration;
     }
 
-    public void halt() throws IOException, InterruptedException {
+    public void halt() {
         if (running) {
             running = false;
-            startComplete.await();
-            for (int i = 0; i < workers.size(); i++) {
-                workers.getQuick(i).halt();
+            try {
+                startComplete.await();
+                for (int i = 0; i < workers.size(); i++) {
+                    workers.getQuick(i).halt();
+                }
+                haltLatch.await();
+                dispatcher.close();
+            } catch (Exception e) {
+                throw new JournalRuntimeException(e);
             }
-            haltLatch.await();
-            dispatcher.close();
 
             for (int i = 0; i < ioQueue.getCapacity(); i++) {
                 IOEvent ev = ioQueue.get(i);

@@ -42,6 +42,8 @@ import com.nfsdb.misc.Files;
 import com.nfsdb.std.CompositePath;
 import com.nfsdb.std.ObjObjHashMap;
 import com.nfsdb.std.ThreadLocal;
+import com.nfsdb.store.Lock;
+import com.nfsdb.store.LockManager;
 import com.nfsdb.store.TxLog;
 import com.nfsdb.store.UnstructuredFile;
 
@@ -127,6 +129,20 @@ class JournalConfigurationImpl implements JournalConfiguration {
             }
 
             throw new JournalMetadataException(mo, mn);
+        }
+    }
+
+    @Override
+    public void delete(CharSequence location) throws JournalException {
+        File l = new File(journalBase, location.toString());
+        Lock lock = LockManager.lockExclusive(l);
+        try {
+            if (lock == null || !lock.isValid()) {
+                throw new JournalException("Journal is open for APPEND at %s", l);
+            }
+            Files.deleteOrException(l);
+        } finally {
+            LockManager.release(lock);
         }
     }
 

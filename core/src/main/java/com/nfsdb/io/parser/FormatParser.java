@@ -59,10 +59,6 @@ public class FormatParser {
     private FormatParser() {
     }
 
-    public int getAvgRecLen() {
-        return avgRecLen;
-    }
-
     public TextFileFormat getFormat() {
         return format;
     }
@@ -204,5 +200,9 @@ public class FormatParser {
         }
 
         this.stdDev = Math.sqrt(temp / n);
+    }
+
+    int getAvgRecLen() {
+        return avgRecLen;
     }
 }

@@ -93,8 +93,8 @@ public class HttpTestUtils {
         return null;
     }
 
-    public static int upload(String resource, String url) throws IOException {
-        return upload(resourceFile(resource), url);
+    public static int upload(String resource, String url, StringBuilder reponse) throws IOException {
+        return upload(resourceFile(resource), url, reponse);
     }
 
     private static HttpClientBuilder createHttpClient_AcceptsUntrustedCerts() throws Exception {
@@ -136,13 +136,21 @@ public class HttpTestUtils {
         return new File(HttpTestUtils.class.getResource(resource).getFile());
     }
 
-    private static int upload(File file, String url) throws IOException {
+    private static int upload(File file, String url, StringBuilder response) throws IOException {
         HttpPost post = new HttpPost(url);
         try (CloseableHttpClient client = HttpClients.createDefault()) {
             MultipartEntityBuilder b = MultipartEntityBuilder.create();
             b.addPart("data", new FileBody(file));
             post.setEntity(b.build());
             HttpResponse r = client.execute(post);
+            if (response != null) {
+                InputStream is = r.getEntity().getContent();
+                int n;
+                while ((n = is.read()) > 0) {
+                    response.append((char) n);
+                }
+                is.close();
+            }
             return r.getStatusLine().getStatusCode();
         }
     }

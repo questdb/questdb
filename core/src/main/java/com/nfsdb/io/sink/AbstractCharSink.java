@@ -129,6 +129,28 @@ public abstract class AbstractCharSink implements CharSink {
 
     @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     @Override
+    public CharSink putUtf8(CharSequence cs) {
+        int hi = cs.length();
+        int i = 0;
+        while (i < hi) {
+            char c = cs.charAt(i++);
+            if (c > 31 && c < 128) {
+                put(c);
+            } else if (c < 32) {
+                putEscaped(c);
+            } else if (c < 2048) {
+                put((char) (192 | c >> 6)).put((char) (128 | c & 63));
+            } else if (Character.isSurrogate(c)) {
+                i = encodeSurrogate(c, cs, i, hi);
+            } else {
+                put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
+            }
+        }
+        return this;
+    }
+
+    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
+    @Override
     public CharSink putUtf8Escaped(CharSequence cs) {
         int hi = cs.length();
         int i = 0;

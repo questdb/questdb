@@ -35,10 +35,10 @@
 package com.nfsdb.ex;
 
 @SuppressWarnings("ThrowableInstanceNeverThrown")
-public final class ImportColumnCountException extends RuntimeException {
+public final class ImportColumnCountException extends JournalRuntimeException {
     public final static ImportColumnCountException INSTANCE = new ImportColumnCountException();
 
     private ImportColumnCountException() {
-        super("Column count mismatch");
+        super("Journal exists and column count does not mismatch");
     }
 }

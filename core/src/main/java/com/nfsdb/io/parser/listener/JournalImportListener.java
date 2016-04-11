@@ -68,6 +68,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     private ObjList<ImportedColumnMetadata> metadata;
     private JournalWriter writer;
     private long _size;
+    private boolean overwrite;
 
     public JournalImportListener(JournalWriterFactory factory) {
         this.factory = factory;
@@ -113,8 +114,9 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
         return writer.getMetadata();
     }
 
-    public JournalImportListener of(String location) {
+    public JournalImportListener of(String location, boolean overwrite) {
         this.location = location;
+        this.overwrite = overwrite;
         return this;
     }
 
@@ -208,7 +210,12 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                         break;
                     case EXISTS:
                         this.metadata = metadata;
-                        writer = mapColumnsAndOpenWriter();
+                        if (overwrite) {
+                            factory.getConfiguration().delete(location);
+                            writer = factory.bulkWriter(createStructure());
+                        } else {
+                            writer = mapColumnsAndOpenWriter();
+                        }
                         break;
                     default:
                         throw ImportNameException.INSTANCE;
@@ -244,6 +251,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
 
     @SuppressWarnings("unchecked")
     private JournalWriter mapColumnsAndOpenWriter() throws JournalException {
+
         JournalMetadata<Object> jm = factory.getConfiguration().createMetadata(new JournalKey<>(location));
 
         // now, compare column count.
