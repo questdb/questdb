@@ -109,24 +109,21 @@ function nopropagation(e) {
             $('#btnRetry').attr('disabled', !retry);
         }
 
-        function renderRowAsOverwrite(x, id) {
-            var item = dict[id];
-            item.retry = 2; // overwrite
-            $('#' + id + ' > .ud-c1').html(item.name + '<span class="label label-danger m-l-lg">overwrite</span>');
+        function renderRowAsOverwrite(x, e) {
+            e.retry = 2; // overwrite
+            $('#' + e.id + ' > .ud-c1').html(e.name + '<span class="label label-danger m-l-lg">overwrite</span>');
             updateButtons();
         }
 
-        function renderRowAsAppend(x, id) {
-            var item = dict[id];
-            item.retry = 1; // append
-            $('#' + id + ' > .ud-c1').html(item.name + '<span class="label label-primary m-l-lg">append</span>');
+        function renderRowAsAppend(x, e) {
+            e.retry = 1; // append
+            $('#' + e.id + ' > .ud-c1').html(e.name + '<span class="label label-primary m-l-lg">append</span>');
             updateButtons();
         }
 
-        function renderRowAsCancel(x, id) {
-            var item = dict[id];
-            item.retry = 0; // cancel
-            $('#' + id + ' > .ud-c1').html(item.name);
+        function renderRowAsCancel(x, e) {
+            e.retry = 0; // cancel
+            $('#' + e.id + ' > .ud-c1').html(e.name);
             updateButtons();
         }
 
@@ -214,10 +211,10 @@ function nopropagation(e) {
             if (data.status === 'OK') {
                 current.response = data;
                 current.importState = 0; // ok
-                renderRowAsCancel(null, current.id);
+                renderRowAsCancel(null, current);
                 status(current, '<span class="label label-success">imported</span>', true);
             } else {
-                current.importState = 4;
+                current.importState = 4; // error with journal, status has error message
                 current.response = data.status;
                 status(current, '<span class="label label-danger">failed</span>', true);
             }
@@ -235,13 +232,13 @@ function nopropagation(e) {
         }
 
         function importFailed(r) {
-            current.response = r.responseText;
-            renderRowAsCancel(null, current.id);
+            renderRowAsCancel(null, current);
             if (r.statusText !== 'abort') {
+                current.response = r.responseText;
                 current.importState = httpStatusToImportState(r.status);
                 status(current, '<span class="label label-danger">failed</span>', true);
             } else {
-                current.importState = -2; // abort
+                // current.importState = -1; // abort
                 status(current, '<span class="label label-warning">aborted</span>', true);
             }
         }
@@ -264,7 +261,6 @@ function nopropagation(e) {
                         schema += c.name + '=' + c.altType + '&';
                     }
                 }
-                console.log('schema: ' + schema);
                 importRequest.data.append('schema', schema);
             }
 
@@ -389,7 +385,7 @@ function nopropagation(e) {
 
             $(document).on('import.line.overwrite', renderRowAsOverwrite);
             $(document).on('import.line.append', renderRowAsAppend);
-            $(document).on('import.line.cancel', renderRowAsCancel);
+            $(document).on('import.line.abort', renderRowAsCancel);
         }
 
         function init() {

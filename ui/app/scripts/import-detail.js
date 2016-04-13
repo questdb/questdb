@@ -121,7 +121,7 @@
                 }
             }
 
-            $(document).trigger(modified ? 'import.line.overwrite' : 'import.line.cancel', current.id);
+            $(document).trigger(modified ? 'import.line.overwrite' : 'import.line.cancel', current);
         }
 
         function selectChange() {
@@ -138,6 +138,13 @@
         }
 
         function render(e) {
+            console.log('render called: ' + e.importState);
+
+            if (e.importState === 0 && !e.response) {
+                // aborted at start
+                return;
+            }
+
             if (e.response && e.importState === 0) {
                 divTabName.html(e.response.location);
 
@@ -249,7 +256,6 @@
         });
 
         btnRadio.on('ifClicked', function () {
-
             var msg;
             switch (this.value) {
                 case 'append':
@@ -259,10 +265,10 @@
                     msg = 'import.line.overwrite';
                     break;
                 default:
-                    msg = 'import.line.cancel';
+                    msg = 'import.line.abort';
                     break;
             }
-            $(document).trigger(msg, current.id);
+            $(document).trigger(msg, current);
         });
 
         $(window).resize(resizeCanvas);
