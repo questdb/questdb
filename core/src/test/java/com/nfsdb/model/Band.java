@@ -1,8 +1,9 @@
 /*******************************************************************************
- *  _  _ ___ ___     _ _
- * | \| | __/ __| __| | |__
- * | .` | _|\__ \/ _` | '_ \
- * |_|\_|_| |___/\__,_|_.__/
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
  *
  * Copyright (C) 2014-2016 Appsicle
  *
@@ -48,9 +49,8 @@ public class Band {
         return image;
     }
 
-    public Band setImage(ByteBuffer image) {
-        this.image = image;
-        return this;
+    public Band setImage(byte[] bytes) {
+        return setImage(ByteBuffer.wrap(bytes));
     }
 
     public String getName() {
@@ -88,8 +88,9 @@ public class Band {
         return this;
     }
 
-    public Band setImage(byte[] bytes) {
-        return setImage(ByteBuffer.wrap(bytes));
+    public Band setImage(ByteBuffer image) {
+        this.image = image;
+        return this;
     }
 
     @Override
