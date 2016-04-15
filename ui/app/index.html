@@ -32,7 +32,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NFSdb - Console</title>
+    <title>QuestDB - Console</title>
 
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
     <!-- Place favicon.ico in the root directory -->
@@ -63,12 +63,12 @@
                     <div class="dropdown profile-element">
                         <a data-toggle="dropdown" class="dropdown-toggle" href="#">
               <span class="clear">
-                <h3>NFSdb Console</h3>
+                <h3>QuestDB</h3>
               </span>
                         </a>
                     </div>
                     <div class="logo-element">
-                        NFSdb
+                        QDB
                     </div>
                 </li>
                 <li>
@@ -112,12 +112,12 @@
 
             </nav>
         </div>
-        <div class="row wrapper border-bottom white-bg page-heading sql-editor">
+        <div class="row wrapper border-bottom white-bg page-heading js-sql-panel">
             <div class="col-lg-10">
-                <h2>SQL Console</h2>
+                <h3>SQL Console</h3>
             </div>
         </div>
-        <div class="wrapper wrapper-content sql-editor">
+        <div class="wrapper wrapper-content js-sql-panel">
             <div class="row">
                 <div class="col-lg-12">
                     <div class="ibox">
@@ -128,20 +128,23 @@
                                         <i class="fa fa-arrow-left"></i>
                                     </button>
                                 </div>
-                                <button class="btn btn-white btn-sm m-r-sm" data-toggle="tooltip" data-placement="top"
-                                        title data-original-title="Execute query"><i class="fa fa-play"></i>&nbsp;&nbsp;Run
+                                <button class="btn btn-white btn-sm m-r-sm js-query-run"><i class="fa fa-play"></i>&nbsp;&nbsp;Run
                                 </button>
-                                <button class="btn btn-white btn-sm" data-toggle="tooltip" data-placement="top" title
-                                        data-original-title="Copy to clipboard"><i class="fa fa-copy"></i></button>
-                                <button class="btn btn-white btn-sm" data-toggle="tooltip" data-placement="top" title
-                                        data-original-title="Cut clipboard"><i class="fa fa-scissors"></i></button>
-                                <button class="btn btn-white btn-sm m-r-sm" data-toggle="tooltip" data-placement="top"
-                                        title data-original-title="Paste"><i class="fa fa-clipboard"></i></button>
-                                <button class="btn btn-white btn-sm" data-toggle="tooltip" data-placement="top" title
-                                        data-original-title="Show invisible characters"><i class="fa fa-paragraph"></i>
+                                <button class="btn btn-white btn-sm"><i class="fa fa-copy"></i></button>
+                                <button class="btn btn-white btn-sm"><i class="fa fa-scissors"></i></button>
+                                <button class="btn btn-white btn-sm m-r-sm"><i class="fa fa-clipboard"></i></button>
+                                <button class="btn btn-white btn-sm"><i class="fa fa-paragraph"></i>
                                 </button>
                             </div>
-                            <div id="sqlEditor" class="editor">
+                            <div id="sqlEditor" class="editor border-rounded-top-half">
+                            </div>
+                            <div class="query-progress-spinner js-query-spinner"></div>
+                            <div class="query-message query-message-ok js-query-message-panel">
+                                <div class="col-lg-2 query-time">
+                                    <i class="fa fa-clock-o"></i>
+                                    <div class="js-query-time">-</div>
+                                </div>
+                                <div class="col-lg-10 js-query-message-text"></div>
                             </div>
                         </div>
                     </div>
@@ -157,12 +160,12 @@
                 </div>
             </div>
         </div>
-        <div class="row wrapper border-bottom white-bg page-heading file-upload">
+        <div class="row wrapper border-bottom white-bg page-heading js-import-panel">
             <div class="col-lg-10">
-                <h2>Data import</h2>
+                <h3>Data import</h3>
             </div>
         </div>
-        <div class="wrapper wrapper-content file-upload">
+        <div class="wrapper wrapper-content js-import-panel">
             <div class="row">
                 <div class="col-lg-12">
                     <div class="ibox">
@@ -310,7 +313,7 @@
 <!-- build:js scripts/nfsdb.js -->
 <script src="scripts/import.js"></script>
 <script src="scripts/import-detail.js"></script>
-<script src="scripts/GridController.js"></script>
+<script src="scripts/query.js"></script>
 <script src="scripts/main.js"></script>
 <!-- endbuild -->
 

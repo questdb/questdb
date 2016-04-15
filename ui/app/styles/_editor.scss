@@ -35,7 +35,81 @@
   display: none;
 }
 
+.border-rounded-top-half {
+  border-top-left-radius: $border-radius;
+  border-top-right-radius: $border-radius;
+}
+
 #sqlEditor {
   height: 240px;
-  border-radius: $border-radius;
+}
+
+// endless progress bar
+@-webkit-keyframes moving-gradient {
+  0% {
+    background-position: left bottom;
+  }
+  100% {
+    background-position: right bottom;
+  }
+}
+
+.query-progress-animated {
+  background: -webkit-linear-gradient(
+                  left,
+                  #0193CD 30%,
+                  #badae5 80%,
+                  #0193CD 100%
+  ) repeat;
+
+  -webkit-background-size: 50% 100%;
+  -webkit-animation-name: moving-gradient;
+  -webkit-animation-duration: 1s;
+  -webkit-animation-iteration-count: infinite;
+  -webkit-animation-timing-function: linear;
+}
+
+.query-progress-spinner {
+  width: 100%;
+  height: 6px;
+  background-color: #1C1C1C;
+
+  border-bottom-left-radius: $border-radius;
+  border-bottom-right-radius: $border-radius;
+}
+
+.query-message {
+  margin-top: 10px;
+  border: 1px solid #e7eaec;
+  background-color: #FAFAFB;
+  border-radius: 2px;
+  padding: 5px;
+  height: 30px;
+}
+
+.query-message.query-message-error {
+  border-left: 3px solid #ED5565;
+}
+
+.query-message.query-message-ok {
+  border-left: 3px solid #1AB394;
+}
+
+.query-message .query-time {
+  border-right: 2px solid #CCCCCC;
+}
+
+.query-message .query-time .fa {
+  margin-right: 8px;
+}
+
+.query-message .js-query-time {
+  display: inline-block;
+}
+
+.js-syntax-error {
+  border-bottom: 1px solid red;
+  position: absolute;
+  cursor: pointer !important;
+  pointer-events: auto;
 }

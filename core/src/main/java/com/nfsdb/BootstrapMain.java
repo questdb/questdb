@@ -65,14 +65,14 @@ class BootstrapMain {
 
     @SuppressFBWarnings("PATH_TRAVERSAL_IN")
     public static void main(String[] args) throws Exception {
-        System.out.printf("NFSdb Server v3.0.0 Copyright (C) Appsicle 2014-2016\n\n");
+        System.out.printf("QDB HTTP Server 3.0\nCopyright (C) Appsicle 2014-2016, all rights reserved.\n\n");
         if (args.length < 1) {
             System.out.println("Root directory name expected");
             return;
         }
 
         if (Os.type == Os._32Bit) {
-            System.out.println("NFSdb requires 64-bit JVM");
+            System.out.println("QDB requires 64-bit JVM");
             return;
         }
 

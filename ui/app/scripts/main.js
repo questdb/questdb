@@ -28,8 +28,6 @@
  ******************************************************************************/
 
 /*globals $:false */
-/*globals ace:false */
-
 /*
  *
  *   INSPINIA - Responsive Admin Theme
@@ -180,34 +178,33 @@ $(document).ready(function () {
 $(document).ready(function () {
     'use strict';
 
-    var sqlEditorStyle = $('.sql-editor');
-    var fileUploadStyle = $('.file-upload');
+    var divSqlPanel = $('.js-sql-panel');
+    var divImportPanel = $('.js-import-panel');
 
     $('a#sql-editor').click(function () {
-        sqlEditorStyle.css('display', 'block');
-        fileUploadStyle.css('display', 'none');
+        divSqlPanel.show();
+        divImportPanel.hide();
         $('#sqlEditor').css('height', '240px');
     });
 
     $('a#file-upload').click(function () {
-        sqlEditorStyle.css('display', 'none');
-        fileUploadStyle.css('display', 'block');
+        divSqlPanel.hide();
+        divImportPanel.show();
     });
 
-
-    var e = ace.edit('sqlEditor');
-    e.getSession().setMode('ace/mode/sql');
-    e.setTheme('ace/theme/merbivore_soft');
-    e.setShowPrintMargin(false);
-    e.setDisplayIndentGuides(false);
-    e.setHighlightActiveLine(false);
-
-    // read editor contents from local storage
-    if (typeof (Storage) !== 'undefined' && localStorage.getItem('lastQuery')) {
-        e.setValue(localStorage.getItem('lastQuery'));
-    }
-
-    e.focus();
+    // var e = ace.edit('sqlEditor');
+    // e.getSession().setMode('ace/mode/sql');
+    // e.setTheme('ace/theme/merbivore_soft');
+    // e.setShowPrintMargin(false);
+    // e.setDisplayIndentGuides(false);
+    // e.setHighlightActiveLine(false);
+    //
+    // // read editor contents from local storage
+    // if (typeof (Storage) !== 'undefined' && localStorage.getItem('lastQuery')) {
+    //     e.setValue(localStorage.getItem('lastQuery'));
+    // }
+    //
+    // e.focus();
 
     var container = $('#grid');
     container.css('height', '430px');
