@@ -34,56 +34,14 @@
 (function ($) {
     'use strict';
     $.fn.grid = function () {
+        var defaults = {
+            minColumnWidth: 60
+        };
         var $style;
         var div = $(this);
         var canvas;
         var header;
-
-        function createCss(columns) {
-            $style = $('<style type="text/css" rel="stylesheet"/>').appendTo($('head'));
-
-            var rules = [];
-            var cw = 8;
-            var rowWidth = 0;
-
-            for (var i = 0; i < columns.length; i++) {
-                var c = columns[i];
-                var headWidth = c.name.length * cw;
-                var typeWidth = 0;
-                switch (c.type) {
-                    case 'BOOLEAN':
-                    case 'BYTE':
-                        typeWidth = 30;
-                        break;
-                    case 'DOUBLE':
-                    case 'FLOAT':
-                    case 'LONG':
-                    case 'DATE':
-                        typeWidth = 150;
-                        break;
-                    case 'INT':
-                    case 'SHORT':
-                        typeWidth = 100;
-                        break;
-                    case 'STRING':
-                    case 'SYMBOL':
-                        typeWidth = 0;
-                        break;
-                    default:
-                        break;
-                }
-                var w = Math.max(headWidth, typeWidth);
-                rules.push('.qg-w' + i + '{width:' + w + 'px;}');
-                rowWidth += w;
-            }
-            rules.push('.qg-r{width:' + rowWidth + 'px;}');
-
-            if ($style[0].styleSheet) { // IE
-                $style[0].styleSheet.cssText = rules.join(' ');
-            } else {
-                $style[0].appendChild(document.createTextNode(rules.join(' ')));
-            }
-        }
+        var colMax;
 
         function renderPermMarkup() {
             header = $('<div class="qg-header-row"></div>');
@@ -96,19 +54,42 @@
             });
         }
 
-        function render(r) {
+        function createCss() {
+            $style = $('<style type="text/css" rel="stylesheet"/>').appendTo($('head'));
 
+            var rules = [];
+            var sum = 0;
+            for (var i = 0; i < colMax.length; i++) {
+                var w = Math.max(defaults.minColumnWidth, colMax[i] * 8 + 8);
+                rules.push('.qg-w' + i + '{width:' + w + 'px;}');
+                sum += w;
+            }
+            rules.push('.qg-r{width:' + sum + 'px;}');
+
+            if ($style[0].styleSheet) { // IE
+                $style[0].styleSheet.cssText = rules.join(' ');
+            } else {
+                $style[0].appendChild(document.createTextNode(rules.join(' ')));
+            }
+        }
+
+        function render(r) {
+            colMax = [];
             var i, k;
             for (i = 0; i < r.columns.length; i++) {
                 var c = r.columns[i];
                 $('<div class="qg-header qg-w' + i + '">' + c.name + '</div>').appendTo(header);
+                colMax.push(0);
             }
 
             for (i = 0; i < r.result.length; i++) {
                 var row = r.result[i];
                 var rowDiv = $('<div class="qg-r"></div>');
                 for (k = 0; k < row.length; k++) {
-                    $('<div class="qg-c qg-w' + k + '">' + row[k] + '</div>').appendTo(rowDiv);
+                    var cell = row[k];
+                    var str = cell !== null ? cell.toString() : 'null';
+                    colMax[k] = Math.max(str.length, colMax[k]);
+                    $('<div class="qg-c qg-w' + k + '">' + str + '</div>').appendTo(rowDiv);
                 }
                 rowDiv.appendTo(canvas);
             }
@@ -141,10 +122,11 @@
             resizeDiv();
         }
 
+        //noinspection JSUnusedLocalSymbols
         function update(x, m) {
             clear();
-            createCss(m.r.columns);
             render(m.r);
+            createCss();
             resize();
         }
 
@@ -157,7 +139,6 @@
         renderPermMarkup();
         resize();
     };
-
 }(jQuery));
 
 $(document).ready(function () {

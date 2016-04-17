@@ -65,7 +65,7 @@
         function handleServerResponse(r) {
             $(document).trigger('query.ok',
                 {
-                    r: r,
+                    r,
                     delta: (new Date().getTime() - time)
                 }
             );
@@ -141,6 +141,7 @@
             };
         }
 
+        //noinspection JSUnusedLocalSymbols
         function error(x, m) {
             clearTimeout(timer);
 
@@ -158,6 +159,7 @@
             }
         }
 
+        //noinspection JSUnusedLocalSymbols
         function ok(x, m) {
             clearTimeout(timer);
             div.removeClass('query-progress-animated');
@@ -177,7 +179,7 @@
 
     function editor() {
         var edit;
-        var item = 'lastQuery';
+        var item = 'query.text';
         var Range = ace.require('ace/range').Range;
         var marker;
 
@@ -196,15 +198,26 @@
             edit.setDisplayIndentGuides(false);
             edit.setHighlightActiveLine(false);
             edit.session.on('change', clearMarker);
+            edit.$blockScrolling = Infinity;
         }
 
         function load() {
-            if (typeof (Storage) !== 'undefined' && localStorage.getItem(item)) {
-                edit.setValue(localStorage.getItem(item));
+            if (typeof (Storage) !== 'undefined') {
+                var q = localStorage.getItem(item);
+                if (q) {
+                    edit.setValue(q);
+                }
+            }
+        }
+
+        function save() {
+            if (typeof (Storage) !== 'undefined') {
+                localStorage.setItem(item, edit.getValue());
             }
         }
 
         function submitQuery() {
+            save();
             clearMarker();
             var q = edit.getSelectedText();
             var r;
@@ -221,6 +234,7 @@
             $(document).trigger('query.execute', {q, r, c});
         }
 
+        //noinspection JSUnusedLocalSymbols
         function showError(x, pos) {
             var token = edit.session.getTokenAt(pos.r - 1, pos.c);
             marker = edit.session.addMarker(
