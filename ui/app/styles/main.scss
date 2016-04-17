@@ -31,11 +31,31 @@
 $icon-font-path: '../fonts/';
 
 // bower:scss
-@import "bower_components/bootstrap-sass/assets/stylesheets/_bootstrap.scss";
+@import "../../bower_components/bootstrap-sass/assets/stylesheets/_bootstrap.scss";
 // endbower
 
-@import "style";
-@import "_editor";
+@import "variables";
+@import "typography";
+@import "navigation";
+@import "buttons";
+@import "badgets_labels";
+@import "sidebar";
+@import "base";
+@import "metismenu";
+@import "media";
+
+// Clear layout on print mode
+@media print {
+  nav.navbar-static-side {
+    display: none;
+  }
+
+  #page-wrapper {
+    margin: 0;
+  }
+}
+
+@import "editor";
 @import "import";
 @import "import-detail";
 @import "grid";
