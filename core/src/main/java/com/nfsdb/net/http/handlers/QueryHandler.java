@@ -229,7 +229,7 @@ public class QueryHandler implements ContextHandler {
                         if (ctx.count > ctx.skip + 1) {
                             r.put(',');
                         }
-                        r.put('{');
+                        r.put('[');
 
                         ctx.state = QueryState.RECORD_COLUMNS;
                         ctx.columnIndex = 0;
@@ -242,7 +242,7 @@ public class QueryHandler implements ContextHandler {
                             if (ctx.columnIndex > 0) {
                                 r.put(',');
                             }
-                            r.putQuoted(m.getName()).put(':');
+//                            r.putQuoted(m.getName()).put(':');
                             putValue(r, m.getType(), ctx.record, ctx.columnIndex);
                         }
 
@@ -251,7 +251,7 @@ public class QueryHandler implements ContextHandler {
 
                     case RECORD_SUFFIX:
                         r.bookmark();
-                        r.put('}');
+                        r.put(']');
                         ctx.record = null;
                         ctx.state = QueryState.RECORD_START;
                         break;

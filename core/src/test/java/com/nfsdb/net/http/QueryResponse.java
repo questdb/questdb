@@ -36,11 +36,12 @@
 package com.nfsdb.net.http;
 
 import java.sql.Timestamp;
+import java.util.List;
 
 public class QueryResponse {
     public String error;
     public String query;
-    public Tab[] result;
+    public List<String[]> result;
     public boolean moreExist;
     public int totalCount;
 

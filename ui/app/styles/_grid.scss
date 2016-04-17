@@ -28,18 +28,43 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-$icon-font-path: '../fonts/';
+#grid {
+}
 
-// bower:scss
-@import "bower_components/bootstrap-sass/assets/stylesheets/_bootstrap.scss";
-// endbower
+.qg-header-row {
+  overflow: hidden;
+}
 
-@import "style";
-@import "_editor";
-@import "import";
-@import "import-detail";
-@import "grid";
+.qg-header-row, .qg-r {
+  white-space: nowrap;
+}
 
-.btn:disabled {
-  cursor: default;
+.qg-r {
+  border-bottom: 1px solid #e6e6e6;
+}
+
+.qg-r:hover {
+  background-color: #f6f6f6;
+}
+
+.qg-header {
+  display: inline-block;
+  padding: 5px 3px 7px;
+  font-weight: 700;
+  border-bottom: 1px solid #e6e6e6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+
+.qg-canvas {
+  overflow: auto;
+}
+
+.qg-c {
+  display: inline-block;
+  padding: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
 }

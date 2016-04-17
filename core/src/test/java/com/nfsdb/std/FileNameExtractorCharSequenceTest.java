@@ -41,8 +41,8 @@ import org.junit.Test;
 
 public class FileNameExtractorCharSequenceTest {
 
+    private static final FileNameExtractorCharSequence extractor = new FileNameExtractorCharSequence();
     private static char separator;
-    private static FileNameExtractorCharSequence extractor = new FileNameExtractorCharSequence();
 
     @BeforeClass
     public static void setUp() throws Exception {

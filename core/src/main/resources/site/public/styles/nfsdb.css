@@ -16220,6 +16220,44 @@ body.md-skin {
     font-size: 110%
 }
 
+.qg-header-row {
+    overflow: hidden
+}
+
+.qg-header-row, .qg-r {
+    white-space: nowrap
+}
+
+.qg-r {
+    border-bottom: 1px solid #e6e6e6
+}
+
+.qg-r:hover {
+    background-color: #f6f6f6
+}
+
+.qg-header {
+    display: inline-block;
+    padding: 5px 3px 7px;
+    font-weight: 700;
+    border-bottom: 1px solid #e6e6e6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: right
+}
+
+.qg-canvas {
+    overflow: auto
+}
+
+.qg-c {
+    display: inline-block;
+    padding: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: right
+}
+
 .btn:disabled {
     cursor: default
 }

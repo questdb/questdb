@@ -125,11 +125,7 @@
         }
 
         function toTextPosition(q, pos) {
-            console.log('query: ' + q.q);
-            console.log('pos: ' + pos);
-
             var r = 0, c = 0, n = Math.min(pos, q.q.length);
-            console.log('n: ' + n);
             for (var i = 0; i < n; i++) {
                 if (q.q.charAt(i) === '\n') {
                     r++;

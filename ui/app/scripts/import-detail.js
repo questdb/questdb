@@ -139,8 +139,6 @@
         }
 
         function render(e) {
-            console.log('render called: ' + e.importState);
-
             if (e.importState === 0 && !e.response) {
                 // aborted at start
                 return;

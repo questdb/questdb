@@ -668,7 +668,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
-    private void assertNotModified(HttpServerConfiguration configuration, HttpServer server) throws IOException, InterruptedException {
+    private void assertNotModified(HttpServerConfiguration configuration, HttpServer server) throws IOException {
         server.start();
         try {
             File out = new File(temp.getRoot(), "get.html");
@@ -699,7 +699,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
-    private void assertRanges(HttpServerConfiguration configuration, HttpServer server) throws IOException, InterruptedException {
+    private void assertRanges(HttpServerConfiguration configuration, HttpServer server) throws IOException {
         server.start();
         try {
 

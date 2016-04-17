@@ -117,19 +117,19 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         int count = 10000;
         generateJournal("large", count);
         QueryResponse queryResponse = download("large");
-        Assert.assertEquals(count, queryResponse.result.length);
+        Assert.assertEquals(count, queryResponse.result.size());
     }
 
     @Test
     public void testJsonEmpty() throws Exception {
         QueryResponse queryResponse = download("tab", 0, 0, false);
-        Assert.assertEquals(0, queryResponse.result.length);
+        Assert.assertEquals(0, queryResponse.result.size());
     }
 
     @Test
     public void testJsonEmpty0() throws Exception {
         QueryResponse queryResponse = download("tab where 1 = 2", 0, 0, false);
-        Assert.assertEquals(0, queryResponse.result.length);
+        Assert.assertEquals(0, queryResponse.result.size());
     }
 
     @Test
@@ -150,8 +150,8 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         QueryResponse queryResponse = download(query);
         Assert.assertEquals(query, queryResponse.query);
         for (int i = 0; i < allCharString.length(); i++) {
-            Assert.assertTrue("result len is less than " + i, i < queryResponse.result[0].id.length());
-            Assert.assertEquals(i + "", allCharString.charAt(i), queryResponse.result[0].id.charAt(i));
+            Assert.assertTrue("result len is less than " + i, i < queryResponse.result.get(0)[0].length());
+            Assert.assertEquals(i + "", allCharString.charAt(i), queryResponse.result.get(0)[0].charAt(i));
         }
     }
 
@@ -159,22 +159,22 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public void testJsonEncodeNumbers() throws Exception {
         generateJournal("nums", null, 1.900232E-10, Double.MAX_VALUE, Long.MAX_VALUE, Integer.MIN_VALUE, new Timestamp(10));
         QueryResponse queryResponse = download("nums limit 20");
-        Assert.assertEquals(1.900232E-10, queryResponse.result[0].x, 1E-6);
-        Assert.assertEquals(Double.MAX_VALUE, queryResponse.result[0].y, 1E-6);
-        Assert.assertEquals(Long.MAX_VALUE, queryResponse.result[0].z);
-        Assert.assertEquals(0, queryResponse.result[0].w);
-//        Assert.assertEquals(ts, queryResponse.result[0].timestamp);
+        Assert.assertEquals("0.0000000002", queryResponse.result.get(0)[1]);
+        Assert.assertEquals("1.7976931348623157E308", queryResponse.result.get(0)[2]);
+        Assert.assertEquals("9223372036854775807", queryResponse.result.get(0)[3]);
+        Assert.assertNull(queryResponse.result.get(0)[4]);
+        Assert.assertEquals("1970-01-01T00:00:00.010Z", queryResponse.result.get(0)[5]);
         Assert.assertEquals(false, queryResponse.moreExist);
 
-        Assert.assertEquals("id4", queryResponse.result[4].id);
-        Assert.assertTrue(Double.isNaN(queryResponse.result[4].y));
+        Assert.assertEquals("id4", queryResponse.result.get(4)[0]);
+        Assert.assertEquals("NaN", queryResponse.result.get(4)[2]);
     }
 
     @Test
     public void testJsonInvertedLimit() throws Exception {
         String query = "tab limit 10";
         QueryResponse queryResponse = download(query, 10, 5, false);
-        Assert.assertEquals(0, queryResponse.result.length);
+        Assert.assertEquals(0, queryResponse.result.size());
         Assert.assertEquals(true, queryResponse.moreExist);
     }
 
@@ -182,10 +182,10 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public void testJsonLimits() throws Exception {
         String query = "tab";
         QueryResponse r = download(query, 2, 4, false);
-        Assert.assertEquals(2, r.result.length);
+        Assert.assertEquals(2, r.result.size());
         Assert.assertEquals(true, r.moreExist);
-        Assert.assertEquals("id2", r.result[0].id);
-        Assert.assertEquals("id3", r.result[1].id);
+        Assert.assertEquals("id2", r.result.get(0)[0]);
+        Assert.assertEquals("id3", r.result.get(1)[0]);
     }
 
     @Test
@@ -195,10 +195,10 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         QueryResponse queryResponse3 = download("tab limit 10");
         QueryResponse queryResponse4 = download("tab limit 10");
 
-        Assert.assertEquals(10, queryResponse1.result.length);
-        Assert.assertEquals(10, queryResponse2.result.length);
-        Assert.assertEquals(10, queryResponse3.result.length);
-        Assert.assertEquals(10, queryResponse4.result.length);
+        Assert.assertEquals(10, queryResponse1.result.size());
+        Assert.assertEquals(10, queryResponse2.result.size());
+        Assert.assertEquals(10, queryResponse3.result.size());
+        Assert.assertEquals(10, queryResponse4.result.size());
 
         Assert.assertTrue(handler.getCacheHits() > 0);
         Assert.assertTrue(handler.getCacheMisses() > 0);
@@ -207,13 +207,13 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     @Test
     public void testJsonSimple() throws Exception {
         QueryResponse queryResponse = download("select 1 z from tab limit 10");
-        Assert.assertEquals(10, queryResponse.result.length);
+        Assert.assertEquals(10, queryResponse.result.size());
     }
 
     @Test
     public void testJsonTakeLimit() throws Exception {
         QueryResponse queryResponse = download("tab limit 10", 2, -1, false);
-        Assert.assertEquals(2, queryResponse.result.length);
+        Assert.assertEquals(2, queryResponse.result.size());
         Assert.assertEquals(true, queryResponse.moreExist);
     }
 
@@ -221,10 +221,10 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public void testJsonTotalCount() throws Exception {
         String query = "tab";
         QueryResponse r = download(query, 2, 4, true);
-        Assert.assertEquals(2, r.result.length);
+        Assert.assertEquals(2, r.result.size());
         Assert.assertEquals(false, r.moreExist);
-        Assert.assertEquals("id2", r.result[0].id);
-        Assert.assertEquals("id3", r.result[1].id);
+        Assert.assertEquals("id2", r.result.get(0)[0]);
+        Assert.assertEquals("id3", r.result.get(1)[0]);
         Assert.assertEquals(1000, r.totalCount);
     }
 
@@ -263,7 +263,8 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
 
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
         Gson gson = new GsonBuilder().setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").create();
-        return gson.fromJson(Files.readStringFromFile(f), QueryResponse.class);
+        String s = Files.readStringFromFile(f);
+        return gson.fromJson(s, QueryResponse.class);
     }
 
     private static void generateJournal() throws JournalException, NumericException {
