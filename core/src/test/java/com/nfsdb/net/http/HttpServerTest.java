@@ -268,7 +268,7 @@ public class HttpServerTest extends AbstractJournalTest {
             ByteBuffers.copyGreedyNonBlocking(channel, out, 100000);
 
             final String expected = "HTTP/1.1 404 Not Found\r\n" +
-                    "Server: nfsdb/0.1\r\n" +
+                    "Server: questDB/1.0\r\n" +
                     "Date: Sat, 5 Dec 2015 13:30:0 GMT\r\n" +
                     "Transfer-Encoding: chunked\r\n" +
                     "Content-Type: text/html; charset=utf-8\r\n" +
