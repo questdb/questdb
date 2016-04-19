@@ -76,14 +76,29 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
 JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong pchar) {
 
-    struct stat st;
+    TIME_ZONE_INFORMATION tz;
+    LONG bias;
 
+    switch (GetTimeZoneInformation(&tz)) {
+        case TIME_ZONE_ID_STANDARD:
+            bias = tz.StandardBias;
+            break;
+        case TIME_ZONE_ID_DAYLIGHT:
+            bias = tz.DaylightBias;
+            break;
+        default:
+            bias = 0;
+    }
+    if (bias != 0) {
+        bias *= 60000L;
+    }
+    struct stat st;
     int r = stat((const char *) pchar, &st);
-    return r == 0 ? 1000 * (jlong) st.st_mtime : r;
+    return r == 0 ? (1000 * (jlong) st.st_mtime) + bias : r;
 }
 
 JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
-        (JNIEnv *e, jclass cl, jlong lpszName, jlong millis){
+        (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
 
     HANDLE handle = CreateFile(
             (LPCSTR) lpszName,
@@ -123,7 +138,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRW
     return (jlong) CreateFile(
             (LPCSTR) lpszName,
             GENERIC_WRITE,
-            FILE_SHARE_READ ,
+            FILE_SHARE_READ,
             NULL,
             OPEN_EXISTING,
             FILE_ATTRIBUTE_NORMAL,
@@ -136,7 +151,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openAppend
     HANDLE h = CreateFile(
             (LPCSTR) lpszName,
             FILE_APPEND_DATA,
-            FILE_SHARE_READ ,
+            FILE_SHARE_READ,
             NULL,
             OPEN_ALWAYS,
             FILE_ATTRIBUTE_NORMAL,
