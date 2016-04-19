@@ -59,7 +59,7 @@ public class LogFactory implements Closeable {
 
     private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
-    private static final String DEFAULT_CONFIG = "/nfslog.conf";
+    private static final String DEFAULT_CONFIG = "/qlog.conf";
     private static final String EMPTY_STR = "";
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
@@ -71,39 +71,6 @@ public class LogFactory implements Closeable {
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
-
-    @SuppressFBWarnings("PATH_TRAVERSAL_IN")
-    public static void configureFromSystemProperties(LogFactory factory) {
-        String conf = System.getProperty("nfslog");
-        if (conf == null) {
-            conf = DEFAULT_CONFIG;
-        }
-        try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
-            if (is != null) {
-                Properties properties = new Properties();
-                properties.load(is);
-                setup(factory, properties);
-            } else {
-                File f = new File(conf);
-                if (f.canRead()) {
-                    try (FileInputStream fis = new FileInputStream(f)) {
-                        Properties properties = new Properties();
-                        properties.load(fis);
-                        setup(factory, properties);
-                    }
-                } else {
-                    factory.configureDefaultWriter();
-                }
-            }
-        } catch (IOException e) {
-            if (!DEFAULT_CONFIG.equals(conf)) {
-                throw new LogError("Cannot read " + conf, e);
-            } else {
-                factory.configureDefaultWriter();
-            }
-        }
-        factory.startThread();
-    }
 
     public static Log getLog(Class clazz) {
         return getLog(clazz.getName());
@@ -215,6 +182,39 @@ public class LogFactory implements Closeable {
         worker.setDaemon(true);
         worker.setName("nfsdb-log-writer");
         worker.start();
+    }
+
+    @SuppressFBWarnings("PATH_TRAVERSAL_IN")
+    static void configureFromSystemProperties(LogFactory factory) {
+        String conf = System.getProperty("nfslog");
+        if (conf == null) {
+            conf = DEFAULT_CONFIG;
+        }
+        try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
+            if (is != null) {
+                Properties properties = new Properties();
+                properties.load(is);
+                setup(factory, properties);
+            } else {
+                File f = new File(conf);
+                if (f.canRead()) {
+                    try (FileInputStream fis = new FileInputStream(f)) {
+                        Properties properties = new Properties();
+                        properties.load(fis);
+                        setup(factory, properties);
+                    }
+                } else {
+                    factory.configureDefaultWriter();
+                }
+            }
+        } catch (IOException e) {
+            if (!DEFAULT_CONFIG.equals(conf)) {
+                throw new LogError("Cannot read " + conf, e);
+            } else {
+                factory.configureDefaultWriter();
+            }
+        }
+        factory.startThread();
     }
 
     @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "LEST_LOST_EXCEPTION_STACK_TRACE"})

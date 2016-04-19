@@ -121,7 +121,7 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
             throw new IllegalArgumentException("Illegal status code: " + code);
         }
         put("HTTP/1.1 ").put(code).put(' ').put(status).put(Misc.EOL);
-        put("Server: ").put("nfsdb/0.1").put(Misc.EOL);
+        put("Server: ").put("questDB/1.0").put(Misc.EOL);
         put("Date: ");
         Dates.formatHTTP(this, clock.getTicks());
         put(Misc.EOL);

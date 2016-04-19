@@ -47,6 +47,13 @@
     <!--suppress HtmlUnknownTarget -->
     <link rel="stylesheet" href="styles/main.css">
     <!-- endbuild -->
+
+    <script type="text/javascript">
+        history.pushState(null, null, 'index.html');
+        window.addEventListener('popstate', function () {
+            history.pushState(null, null, 'index.html');
+        });
+    </script>
 </head>
 <body class="pace-done">
 
