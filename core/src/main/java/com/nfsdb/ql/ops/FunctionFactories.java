@@ -137,10 +137,35 @@ public final class FunctionFactories {
                     break;
                 case STRING:
                     if (vc.getFlyweightStr(null) == null) {
+                        ColumnType t = sig.paramTypes.getQuick(0);
                         if (Chars.equals(sig.name, '=')) {
-                            return StrEqualsNullOperator.FACTORY;
+                            switch (t) {
+                                case DOUBLE:
+                                    return DoubleEqualsNanOperator.FACTORY;
+                                case STRING:
+                                    return StrEqualsNullOperator.FACTORY;
+                                case INT:
+                                    return IntEqualsNaNOperator.FACTORY;
+                                case LONG:
+                                case DATE:
+                                    return LongEqualsNaNOperator.FACTORY;
+                                default:
+                                    break;
+                            }
                         } else if (Chars.equals(sig.name, "!=")) {
-                            return StrNotEqualsNullOperator.FACTORY;
+                            switch (t) {
+                                case DOUBLE:
+                                    return DoubleNotEqualsNanOperator.FACTORY;
+                                case STRING:
+                                    return StrNotEqualsNullOperator.FACTORY;
+                                case INT:
+                                    return IntNotEqualsNaNOperator.FACTORY;
+                                case LONG:
+                                case DATE:
+                                    return LongNotEqualsNaNOperator.FACTORY;
+                                default:
+                                    break;
+                            }
                         }
                     }
                     break;

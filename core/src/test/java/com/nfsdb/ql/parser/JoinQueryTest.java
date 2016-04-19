@@ -844,6 +844,19 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testNullInsteadOfNaN() throws Exception {
+        assertThat("1406\tVQHYIIQL\tKJE\tnull\tDYQFLMPNGEJKKJCRCKNPUTHTVNYXM\tDFDISBFBRCCQDV\tXTGNJ\t2015-07-10T00:00:01.406Z\tNaN\tNaN\tNaN\t\t\tnull\n" +
+                        "1414\tDHMTF\tRTGV\tnull\tHMDJSBGPXQTKPGGWFSTJSKSZSBEPDVNMFEVEMQCOHDBK\tJKBVDSERXZ\tOEENNEBQQEMXD\t2015-07-10T00:00:01.414Z\tNaN\tNaN\tNaN\t\t\tnull\n" +
+                        "1422\tEKVFCZGGCKCHK\tEEGCRISJP\tnull\tILWBREVXDHHWPREIFCMLRXSWMFWEKIOTXUPRNGEPIJVNKTXHNKYITYG\tYYBJER\tCNSFFLTRY\t2015-07-10T00:00:01.422Z\tNaN\tNaN\tNaN\t\t\tnull\n" +
+                        "1523\tV\tODSBTX\tnull\tECUZSRJCTRJLH\tVBNHX\tZHEI\t2015-07-10T00:00:01.523Z\tNaN\tNaN\tNaN\t\t\tnull\n" +
+                        "1567\tBWPEIFNITZK\tBIJXCYTOHOQT\tnull\tYZMMSEZIPCOCZZUFYIVELTS\tFVPDDGSEK\tUN\t2015-07-10T00:00:01.567Z\tNaN\tNaN\tNaN\t\t\tnull\n",
+                "customers c" +
+                        " outer join orders o on c.customerId = o.customerId " +
+                        " where orderId = null" +
+                        " limit 10,15");
+    }
+
+    @Test
     public void testNullSymbol() throws Exception {
         assertThat("",
                 "select country, avg(quantity) from orders o " +
