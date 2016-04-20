@@ -1,11 +1,11 @@
 {
-  "name": "nfsdb-ui",
+  "name": "questdb-console",
   "authors": [
     "Vlad Ilyushchenko"
   ],
-  "description": "NFSdb Web Console",
-  "license": "Apache 2.0",
-  "homepage": "github.nfsdb.org",
+  "description": "QuestDB Web Console",
+  "license": "The MIT License",
+  "homepage": "www.questdb.org",
   "private": true,
   "ignore": [
     "**/.*",
