@@ -22,19 +22,19 @@
 
 package org.nfsdb.examples.ha.cluster;
 
-import com.nfsdb.JournalKey;
-import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.ex.JournalNetworkException;
-import com.nfsdb.ex.NumericException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.misc.Numbers;
-import com.nfsdb.net.ha.ClusterController;
-import com.nfsdb.net.ha.ClusterStatusListener;
-import com.nfsdb.net.ha.config.ClientConfig;
-import com.nfsdb.net.ha.config.ServerConfig;
-import com.nfsdb.net.ha.config.ServerNode;
+import com.questdb.JournalKey;
+import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
+import com.questdb.ex.JournalNetworkException;
+import com.questdb.ex.NumericException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.factory.configuration.JournalConfigurationBuilder;
+import com.questdb.misc.Numbers;
+import com.questdb.net.ha.ClusterController;
+import com.questdb.net.ha.ClusterStatusListener;
+import com.questdb.net.ha.config.ClientConfig;
+import com.questdb.net.ha.config.ServerConfig;
+import com.questdb.net.ha.config.ServerNode;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Price;
 

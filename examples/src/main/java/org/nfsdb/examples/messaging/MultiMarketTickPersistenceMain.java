@@ -26,9 +26,9 @@ import com.lmax.disruptor.BatchEventProcessor;
 import com.lmax.disruptor.BusySpinWaitStrategy;
 import com.lmax.disruptor.RingBuffer;
 import com.lmax.disruptor.SequenceBarrier;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.factory.configuration.JournalConfigurationBuilder;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;

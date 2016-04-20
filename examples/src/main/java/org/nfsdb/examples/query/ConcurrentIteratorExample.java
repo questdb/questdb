@@ -22,13 +22,13 @@
 
 package org.nfsdb.examples.query;
 
-import com.nfsdb.Journal;
-import com.nfsdb.JournalIterators;
-import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.iter.ConcurrentIterator;
-import com.nfsdb.misc.Files;
+import com.questdb.Journal;
+import com.questdb.JournalIterators;
+import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.iter.ConcurrentIterator;
+import com.questdb.misc.Files;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;

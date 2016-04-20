@@ -22,8 +22,8 @@
 
 package org.nfsdb.examples.support;
 
-import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.JournalException;
+import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Quote;
 

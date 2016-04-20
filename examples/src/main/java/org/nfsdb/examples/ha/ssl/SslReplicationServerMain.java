@@ -22,11 +22,11 @@
 
 package org.nfsdb.examples.ha.ssl;
 
-import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.net.ha.JournalServer;
-import com.nfsdb.net.ha.config.ServerConfig;
+import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.net.ha.JournalServer;
+import com.questdb.net.ha.config.ServerConfig;
 import org.nfsdb.examples.model.Price;
 
 import java.io.InputStream;

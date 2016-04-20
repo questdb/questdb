@@ -22,10 +22,10 @@
 
 package org.nfsdb.examples.query;
 
-import com.nfsdb.Journal;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.query.api.QueryHeadBuilder;
+import com.questdb.Journal;
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.query.api.QueryHeadBuilder;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Price;
 

@@ -23,7 +23,7 @@
 package org.nfsdb.examples.messaging;
 
 import com.lmax.disruptor.RingBuffer;
-import com.nfsdb.misc.Rnd;
+import com.questdb.misc.Rnd;
 
 public class TickMarket implements Runnable {
     private final RingBuffer<Tick> buffer;

@@ -22,13 +22,13 @@
 
 package org.nfsdb.examples.ha.authentication;
 
-import com.nfsdb.JournalKey;
-import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.net.ha.JournalServer;
-import com.nfsdb.net.ha.auth.AuthorizationHandler;
-import com.nfsdb.std.ObjList;
+import com.questdb.JournalKey;
+import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.net.ha.JournalServer;
+import com.questdb.net.ha.auth.AuthorizationHandler;
+import com.questdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Price;
 

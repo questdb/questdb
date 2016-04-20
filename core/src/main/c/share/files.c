@@ -40,7 +40,7 @@
 #include <utime.h>
 #include "files.h"
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
@@ -49,7 +49,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
     return pwrite((int) fd, (void *) (address), (size_t) len, (off_t) offset);
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_append
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
@@ -57,7 +57,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_append
     return write((int) fd, (void *) (address), (size_t) len);
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
@@ -67,7 +67,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
     return pread((int) fd, (void *) address, (size_t) len, (off_t) offset);
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getLastModified
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong pchar) {
 
     struct stat st;
@@ -76,29 +76,29 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getLastModified
     return r == 0 ? 1000 * (jlong) st.st_mtime : r;
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRO
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRO
         (JNIEnv *e, jclass cl, jlong lpszName) {
     return open((const char *) lpszName, O_RDONLY);
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Files_close
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close
         (JNIEnv *e, jclass cl, jlong fd) {
     return close((int) fd);
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRW
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
     umask(0);
     return open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openAppend
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
     umask(0);
     return open((const char *) lpszName, O_CREAT | O_WRONLY | O_APPEND, 0644);
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_length
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
         (JNIEnv *e, jclass cl, jlong pchar) {
     struct stat st;
 
@@ -108,7 +108,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_length
 
 #ifdef __APPLE__
 
-JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
     struct timeval t[2];
     t[1].tv_sec = millis / 1000;
@@ -118,7 +118,7 @@ JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
 
 #else
 
-JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
     struct utimbuf t;
     t.modtime = millis/1000;
@@ -127,7 +127,7 @@ JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
 
 #endif
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getStdOutFd
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
         (JNIEnv *e, jclass cl) {
     return (jlong) 1;
 }

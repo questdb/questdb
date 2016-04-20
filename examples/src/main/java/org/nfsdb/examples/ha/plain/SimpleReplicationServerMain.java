@@ -22,10 +22,10 @@
 
 package org.nfsdb.examples.ha.plain;
 
-import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.net.ha.JournalServer;
+import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.net.ha.JournalServer;
 import org.nfsdb.examples.model.Price;
 
 import java.util.concurrent.TimeUnit;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.3)
-project(nfsdb)
+project(questdb)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -m64 -Wimplicit-function-declaration")
 
@@ -58,8 +58,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT})
 set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
 include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 
-add_library(nfsdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})
+add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})
 
 if (WIN32)
-    target_link_libraries(nfsdb wsock32 ws2_32)
+    target_link_libraries(questdb wsock32 ws2_32)
 endif (WIN32)

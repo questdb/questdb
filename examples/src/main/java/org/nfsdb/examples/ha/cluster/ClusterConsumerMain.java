@@ -22,15 +22,15 @@
 
 package org.nfsdb.examples.ha.cluster;
 
-import com.nfsdb.Journal;
-import com.nfsdb.JournalIterators;
-import com.nfsdb.JournalKey;
-import com.nfsdb.PartitionType;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.net.ha.JournalClient;
-import com.nfsdb.net.ha.config.ClientConfig;
-import com.nfsdb.store.TxListener;
+import com.questdb.Journal;
+import com.questdb.JournalIterators;
+import com.questdb.JournalKey;
+import com.questdb.PartitionType;
+import com.questdb.factory.JournalFactory;
+import com.questdb.factory.configuration.JournalConfigurationBuilder;
+import com.questdb.net.ha.JournalClient;
+import com.questdb.net.ha.config.ClientConfig;
+import com.questdb.store.TxListener;
 import org.nfsdb.examples.model.Price;
 
 public class ClusterConsumerMain {

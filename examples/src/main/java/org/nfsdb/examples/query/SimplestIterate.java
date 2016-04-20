@@ -22,9 +22,9 @@
 
 package org.nfsdb.examples.query;
 
-import com.nfsdb.Journal;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.factory.JournalFactory;
+import com.questdb.Journal;
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalFactory;
 import org.nfsdb.examples.model.Price;
 
 import java.util.concurrent.TimeUnit;

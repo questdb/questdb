@@ -29,13 +29,13 @@
     </properties>
 
     <version>3.0.0-SNAPSHOT</version>
-    <groupId>com.nfsdb</groupId>
+    <groupId>com.questdb</groupId>
     <artifactId>examples</artifactId>
     <packaging>jar</packaging>
-    <name>nfsdb.examples</name>
-    <description>Code examples and usage scenarios for NFSdb</description>
+    <name>QuestDB.Examples</name>
+    <description>Code examples and usage scenarios for QuestDB</description>
 
-    <url>http://github.nfsdb.org</url>
+    <url>http://www.questdb.org</url>
     <licenses>
         <license>
             <name>Apache 2</name>
@@ -53,7 +53,7 @@
     </developers>
 
     <scm>
-        <url>scm:git:https://github.com/NFSdb/nfsdb.git</url>
+        <url>scm:git:https://github.com/bluestreak01/questdb.git</url>
     </scm>
 
     <build>
@@ -81,8 +81,8 @@
     <dependencies>
 
         <dependency>
-            <groupId>com.nfsdb</groupId>
-            <artifactId>nfsdb</artifactId>
+            <groupId>com.questdb</groupId>
+            <artifactId>core</artifactId>
             <version>${project.version}</version>
         </dependency>
 
@@ -115,8 +115,8 @@
         </dependency>
 
         <dependency>
-            <groupId>com.nfsdb</groupId>
-            <artifactId>nfsdb</artifactId>
+            <groupId>com.questdb</groupId>
+            <artifactId>core</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>
             <scope>test</scope>

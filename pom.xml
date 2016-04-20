@@ -38,10 +38,10 @@
     <modelVersion>4.0.0</modelVersion>
 
     <version>1.0</version>
-    <groupId>com.nfsdb</groupId>
-    <artifactId>nfsdb-parent</artifactId>
+    <groupId>com.questdb</groupId>
+    <artifactId>parent</artifactId>
     <packaging>pom</packaging>
-    <name>nfsdb.parent</name>
+    <name>QuestDB.Parent.POM</name>
 
     <build>
         <plugins>

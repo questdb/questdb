@@ -22,11 +22,11 @@
 
 package org.nfsdb.examples.blob;
 
-import com.nfsdb.JournalEntryWriter;
-import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.factory.configuration.JournalStructure;
+import com.questdb.JournalEntryWriter;
+import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.factory.configuration.JournalStructure;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.*;

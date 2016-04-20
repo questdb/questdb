@@ -22,13 +22,13 @@
 
 package org.nfsdb.examples.append;
 
-import com.nfsdb.JournalWriter;
-import com.nfsdb.PartitionType;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
-import com.nfsdb.misc.Files;
-import com.nfsdb.misc.Rnd;
+import com.questdb.JournalWriter;
+import com.questdb.PartitionType;
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.factory.configuration.JournalConfigurationBuilder;
+import com.questdb.misc.Files;
+import com.questdb.misc.Rnd;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.Quote;
 

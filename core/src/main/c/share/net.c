@@ -42,7 +42,7 @@
 #include <sys/errno.h>
 #include "net.h"
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_socketTcp
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketTcp
         (JNIEnv *e, jobject cl, jboolean blocking) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd > 0 && !blocking) {
@@ -60,7 +60,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_socketTcp
     return fd;
 }
 
-JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Net_bind
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_bind
         (JNIEnv *e, jobject cl, jlong fd, jint address, jint port) {
     struct sockaddr_in addr;
 
@@ -72,12 +72,12 @@ JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Net_bind
     return (jboolean) (bind((int) fd, (struct sockaddr *) &addr, sizeof(addr)) == 0);
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_accept
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_accept
         (JNIEnv *e, jobject cl, jlong fd) {
     return accept((int) fd, NULL, NULL);
 }
 
-JNIEXPORT void JNICALL Java_com_nfsdb_misc_Net_listen
+JNIEXPORT void JNICALL Java_com_questdb_misc_Net_listen
         (JNIEnv *e, jclass cl, jlong fd, jint backlog) {
     listen((int) fd, backlog);
 }
@@ -89,24 +89,24 @@ jint convert_error(ssize_t n) {
 
     switch (n) {
         case 0:
-            return com_nfsdb_misc_Net_EPEERDISCONNECT;
+            return com_questdb_misc_Net_EPEERDISCONNECT;
         default:
-            return (jint) (errno == EWOULDBLOCK ? com_nfsdb_misc_Net_ERETRY : com_nfsdb_misc_Net_EOTHERDISCONNECT);
+            return (jint) (errno == EWOULDBLOCK ? com_questdb_misc_Net_ERETRY : com_questdb_misc_Net_EOTHERDISCONNECT);
     }
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_send
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_send
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
     return convert_error(send((int) fd, (const void *) ptr, (size_t) len, 0));
 }
 
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_recv
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_recv
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
     return convert_error(recv((int) fd, (void *) ptr, (size_t) len, 0));
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_configureNonBlocking
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_configureNonBlocking
         (JNIEnv *e, jclass cl, jlong fd) {
     int flags;
 
@@ -123,24 +123,24 @@ JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_configureNonBlocking
     return 0;
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_setSndBuf
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_setSndBuf
         (JNIEnv *e, jclass cl, jlong fd, jint size) {
     jint sz = size;
     return setsockopt((int) fd, SOL_SOCKET, SO_SNDBUF, (char *) &sz, sizeof(sz));
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_setRcvBuf
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_setRcvBuf
         (JNIEnv *e, jclass cl, jlong fd, jint size) {
     jint sz = size;
     return setsockopt((int) fd, SOL_SOCKET, SO_RCVBUF, (char *) &sz, sizeof(sz));
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getEwouldblock
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEwouldblock
         (JNIEnv *e, jclass cl) {
     return EWOULDBLOCK;
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_getPeerIP
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_getPeerIP
         (JNIEnv *e, jclass cl, jlong fd) {
     struct sockaddr peer;
     socklen_t nameLen = sizeof(peer);
@@ -156,7 +156,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Net_getPeerIP
 
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Net_getPeerPort
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getPeerPort
         (JNIEnv *e, jclass cl, jlong fd) {
     struct sockaddr peer;
     socklen_t nameLen = sizeof(peer);

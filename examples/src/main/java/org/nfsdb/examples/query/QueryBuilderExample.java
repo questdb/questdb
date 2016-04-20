@@ -22,14 +22,14 @@
 
 package org.nfsdb.examples.query;
 
-import com.nfsdb.Journal;
-import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.misc.Dates;
-import com.nfsdb.misc.Files;
-import com.nfsdb.misc.Interval;
-import com.nfsdb.query.api.QueryAllBuilder;
+import com.questdb.Journal;
+import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.misc.Dates;
+import com.questdb.misc.Files;
+import com.questdb.misc.Interval;
+import com.questdb.query.api.QueryAllBuilder;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;
 import org.nfsdb.examples.support.QuoteGenerator;

@@ -22,16 +22,16 @@
 
 package org.nfsdb.examples.reporting;
 
-import com.nfsdb.Journal;
-import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.io.sink.StringSink;
-import com.nfsdb.misc.Dates;
-import com.nfsdb.misc.Files;
-import com.nfsdb.printer.JournalPrinter;
-import com.nfsdb.printer.appender.StdOutAppender;
-import com.nfsdb.query.api.QueryAllBuilder;
+import com.questdb.Journal;
+import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.io.sink.StringSink;
+import com.questdb.misc.Dates;
+import com.questdb.misc.Files;
+import com.questdb.printer.JournalPrinter;
+import com.questdb.printer.appender.StdOutAppender;
+import com.questdb.query.api.QueryAllBuilder;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.nfsdb.examples.model.ModelConfiguration;
 import org.nfsdb.examples.model.Quote;

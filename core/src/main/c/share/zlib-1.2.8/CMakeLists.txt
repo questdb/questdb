@@ -1,4 +1,4 @@
-# This make file has been modified to compile with NFSdb sources
+# This make file has been modified to compile with questdb sources
 cmake_minimum_required(VERSION 2.4.4)
 set(CMAKE_ALLOW_LOOSE_LOOP_CONSTRUCTS ON)
 

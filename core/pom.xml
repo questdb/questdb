@@ -42,19 +42,18 @@
     </properties>
 
     <version>3.0.0-SNAPSHOT</version>
-    <groupId>com.nfsdb</groupId>
-    <artifactId>nfsdb</artifactId>
+    <groupId>com.questdb</groupId>
+    <artifactId>core</artifactId>
     <packaging>jar</packaging>
-    <name>nfsdb</name>
-    <description>Low Latency, high throughput database and cache</description>
+    <name>QuestDB</name>
+    <description>High performance Time Series Database</description>
 
-    <url>http://github.nfsdb.org</url>
+    <url>http://www.questdb.org</url>
     <licenses>
         <license>
-            <name>Apache 2</name>
-            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <name>GNU Affero General Public License 3.0</name>
+            <url>http://www.fsf.org/licensing/licenses/agpl-3.0.html</url>
             <distribution>repo</distribution>
-            <comments>A business-friendly OSS license</comments>
         </license>
     </licenses>
 
@@ -66,7 +65,7 @@
     </developers>
 
     <scm>
-        <url>scm:git:https://github.com/bluestreak01/nfsdb.git</url>
+        <url>scm:git:https://github.com/bluestreak01/questdb.git</url>
     </scm>
 
     <build>

@@ -51,7 +51,7 @@ int set_file_pos(HANDLE fd, jlong offset) {
     return SetFilePointer(fd, (DWORD) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
@@ -62,7 +62,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_write
            WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL) ? count : 0;
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
@@ -73,7 +73,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_read
            ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL) ? count : 0;
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getLastModified
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong pchar) {
 
     TIME_ZONE_INFORMATION tz;
@@ -97,7 +97,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getLastModified
     return r == 0 ? (1000 * (jlong) st.st_mtime) + bias : r;
 }
 
-JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
 
     HANDLE handle = CreateFile(
@@ -122,18 +122,18 @@ JNIEXPORT jboolean JNICALL Java_com_nfsdb_misc_Files_setLastModified
     return (jboolean) r;
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRO
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRO
         (JNIEnv *e, jclass cl, jlong lpszName) {
     OFSTRUCT st;
     return OpenFile((LPCSTR) lpszName, &st, OF_READ);
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Files_close
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close
         (JNIEnv *e, jclass cl, jlong fd) {
     return CloseHandle((HANDLE) fd) ? 0 : GetLastError();
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRW
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
     return (jlong) CreateFile(
             (LPCSTR) lpszName,
@@ -146,7 +146,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openRW
     );
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openAppend
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
     HANDLE h = CreateFile(
             (LPCSTR) lpszName,
@@ -165,13 +165,13 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_openAppend
     return (jlong) h;
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_append
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
         (JNIEnv *e, jclass cl, jlong fd, jlong address, jint length) {
     DWORD count;
     return WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) length, &count, NULL) ? count : 0;
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_length
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
         (JNIEnv *e, jclass cl, jlong pchar) {
     struct stat st;
 
@@ -179,7 +179,7 @@ JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_length
     return r == 0 ? st.st_size : r;
 }
 
-JNIEXPORT jlong JNICALL Java_com_nfsdb_misc_Files_getStdOutFd
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
         (JNIEnv *e, jclass cl) {
     return (jlong) GetStdHandle(STD_OUTPUT_HANDLE);
 }

@@ -22,12 +22,12 @@
 
 package org.nfsdb.examples.io;
 
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.ex.ParserException;
-import com.nfsdb.factory.JournalFactory;
-import com.nfsdb.io.ExportManager;
-import com.nfsdb.io.TextFileFormat;
-import com.nfsdb.ql.parser.QueryCompiler;
+import com.questdb.ex.JournalException;
+import com.questdb.ex.ParserException;
+import com.questdb.factory.JournalFactory;
+import com.questdb.io.ExportManager;
+import com.questdb.io.TextFileFormat;
+import com.questdb.ql.parser.QueryCompiler;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;

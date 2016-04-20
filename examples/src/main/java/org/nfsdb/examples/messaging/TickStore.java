@@ -24,10 +24,10 @@ package org.nfsdb.examples.messaging;
 
 import com.lmax.disruptor.EventHandler;
 import com.lmax.disruptor.LifecycleAware;
-import com.nfsdb.JournalWriter;
-import com.nfsdb.ex.JournalException;
-import com.nfsdb.ex.JournalRuntimeException;
-import com.nfsdb.factory.JournalFactory;
+import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
+import com.questdb.ex.JournalRuntimeException;
+import com.questdb.factory.JournalFactory;
 
 import java.util.concurrent.CountDownLatch;
 

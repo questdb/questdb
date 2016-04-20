@@ -37,12 +37,12 @@
 #include <errhandlingapi.h>
 #include "../share/os.h"
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Os_getPid
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_getPid
         (JNIEnv *e, jclass cl) {
     return GetCurrentProcessId();
 }
 
-JNIEXPORT jint JNICALL Java_com_nfsdb_misc_Os_errno
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_errno
         (JNIEnv *e, jclass cl) {
     return GetLastError();
 }

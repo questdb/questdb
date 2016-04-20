@@ -22,8 +22,8 @@
 
 package org.nfsdb.examples.model;
 
-import com.nfsdb.PartitionType;
-import com.nfsdb.factory.configuration.JournalConfigurationBuilder;
+import com.questdb.PartitionType;
+import com.questdb.factory.configuration.JournalConfigurationBuilder;
 
 import java.util.concurrent.TimeUnit;
 
