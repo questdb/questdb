@@ -1,35 +1,23 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
- * Copyright (C) 2014-2016 Appsicle
- * <p>
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
- * <p>
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- * <p>
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
- * As a special exception, the copyright holders give permission to link the
- * code of portions of this program with the OpenSSL library under certain
- * conditions as described in each individual source file and distribute
- * linked combinations including the program with the OpenSSL library. You
- * must comply with the GNU Affero General Public License in all respects for
- * all of the code used other than as permitted herein. If you modify file(s)
- * with this exception, you may extend this exception to your version of the
- * file(s), but you are not obligated to do so. If you do not wish to do so,
- * delete this exception statement from your version. If you delete this
- * exception statement from all source files in the program, then also delete
- * it in the license file.
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (c) 2014-2016 Appsicle
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 
 package com.questdb;
@@ -670,7 +658,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    private Partition<T> createTempPartition() throws JournalException {
+    private Partition<T> createTempPartition() {
         return createTempPartition(Constants.TEMP_DIRECTORY_PREFIX + '.' + System.currentTimeMillis() + '.' + UUID.randomUUID());
     }
 
@@ -960,51 +948,47 @@ public class JournalWriter<T> extends Journal<T> {
                         while (true) {
                             try {
                                 subSeq.done(subSeq.waitForNext());
-                                try {
-                                    if (txLog != null) {
-                                        final Tx tx1 = new Tx();
-                                        final String lagPartitionName = writer.hasIrregularPartition() ? writer.getIrregularPartition().getName() : null;
+                                if (txLog != null) {
+                                    final Tx tx1 = new Tx();
+                                    final String lagPartitionName = writer.hasIrregularPartition() ? writer.getIrregularPartition().getName() : null;
 
-                                        File[] files = writer.getLocation().listFiles(new FileFilter() {
-                                            public boolean accept(File f) {
-                                                return f.isDirectory() && f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX) &&
-                                                        (lagPartitionName == null || !lagPartitionName.equals(f.getName()));
+                                    File[] files = writer.getLocation().listFiles(new FileFilter() {
+                                        public boolean accept(File f) {
+                                            return f.isDirectory() && f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX) &&
+                                                    (lagPartitionName == null || !lagPartitionName.equals(f.getName()));
+                                        }
+                                    });
+
+                                    if (files != null) {
+
+                                        Arrays.sort(files);
+
+                                        for (int i = 0; i < files.length; i++) {
+
+                                            if (!txLog.isEmpty()) {
+                                                txLog.head(tx1);
+                                                if (files[i].getName().equals(tx1.lagName)) {
+                                                    continue;
+                                                }
                                             }
-                                        });
 
-                                        if (files != null) {
+                                            // get exclusive lock
+                                            Lock lock = LockManager.lockExclusive(files[i]);
+                                            try {
+                                                if (lock != null && lock.isValid()) {
+                                                    LOG.debug().$("Purging :").$(files[i].getAbsolutePath()).$();
 
-                                            Arrays.sort(files);
-
-                                            for (int i = 0; i < files.length; i++) {
-
-                                                if (!txLog.isEmpty()) {
-                                                    txLog.head(tx1);
-                                                    if (files[i].getName().equals(tx1.lagName)) {
-                                                        continue;
+                                                    if (!Files.delete(files[i])) {
+                                                        LOG.debug().$("Could not purge: ").$(files[i].getAbsolutePath()).$();
                                                     }
+                                                } else {
+                                                    LOG.debug().$("Partition in use: ").$(files[i].getAbsolutePath()).$();
                                                 }
-
-                                                // get exclusive lock
-                                                Lock lock = LockManager.lockExclusive(files[i]);
-                                                try {
-                                                    if (lock != null && lock.isValid()) {
-                                                        LOG.debug().$("Purging :").$(files[i].getAbsolutePath()).$();
-
-                                                        if (!Files.delete(files[i])) {
-                                                            LOG.debug().$("Could not purge: ").$(files[i].getAbsolutePath()).$();
-                                                        }
-                                                    } else {
-                                                        LOG.debug().$("Partition in use: ").$(files[i].getAbsolutePath()).$();
-                                                    }
-                                                } finally {
-                                                    LockManager.release(lock);
-                                                }
+                                            } finally {
+                                                LockManager.release(lock);
                                             }
                                         }
                                     }
-                                } catch (JournalException e) {
-                                    throw new JournalRuntimeException(e);
                                 }
                             } catch (Throwable ignore) {
                                 running = false;

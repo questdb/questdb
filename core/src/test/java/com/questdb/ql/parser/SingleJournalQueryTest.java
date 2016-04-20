@@ -1,35 +1,23 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
- * Copyright (C) 2014-2016 Appsicle
- * <p>
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
- * <p>
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- * <p>
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
- * As a special exception, the copyright holders give permission to link the
- * code of portions of this program with the OpenSSL library under certain
- * conditions as described in each individual source file and distribute
- * linked combinations including the program with the OpenSSL library. You
- * must comply with the GNU Affero General Public License in all respects for
- * all of the code used other than as permitted herein. If you modify file(s)
- * with this exception, you may extend this exception to your version of the
- * file(s), but you are not obligated to do so. If you do not wish to do so,
- * delete this exception statement from your version. If you delete this
- * exception statement from all source files in the program, then also delete
- * it in the license file.
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (c) 2014-2016 Appsicle
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 
 package com.questdb.ql.parser;
@@ -1031,6 +1019,16 @@ public class SingleJournalQueryTest extends AbstractTest {
             Assert.assertEquals(32, QueryError.getPosition());
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "does not exist"));
         }
+    }
+
+    @Test
+    public void testJournalRefresh() throws Exception {
+        createTabWithNaNs();
+        assertThat("10000\n", "select count() from tab");
+        try (JournalWriter w = factory.bulkWriter("tab")) {
+            appendNaNs(w, Dates.parseDateTime("2015-10-12T00:00:00.000Z"));
+        }
+        assertThat("20000\n", "select count() from tab");
     }
 
     @Test
@@ -3240,6 +3238,34 @@ public class SingleJournalQueryTest extends AbstractTest {
         assertThat(expected, "select sym, 1-(bid+ask)/2 mid, bid, ask from q");
     }
 
+    private void appendNaNs(JournalWriter w, long t) throws JournalException {
+        Rnd rnd = new Rnd();
+        int n = 128;
+        ObjHashSet<String> names = getNames(rnd, n);
+
+        int mask = n - 1;
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter(t);
+            ew.putStr(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(1, rnd.nextDouble());
+            if (rnd.nextPositiveInt() % 10 == 0) {
+                ew.putNull(2);
+            } else {
+                ew.putDouble(2, rnd.nextDouble());
+            }
+            if (rnd.nextPositiveInt() % 10 == 0) {
+                ew.putNull(3);
+            } else {
+                ew.putLong(3, rnd.nextLong() % 500);
+            }
+            ew.putInt(4, rnd.nextInt() % 500);
+            ew.putDate(5, t += 10);
+            ew.append();
+        }
+        w.commit();
+    }
+
     private void assertNullSearch() throws JournalException, ParserException, IOException {
         final String expected = "null\t256.000000000000\t-455.750000000000\n" +
                 "null\t525.287368774414\t-470.171875000000\n" +
@@ -3282,61 +3308,63 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createIndexedTab() throws JournalException, NumericException {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(16).
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 1024);
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = getNames(rnd, 1024);
 
-        int mask = 1023;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = 1023;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
     }
 
     private void createTab() throws JournalException, NumericException {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 1024);
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = getNames(rnd, 1024);
 
-        int mask = 1023;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = 1023;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 100000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+            for (int i = 0; i < 100000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
     }
 
     private void createTabNoNaNs() throws JournalException, NumericException {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -3345,30 +3373,31 @@ public class SingleJournalQueryTest extends AbstractTest {
                         $int("w").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        int n = 128;
-        ObjHashSet<String> names = getNames(rnd, n);
+            Rnd rnd = new Rnd();
+            int n = 128;
+            ObjHashSet<String> names = getNames(rnd, n);
 
-        int mask = n - 1;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = n - 1;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putLong(3, rnd.nextLong());
-            ew.putInt(4, rnd.nextInt());
-            ew.putDate(5, t += 10);
-            ew.append();
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putLong(3, rnd.nextLong());
+                ew.putInt(4, rnd.nextInt());
+                ew.putDate(5, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
     }
 
     private void createTabWithNaNs() throws JournalException, NumericException {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -3377,38 +3406,13 @@ public class SingleJournalQueryTest extends AbstractTest {
                         $int("w").
                         $ts()
 
-        );
-
-        Rnd rnd = new Rnd();
-        int n = 128;
-        ObjHashSet<String> names = getNames(rnd, n);
-
-        int mask = n - 1;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(2);
-            } else {
-                ew.putDouble(2, rnd.nextDouble());
-            }
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(3);
-            } else {
-                ew.putLong(3, rnd.nextLong() % 500);
-            }
-            ew.putInt(4, rnd.nextInt() % 500);
-            ew.putDate(5, t += 10);
-            ew.append();
+        )) {
+            appendNaNs(w, Dates.parseDateTime("2015-03-12T00:00:00.000Z"));
         }
-        w.commit();
     }
 
     private void createTabWithNaNs2() throws JournalException, NumericException {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -3417,38 +3421,39 @@ public class SingleJournalQueryTest extends AbstractTest {
                         $int("w").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        int n = 128;
-        ObjHashSet<String> names = getNames(rnd, n);
+            Rnd rnd = new Rnd();
+            int n = 128;
+            ObjHashSet<String> names = getNames(rnd, n);
 
-        int mask = n - 1;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = n - 1;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(2);
-            } else {
-                ew.putDouble(2, rnd.nextDouble());
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(2);
+                } else {
+                    ew.putDouble(2, rnd.nextDouble());
+                }
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(3);
+                } else {
+                    ew.putLong(3, rnd.nextLong() % 500);
+                }
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(4);
+                } else {
+                    ew.putInt(4, rnd.nextInt() % 500);
+                }
+                ew.putDate(5, t += (60 * 60 * 1000));
+                ew.append();
             }
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(3);
-            } else {
-                ew.putLong(3, rnd.nextLong() % 500);
-            }
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(4);
-            } else {
-                ew.putInt(4, rnd.nextInt() % 500);
-            }
-            ew.putDate(5, t += (60 * 60 * 1000));
-            ew.append();
+            w.commit();
         }
-        w.commit();
     }
 
     private ObjHashSet<String> getNames(Rnd r, int n) {
