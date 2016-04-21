@@ -1,35 +1,23 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
- * Copyright (C) 2014-2016 Appsicle
- * <p>
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
- * <p>
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- * <p>
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
- * As a special exception, the copyright holders give permission to link the
- * code of portions of this program with the OpenSSL library under certain
- * conditions as described in each individual source file and distribute
- * linked combinations including the program with the OpenSSL library. You
- * must comply with the GNU Affero General Public License in all respects for
- * all of the code used other than as permitted herein. If you modify file(s)
- * with this exception, you may extend this exception to your version of the
- * file(s), but you are not obligated to do so. If you do not wish to do so,
- * delete this exception statement from your version. If you delete this
- * exception statement from all source files in the program, then also delete
- * it in the license file.
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (c) 2014-2016 Appsicle
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 
 package com.questdb.ql.impl.sort;
@@ -51,7 +39,8 @@ public class ComparatorCompiler {
     private final IntList fieldIndices = new IntList();
     private final IntList fieldNameIndices = new IntList();
     private final IntList fieldTypeIndices = new IntList();
-    private final IntList fieldRecordAccessorIndices = new IntList();
+    private final IntList fieldRecordAccessorIndicesA = new IntList();
+    private final IntList fieldRecordAccessorIndicesB = new IntList();
     private final IntList comparatorAccessorIndices = new IntList();
     private final IntList branches = new IntList();
 
@@ -120,7 +109,7 @@ public class ComparatorCompiler {
             asm.put(BytecodeAssembler.aload_1);
             int index = keyColumns.getQuick(i);
             asm.putConstant((index > 0 ? index : -index) - 1);
-            asm.invokeInterface(fieldRecordAccessorIndices.getQuick(i));
+            asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i));
             asm.put(BytecodeAssembler.invokestatic);
             asm.putShort(comparatorAccessorIndices.getQuick(i));
             if (index < 0) {
@@ -188,7 +177,7 @@ public class ComparatorCompiler {
             int index = keyColumns.getQuick(i);
             // make sure column index is valid in case of "descending sort" flag
             asm.putConstant((index > 0 ? index : -index) - 1);
-            asm.invokeInterface(fieldRecordAccessorIndices.getQuick(i));
+            asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i));
             asm.put(BytecodeAssembler.putfield);
             asm.putShort(fieldIndices.getQuick(i));
         }
@@ -206,14 +195,16 @@ public class ComparatorCompiler {
         fieldIndices.clear();
         fieldNameIndices.clear();
         fieldTypeIndices.clear();
-        fieldRecordAccessorIndices.clear();
+        fieldRecordAccessorIndicesA.clear();
+        fieldRecordAccessorIndicesB.clear();
         comparatorAccessorIndices.clear();
         methodMap.clear();
 
         // define names and types
         for (int i = 0, n = keyColumnIndices.size(); i < n; i++) {
             String fieldType;
-            String getterName;
+            String getterNameA;
+            String getterNameB = null;
             String comparatorClass;
             String comparatorDesc = null;
             int index = keyColumnIndices.getQuick(i);
@@ -228,47 +219,48 @@ public class ComparatorCompiler {
             switch (m.getColumn(index).getType()) {
                 case BOOLEAN:
                     fieldType = "Z";
-                    getterName = "getBool";
+                    getterNameA = "getBool";
                     comparatorClass = "java/lang/Boolean";
                     break;
                 case BYTE:
                     fieldType = "B";
-                    getterName = "get";
+                    getterNameA = "get";
                     comparatorClass = "java/lang/Byte";
                     break;
                 case DOUBLE:
                     fieldType = "D";
-                    getterName = "getDouble";
+                    getterNameA = "getDouble";
                     comparatorClass = "com/questdb/misc/Numbers";
                     break;
                 case FLOAT:
                     fieldType = "F";
-                    getterName = "getFloat";
+                    getterNameA = "getFloat";
                     comparatorClass = "com/questdb/misc/Numbers";
                     break;
                 case INT:
                     fieldType = "I";
-                    getterName = "getInt";
+                    getterNameA = "getInt";
                     comparatorClass = "java/lang/Integer";
                     break;
                 case LONG:
                 case DATE:
                     fieldType = "J";
-                    getterName = "getLong";
+                    getterNameA = "getLong";
                     comparatorClass = "java/lang/Long";
                     break;
                 case SHORT:
                     fieldType = "S";
-                    getterName = "getShort";
+                    getterNameA = "getShort";
                     comparatorClass = "java/lang/Short";
                     break;
                 case STRING:
-                    getterName = "getFlyweightStr";
+                    getterNameA = "getFlyweightStr";
+                    getterNameB = "getFlyweightStrB";
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = "com/questdb/misc/Chars";
                     break;
                 case SYMBOL:
-                    getterName = "getSym";
+                    getterNameA = "getSym";
                     fieldType = "Ljava/lang/String;";
                     comparatorClass = "com/questdb/misc/Chars";
                     comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
@@ -286,11 +278,19 @@ public class ComparatorCompiler {
             fieldNameIndices.add(nameIndex = asm.poolUtf8().put('f').put(i).$());
             fieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex)));
 
-            int methodIndex = methodMap.get(getterName);
+            int methodIndex = methodMap.get(getterNameA);
             if (methodIndex == -1) {
-                methodMap.put(getterName, methodIndex = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8(getterName), asm.poolUtf8("(I)" + fieldType))));
+                methodMap.put(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8(getterNameA), asm.poolUtf8("(I)" + fieldType))));
             }
-            fieldRecordAccessorIndices.add(methodIndex);
+            fieldRecordAccessorIndicesA.add(methodIndex);
+
+            if (getterNameB != null) {
+                methodIndex = methodMap.get(getterNameB);
+                if (methodIndex == -1) {
+                    methodMap.put(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8(getterNameB), asm.poolUtf8("(I)" + fieldType))));
+                }
+            }
+            fieldRecordAccessorIndicesB.add(methodIndex);
 
             int comparatorIndex = comparatorMap.get(comparatorClass);
             if (comparatorIndex == -1) {
