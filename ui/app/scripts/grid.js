@@ -91,9 +91,10 @@
             // calculate the viewport + buffer
             var t = Math.max(0, Math.floor((y - vp) / rh));
             var b = Math.min(yMax / rh - 1, Math.ceil((y + vp + vp) / rh));
+            var i;
 
             // remove rows no longer in the viewport
-            for (var i in rows) {
+            for (i in rows) {
                 if (i < t || i > b) {
                     rows[i].remove();
                     delete rows[i];
@@ -106,27 +107,6 @@
                     rows[i] = renderRow(i);
                 }
             }
-        }
-
-        function viewportScroll(force) {
-            header.scrollLeft(viewport.scrollLeft());
-
-            var scrollTop = viewport.scrollTop();
-            if (scrollTop !== top || force) {
-                if (Math.abs(scrollTop - top) > vp) {
-                    onJump(scrollTop);
-                } else {
-                    onNearScroll(scrollTop);
-                }
-                renderViewport();
-            }
-        }
-
-        function renderPermMarkup() {
-            header = div.find('.qg-header-row');
-            viewport = div.find('.qg-viewport');
-            viewport.scroll(viewportScroll);
-            canvas = div.find('.qg-canvas');
         }
 
         function getColumnAlignment(i) {
@@ -217,8 +197,6 @@
                 }
                 totalWidth = Math.max(totalWidth, sum);
             }
-
-            console.log('computed: ' + totalWidth);
         }
 
         function clear() {
@@ -235,24 +213,6 @@
             rows = {};
             stretched = 0;
             data = null;
-        }
-
-        function resizeViewport() {
-            var t = viewport[0].getBoundingClientRect().top;
-            vp = Math.round((window.innerHeight - t)) - 90;
-            viewport.css('height', vp);
-            createCss();
-            viewportScroll(true);
-        }
-
-        function resizeDiv() {
-            var t = div[0].getBoundingClientRect().top;
-            div.css('height', Math.round((window.innerHeight - t)) - 90);
-        }
-
-        function resize() {
-            resizeViewport();
-            resizeDiv();
         }
 
         function onNearScroll(scrollTop) {
@@ -272,6 +232,45 @@
             top = scrollTop;
             o = y - top;
             removeAllRows();
+        }
+
+        function viewportScroll(force) {
+            header.scrollLeft(viewport.scrollLeft());
+
+            var scrollTop = viewport.scrollTop();
+            if (scrollTop !== top || force) {
+                if (Math.abs(scrollTop - top) > vp) {
+                    onJump(scrollTop);
+                } else {
+                    onNearScroll(scrollTop);
+                }
+                renderViewport();
+            }
+        }
+
+        function renderPermMarkup() {
+            header = div.find('.qg-header-row');
+            viewport = div.find('.qg-viewport');
+            viewport.scroll(viewportScroll);
+            canvas = div.find('.qg-canvas');
+        }
+
+        function resizeViewport() {
+            var t = viewport[0].getBoundingClientRect().top;
+            vp = Math.round((window.innerHeight - t)) - 90;
+            viewport.css('height', vp);
+            createCss();
+            viewportScroll(true);
+        }
+
+        function resizeDiv() {
+            var t = div[0].getBoundingClientRect().top;
+            div.css('height', Math.round((window.innerHeight - t)) - 90);
+        }
+
+        function resize() {
+            resizeViewport();
+            resizeDiv();
         }
 
         //noinspection JSUnusedLocalSymbols
