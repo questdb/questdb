@@ -77,7 +77,7 @@
         function qq() {
             abortActive();
             requestParams.query = qry.q;
-            requestParams.limit = '0,10000';
+            requestParams.limit = '0,1000';
             requestParams.withCount = false;
             time = new Date().getTime();
             hActiveRequest = $.get('/js', requestParams).done(handleServerResponse).fail(handleServerError);

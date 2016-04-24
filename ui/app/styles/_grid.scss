@@ -50,6 +50,10 @@
   text-align: right;
 }
 
+.qg-header-l {
+  text-align: left;
+}
+
 .qg-viewport {
   overflow: auto;
 }
@@ -61,8 +65,13 @@
 
 .qg-c {
   display: inline-block;
-  padding: 3px;
+  padding: 4px 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: right;
+}
+
+.qg-c:hover {
+  padding: 2px 1px;
+  border: 2px solid #afb7c7;
 }

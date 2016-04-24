@@ -27,7 +27,8 @@
     'use strict';
     $.fn.grid = function () {
         var defaults = {
-            minColumnWidth: 60
+            minColumnWidth: 60,
+            rowHeight: 28
         };
         var $style;
         var div = $(this);
@@ -36,11 +37,13 @@
         var header;
         var colMax;
         var data;
+        var totalWidth = -1;
+        var stretched = 0;
 
         // viewport height
         var vp = 400;
         // row height in px
-        var rh = 30;
+        var rh = defaults.rowHeight;
         // virtual row count in grid
         var r;
         // max virtual y (height) of grid canvas
@@ -67,7 +70,7 @@
                 h = 10000000;
             }
             M = Math.ceil(yMax / h);
-            canvas.css('height', h);
+            canvas.css('height', h === 0 ? 1 : h);
         }
 
         function renderRow(row) {
@@ -126,45 +129,96 @@
             canvas = div.find('.qg-canvas');
         }
 
-        function createCss() {
-            $style = $('<style type="text/css" rel="stylesheet"/>').appendTo($('head'));
-
-            var rules = [];
-            var sum = 0;
-            for (var i = 0; i < colMax.length; i++) {
-                var w = Math.max(defaults.minColumnWidth, colMax[i] * 8 + 8);
-                rules.push('.qg-w' + i + '{width:' + w + 'px;}');
-                sum += w;
+        function getColumnAlignment(i) {
+            switch (data.columns[i].type) {
+                case 'STRING':
+                case 'SYMBOL':
+                    return 'text-align: left;';
+                default:
+                    return '';
             }
-            rules.push('.qg-r{width:' + sum + 'px;}');
-            rules.push('.qg-canvas{width:' + sum + 'px;}');
+        }
 
-            if ($style[0].styleSheet) { // IE
-                $style[0].styleSheet.cssText = rules.join(' ');
-            } else {
-                $style[0].appendChild(document.createTextNode(rules.join(' ')));
+        function generatePxWidth(rules) {
+            for (var i = 0; i < colMax.length; i++) {
+                rules.push('.qg-w' + i + '{width:' + colMax[i] + 'px;' + getColumnAlignment(i) + '}');
+            }
+            rules.push('.qg-r{width:' + totalWidth + 'px;}');
+            rules.push('.qg-canvas{width:' + totalWidth + 'px;}');
+            stretched = 2;
+        }
+
+        function generatePctWidth(rules) {
+            for (var i = 0; i < colMax.length; i++) {
+                rules.push('.qg-w' + i + '{width:' + colMax[i] * 100 / totalWidth + '%;' + getColumnAlignment(i) + '}');
+            }
+            rules.push('.qg-r{width:100%;}');
+            rules.push('.qg-canvas{width:100%;}');
+            stretched = 1;
+        }
+
+        function createCss() {
+            if (data) {
+                var viewportWidth = viewport.width();
+                var f = null;
+                if (totalWidth < viewportWidth && stretched !== 1) {
+                    f = generatePctWidth;
+                } else if (totalWidth > viewportWidth && stretched !== 2) {
+                    f = generatePxWidth;
+                }
+
+                if (f) {
+                    if ($style) {
+                        $style.remove();
+                    }
+                    $style = $('<style type="text/css" rel="stylesheet"/>').appendTo($('head'));
+                    var rules = [];
+
+                    f(rules);
+
+                    rules.push('.qg-c{height:' + rh + 'px;}');
+                    if ($style[0].styleSheet) { // IE
+                        $style[0].styleSheet.cssText = rules.join(' ');
+                    } else {
+                        $style[0].appendChild(document.createTextNode(rules.join(' ')));
+                    }
+                }
             }
         }
 
         function computeColumnWidths() {
             colMax = [];
-            var i, k;
+            var i, k, w;
+            totalWidth = 0;
             for (i = 0; i < data.columns.length; i++) {
                 var c = data.columns[i];
-                $('<div class="qg-header qg-w' + i + '">' + c.name + '</div>').appendTo(header);
-                colMax.push(c.name.length * 1.2);
+                var col = $('<div class="qg-header qg-w' + i + '">' + c.name + '</div>').appendTo(header);
+                switch (c.type) {
+                    case 'STRING':
+                    case 'SYMBOL':
+                        col.addClass('qg-header-l');
+                        break;
+                }
+                w = Math.max(defaults.minColumnWidth, Math.ceil(c.name.length * 8 * 1.2 + 8));
+                colMax.push(w);
+                totalWidth += w;
             }
 
             var max = data.result.length > 100 ? 100 : data.result.length;
-
             for (i = 0; i < max; i++) {
                 var row = data.result[i];
+                var sum = 0;
                 for (k = 0; k < row.length; k++) {
                     var cell = row[k];
                     var str = cell !== null ? cell.toString() : 'null';
-                    colMax[k] = Math.max(str.length, colMax[k]);
+                    w = Math.max(defaults.minColumnWidth, str.length * 8 + 8);
+                    colMax[k] = Math.max(w, colMax[k]);
+                    sum += colMax[k];
                 }
+                totalWidth = Math.max(totalWidth, sum);
             }
+
+            console.log('computed: ' + totalWidth);
         }
 
         function clear() {
@@ -179,12 +233,16 @@
             header.empty();
             canvas.empty();
             rows = {};
+            stretched = 0;
+            data = null;
         }
 
         function resizeViewport() {
             var t = viewport[0].getBoundingClientRect().top;
             vp = Math.round((window.innerHeight - t)) - 90;
             viewport.css('height', vp);
+            createCss();
+            viewportScroll(true);
         }
 
         function resizeDiv() {
@@ -218,12 +276,12 @@
 
         //noinspection JSUnusedLocalSymbols
         function update(x, m) {
-            data = m.r;
             clear();
+            data = m.r;
             addRows(data.result.length);
             computeColumnWidths();
-            createCss();
             resize();
+            viewport[0].scrollTop = 0;
             viewportScroll(true);
         }
 
