@@ -5,27 +5,19 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * The MIT License (MIT)
+ * Copyright (c) 2014-2016 Appsicle
  *
- * Copyright (C) 2016 Appsicle
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  ******************************************************************************/
 
 /*globals $:false */
@@ -53,16 +45,20 @@
         var lineHeight = 35;
         var select;
         var types = [
-            'BOOLEAN',
-            'BYTE',
-            'DOUBLE',
-            'FLOAT',
-            'INT',
-            'LONG',
-            'SHORT',
-            'STRING',
-            'SYMBOL',
-            'DATE'
+            {text: 'AUTO', value: null},
+            {text: 'BOOLEAN', value: 'BOOLEAN'},
+            {text: 'BYTE', value: 'BYTE'},
+            {text: 'DOUBLE', value: 'DOUBLE'},
+            {text: 'FLOAT', value: 'FLOAT'},
+            {text: 'INT', value: 'INT'},
+            {text: 'LONG', value: 'LONG'},
+            {text: 'SHORT', value: 'SHORT'},
+            {text: 'STRING', value: 'STRING'},
+            {text: 'SYMBOL', value: 'SYMBOL'},
+            {text: 'DATE (ISO)', value: 'DATE_ISO'},
+            {text: 'DATE (YYYY-MM-DD hh:mm:ss)', value: 'DATE_1'},
+            {text: 'DATE (MM/DD/YYYY)', value: 'DATE_2'},
+            {text: 'DATE (DD/MM/YYYY)', value: 'DATE_3'}
         ];
 
         var current = null;
@@ -88,7 +84,7 @@
 
             // set option
             if (col.altType) {
-                select.val(col.altType);
+                select.val(col.altType.value);
             } else {
                 select.val(col.type);
             }
@@ -105,8 +101,8 @@
         }
 
         function getTypeHtml(col) {
-            if (col.altType && col.altType !== col.type) {
-                return col.type + '<i class="fa fa-angle-double-right g-type-separator"></i>' + col.altType;
+            if (col.altType && col.altType.text !== col.type) {
+                return col.type + '<i class="fa fa-angle-double-right g-type-separator"></i>' + col.altType.text;
             } else {
                 return col.type;
             }
@@ -116,7 +112,7 @@
             var modified = false;
             for (var i = 0; i < current.response.columns.length; i++) {
                 var col = current.response.columns[i];
-                if (col.altType && col.type !== col.altType) {
+                if (col.altType && col.type !== col.altType.text) {
                     modified = true;
                     break;
                 }
@@ -126,7 +122,8 @@
         }
 
         function selectChange() {
-            select.changeTargetCol.altType = $(this).find('option:selected').text();
+            var sel = $(this).find('option:selected');
+            select.changeTargetCol.altType = {text: sel.text(), value: sel.val()};
             select.changeTargetDiv.html(getTypeHtml(select.changeTargetCol));
             calcModifiedFlag();
             selectHide();
@@ -221,7 +218,7 @@
             select = $('<select class="g-dynamic-select form-control m-b"/>');
             for (var i = 0; i < types.length; i++) {
                 var val = types[i];
-                $('<option />', {value: val, text: val}).appendTo(select);
+                $('<option />', {value: val.value, text: val.text}).appendTo(select);
             }
         }
 

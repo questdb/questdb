@@ -338,8 +338,6 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
     private int parseMethod(long lo, int len) throws HeadersTooLargeException {
         long p = lo;
         long hi = lo + len;
-        int offset = 0;
-
         while (p < hi) {
             if (_wptr == this.hi) {
                 throw HeadersTooLargeException.INSTANCE;

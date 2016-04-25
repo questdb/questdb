@@ -249,9 +249,11 @@ function nopropagation(e) {
                 var schema = '';
                 for (var i = 0; i < current.response.columns.length; i++) {
                     var c = current.response.columns[i];
-                    if (c.altType && c.type !== c.altType) {
-                        schema += c.name + '=' + c.altType + '&';
-                    } else if (c.errors === 0) {
+                    console.log('name: ' + c.name + ', altType: ' + (c.altType ? c.altType.text : ''));
+                    if (c.altType && c.type !== c.altType.text && c.altType.text !== 'AUTO') {
+                        schema += c.name + '=' + c.altType.value + '&';
+                    } else if (c.errors === 0 && (c.altType === undefined || c.altType.text !== 'AUTO')) {
+                        console.log('name: ' + c.name + ', no errors!');
                         schema += c.name + '=' + c.type + '&';
                     }
                 }
