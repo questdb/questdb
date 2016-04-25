@@ -39,6 +39,8 @@
         var data;
         var totalWidth = -1;
         var stretched = 0;
+        var dc = 128; // number of divs in "rows" cache, has to be power of two
+        var dcn = dc - 1;
 
         // viewport height
         var vp = 400;
@@ -59,10 +61,10 @@
         // offset to bring virtual y inline with actual y
         var o;
         // row div cache
-        var rows = {};
+        var rows = [];
 
-        function addRows(n) {
-            r += n;
+        function addRows() {
+            r += data.result.length;
             yMax = r * rh;
             if (yMax < 10000000) {
                 h = yMax;
@@ -73,39 +75,25 @@
             canvas.css('height', h === 0 ? 1 : h);
         }
 
-        function renderRow(row) {
-            var d = data.result[row];
-            var rowDiv = $('<div class="qg-r"/>');
-            for (var k = 0; k < d.length; k++) {
-                var str = d[k] !== null ? d[k].toString() : 'null';
-                $('<div class="qg-c qg-w' + k + '">' + str + '</div>').appendTo(rowDiv);
+        function renderRow(row, n) {
+            if (row.questIndex !== n) {
+                var d = data.result[n];
+                var l = d.length;
+                for (var k = 0; k < l; k++) {
+                    row.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
+                }
+                row.style.top = (n * rh - o) + 'px';
+                row.questIndex = n;
             }
-            return rowDiv.css({
-                    top: row * rh - o,
-                    height: rh
-                })
-                .appendTo(canvas);
         }
 
         function renderViewport() {
             // calculate the viewport + buffer
             var t = Math.max(0, Math.floor((y - vp) / rh));
-            var b = Math.min(yMax / rh - 1, Math.ceil((y + vp + vp) / rh));
-            var i;
+            var b = Math.min(yMax / rh - 1, Math.ceil((y + vp + vp) / rh)) + 1;
 
-            // remove rows no longer in the viewport
-            for (i in rows) {
-                if (i < t || i > b) {
-                    rows[i].remove();
-                    delete rows[i];
-                }
-            }
-
-            // add new rows
-            for (i = t; i <= b; i++) {
-                if (!rows[i]) {
-                    rows[i] = renderRow(i);
-                }
+            for (var i = t; i < b; i++) {
+                renderRow(rows[i & dcn], i);
             }
         }
 
@@ -210,7 +198,7 @@
             }
             header.empty();
             canvas.empty();
-            rows = {};
+            rows = [];
             stretched = 0;
             data = null;
         }
@@ -220,18 +208,10 @@
             top = scrollTop;
         }
 
-        function removeAllRows() {
-            for (var i in rows) {
-                rows[i].remove();
-                delete rows[i];
-            }
-        }
-
         function onJump(scrollTop) {
             y = scrollTop === 0 ? 0 : Math.ceil((scrollTop + vp) * M - vp);
             top = scrollTop;
             o = y - top;
-            removeAllRows();
         }
 
         function viewportScroll(force) {
@@ -273,11 +253,23 @@
             resizeDiv();
         }
 
+        function addColumns() {
+            for (var i = 0; i < dc; i++) {
+                var rowDiv = $('<div class="qg-r"/>');
+                for (var k = 0; k < data.columns.length; k++) {
+                    $('<div class="qg-c qg-w' + k + '"/>').appendTo(rowDiv);
+                }
+                rowDiv.css({top: -100, height: rh}).appendTo(canvas);
+                rows.push(rowDiv[0]);
+            }
+        }
+
         //noinspection JSUnusedLocalSymbols
         function update(x, m) {
             clear();
             data = m.r;
-            addRows(data.result.length);
+            addColumns();
+            addRows();
             computeColumnWidths();
             resize();
             viewport[0].scrollTop = 0;
