@@ -39,7 +39,8 @@
         var data;
         var totalWidth = -1;
         var stretched = 0;
-        var dc = 128; // number of divs in "rows" cache, has to be power of two
+        // number of divs in "rows" cache, has to be power of two
+        var dc = 128;
         var dcn = dc - 1;
 
         // viewport height
@@ -203,54 +204,31 @@
             data = null;
         }
 
-        function onNearScroll(scrollTop) {
-            y += scrollTop - top;
-            top = scrollTop;
-        }
-
-        function onJump(scrollTop) {
-            y = scrollTop === 0 ? 0 : Math.ceil((scrollTop + vp) * M - vp);
-            top = scrollTop;
-            o = y - top;
-        }
-
         function viewportScroll(force) {
             header.scrollLeft(viewport.scrollLeft());
 
             var scrollTop = viewport.scrollTop();
             if (scrollTop !== top || force) {
                 if (Math.abs(scrollTop - top) > vp) {
-                    onJump(scrollTop);
+                    // near scroll
+                    y = scrollTop === 0 ? 0 : Math.ceil((scrollTop + vp) * M - vp);
+                    top = scrollTop;
+                    o = y - top;
                 } else {
-                    onNearScroll(scrollTop);
+                    // jump
+                    y += scrollTop - top;
+                    top = scrollTop;
                 }
                 renderViewport();
             }
         }
 
-        function renderPermMarkup() {
-            header = div.find('.qg-header-row');
-            viewport = div.find('.qg-viewport');
-            viewport.scroll(viewportScroll);
-            canvas = div.find('.qg-canvas');
-        }
-
-        function resizeViewport() {
-            var t = viewport[0].getBoundingClientRect().top;
-            vp = Math.round((window.innerHeight - t)) - 90;
+        function resize() {
+            vp = Math.round((window.innerHeight - viewport[0].getBoundingClientRect().top)) - 90;
             viewport.css('height', vp);
+            div.css('height', Math.round((window.innerHeight - div[0].getBoundingClientRect().top)) - 90);
             createCss();
             viewportScroll(true);
-        }
-
-        function resizeDiv() {
-            var t = div[0].getBoundingClientRect().top;
-            div.css('height', Math.round((window.innerHeight - t)) - 90);
-        }
-
-        function resize() {
-            resizeViewport();
-            resizeDiv();
         }
 
         function addColumns() {
@@ -271,18 +249,20 @@
             addColumns();
             addRows();
             computeColumnWidths();
-            resize();
             viewport[0].scrollTop = 0;
-            viewportScroll(true);
+            resize();
         }
 
         function bind() {
+            header = div.find('.qg-header-row');
+            viewport = div.find('.qg-viewport');
+            viewport.scroll(viewportScroll);
+            canvas = div.find('.qg-canvas');
             $(document).on('query.ok', update);
             $(window).resize(resize);
         }
 
         bind();
-        renderPermMarkup();
         resize();
     };
 }(jQuery));
