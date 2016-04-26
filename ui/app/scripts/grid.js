@@ -91,7 +91,7 @@
         function renderViewport() {
             // calculate the viewport + buffer
             var t = Math.max(0, Math.floor((y - vp) / rh));
-            var b = Math.min(yMax / rh - 1, Math.ceil((y + vp + vp) / rh)) + 1;
+            var b = Math.min(yMax / rh, Math.ceil((y + vp + vp) / rh));
 
             for (var i = t; i < b; i++) {
                 renderRow(rows[i & dcn], i);
@@ -128,7 +128,7 @@
 
         function createCss() {
             if (data) {
-                var viewportWidth = viewport.width();
+                var viewportWidth = viewport.offsetWidth;
                 var f = null;
                 if (totalWidth < viewportWidth && stretched !== 1) {
                     f = generatePctWidth;
@@ -205,9 +205,9 @@
         }
 
         function viewportScroll(force) {
-            header.scrollLeft(viewport.scrollLeft());
+            header.scrollLeft(viewport.scrollLeft);
 
-            var scrollTop = viewport.scrollTop();
+            var scrollTop = viewport.scrollTop;
             if (scrollTop !== top || force) {
                 if (Math.abs(scrollTop - top) > vp) {
                     // near scroll
@@ -224,8 +224,8 @@
         }
 
         function resize() {
-            vp = Math.round((window.innerHeight - viewport[0].getBoundingClientRect().top)) - 90;
-            viewport.css('height', vp);
+            vp = Math.round((window.innerHeight - viewport.getBoundingClientRect().top)) - 90;
+            viewport.style.height = vp + 'px';
             div.css('height', Math.round((window.innerHeight - div[0].getBoundingClientRect().top)) - 90);
             createCss();
             viewportScroll(true);
@@ -249,14 +249,14 @@
             addColumns();
             addRows();
             computeColumnWidths();
-            viewport[0].scrollTop = 0;
+            viewport.scrollTop = 0;
             resize();
         }
 
         function bind() {
             header = div.find('.qg-header-row');
-            viewport = div.find('.qg-viewport');
-            viewport.scroll(viewportScroll);
+            viewport = div.find('.qg-viewport')[0];
+            viewport.onscroll = viewportScroll;
             canvas = div.find('.qg-canvas');
             $(document).on('query.ok', update);
             $(window).resize(resize);
