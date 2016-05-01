@@ -5,30 +5,44 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (c) 2014-2016 Appsicle
+ * The MIT License (MIT)
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * Copyright (C) 2016 Appsicle
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
 /*globals $:false */
 /*globals jQuery:false */
+/*globals qdb:false */
 
 (function ($) {
     'use strict';
     $.fn.grid = function () {
         var defaults = {
             minColumnWidth: 60,
-            rowHeight: 28
+            rowHeight: 28,
+            divCacheSize: 128,
+            viewportHeight: 400,
+            yMaxThreshold: 10000000,
+            maxRowsToAnalyze: 100,
+            bottomMargin: 90
         };
         var $style;
         var div = $(this);
@@ -36,15 +50,23 @@
         var canvas;
         var header;
         var colMax;
-        var data;
+        var columns = [];
+        var data = [];
         var totalWidth = -1;
         var stretched = 0;
         // number of divs in "rows" cache, has to be power of two
-        var dc = 128;
+        var dc = defaults.divCacheSize;
         var dcn = dc - 1;
+        var pageSize = qdb.queryBatchSize;
+        var halfPage = Math.floor(pageSize / 2);
+        var loPage;
+        var hiPage;
+        var query;
+        // var loadLo = -1;
+        // var loadHi = -1;
 
         // viewport height
-        var vp = 400;
+        var vp = defaults.viewportHeight;
         // row height in px
         var rh = defaults.rowHeight;
         // virtual row count in grid
@@ -64,13 +86,13 @@
         // row div cache
         var rows = [];
 
-        function addRows() {
-            r += data.result.length;
+        function addRows(n) {
+            r += n;
             yMax = r * rh;
-            if (yMax < 10000000) {
+            if (yMax < defaults.yMaxThreshold) {
                 h = yMax;
             } else {
-                h = 10000000;
+                h = defaults.yMaxThreshold;
             }
             M = Math.ceil(yMax / h);
             canvas.css('height', h === 0 ? 1 : h);
@@ -78,20 +100,124 @@
 
         function renderRow(row, n) {
             if (row.questIndex !== n) {
-                var d = data.result[n];
-                var l = d.length;
-                for (var k = 0; k < l; k++) {
-                    row.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
+                var rowData = data[Math.floor(n / pageSize)];
+                var offset = n % pageSize;
+                var k;
+                if (rowData) {
+                    var d = rowData[offset];
+                    for (k = 0; k < columns.length; k++) {
+                        row.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
+                    }
+                } else {
+                    for (k = 0; k < columns.length; k++) {
+                        row.childNodes[k].innerHTML = '';
+                    }
                 }
                 row.style.top = (n * rh - o) + 'px';
                 row.questIndex = n;
             }
         }
 
-        function renderViewport() {
+        function purgeOutlierPages() {
+            data.splice(0, loPage);
+            data.splice(hiPage + 1, data.length);
+        }
+
+        function loadOnePage(pageToLoad, pageToPurge) {
+            purgeOutlierPages();
+            console.log(query);
+            console.log('one page: ' + pageToLoad + ', purge: ' + pageToPurge + ', loPage: ' + loPage + ', hiPage: ' + hiPage);
+        }
+
+        function loadTwoPages(p1, p2) {
+            purgeOutlierPages();
+            console.log('two pages: ' + p1 + ', ' + p2);
+        }
+
+        function computePages(direction, t, b) {
+
+            if (t !== t || b !== b) {
+                return;
+            }
+
+            var tp; // top page
+            var tr; // top remaining
+            var bp; // bottom page
+            var br; // bottom remaining
+
+            tp = Math.floor(t / pageSize);
+            bp = Math.floor(b / pageSize);
+
+            if (direction > 0) {
+                br = b % pageSize;
+
+                if (tp >= loPage && bp < hiPage) {
+                    return;
+                }
+
+                if (bp === hiPage) {
+                    if (br > halfPage) {
+                        hiPage = bp + 1;
+                        loPage = bp;
+                        loadOnePage(bp + 1, bp - 1);
+                        addRows(pageSize);
+                    }
+                    return;
+                }
+
+                if (tp < bp) {
+                    loadTwoPages(tp, bp);
+                    loPage = tp;
+                    hiPage = bp;
+                } else if (br > halfPage) {
+                    loadTwoPages(bp, bp + 1);
+                    loPage = bp;
+                    hiPage = bp + 1;
+                } else {
+                    hiPage = tp;
+                    loPage = tp;
+                    loadOnePage(tp, -1);
+                }
+            } else {
+                tr = t % pageSize;
+
+                if (tp > loPage && bp <= hiPage) {
+                    return;
+                }
+
+                if (tp === loPage) {
+                    if (tr < halfPage && loPage > 0) {
+                        loPage = Math.max(0, tp - 1);
+                        hiPage = tp;
+                        loadOnePage(tp - 1, tp + 1);
+                    }
+                    return;
+                }
+
+                if (tp < bp) {
+                    loadTwoPages(tp, bp);
+                    loPage = tp;
+                    hiPage = bp;
+                } else if (tr < halfPage) {
+                    loadTwoPages(tp - 1, tp);
+                    loPage = Math.max(0, tp - 1);
+                    hiPage = tp;
+                } else {
+                    loPage = tp;
+                    hiPage = tp;
+                    loadOnePage(tp);
+                }
+            }
+        }
+
+        function renderViewport(direction) {
             // calculate the viewport + buffer
             var t = Math.max(0, Math.floor((y - vp) / rh));
             var b = Math.min(yMax / rh, Math.ceil((y + vp + vp) / rh));
+
+            if (direction !== 0) {
+                computePages(direction, t, b);
+            }
 
             for (var i = t; i < b; i++) {
                 renderRow(rows[i & dcn], i);
@@ -99,7 +225,7 @@
         }
 
         function getColumnAlignment(i) {
-            switch (data.columns[i].type) {
+            switch (columns[i].type) {
                 case 'STRING':
                 case 'SYMBOL':
                     return 'text-align: left;';
@@ -127,7 +253,7 @@
         }
 
         function createCss() {
-            if (data) {
+            if (data.length > 0) {
                 var viewportWidth = viewport.offsetWidth;
                 var f = null;
                 if (totalWidth < viewportWidth && stretched !== 1) {
@@ -159,8 +285,8 @@
             colMax = [];
             var i, k, w;
             totalWidth = 0;
-            for (i = 0; i < data.columns.length; i++) {
-                var c = data.columns[i];
+            for (i = 0; i < columns.length; i++) {
+                var c = columns[i];
                 var col = $('<div class="qg-header qg-w' + i + '">' + c.name + '</div>').appendTo(header);
                 switch (c.type) {
                     case 'STRING':
@@ -173,9 +299,9 @@
                 totalWidth += w;
             }
 
-            var max = data.result.length > 100 ? 100 : data.result.length;
+            var max = data[0].length > defaults.maxRowsToAnalyze ? defaults.maxRowsToAnalyze : data[0].length;
             for (i = 0; i < max; i++) {
-                var row = data.result[i];
+                var row = data[0][i];
                 var sum = 0;
                 for (k = 0; k < row.length; k++) {
                     var cell = row[k];
@@ -201,7 +327,8 @@
             canvas.empty();
             rows = [];
             stretched = 0;
-            data = null;
+            data = [];
+            query = null;
         }
 
         function viewportScroll(force) {
@@ -209,6 +336,7 @@
 
             var scrollTop = viewport.scrollTop;
             if (scrollTop !== top || force) {
+                var oldY = y;
                 if (Math.abs(scrollTop - top) > vp) {
                     // near scroll
                     y = scrollTop === 0 ? 0 : Math.ceil((scrollTop + vp) * M - vp);
@@ -219,14 +347,14 @@
                     y += scrollTop - top;
                     top = scrollTop;
                 }
-                renderViewport();
+                renderViewport(y - oldY);
             }
         }
 
         function resize() {
-            vp = Math.round((window.innerHeight - viewport.getBoundingClientRect().top)) - 90;
+            vp = Math.round((window.innerHeight - viewport.getBoundingClientRect().top)) - defaults.bottomMargin;
             viewport.style.height = vp + 'px';
-            div.css('height', Math.round((window.innerHeight - div[0].getBoundingClientRect().top)) - 90);
+            div.css('height', Math.round((window.innerHeight - div[0].getBoundingClientRect().top)) - defaults.bottomMargin);
             createCss();
             viewportScroll(true);
         }
@@ -234,7 +362,7 @@
         function addColumns() {
             for (var i = 0; i < dc; i++) {
                 var rowDiv = $('<div class="qg-r"/>');
-                for (var k = 0; k < data.columns.length; k++) {
+                for (var k = 0; k < columns.length; k++) {
                     $('<div class="qg-c qg-w' + k + '"/>').appendTo(rowDiv);
                 }
                 rowDiv.css({top: -100, height: rh}).appendTo(canvas);
@@ -245,9 +373,13 @@
         //noinspection JSUnusedLocalSymbols
         function update(x, m) {
             clear();
-            data = m.r;
+            loPage = 0;
+            hiPage = 0;
+            query = m.r.query;
+            data.push(m.r.result);
+            columns = m.r.columns;
             addColumns();
-            addRows();
+            addRows(m.r.result.length);
             computeColumnWidths();
             viewport.scrollTop = 0;
             resize();

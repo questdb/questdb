@@ -28,58 +28,16 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-#grid {
-}
+/*globals jQuery:false */
 
-.qg-header-row {
-  overflow: hidden;
-}
+(function ($) {
+    'use strict';
 
-.qg-header-row, .qg-r {
-  white-space: nowrap;
-}
+    var queryBatchSize = 1000;
 
-.qg-r {
-  border-bottom: 1px solid #e6e6e6;
-  position: absolute;
-}
-
-.qg-r:hover {
-  background-color: #f6f6f6;
-}
-
-.qg-header {
-  display: inline-block;
-  padding: 5px 3px 7px;
-  font-weight: 700;
-  border-bottom: 1px solid #e6e6e6;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: right;
-}
-
-.qg-header-l {
-  text-align: left;
-}
-
-.qg-viewport {
-  overflow: auto;
-}
-
-.qg-canvas {
-  position: relative;
-  overflow: hidden;
-}
-
-.qg-c {
-  display: inline-block;
-  padding: 4px 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: right;
-}
-
-.qg-c:hover {
-  padding: 2px 1px;
-  border: 2px solid #afb7c7;
-}
+    $.extend(true, window, {
+        qdb: {
+            queryBatchSize
+        }
+    });
+}(jQuery));
