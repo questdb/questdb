@@ -64,6 +64,7 @@
         var hiPage;
         var query;
         var moreExists = true;
+        var renderTimer;
 
         // viewport height
         var vp = defaults.viewportHeight;
@@ -108,14 +109,31 @@
                     for (k = 0; k < columns.length; k++) {
                         row.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
                     }
+                    row.questIndex = n;
                 } else {
                     for (k = 0; k < columns.length; k++) {
                         row.childNodes[k].innerHTML = '';
                     }
                 }
                 row.style.top = (n * rh - o) + 'px';
-                row.questIndex = n;
             }
+        }
+
+        function renderViewportNoCompute() {
+            // calculate the viewport + buffer
+            var t = Math.max(0, Math.floor((y - vp) / rh));
+            var b = Math.min(yMax / rh, Math.ceil((y + vp + vp) / rh));
+
+            for (var i = t; i < b; i++) {
+                renderRow(rows[i & dcn], i);
+            }
+        }
+
+        function delayedRenderViewportNoCompute() {
+            if (renderTimer) {
+                clearTimeout(renderTimer);
+            }
+            renderTimer = setTimeout(renderViewportNoCompute, 50);
         }
 
         function purgeOutlierPages() {
@@ -134,16 +152,15 @@
             $.get('/js', {query, limit: lo + ',' + hi, withCount: false})
                 .done(function (response) {
                     data[pageToLoad] = response.result;
-                    console.log('more: ' + moreExists);
                     if (append && moreExists) {
                         addRows(response.result.length);
                         moreExists = response.moreExist;
                     }
+                    delayedRenderViewportNoCompute();
                 })
                 .fail(function () {
-                    console.log('oops');
+                    console.error('fetch failed');
                 });
-            console.log('one page: ' + pageToLoad + ', loPage: ' + loPage + ', hiPage: ' + hiPage);
         }
 
         function loadTwoPages(p1, p2) {
@@ -152,14 +169,18 @@
             var hi = lo + pageSize * (p2 - p1 + 1);
             $.get('/js', {query, limit: lo + ',' + hi, withCount: false})
                 .done(function (response) {
+                    var l = response.result.length;
                     data[p1] = response.result.splice(0, pageSize);
                     data[p2] = response.result;
-                    console.log(data);
+                    // work out if we need to extend grid's virtual space
+                    if (r < lo + l) {
+                        addRows(lo + l - r);
+                    }
+                    delayedRenderViewportNoCompute();
                 })
                 .fail(function () {
-                    console.log('oops');
+                    console.error('fetch failed');
                 });
-            console.log('two pages: ' + p1 + ', ' + p2);
         }
 
         function computePages(direction, t, b) {
@@ -225,7 +246,7 @@
                     loadTwoPages(tp, bp);
                     loPage = tp;
                     hiPage = bp;
-                } else if (tr < oneThirdPage) {
+                } else if (tr < oneThirdPage && tp > 0) {
                     loadTwoPages(tp - 1, tp);
                     loPage = Math.max(0, tp - 1);
                     hiPage = tp;
