@@ -250,7 +250,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
             url += "&limit=" + limitFrom;
         }
         if (limitTo >= 0) {
-            url += ',' + limitTo;
+            url += "," + limitTo;
         }
 
         if (noMeta) {
