@@ -95,7 +95,7 @@
         function sendQuery(q) {
             qry = q;
             abortPending();
-            setTimeout(qq, 50);
+            hPendingRequest = setTimeout(qq, 50);
         }
 
         function bind() {

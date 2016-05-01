@@ -58,12 +58,12 @@
         var dc = defaults.divCacheSize;
         var dcn = dc - 1;
         var pageSize = qdb.queryBatchSize;
-        var halfPage = Math.floor(pageSize / 2);
+        var oneThirdPage = Math.floor(pageSize / 3);
+        var twoThirdsPage = oneThirdPage * 2;
         var loPage;
         var hiPage;
         var query;
-        // var loadLo = -1;
-        // var loadHi = -1;
+        var moreExists = true;
 
         // viewport height
         var vp = defaults.viewportHeight;
@@ -119,18 +119,46 @@
         }
 
         function purgeOutlierPages() {
-            data.splice(0, loPage);
-            data.splice(hiPage + 1, data.length);
+            for (var i = 0; i < data.length; i++) {
+                if ((i < loPage || i > hiPage) && data[i]) {
+                    delete data[i];
+                }
+            }
         }
 
-        function loadOnePage(pageToLoad, pageToPurge) {
+        function loadOnePage(pageToLoad) {
             purgeOutlierPages();
-            console.log(query);
-            console.log('one page: ' + pageToLoad + ', purge: ' + pageToPurge + ', loPage: ' + loPage + ', hiPage: ' + hiPage);
+            var append = (pageToLoad + 1) * pageSize > r;
+            var lo = pageToLoad * pageSize;
+            var hi = lo + pageSize;
+            $.get('/js', {query, limit: lo + ',' + hi, withCount: false})
+                .done(function (response) {
+                    data[pageToLoad] = response.result;
+                    console.log('more: ' + moreExists);
+                    if (append && moreExists) {
+                        addRows(response.result.length);
+                        moreExists = response.moreExist;
+                    }
+                })
+                .fail(function () {
+                    console.log('oops');
+                });
+            console.log('one page: ' + pageToLoad + ', loPage: ' + loPage + ', hiPage: ' + hiPage);
         }
 
         function loadTwoPages(p1, p2) {
             purgeOutlierPages();
+            var lo = p1 * pageSize;
+            var hi = lo + pageSize * (p2 - p1 + 1);
+            $.get('/js', {query, limit: lo + ',' + hi, withCount: false})
+                .done(function (response) {
+                    data[p1] = response.result.splice(0, pageSize);
+                    data[p2] = response.result;
+                    console.log(data);
+                })
+                .fail(function () {
+                    console.log('oops');
+                });
             console.log('two pages: ' + p1 + ', ' + p2);
         }
 
@@ -156,11 +184,10 @@
                 }
 
                 if (bp === hiPage) {
-                    if (br > halfPage) {
+                    if (br > twoThirdsPage) {
                         hiPage = bp + 1;
                         loPage = bp;
-                        loadOnePage(bp + 1, bp - 1);
-                        addRows(pageSize);
+                        loadOnePage(bp + 1);
                     }
                     return;
                 }
@@ -169,14 +196,14 @@
                     loadTwoPages(tp, bp);
                     loPage = tp;
                     hiPage = bp;
-                } else if (br > halfPage) {
+                } else if (br > twoThirdsPage) {
                     loadTwoPages(bp, bp + 1);
                     loPage = bp;
                     hiPage = bp + 1;
                 } else {
                     hiPage = tp;
                     loPage = tp;
-                    loadOnePage(tp, -1);
+                    loadOnePage(tp);
                 }
             } else {
                 tr = t % pageSize;
@@ -186,10 +213,10 @@
                 }
 
                 if (tp === loPage) {
-                    if (tr < halfPage && loPage > 0) {
+                    if (tr < oneThirdPage && loPage > 0) {
                         loPage = Math.max(0, tp - 1);
                         hiPage = tp;
-                        loadOnePage(tp - 1, tp + 1);
+                        loadOnePage(tp - 1);
                     }
                     return;
                 }
@@ -198,7 +225,7 @@
                     loadTwoPages(tp, bp);
                     loPage = tp;
                     hiPage = bp;
-                } else if (tr < halfPage) {
+                } else if (tr < oneThirdPage) {
                     loadTwoPages(tp - 1, tp);
                     loPage = Math.max(0, tp - 1);
                     hiPage = tp;
@@ -329,6 +356,7 @@
             stretched = 0;
             data = [];
             query = null;
+            moreExists = true;
         }
 
         function viewportScroll(force) {
@@ -378,6 +406,7 @@
             query = m.r.query;
             data.push(m.r.result);
             columns = m.r.columns;
+            moreExists = m.r.moreExist;
             addColumns();
             addRows(m.r.result.length);
             computeColumnWidths();
