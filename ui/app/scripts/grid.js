@@ -149,12 +149,12 @@
             var append = (pageToLoad + 1) * pageSize > r;
             var lo = pageToLoad * pageSize;
             var hi = lo + pageSize;
-            $.get('/js', {query, limit: lo + ',' + hi, withCount: false})
+            $.get('/js', {query, limit: lo + ',' + hi, nm: true})
                 .done(function (response) {
                     data[pageToLoad] = response.result;
                     if (append && moreExists) {
                         addRows(response.result.length);
-                        moreExists = response.moreExist;
+                        moreExists = response.more;
                     }
                     delayedRenderViewportNoCompute();
                 })
@@ -167,7 +167,7 @@
             purgeOutlierPages();
             var lo = p1 * pageSize;
             var hi = lo + pageSize * (p2 - p1 + 1);
-            $.get('/js', {query, limit: lo + ',' + hi, withCount: false})
+            $.get('/js', {query, limit: lo + ',' + hi, np: true})
                 .done(function (response) {
                     var l = response.result.length;
                     data[p1] = response.result.splice(0, pageSize);
@@ -427,7 +427,7 @@
             query = m.r.query;
             data.push(m.r.result);
             columns = m.r.columns;
-            moreExists = m.r.moreExist;
+            moreExists = m.r.more;
             addColumns();
             addRows(m.r.result.length);
             computeColumnWidths();

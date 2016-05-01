@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.net.http.handlers;
@@ -121,19 +122,19 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
 
     @Test
     public void testJsonEmpty() throws Exception {
-        QueryResponse queryResponse = download("tab", 0, 0, false);
+        QueryResponse queryResponse = download("tab", 0, 0);
         Assert.assertEquals(0, queryResponse.result.size());
     }
 
     @Test
     public void testJsonEmpty0() throws Exception {
-        QueryResponse queryResponse = download("tab where 1 = 2", 0, 0, false);
+        QueryResponse queryResponse = download("tab where 1 = 2", 0, 0);
         Assert.assertEquals(0, queryResponse.result.size());
     }
 
     @Test
     public void testJsonEmptyQuery() throws Exception {
-        Assert.assertNull(download("", 0, 0, false).result);
+        Assert.assertNull(download("", 0, 0).result);
     }
 
     @Test
@@ -163,7 +164,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         Assert.assertEquals("9223372036854775807", queryResponse.result.get(0)[3]);
         Assert.assertNull(queryResponse.result.get(0)[4]);
         Assert.assertEquals("1970-01-01T00:00:00.010Z", queryResponse.result.get(0)[5]);
-        Assert.assertEquals(false, queryResponse.moreExist);
+        Assert.assertEquals(false, queryResponse.more);
 
         Assert.assertEquals("id4", queryResponse.result.get(4)[0]);
         Assert.assertEquals("NaN", queryResponse.result.get(4)[2]);
@@ -172,17 +173,17 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     @Test
     public void testJsonInvertedLimit() throws Exception {
         String query = "tab limit 10";
-        QueryResponse queryResponse = download(query, 10, 5, false);
+        QueryResponse queryResponse = download(query, 10, 5);
         Assert.assertEquals(0, queryResponse.result.size());
-        Assert.assertEquals(true, queryResponse.moreExist);
+        Assert.assertEquals(true, queryResponse.more);
     }
 
     @Test
     public void testJsonLimits() throws Exception {
         String query = "tab";
-        QueryResponse r = download(query, 2, 4, false);
+        QueryResponse r = download(query, 2, 4);
         Assert.assertEquals(2, r.result.size());
-        Assert.assertEquals(true, r.moreExist);
+        Assert.assertEquals(true, r.more);
         Assert.assertEquals("id2", r.result.get(0)[0]);
         Assert.assertEquals("id3", r.result.get(1)[0]);
     }
@@ -210,21 +211,17 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testJsonTakeLimit() throws Exception {
-        QueryResponse queryResponse = download("tab limit 10", 2, -1, false);
-        Assert.assertEquals(2, queryResponse.result.size());
-        Assert.assertEquals(true, queryResponse.moreExist);
+    public void testJsonSimpleNoMeta() throws Exception {
+        QueryResponse queryResponse = download("select 1 z from tab limit 10", 0, 10, true, temp);
+        Assert.assertEquals(10, queryResponse.result.size());
+        Assert.assertNull(queryResponse.query);
     }
 
     @Test
-    public void testJsonTotalCount() throws Exception {
-        String query = "tab";
-        QueryResponse r = download(query, 2, 4, true);
-        Assert.assertEquals(2, r.result.size());
-        Assert.assertEquals(false, r.moreExist);
-        Assert.assertEquals("id2", r.result.get(0)[0]);
-        Assert.assertEquals("id3", r.result.get(1)[0]);
-        Assert.assertEquals(1000, r.totalCount);
+    public void testJsonTakeLimit() throws Exception {
+        QueryResponse queryResponse = download("tab limit 10", 2, -1);
+        Assert.assertEquals(2, queryResponse.result.size());
+        Assert.assertEquals(true, queryResponse.more);
     }
 
     static QueryResponse download(String queryUrl, TemporaryFolder temp) throws Exception {
@@ -246,18 +243,18 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         generateJournal(name, new QueryResponse.Tab[]{record}, 1000);
     }
 
-    private static QueryResponse download(String queryUrl, int limitFrom, int limitTo, boolean count, TemporaryFolder temp) throws Exception {
+    private static QueryResponse download(String queryUrl, int limitFrom, int limitTo, boolean noMeta, TemporaryFolder temp) throws Exception {
         File f = temp.newFile();
         String url = "http://localhost:9000/js?query=" + URLEncoder.encode(queryUrl, "UTF-8");
         if (limitFrom >= 0) {
             url += "&limit=" + limitFrom;
         }
         if (limitTo >= 0) {
-            url += "," + limitTo;
+            url += ',' + limitTo;
         }
 
-        if (count) {
-            url += "&withCount=true";
+        if (noMeta) {
+            url += "&nm=true";
         }
 
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
@@ -317,7 +314,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         return download(queryUrl, temp);
     }
 
-    private static QueryResponse download(String queryUrl, int limitFrom, int limitTo, boolean count) throws Exception {
-        return download(queryUrl, limitFrom, limitTo, count, temp);
+    private static QueryResponse download(String queryUrl, int limitFrom, int limitTo) throws Exception {
+        return download(queryUrl, limitFrom, limitTo, false, temp);
     }
 }

@@ -45,8 +45,7 @@
 
         var requestParams = {
             'query': '',
-            'limit': '',
-            'withCount': false
+            'limit': ''
         };
 
         function abortActive() {
@@ -87,7 +86,6 @@
             abortActive();
             requestParams.query = qry.q;
             requestParams.limit = '0,' + batchSize;
-            requestParams.withCount = false;
             time = new Date().getTime();
             hActiveRequest = $.get('/js', requestParams).done(handleServerResponse).fail(handleServerError);
         }

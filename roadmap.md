@@ -51,7 +51,7 @@ __Web UI__
 - [x] query execution and result display
 - [x] grid styling
 - [x] error reporting and interaction with query editor
-- [ ] __grid virtualisation (in-progress)__
+- [x] grid virtualisation
 - [x] file import UI
 - [ ] charting UI
 

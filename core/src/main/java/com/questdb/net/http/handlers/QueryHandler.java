@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.net.http.handlers;
@@ -134,8 +135,7 @@ public class QueryHandler implements ContextHandler {
             skip = 0;
         }
 
-        CharSequence withCount = context.request.getUrlParam("withCount");
-        ctx.includeCount = withCount != null && Chars.equalsIgnoreCase(withCount, "true");
+        ctx.noMeta = Chars.equalsNc("true", context.request.getUrlParam("nm"));
         ctx.query = query;
         ctx.skip = skip;
         ctx.count = 0L;
@@ -143,8 +143,7 @@ public class QueryHandler implements ContextHandler {
 
         ctx.info().$("Query: ").$(query).
                 $(", skip: ").$(skip).
-                $(", stop: ").$(stop).
-                $(", withCount: ").$(ctx.includeCount).$();
+                $(", stop: ").$(stop).$();
 
         executeQuery(r, ctx);
         resume(context);
@@ -167,6 +166,11 @@ public class QueryHandler implements ContextHandler {
                 SWITCH:
                 switch (ctx.state) {
                     case PREFIX:
+                        if (ctx.noMeta) {
+                            r.put("{\"result\":[");
+                            ctx.state = QueryState.RECORD_START;
+                            break;
+                        }
                         r.bookmark();
                         r.put('{').putQuoted("query").put(':').putUtf8EscapedAndQuoted(ctx.query);
                         r.put(',').putQuoted("columns").put(':').put('[');
@@ -215,11 +219,6 @@ public class QueryHandler implements ContextHandler {
                         }
 
                         if (ctx.count > ctx.stop) {
-                            if (ctx.includeCount) {
-                                ctx.record = null;
-                                continue;
-                            }
-
                             ctx.state = QueryState.DATA_SUFFIX;
                             break;
                         }
@@ -241,7 +240,6 @@ public class QueryHandler implements ContextHandler {
                             if (ctx.columnIndex > 0) {
                                 r.put(',');
                             }
-//                            r.putQuoted(m.getName()).put(':');
                             putValue(r, m.getType(), ctx.record, ctx.columnIndex);
                         }
 
@@ -394,13 +392,7 @@ public class QueryHandler implements ContextHandler {
         if (ctx.count > -1) {
             r.bookmark();
             r.put(']');
-            if (ctx.count > ctx.stop && !ctx.includeCount) {
-                r.put(",\"moreExist\":true");
-            }
-
-            if (ctx.includeCount) {
-                r.put(',').putQuoted("totalCount").put(':').put(ctx.count);
-            }
+            r.put(',').putQuoted("more").put(':').put(ctx.count > ctx.stop);
             r.put('}');
             ctx.count = -1;
             r.sendChunk();
@@ -422,11 +414,11 @@ public class QueryHandler implements ContextHandler {
         private long skip;
         private long stop;
         private Record record;
-        private boolean includeCount;
         private JournalCachingFactory factory;
         private long fd;
         private QueryState state = QueryState.PREFIX;
         private int columnIndex;
+        private boolean noMeta = false;
 
         @Override
         public void clear() {
