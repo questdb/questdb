@@ -88,7 +88,10 @@
         var rows = [];
         // active (highlighted) row
         var activeRow = -1;
+        // div that is highlighted
         var activeContainer;
+        // rows in current view
+        var rowsInView;
 
         function addRows(n) {
             r += n;
@@ -412,6 +415,7 @@
 
         function resize() {
             vp = Math.round((window.innerHeight - viewport.getBoundingClientRect().top)) - defaults.bottomMargin;
+            rowsInView = Math.floor(vp / rh);
             viewport.style.height = vp + 'px';
             div.css('height', Math.round((window.innerHeight - div[0].getBoundingClientRect().top)) - defaults.bottomMargin);
             createCss();
@@ -455,23 +459,26 @@
         }
 
         function onKeyDown(e) {
-            var keyCode = ('which' in event) ? event.which : event.keyCode;
+            var keyCode = ('which' in e) ? e.which : e.keyCode;
             switch (keyCode) {
                 case 33: // page up
-                    activeRowUp(Math.floor(vp / rh));
+                    activeRowUp(rowsInView);
+                    e.preventDefault();
                     break;
                 case 38: // arrow up
                     activeRowUp(1);
+                    e.preventDefault();
                     break;
                 case 40: // arrow down
                     activeRowDown(1);
+                    e.preventDefault();
                     break;
                 case 34: // arrow down
-                    activeRowDown(Math.floor(vp / rh));
+                    activeRowDown(rowsInView);
+                    e.preventDefault();
                     break;
             }
             // console.log('key: ' + keyCode);
-            e.preventDefault();
         }
 
         function addColumns() {
