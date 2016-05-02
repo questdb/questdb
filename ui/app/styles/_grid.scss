@@ -48,6 +48,20 @@
   background-color: #f6f6f6;
 }
 
+.qg-r:focus {
+  outline: none;
+}
+
+.qg-r-active:hover {
+  background-color: #8ED0C2;
+  color: white;
+}
+
+.qg-r-active {
+  background-color: #6caea0;
+  color: white;
+}
+
 .qg-header {
   display: inline-block;
   padding: 5px 3px 7px;

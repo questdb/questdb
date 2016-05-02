@@ -126,10 +126,12 @@
                                 </div>
                                 <button class="btn btn-white btn-sm m-r-sm js-query-run"><i class="fa fa-play"></i>&nbsp;&nbsp;Run
                                 </button>
-                                <button class="btn btn-white btn-sm"><i class="fa fa-copy"></i></button>
+                                <button class="btn btn-white btn-sm js-editor-copy"><i class="fa fa-copy"></i></button>
                                 <button class="btn btn-white btn-sm"><i class="fa fa-scissors"></i></button>
                                 <button class="btn btn-white btn-sm m-r-sm"><i class="fa fa-clipboard"></i></button>
-                                <button class="btn btn-white btn-sm"><i class="fa fa-paragraph"></i>
+                                <button data-toggle="button" type="button"
+                                        class="btn btn-white btn-sm js-editor-toggle-invisible"><i
+                                        class="fa fa-paragraph"></i>
                                 </button>
                             </div>
                             <div id="sqlEditor" class="editor border-rounded-top-half">
@@ -237,22 +239,6 @@
                                                     <div class="ud-header gh-4">Errors</div>
                                                 </div>
                                                 <div class="ud-canvas">
-                                                    <!--<div class="ud-row" style="top: 0">-->
-                                                    <!--<div class="ud-cell gc-1 g-other js-g-row">1</div>-->
-                                                    <!--<div class="ud-cell gc-2 g-other">location</div>-->
-                                                    <!--<div class="ud-cell gc-3 g-type">STRING</div>-->
-                                                    <!--<div class="ud-cell gc-4 g-other">10</div>-->
-                                                    <!--<div class="ud-cell gc-5 g-other">0</div>-->
-                                                    <!--</div>-->
-                                                    <!--<div class="ud-row" style="top: 35px">-->
-                                                    <!--<div class="ud-cell gc-1 g-other">2</div>-->
-                                                    <!--<div class="ud-cell gc-2 g-other"><i-->
-                                                    <!--class="fa fa-exclamation-triangle g-warning"></i>price-->
-                                                    <!--</div>-->
-                                                    <!--<div class="ud-cell gc-3 g-type">DOUBLE</div>-->
-                                                    <!--<div class="ud-cell gc-4 g-other">8</div>-->
-                                                    <!--<div class="ud-cell gc-5 g-other">1400</div>-->
-                                                    <!--</div>-->
                                                 </div>
                                             </div>
                                         </div>
@@ -302,6 +288,7 @@
 <!-- build:js scripts/qdb.js -->
 <!-- bower:js -->
 <script src="/bower_components/jquery/dist/jquery.min.js"></script>
+<script src="/bower_components/bootstrap/dist/js/bootstrap.min.js"></script>
 <script src="/bower_components/metisMenu/dist/metisMenu.min.js"></script>
 <script src="/bower_components/PACE/pace.min.js"></script>
 <script src="/bower_components/ace-builds/src-noconflict/ace.js"></script>

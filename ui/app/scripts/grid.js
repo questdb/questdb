@@ -86,6 +86,9 @@
         var o;
         // row div cache
         var rows = [];
+        // active (highlighted) row
+        var activeRow = -1;
+        var activeContainer;
 
         function addRows(n) {
             r += n;
@@ -99,23 +102,30 @@
             canvas.css('height', h === 0 ? 1 : h);
         }
 
-        function renderRow(row, n) {
-            if (row.questIndex !== n) {
+        function renderRow(rowContainer, n) {
+            if (rowContainer.questIndex !== n) {
                 var rowData = data[Math.floor(n / pageSize)];
                 var offset = n % pageSize;
                 var k;
                 if (rowData) {
                     var d = rowData[offset];
                     for (k = 0; k < columns.length; k++) {
-                        row.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
+                        rowContainer.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
                     }
-                    row.questIndex = n;
+                    rowContainer.questIndex = n;
                 } else {
                     for (k = 0; k < columns.length; k++) {
-                        row.childNodes[k].innerHTML = '';
+                        rowContainer.childNodes[k].innerHTML = '';
                     }
                 }
-                row.style.top = (n * rh - o) + 'px';
+                rowContainer.style.top = (n * rh - o) + 'px';
+                if (rowContainer === activeContainer) {
+                    if (n === activeRow) {
+                        rowContainer.className = 'qg-r qg-r-active';
+                    } else {
+                        rowContainer.className = 'qg-r';
+                    }
+                }
             }
         }
 
@@ -408,11 +418,67 @@
             viewportScroll(true);
         }
 
+        function rowClick() {
+            if (activeContainer) {
+                activeContainer.className = 'qg-r';
+            }
+            this.focus();
+            activeContainer = this.parentElement;
+            activeContainer.className += ' qg-r-active';
+            activeRow = activeContainer.questIndex;
+        }
+
+        function activeRowUp(n) {
+            if (activeRow > 0) {
+                activeRow = Math.max(0, activeRow - n);
+                activeContainer.className = 'qg-r';
+                activeContainer = rows[activeRow & dcn];
+                activeContainer.className = 'qg-r qg-r-active';
+                var scrollTop = activeRow * rh;
+                if (scrollTop < viewport.scrollTop) {
+                    viewport.scrollTop = Math.max(0, scrollTop);
+                }
+            }
+        }
+
+        function activeRowDown(n) {
+            if (activeRow > -1 && activeRow < r) {
+                activeRow = Math.min(r, activeRow + n);
+                activeContainer.className = 'qg-r';
+                activeContainer = rows[activeRow & dcn];
+                activeContainer.className = 'qg-r qg-r-active';
+                var scrollTop = activeRow * rh - vp + rh;
+                if (scrollTop > viewport.scrollTop) {
+                    viewport.scrollTop = scrollTop;
+                }
+            }
+        }
+
+        function onKeyDown(e) {
+            var keyCode = ('which' in event) ? event.which : event.keyCode;
+            switch (keyCode) {
+                case 33: // page up
+                    activeRowUp(Math.floor(vp / rh));
+                    break;
+                case 38: // arrow up
+                    activeRowUp(1);
+                    break;
+                case 40: // arrow down
+                    activeRowDown(1);
+                    break;
+                case 34: // arrow down
+                    activeRowDown(Math.floor(vp / rh));
+                    break;
+            }
+            // console.log('key: ' + keyCode);
+            e.preventDefault();
+        }
+
         function addColumns() {
             for (var i = 0; i < dc; i++) {
-                var rowDiv = $('<div class="qg-r"/>');
+                var rowDiv = $('<div class="qg-r" tabindex="' + i + '"/>');
                 for (var k = 0; k < columns.length; k++) {
-                    $('<div class="qg-c qg-w' + k + '"/>').appendTo(rowDiv);
+                    $('<div class="qg-c qg-w' + k + '"/>').click(rowClick).appendTo(rowDiv);
                 }
                 rowDiv.css({top: -100, height: rh}).appendTo(canvas);
                 rows.push(rowDiv[0]);
@@ -440,6 +506,7 @@
             viewport = div.find('.qg-viewport')[0];
             viewport.onscroll = viewportScroll;
             canvas = div.find('.qg-canvas');
+            canvas.bind('keydown', onKeyDown);
             $(document).on('query.ok', update);
             $(window).resize(resize);
         }

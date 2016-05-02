@@ -144,6 +144,10 @@
         function error(x, m) {
             clearTimeout(timer);
 
+            if (m.statusText === 'abort') {
+                return;
+            }
+
             div.removeClass('query-progress-animated');
             divMsg.removeClass('query-message-ok').addClass('query-message-error');
             divTime.html('failed after <strong>' + (m.delta / 1000) + 's</strong>');
@@ -246,9 +250,15 @@
             edit.focus();
         }
 
+        function toggleInvisibles() {
+            console.log('about to ask');
+            edit.renderer.setShowInvisibles(!edit.renderer.getShowInvisibles());
+        }
+
         function bind() {
             $(document).on('editor.execute', submitQuery);
             $(document).on('editor.show.error', showError);
+            $(document).on('editor.toggle.invisibles', toggleInvisibles);
 
             edit.commands.addCommand({
                 name: 'editor.execute',
@@ -280,6 +290,10 @@ $(document).ready(function () {
 
     $('.js-query-run').click(function () {
         $(document).trigger('editor.execute');
+    });
+
+    $('.js-editor-toggle-invisible').click(function () {
+        $(document).trigger('editor.toggle.invisibles');
     });
 });
 

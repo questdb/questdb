@@ -1,7 +1,7 @@
 {
   "name": "questdb-console",
   "authors": [
-    "Vlad Ilyushchenko"
+    "Vlad Ilyushchenko (Appsicle Ltd.)"
   ],
   "description": "QuestDB Web Console",
   "license": "The MIT License",
@@ -21,7 +21,8 @@
     "metisMenu": "^2.4.3",
     "PACE": "pace#^1.0.2",
     "ace-builds": "^1.2.3",
-    "iCheck": "^1.0.2"
+    "iCheck": "^1.0.2",
+    "bootstrap": "^3.3.6"
   },
   "overrides": {
     "bootstrap-sass": {
@@ -40,9 +41,6 @@
   },
   "devDependencies": {
     "chai": "^3.5.0",
-    "mocha": "^2.4.5"
-  },
-  "resolutions": {
     "mocha": "^2.4.5"
   }
 }
