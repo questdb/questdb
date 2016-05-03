@@ -484,8 +484,8 @@
         }
 
         function activeRowDown(n) {
-            if (activeRow > -1 && activeRow < r) {
-                activeRow = Math.min(r, activeRow + n);
+            if (activeRow > -1 && activeRow < r - 1) {
+                activeRow = Math.min(r - 1, activeRow + n);
                 activeRowContainer.className = 'qg-r';
                 activeCellOff();
                 activeRowContainer = rows[activeRow & dcn];

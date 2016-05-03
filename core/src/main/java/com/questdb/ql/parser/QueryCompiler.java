@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.parser;
@@ -50,10 +51,7 @@ import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.*;
-import com.questdb.ql.impl.aggregation.AggregatedRecordSource;
-import com.questdb.ql.impl.aggregation.ResampledRecordSource;
-import com.questdb.ql.impl.aggregation.SamplerFactory;
-import com.questdb.ql.impl.aggregation.TimestampSampler;
+import com.questdb.ql.impl.aggregation.*;
 import com.questdb.ql.impl.interval.IntervalJournalRecordSource;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.questdb.ql.impl.interval.SingleIntervalSource;
@@ -565,7 +563,7 @@ public class QueryCompiler {
                         selectColumns(
                                 model.getJoinModels().size() > 1 ?
                                         optimise(model, factory).compileJoins(model, factory) :
-                                        optimise(model, factory).compileSingleOrSubQuery(model, factory),
+                                        compileSingleOrSubQuery(model, factory),
                                 model
                         ), model
                 ), model
@@ -809,6 +807,17 @@ public class QueryCompiler {
             }
         }
 
+        // check for case of simple "select count() from tab"
+        if (rs == null && model.getColumns().size() == 1) {
+            QueryColumn qc = model.getColumns().getQuick(0);
+            if ("count".equals(qc.getAst().token) && qc.getAst().paramCount == 0) {
+                // remove order clause
+                model.getOrderBy().clear();
+                // remove columns so that there is no wrapping of result source
+                model.getColumns().clear();
+                return new CountRecordSource(qc.getAlias() == null ? "count" : qc.getAlias(), ps);
+            }
+        }
         return new JournalSource(ps, rs == null ? new AllRowSource() : rs);
     }
 
