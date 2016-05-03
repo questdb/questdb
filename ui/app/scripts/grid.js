@@ -89,7 +89,10 @@
         // active (highlighted) row
         var activeRow = -1;
         // div that is highlighted
-        var activeContainer;
+        var activeRowContainer;
+        // active cell
+        var activeCell = -1;
+        var activeCellContainer;
         // rows in current view
         var rowsInView;
 
@@ -122,11 +125,14 @@
                     }
                 }
                 rowContainer.style.top = (n * rh - o) + 'px';
-                if (rowContainer === activeContainer) {
+
+                if (rowContainer === activeRowContainer) {
                     if (n === activeRow) {
                         rowContainer.className = 'qg-r qg-r-active';
+                        rowContainer.childNodes[activeCell].className += ' qg-c-active';
                     } else {
                         rowContainer.className = 'qg-r';
+                        rowContainer.childNodes[activeCell].className = 'qg-c qg-w' + activeCell;
                     }
                 }
             }
@@ -423,21 +429,53 @@
         }
 
         function rowClick() {
-            if (activeContainer) {
-                activeContainer.className = 'qg-r';
+            if (activeRowContainer) {
+                activeRowContainer.className = 'qg-r';
             }
             this.focus();
-            activeContainer = this.parentElement;
-            activeContainer.className += ' qg-r-active';
-            activeRow = activeContainer.questIndex;
+            activeRowContainer = this.parentElement;
+            activeRowContainer.className += ' qg-r-active';
+            activeRow = activeRowContainer.questIndex;
+
+            if (activeCellContainer) {
+                activeCellContainer.className = 'qg-c qg-w' + activeCell;
+            }
+            activeCellContainer = this;
+            activeCell = this.cellIndex;
+            activeCellContainer.className += ' qg-c-active';
+        }
+
+        function activeCellOff() {
+            activeCellContainer.className = 'qg-c qg-w' + activeCell;
+        }
+
+        function activeCellOn(focus) {
+            activeCellContainer = activeRowContainer.childNodes[activeCell];
+            activeCellContainer.className += ' qg-c-active';
+
+            if (focus) {
+                var w;
+                w = Math.max(0, activeCellContainer.offsetLeft - 5);
+                if (w < viewport.scrollLeft) {
+                    viewport.scrollLeft = w;
+                } else {
+                    w = activeCellContainer.offsetLeft + activeCellContainer.clientWidth + 5;
+                    if (w > viewport.scrollLeft + viewport.clientWidth) {
+                        viewport.scrollLeft = w - viewport.clientWidth;
+                    }
+                }
+
+            }
         }
 
         function activeRowUp(n) {
             if (activeRow > 0) {
                 activeRow = Math.max(0, activeRow - n);
-                activeContainer.className = 'qg-r';
-                activeContainer = rows[activeRow & dcn];
-                activeContainer.className = 'qg-r qg-r-active';
+                activeRowContainer.className = 'qg-r';
+                activeCellOff();
+                activeRowContainer = rows[activeRow & dcn];
+                activeRowContainer.className = 'qg-r qg-r-active';
+                activeCellOn();
                 var scrollTop = activeRow * rh;
                 if (scrollTop < viewport.scrollTop) {
                     viewport.scrollTop = Math.max(0, scrollTop);
@@ -448,9 +486,11 @@
         function activeRowDown(n) {
             if (activeRow > -1 && activeRow < r) {
                 activeRow = Math.min(r, activeRow + n);
-                activeContainer.className = 'qg-r';
-                activeContainer = rows[activeRow & dcn];
-                activeContainer.className = 'qg-r qg-r-active';
+                activeRowContainer.className = 'qg-r';
+                activeCellOff();
+                activeRowContainer = rows[activeRow & dcn];
+                activeRowContainer.className = 'qg-r qg-r-active';
+                activeCellOn();
                 var scrollTop = activeRow * rh - vp + rh;
                 if (scrollTop > viewport.scrollTop) {
                     viewport.scrollTop = scrollTop;
@@ -458,34 +498,82 @@
             }
         }
 
+        function activeCellRight() {
+            if (activeCell > -1 && activeCell < columns.length - 1) {
+                activeCellOff();
+                activeCell++;
+                activeCellOn(true);
+            }
+        }
+
+        function activeCellLeft() {
+            if (activeCell > 0) {
+                activeCellOff();
+                activeCell--;
+                activeCellOn(true);
+            }
+        }
+
+        function activeCellHome() {
+            if (activeCell > 0) {
+                activeCellOff();
+                activeCell = 0;
+                activeCellOn(true);
+            }
+        }
+
+        function activeCellEnd() {
+            if (activeCell > -1 && activeCell !== columns.length - 1) {
+                activeCellOff();
+                activeCell = columns.length - 1;
+                activeCellOn(true);
+            }
+        }
+
         function onKeyDown(e) {
             var keyCode = ('which' in e) ? e.which : e.keyCode;
+            var preventDefault = true;
             switch (keyCode) {
                 case 33: // page up
                     activeRowUp(rowsInView);
-                    e.preventDefault();
                     break;
                 case 38: // arrow up
                     activeRowUp(1);
-                    e.preventDefault();
                     break;
                 case 40: // arrow down
                     activeRowDown(1);
-                    e.preventDefault();
                     break;
                 case 34: // arrow down
                     activeRowDown(rowsInView);
-                    e.preventDefault();
+                    break;
+                case 39: // arrow right
+                    activeCellRight();
+                    break;
+                case 37: // arrow left
+                    activeCellLeft();
+                    break;
+                case 35: // end? Fn+arrow right on mac
+                    activeCellEnd();
+                    break;
+                case 36: // home ? Fn + arrow left on mac
+                    activeCellHome();
+                    break;
+                default:
+                    preventDefault = false;
                     break;
             }
-            // console.log('key: ' + keyCode);
+
+            if (preventDefault) {
+                e.preventDefault();
+            }
         }
 
         function addColumns() {
             for (var i = 0; i < dc; i++) {
                 var rowDiv = $('<div class="qg-r" tabindex="' + i + '"/>');
                 for (var k = 0; k < columns.length; k++) {
-                    $('<div class="qg-c qg-w' + k + '"/>').click(rowClick).appendTo(rowDiv);
+                    var cell = $('<div class="qg-c qg-w' + k + '"/>').click(rowClick).appendTo(rowDiv)[0];
+                    cell.cellIndex = k;
                 }
                 rowDiv.css({top: -100, height: rh}).appendTo(canvas);
                 rows.push(rowDiv[0]);
