@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.store;
@@ -40,10 +41,7 @@ import com.questdb.ex.JournalNoSuchFileException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Files;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
+import com.questdb.misc.*;
 import com.questdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -61,7 +59,7 @@ public class MemoryFile implements Closeable {
     private final static int DATA_OFFSET = 8;
     private final File file;
     private final JournalMode mode;
-    private final int bitHint;
+    private int bitHint;
     private FileChannel channel;
     private MappedByteBuffer offsetBuffer;
     private ObjList<MappedByteBuffer> buffers;
@@ -181,6 +179,61 @@ public class MemoryFile implements Closeable {
         return cachedAddress + cachedBuffer.position();
     }
 
+    private MappedByteBuffer createMappedBuffer(int index, int bufferSize, long bufferOffset) {
+        MappedByteBuffer buffer;
+        buffer = mapBufferInternal(bufferOffset, bufferSize);
+        assert bufferSize > 0;
+        buffers.extendAndSet(index, buffer);
+        switch (mode) {
+            case BULK_READ:
+            case BULK_APPEND:
+                // for bulk operations unmap all buffers except for current one
+                // this is to prevent OS paging large files.
+                cachedBuffer = null;
+                cachedBufferLo = cachedBufferHi = -1;
+                int ssz = stitches.size();
+                for (int i = index - 1; i > -1; i--) {
+                    MappedByteBuffer b = buffers.getAndSetQuick(i, null);
+                    if (b != null) {
+                        ByteBuffers.release(b);
+                    }
+
+                    if (i < ssz) {
+                        ByteBufferWrapper stitch = stitches.getAndSetQuick(i, null);
+                        if (stitch != null) {
+                            stitch.release();
+                        }
+                    }
+                }
+                break;
+            default:
+                break;
+        }
+        return buffer;
+    }
+
+    private MappedByteBuffer createStitchBuffer(int size, int index, long stitchOffset) {
+        ByteBufferWrapper bufferWrapper = stitches.getQuiet(index);
+        if (bufferWrapper != null) {
+            // if we already have a stitch for this buffer
+            // it could be too small for the size
+            // if that's the case - discard the existing stitch and create a larger one.
+            if (bufferWrapper.getOffset() != stitchOffset || bufferWrapper.getByteBuffer().limit() < size) {
+                bufferWrapper.release();
+                bufferWrapper = null;
+            } else {
+                bufferWrapper.getByteBuffer().rewind();
+            }
+        }
+
+        if (bufferWrapper == null) {
+            bufferWrapper = new ByteBufferWrapper(stitchOffset, mapBufferInternal(stitchOffset, size));
+            stitches.extendAndSet(index, bufferWrapper);
+        }
+
+        return bufferWrapper.getByteBuffer();
+    }
+
     private MappedByteBuffer getBufferInternal(long offset, int size) {
 
         int bufferSize = 1 << bitHint;
@@ -196,63 +249,15 @@ public class MemoryFile implements Closeable {
         }
 
         if (buffer == null) {
-            buffer = mapBufferInternal(bufferOffset, bufferSize);
-            assert bufferSize > 0;
-            buffers.extendAndSet(index, buffer);
-            switch (mode) {
-                case BULK_READ:
-                case BULK_APPEND:
-                    // for bulk operations unmap all buffers except for current one
-                    // this is to prevent OS paging large files.
-                    cachedBuffer = null;
-                    cachedBufferLo = cachedBufferHi = -1;
-                    int ssz = stitches.size();
-                    for (int i = index - 1; i > -1; i--) {
-                        MappedByteBuffer b = buffers.getAndSetQuick(i, null);
-                        if (b != null) {
-                            ByteBuffers.release(b);
-                        }
-
-                        if (i < ssz) {
-                            ByteBufferWrapper stitch = stitches.getAndSetQuick(i, null);
-                            if (stitch != null) {
-                                stitch.release();
-                            }
-                        }
-                    }
-                    break;
-                default:
-                    break;
-            }
+            buffer = createMappedBuffer(index, bufferSize, bufferOffset);
         }
 
         buffer.position(bufferPos);
 
-        // if the desired size is larger than remaining buffer we need to crate
-        // a stitch buffer, which would accommodate the size
         if (buffer.remaining() < size) {
-
-            ByteBufferWrapper bufferWrapper = stitches.getQuiet(index);
-
-            long stitchOffset = bufferOffset + bufferPos;
-            if (bufferWrapper != null) {
-                // if we already have a stitch for this buffer
-                // it could be too small for the size
-                // if that's the case - discard the existing stitch and create a larger one.
-                if (bufferWrapper.getOffset() != stitchOffset || bufferWrapper.getByteBuffer().limit() < size) {
-                    bufferWrapper.release();
-                    bufferWrapper = null;
-                } else {
-                    bufferWrapper.getByteBuffer().rewind();
-                }
-            }
-
-            if (bufferWrapper == null) {
-                bufferWrapper = new ByteBufferWrapper(stitchOffset, mapBufferInternal(stitchOffset, size));
-                stitches.extendAndSet(index, bufferWrapper);
-            }
-
-            return bufferWrapper.getByteBuffer();
+            // if the desired size is larger than remaining buffer we need to crate
+            // a stitch buffer, which would accommodate the size
+            return createStitchBuffer(size, index, bufferOffset + bufferPos);
         }
         return buffer;
     }
@@ -325,6 +330,20 @@ public class MemoryFile implements Closeable {
             }
             offsetBuffer.order(ByteOrder.LITTLE_ENDIAN);
             offsetDirectAddr = ByteBuffers.getAddress(offsetBuffer);
+            // adjust bitHint to make sure it is not too small
+            long offset = getAppendOffset();
+            if (offset > 0) {
+                if (offset > Integer.MAX_VALUE) {
+                    bitHint = 30;
+                } else {
+                    int hint = Numbers.msb((int) offset);
+                    if (hint < 0) {
+                        bitHint = 30;
+                    } else if (hint > bitHint) {
+                        bitHint = hint;
+                    }
+                }
+            }
         } catch (FileNotFoundException e) {
             throw new JournalNoSuchFileException(e);
         } catch (IOException e) {

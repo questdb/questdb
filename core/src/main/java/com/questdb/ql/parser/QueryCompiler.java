@@ -1629,7 +1629,6 @@ public class QueryCompiler {
             final QueryColumn qc = columns.getQuick(i);
             final ExprNode node = qc.getAst();
 
-
             if (node.type == ExprNode.NodeType.LITERAL) {
                 // check literal column validity
                 if (meta.getColumnIndexQuiet(node.token) == -1) {
