@@ -39,13 +39,14 @@ import com.questdb.JournalWriter;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class SubqueryOptimiserTest extends AbstractOptimiserTest {
 
     @BeforeClass
-    public static void setUp() throws Exception {
+    public static void setUpClass() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
                         $sym("id").index().valueCountHint(128).
@@ -57,6 +58,11 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
 
         );
         w.close();
+    }
+
+    @Before
+    public void setUp() throws Exception {
+        sink.clear();
     }
 
     @Test
