@@ -52,7 +52,7 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.*;
 import com.questdb.ql.impl.aggregation.*;
-import com.questdb.ql.impl.interval.IntervalJournalRecordSource;
+import com.questdb.ql.impl.interval.IntervalRecordSource;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.questdb.ql.impl.interval.SingleIntervalSource;
 import com.questdb.ql.impl.join.AsOfJoinRecordSource;
@@ -563,7 +563,7 @@ public class QueryCompiler {
                         selectColumns(
                                 model.getJoinModels().size() > 1 ?
                                         optimise(model, factory).compileJoins(model, factory) :
-                                        compileSingleOrSubQuery(model, factory),
+                                        tryMovingFilterInsideSubquery(model, factory).compileSingleOrSubQuery(model, factory),
                                 model
                         ), model
                 ), model
@@ -618,7 +618,7 @@ public class QueryCompiler {
             // check if there are post-filters
             ExprNode filter = m.getPostJoinWhereClause();
             if (filter != null) {
-                master = new FilteredJournalRecordSource(master, virtualColumnBuilder.createVirtualColumn(model, filter, master.getMetadata()));
+                master = new FilteredJournalRecordSource(master, virtualColumnBuilder.createVirtualColumn(model, filter, master.getMetadata()), filter);
             }
         }
 
@@ -849,7 +849,7 @@ public class QueryCompiler {
                 return new NoOpJournalRecordSource(rs);
             default:
                 if (im.intervalSource != null) {
-                    rs = new IntervalJournalRecordSource(rs, im.intervalSource);
+                    rs = new IntervalRecordSource(rs, im.intervalSource);
                 }
                 if (im.filter != null) {
                     VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, im.filter, m);
@@ -860,7 +860,7 @@ public class QueryCompiler {
                             return new NoOpJournalRecordSource(rs);
                         }
                     }
-                    return new FilteredJournalRecordSource(rs, vc);
+                    return new FilteredJournalRecordSource(rs, vc, im.filter);
                 } else {
                     return rs;
                 }
@@ -1256,10 +1256,10 @@ public class QueryCompiler {
             // optimiser can assign there correct nodes
 
             parent.setWhereClause(null);
-            processAndConditions(parent, where);
+            processJoinConditions(parent, where);
 
             for (int i = 1; i < n; i++) {
-                processAndConditions(parent, joinModels.getQuick(i).getJoinCriteria());
+                processJoinConditions(parent, joinModels.getQuick(i).getJoinCriteria());
             }
 
             if (emittedJoinClauses.size() > 0) {
@@ -1313,12 +1313,60 @@ public class QueryCompiler {
     }
 
     /**
-     * Splits "where" clauses into "and" concatenated list of boolean expressions.
+     * Splits "where" clauses into "and" chunks
      *
      * @param node expression n
      * @throws ParserException
      */
     private void processAndConditions(QueryModel parent, ExprNode node) throws ParserException {
+        ExprNode n = node;
+        // pre-order traversal
+        exprNodeStack.clear();
+        while (!exprNodeStack.isEmpty() || n != null) {
+            if (n != null) {
+                switch (n.token) {
+                    case "and":
+                        if (n.rhs != null) {
+                            exprNodeStack.push(n.rhs);
+                        }
+                        n = n.lhs;
+                        break;
+                    default:
+                        parent.addParsedWhereNode(n);
+                        n = null;
+                        break;
+                }
+            } else {
+                n = exprNodeStack.poll();
+            }
+        }
+    }
+
+    private void processEmittedJoinClauses(QueryModel model) {
+        // process emitted join conditions
+        do {
+            ObjList<JoinContext> clauses = emittedJoinClauses;
+
+            if (clauses == joinClausesSwap1) {
+                emittedJoinClauses = joinClausesSwap2;
+            } else {
+                emittedJoinClauses = joinClausesSwap1;
+            }
+            emittedJoinClauses.clear();
+            for (int i = 0, k = clauses.size(); i < k; i++) {
+                addJoinContext(model, clauses.getQuick(i));
+            }
+        } while (emittedJoinClauses.size() > 0);
+
+    }
+
+    /**
+     * Splits "where" clauses into "and" concatenated list of boolean expressions.
+     *
+     * @param node expression n
+     * @throws ParserException
+     */
+    private void processJoinConditions(QueryModel parent, ExprNode node) throws ParserException {
         ExprNode n = node;
         // pre-order traversal
         exprNodeStack.clear();
@@ -1351,24 +1399,6 @@ public class QueryCompiler {
                 n = exprNodeStack.poll();
             }
         }
-    }
-
-    private void processEmittedJoinClauses(QueryModel model) {
-        // process emitted join conditions
-        do {
-            ObjList<JoinContext> clauses = emittedJoinClauses;
-
-            if (clauses == joinClausesSwap1) {
-                emittedJoinClauses = joinClausesSwap2;
-            } else {
-                emittedJoinClauses = joinClausesSwap1;
-            }
-            emittedJoinClauses.clear();
-            for (int i = 0, k = clauses.size(); i < k; i++) {
-                addJoinContext(model, clauses.getQuick(i));
-            }
-        } while (emittedJoinClauses.size() > 0);
-
     }
 
     /**
@@ -1838,6 +1868,75 @@ public class QueryCompiler {
             }
         }
         return set;
+    }
+
+    // todo: this is quite primitive (first cut), need to work with journal aliases, joins and multi-level subqueries
+    private QueryCompiler tryMovingFilterInsideSubquery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        QueryModel nm = model.getNestedModel();
+
+        if (nm == null) {
+            return this;
+        }
+
+        if (nm.getJournalName() != null) {
+
+            CharSequenceHashSet names = new CharSequenceHashSet();
+
+            // ok, there are selected columns
+            // literal columns will be narrowing down journal columns
+            // constant columns are interesting from narrowing down constant conditions point of view
+            // e.g. (select 'a' c from B) where c = 'b'
+            // this is the same as:
+            // select 'a' c from B where 'a' = 'c', which is intrinsic FALSE
+            int n = nm.getColumns().size();
+            if (n > 0) {
+                for (int i = 0; i < n; i++) {
+                    QueryColumn qc = nm.getColumns().getQuick(i);
+                    switch (qc.getAst().type) {
+                        case CONSTANT:
+                            if (qc.getAlias() != null) {
+                                names.add(qc.getAlias());
+                            }
+                            break;
+                        case LITERAL:
+                            if (qc.getAlias() != null) {
+                                names.add(qc.getAlias());
+                            } else {
+                                names.add(qc.getAst().token);
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            } else {
+                JournalMetadata m = collectJournalMetadata(nm, factory);
+                for (int i = 0, k = m.getColumnCount(); i < k; i++) {
+                    names.add(m.getColumnName(i));
+                }
+            }
+
+            processAndConditions(model, model.getWhereClause());
+            LiteralMatcher matcher = new LiteralMatcher(traversalAlgo);
+
+            ExprNode nmWhere = nm.getWhereClause();
+            ExprNode thisWhere = null;
+            ObjList<ExprNode> w = model.getParsedWhere();
+            n = w.size();
+            for (int i = 0; i < n; i++) {
+                ExprNode node = w.getQuick(i);
+                if (matcher.matches(node, names)) {
+                    nmWhere = concatFilters(nmWhere, node);
+                } else {
+                    thisWhere = concatFilters(thisWhere, node);
+                }
+            }
+
+            nm.setWhereClause(nmWhere);
+            model.setWhereClause(thisWhere);
+        }
+
+        return this;
     }
 
     private void unlinkDependencies(QueryModel model, int parent, int child) {

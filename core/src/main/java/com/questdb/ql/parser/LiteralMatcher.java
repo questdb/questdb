@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,40 +30,35 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
-package com.questdb.io.sink;
+package com.questdb.ql.parser;
 
-import java.io.IOException;
+import com.questdb.ex.ParserException;
+import com.questdb.ql.model.ExprNode;
+import com.questdb.std.CharSequenceHashSet;
 
-public interface CharSink {
-    void flush() throws IOException;
+class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
+    private final PostOrderTreeTraversalAlgo algo;
+    private CharSequenceHashSet names;
+    private boolean match;
 
-    CharSink put(CharSequence cs);
+    LiteralMatcher(PostOrderTreeTraversalAlgo algo) {
+        this.algo = algo;
+    }
 
-    CharSink put(char c);
+    @Override
+    public void visit(ExprNode node) throws ParserException {
+        if (node.type == ExprNode.NodeType.LITERAL) {
+            match = match && names.contains(node.token);
+        }
+    }
 
-    CharSink put(int value);
-
-    CharSink put(long value);
-
-    CharSink put(float value, int scale);
-
-    CharSink put(double value, int scale);
-
-    CharSink put(boolean value);
-
-    CharSink put(Throwable e);
-
-    CharSink putISODate(long value);
-
-    CharSink putQuoted(CharSequence cs);
-
-    CharSink putTrim(double value, int scale);
-
-    CharSink putUtf8(CharSequence cs);
-
-    CharSink putUtf8Escaped(CharSequence cs);
-
-    CharSink putUtf8EscapedAndQuoted(CharSequence cs);
+    boolean matches(ExprNode node, CharSequenceHashSet names) throws ParserException {
+        this.match = true;
+        this.names = names;
+        algo.traverse(node, this);
+        return match;
+    }
 }

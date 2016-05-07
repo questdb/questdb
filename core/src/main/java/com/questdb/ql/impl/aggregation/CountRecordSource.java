@@ -39,10 +39,10 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.io.sink.CharSink;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
+import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
 
@@ -108,6 +108,14 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
     @Override
     public Record next() {
         return record;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('{');
+        sink.putQuoted("op").put(':').putQuoted("CountRecordSource").put(',');
+        sink.putQuoted("psrc").put(':').put(partitionSource);
+        sink.put('}');
     }
 
     private void computeCount() {

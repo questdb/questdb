@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,16 +30,14 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.model;
 
-import com.questdb.io.sink.CharSink;
-import com.questdb.std.Mutable;
-import com.questdb.std.ObjList;
-import com.questdb.std.ObjectFactory;
+import com.questdb.std.*;
 
-public class ExprNode implements Mutable {
+public class ExprNode implements Mutable, Sinkable {
 
     public final static ExprNodeFactory FACTORY = new ExprNodeFactory();
     public final ObjList<ExprNode> args = new ObjList<>(4);
@@ -76,6 +74,38 @@ public class ExprNode implements Mutable {
     }
 
     @Override
+    public void toSink(CharSink sink) {
+        switch (paramCount) {
+            case 0:
+                sink.put(token);
+                break;
+            case 1:
+            case 2:
+                if (lhs != null) {
+                    lhs.toSink(sink);
+                }
+                sink.put(' ');
+                sink.put(token);
+                sink.put(' ');
+                if (rhs != null) {
+                    rhs.toSink(sink);
+                }
+                break;
+            default:
+                sink.put(token);
+                sink.put('(');
+                for (int i = 0, n = args.size(); i < n; i++) {
+                    if (i > 0) {
+                        sink.put(',');
+                    }
+                    args.getQuick(i).toSink(sink);
+                }
+                sink.put(')');
+                break;
+        }
+    }
+
+    @Override
     public String toString() {
         return "ExprNode{" +
                 "token='" + token + '\'' +
@@ -87,37 +117,6 @@ public class ExprNode implements Mutable {
                 ", args=" + args +
                 ", position=" + position +
                 '}';
-    }
-
-    public void toString(CharSink sink) {
-        switch (paramCount) {
-            case 0:
-                sink.put(token);
-                break;
-            case 1:
-            case 2:
-                if (lhs != null) {
-                    lhs.toString(sink);
-                }
-                sink.put(' ');
-                sink.put(token);
-                sink.put(' ');
-                if (rhs != null) {
-                    rhs.toString(sink);
-                }
-                break;
-            default:
-                sink.put(token);
-                sink.put('(');
-                for (int i = 0, n = args.size(); i < n; i++) {
-                    if (i > 0) {
-                        sink.put(',');
-                    }
-                    args.getQuick(i).toString(sink);
-                }
-                sink.put(')');
-                break;
-        }
     }
 
     public enum NodeType {

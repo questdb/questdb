@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.sort;
@@ -46,6 +47,7 @@ import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.join.hash.RecordDequeue;
 import com.questdb.ql.ops.AbstractRecordSource;
 import com.questdb.std.AbstractImmutableIterator;
+import com.questdb.std.CharSink;
 import com.questdb.std.Mutable;
 import com.questdb.store.MemoryPages;
 
@@ -69,9 +71,8 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private final TreeCursor cursor = new TreeCursor();
     private final FakeRecord fakeRecord = new FakeRecord();
     private final boolean byRowId;
-    private long root = 0;
+    private long root = -1;
     private RecordCursor sourceCursor;
-
 
     public RBTreeSortedRecordSource(RecordSource recordSource, RecordComparator comparator) {
         this.recordSource = recordSource;
@@ -84,7 +85,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     @Override
     public void clear() {
-        root = 0;
+        root = -1;
         this.mem.clear();
         records.clear();
     }
@@ -128,16 +129,25 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         this.records.setStorageFacade(facade);
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('{');
+        sink.putQuoted("op").put(':').putQuoted("RBTreeSortedRecordSource").put(',');
+        sink.putQuoted("byRowId").put(':').put(byRowId).put(',');
+        sink.putQuoted("src").put(':').put(recordSource);
+        sink.put('}');
+    }
+
     private static void setLeft(long blockAddress, long left) {
         Unsafe.getUnsafe().putLong(blockAddress + O_LEFT, left);
     }
 
     private static long rightOf(long blockAddress) {
-        return blockAddress == 0 ? 0 : Unsafe.getUnsafe().getLong(blockAddress + O_RIGHT);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_RIGHT);
     }
 
     private static long leftOf(long blockAddress) {
-        return blockAddress == 0 ? 0 : Unsafe.getUnsafe().getLong(blockAddress + O_LEFT);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_LEFT);
     }
 
     private static void setParent(long blockAddress, long parent) {
@@ -145,11 +155,11 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     }
 
     private static long refOf(long blockAddress) {
-        return blockAddress == 0 ? 0 : Unsafe.getUnsafe().getLong(blockAddress + O_REF);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_REF);
     }
 
     private static long topOf(long blockAddress) {
-        return blockAddress == 0 ? 0 : Unsafe.getUnsafe().getLong(blockAddress + O_TOP);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_TOP);
     }
 
     private static void setRef(long blockAddress, long recRef) {
@@ -165,7 +175,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     }
 
     private static long parentOf(long blockAddress) {
-        return blockAddress == 0 ? 0 : Unsafe.getUnsafe().getLong(blockAddress);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress);
     }
 
     private static long parent2Of(long blockAddress) {
@@ -173,27 +183,27 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     }
 
     private static void setColor(long blockAddress, byte colour) {
-        if (blockAddress == 0) {
+        if (blockAddress == -1) {
             return;
         }
         Unsafe.getUnsafe().putByte(blockAddress + O_COLOUR, colour);
     }
 
     private static byte colorOf(long blockAddress) {
-        return blockAddress == 0 ? BLACK : Unsafe.getUnsafe().getByte(blockAddress + O_COLOUR);
+        return blockAddress == -1 ? BLACK : Unsafe.getUnsafe().getByte(blockAddress + O_COLOUR);
     }
 
     private static long successor(long current) {
         long p = rightOf(current);
-        if (p != 0) {
+        if (p != -1) {
             long l;
-            while ((l = leftOf(p)) != 0) {
+            while ((l = leftOf(p)) != -1) {
                 p = l;
             }
         } else {
             p = parentOf(current);
             long ch = current;
-            while (p != 0 && ch == rightOf(p)) {
+            while (p != -1 && ch == rightOf(p)) {
                 ch = p;
                 p = parentOf(p);
             }
@@ -203,8 +213,8 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     private long allocateBlock() {
         long p = mem.addressOf(mem.allocate(BLOCK_SIZE));
-        setLeft(p, 0);
-        setRight(p, 0);
+        setLeft(p, -1);
+        setRight(p, -1);
         setColor(p, BLACK);
         return p;
     }
@@ -224,7 +234,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private void fix(long x) {
         setColor(x, RED);
 
-        while (x != 0 && x != root && colorOf(parentOf(x)) == RED) {
+        while (x != -1 && x != root && colorOf(parentOf(x)) == RED) {
             if (parentOf(x) == leftOf(parent2Of(x))) {
                 long y = rightOf(parent2Of(x));
                 if (colorOf(y) == RED) {
@@ -263,7 +273,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     }
 
     private void put(Record record) {
-        if (root == 0) {
+        if (root == -1) {
             putParent(record);
             return;
         }
@@ -285,7 +295,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
                 setRef(p, records.append(record, r));
                 return;
             }
-        } while (p > 0);
+        } while (p > -1);
 
         p = allocateBlock();
         setParent(p, parent);
@@ -302,7 +312,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     }
 
     private void put(long rowId) {
-        if (root == 0) {
+        if (root == -1) {
             putParent(fakeRecord.of(rowId));
             return;
         }
@@ -324,7 +334,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
                 setRef(p, records.append(fakeRecord.of(rowId), r));
                 return;
             }
-        } while (p > 0);
+        } while (p > -1);
 
         p = allocateBlock();
         setParent(p, parent);
@@ -345,20 +355,20 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         long r = records.append(record, -1L);
         setTop(root, r);
         setRef(root, r);
-        setParent(root, 0);
-        setLeft(root, 0);
-        setRight(root, 0);
+        setParent(root, -1);
+        setLeft(root, -1);
+        setRight(root, -1);
     }
 
     private void rotateLeft(long p) {
-        if (p != 0) {
+        if (p != -1) {
             long r = rightOf(p);
             setRight(p, leftOf(r));
-            if (leftOf(r) != 0) {
+            if (leftOf(r) != -1) {
                 setParent(leftOf(r), p);
             }
             setParent(r, parentOf(p));
-            if (parentOf(p) == 0) {
+            if (parentOf(p) == -1) {
                 root = r;
             } else if (leftOf(parentOf(p)) == p) {
                 setLeft(parentOf(p), r);
@@ -371,14 +381,14 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     }
 
     private void rotateRight(long p) {
-        if (p != 0) {
+        if (p != -1) {
             long l = leftOf(p);
             setLeft(p, rightOf(l));
-            if (rightOf(l) != 0) {
+            if (rightOf(l) != -1) {
                 setParent(rightOf(l), p);
             }
             setParent(l, parentOf(p));
-            if (parentOf(p) == 0) {
+            if (parentOf(p) == -1) {
                 root = l;
             } else if (rightOf(parentOf(p)) == p) {
                 setRight(parentOf(p), l);
@@ -416,7 +426,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             }
 
             current = successor(current);
-            if (current == 0) {
+            if (current == -1) {
                 return false;
             }
 
@@ -432,8 +442,8 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
         private void setup() {
             long p = root;
-            if (p != 0) {
-                while (leftOf(p) != 0) {
+            if (p != -1) {
+                while (leftOf(p) != -1) {
                     p = leftOf(p);
                 }
             }

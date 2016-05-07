@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.model;
@@ -384,7 +385,6 @@ public class QueryModel implements Mutable {
                 final QueryModel m = joinModels.getQuick(index);
                 final JoinContext jc = m.getContext();
 
-//                final boolean cross = jc == null || jc.parents.size() == 0;
                 sink.put(' ', pad).put('+').put(' ').put(index);
 
                 // join type
@@ -423,7 +423,7 @@ public class QueryModel implements Mutable {
                 ExprNode filter = getJoinModels().getQuick(index).getWhereClause();
                 if (filter != null) {
                     sink.put(" (filter: ");
-                    filter.toString(sink);
+                    filter.toSink(sink);
                     sink.put(')');
                 }
 
@@ -434,9 +434,9 @@ public class QueryModel implements Mutable {
                         if (k > 0) {
                             sink.put(" and ");
                         }
-                        jc.aNodes.getQuick(k).toString(sink);
+                        jc.aNodes.getQuick(k).toSink(sink);
                         sink.put(" = ");
-                        jc.bNodes.getQuick(k).toString(sink);
+                        jc.bNodes.getQuick(k).toSink(sink);
                     }
                 }
 
@@ -444,7 +444,7 @@ public class QueryModel implements Mutable {
                 filter = m.getPostJoinWhereClause();
                 if (filter != null) {
                     sink.put(" (post-filter: ");
-                    filter.toString(sink);
+                    filter.toSink(sink);
                     sink.put(')');
                 }
                 sink.put('\n');
@@ -464,14 +464,14 @@ public class QueryModel implements Mutable {
             ExprNode filter = getWhereClause();
             if (filter != null) {
                 sink.put(" (filter: ");
-                filter.toString(sink);
+                filter.toSink(sink);
                 sink.put(')');
             }
 
             ExprNode latestBy = getLatestBy();
             if (latestBy != null) {
                 sink.put(" (latest by: ");
-                latestBy.toString(sink);
+                latestBy.toSink(sink);
                 sink.put(')');
             }
 

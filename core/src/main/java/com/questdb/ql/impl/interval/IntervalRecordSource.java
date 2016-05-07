@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.interval;
@@ -43,9 +44,10 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
+import com.questdb.std.CharSink;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class IntervalJournalRecordSource extends AbstractCombinedRecordSource {
+public class IntervalRecordSource extends AbstractCombinedRecordSource {
 
     private final RecordSource delegate;
     private final IntervalSource intervalSource;
@@ -56,7 +58,7 @@ public class IntervalJournalRecordSource extends AbstractCombinedRecordSource {
     private boolean needRecord = true;
     private Interval interval;
 
-    public IntervalJournalRecordSource(RecordSource delegate, IntervalSource intervalSource) {
+    public IntervalRecordSource(RecordSource delegate, IntervalSource intervalSource) {
         this.delegate = delegate;
         this.intervalSource = intervalSource;
         final RecordMetadata metadata = delegate.getMetadata();
@@ -142,5 +144,14 @@ public class IntervalJournalRecordSource extends AbstractCombinedRecordSource {
     @Override
     public Record next() {
         return record;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('{');
+        sink.putQuoted("op").put(':').putQuoted("IntervalRecordSource").put(',');
+        sink.putQuoted("src").put(':').put(delegate).put(',');
+        sink.putQuoted("interval").put(':').put(intervalSource);
+        sink.put('}');
     }
 }

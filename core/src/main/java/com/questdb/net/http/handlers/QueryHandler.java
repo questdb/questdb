@@ -40,7 +40,6 @@ import com.questdb.factory.JournalCachingFactory;
 import com.questdb.factory.JournalFactoryPool;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.io.sink.CharSink;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.log.LogRecord;

@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.join;
@@ -48,6 +49,7 @@ import com.questdb.ql.impl.join.hash.MultiRecordMap;
 import com.questdb.ql.impl.join.hash.NullRecord;
 import com.questdb.ql.impl.map.MultiMap;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
+import com.questdb.std.CharSink;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
@@ -156,6 +158,32 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     @Override
     public SplitRecord next() {
         return currentRecord;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('{');
+        sink.putQuoted("op").put(':').putQuoted("HashJoinRecordSource").put(',');
+        sink.putQuoted("master").put(':').put(master).put(',');
+        sink.putQuoted("slave").put(':').put(slave).put(',');
+        sink.putQuoted("masterColumns").put(':');
+        sink.put('[');
+        for (int i = 0, n = masterColumns.size(); i < n; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put(masterColumns.getQuick(i).getName());
+        }
+        sink.put(']').put(',');
+        sink.put('[');
+        for (int i = 0, n = slaveColumns.size(); i < n; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put(slaveColumns.getQuick(i).getName());
+        }
+        sink.put(']').put(',');
+        sink.put('}');
     }
 
     private void buildHashTable() {

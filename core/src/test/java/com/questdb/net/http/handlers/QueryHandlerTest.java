@@ -224,6 +224,12 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         Assert.assertEquals(true, queryResponse.more);
     }
 
+    @Test
+    public void testOrderByEmpty() throws Exception {
+        QueryResponse queryResponse = download("tab where 1 = 2 order by y", 0, 1000);
+        Assert.assertEquals(0, queryResponse.result.size());
+    }
+
     static QueryResponse download(String queryUrl, TemporaryFolder temp) throws Exception {
         return download(queryUrl, -1, -1, false, temp);
     }
