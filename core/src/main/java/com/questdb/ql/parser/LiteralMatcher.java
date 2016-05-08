@@ -36,22 +36,52 @@
 package com.questdb.ql.parser;
 
 import com.questdb.ex.ParserException;
+import com.questdb.factory.configuration.ColumnName;
+import com.questdb.misc.Chars;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.std.CharSequenceHashSet;
 
 class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
     private final PostOrderTreeTraversalAlgo algo;
     private CharSequenceHashSet names;
+    private String alias;
     private boolean match;
 
     LiteralMatcher(PostOrderTreeTraversalAlgo algo) {
         this.algo = algo;
     }
 
+    public LiteralMatcher of(String alias) {
+        this.alias = alias;
+        return this;
+    }
+
     @Override
     public void visit(ExprNode node) throws ParserException {
         if (node.type == ExprNode.NodeType.LITERAL) {
-            match = match && names.contains(node.token);
+            if (match) {
+                if (names.contains(node.token)) {
+                    return;
+                }
+
+                if (alias == null) {
+                    match = false;
+                    return;
+                }
+
+                ColumnName columnName = ColumnName.singleton(node.token);
+
+                if (columnName.alias() == null) {
+                    match = false;
+                    return;
+                }
+
+                if (Chars.equals(columnName.alias(), alias) && names.contains(columnName.name())) {
+                    node.token = columnName.name().toString();
+                    return;
+                }
+                match = false;
+            }
         }
     }
 

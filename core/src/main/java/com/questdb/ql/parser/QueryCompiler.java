@@ -128,6 +128,8 @@ public class QueryCompiler {
     private final ObjList<QueryColumn> outerVirtualColumns = new ObjList<>();
     private final ObjHashSet<String> groupKeyColumns = new ObjHashSet<>();
     private final ComparatorCompiler cc = new ComparatorCompiler();
+    private final LiteralMatcher literalMatcher = new LiteralMatcher(traversalAlgo);
+
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
 
@@ -563,7 +565,7 @@ public class QueryCompiler {
                         selectColumns(
                                 model.getJoinModels().size() > 1 ?
                                         optimise(model, factory).compileJoins(model, factory) :
-                                        tryMovingFilterInsideSubquery(model, factory).compileSingleOrSubQuery(model, factory),
+                                        optimiseSubQueries(model, factory).compileSingleOrSubQuery(model, factory),
                                 model
                         ), model
                 ), model
@@ -842,6 +844,10 @@ public class QueryCompiler {
         }
 
         RecordMetadata m = rs.getMetadata();
+        if (model.getAlias() != null) {
+            m.setAlias(model.getAlias().token);
+        }
+
         IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null);
 
         switch (im.intrinsicValue) {
@@ -954,7 +960,7 @@ public class QueryCompiler {
 
     /**
      * Creates dependencies via implied columns, typically timestamp.
-     * Dependencies like that are no explicitly expressed in SQL query and
+     * Dependencies like that are not explicitly expressed in SQL query and
      * therefore are not created by analyzing "where" clause.
      * <p>
      * Explicit dependencies however are required for journal ordering.
@@ -1274,6 +1280,72 @@ public class QueryCompiler {
             addTransitiveFilters(parent);
         }
         return this;
+    }
+
+    // todo: this is quite primitive (first cut), joins and multi-level subqueries
+    private QueryCompiler optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        QueryModel nm = model.getNestedModel();
+
+        if (nm == null || nm.getJournalName() == null) {
+            return this;
+        }
+
+        CharSequenceHashSet names = new CharSequenceHashSet();
+
+        // ok, there are selected columns
+        // literal columns will be narrowing down journal columns
+        // constant columns are interesting from narrowing down constant conditions point of view
+        // e.g. (select 'a' c from B) where c = 'b'
+        // this is the same as:
+        // select 'a' c from B where 'a' = 'c', which is intrinsic FALSE
+        int n = nm.getColumns().size();
+        if (n > 0) {
+            for (int i = 0; i < n; i++) {
+                QueryColumn qc = nm.getColumns().getQuick(i);
+                switch (qc.getAst().type) {
+                    case CONSTANT:
+                        if (qc.getAlias() != null) {
+                            names.add(qc.getAlias());
+                        }
+                        break;
+                    case LITERAL:
+                        if (qc.getAlias() != null) {
+                            names.add(qc.getAlias());
+                        } else {
+                            names.add(qc.getAst().token);
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+        } else {
+            JournalMetadata m = collectJournalMetadata(nm, factory);
+            for (int i = 0, k = m.getColumnCount(); i < k; i++) {
+                names.add(m.getColumnName(i));
+            }
+        }
+
+        processAndConditions(model, model.getWhereClause());
+        literalMatcher.of(model.getAlias() != null ? model.getAlias().token : null);
+
+        ExprNode nmWhere = nm.getWhereClause();
+        ExprNode thisWhere = null;
+        ObjList<ExprNode> w = model.getParsedWhere();
+        n = w.size();
+        for (int i = 0; i < n; i++) {
+            ExprNode node = w.getQuick(i);
+            if (literalMatcher.matches(node, names)) {
+                nmWhere = concatFilters(nmWhere, node);
+            } else {
+                thisWhere = concatFilters(thisWhere, node);
+            }
+        }
+
+        nm.setWhereClause(nmWhere);
+        model.setWhereClause(thisWhere);
+
+        return optimiseSubQueries(nm, factory);
     }
 
     private RecordSource order(RecordSource rs, QueryModel model) throws ParserException {
@@ -1868,75 +1940,6 @@ public class QueryCompiler {
             }
         }
         return set;
-    }
-
-    // todo: this is quite primitive (first cut), need to work with journal aliases, joins and multi-level subqueries
-    private QueryCompiler tryMovingFilterInsideSubquery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        QueryModel nm = model.getNestedModel();
-
-        if (nm == null) {
-            return this;
-        }
-
-        if (nm.getJournalName() != null) {
-
-            CharSequenceHashSet names = new CharSequenceHashSet();
-
-            // ok, there are selected columns
-            // literal columns will be narrowing down journal columns
-            // constant columns are interesting from narrowing down constant conditions point of view
-            // e.g. (select 'a' c from B) where c = 'b'
-            // this is the same as:
-            // select 'a' c from B where 'a' = 'c', which is intrinsic FALSE
-            int n = nm.getColumns().size();
-            if (n > 0) {
-                for (int i = 0; i < n; i++) {
-                    QueryColumn qc = nm.getColumns().getQuick(i);
-                    switch (qc.getAst().type) {
-                        case CONSTANT:
-                            if (qc.getAlias() != null) {
-                                names.add(qc.getAlias());
-                            }
-                            break;
-                        case LITERAL:
-                            if (qc.getAlias() != null) {
-                                names.add(qc.getAlias());
-                            } else {
-                                names.add(qc.getAst().token);
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-                }
-            } else {
-                JournalMetadata m = collectJournalMetadata(nm, factory);
-                for (int i = 0, k = m.getColumnCount(); i < k; i++) {
-                    names.add(m.getColumnName(i));
-                }
-            }
-
-            processAndConditions(model, model.getWhereClause());
-            LiteralMatcher matcher = new LiteralMatcher(traversalAlgo);
-
-            ExprNode nmWhere = nm.getWhereClause();
-            ExprNode thisWhere = null;
-            ObjList<ExprNode> w = model.getParsedWhere();
-            n = w.size();
-            for (int i = 0; i < n; i++) {
-                ExprNode node = w.getQuick(i);
-                if (matcher.matches(node, names)) {
-                    nmWhere = concatFilters(nmWhere, node);
-                } else {
-                    thisWhere = concatFilters(thisWhere, node);
-                }
-            }
-
-            nm.setWhereClause(nmWhere);
-            model.setWhereClause(thisWhere);
-        }
-
-        return this;
     }
 
     private void unlinkDependencies(QueryModel model, int parent, int child) {

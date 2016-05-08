@@ -120,6 +120,7 @@ public class FilteredJournalRecordSource extends AbstractCombinedRecordSource {
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("FilteredJournalRecordSource").put(',');
+        sink.putQuoted("src").put(':').put(delegate).put(',');
         sink.putQuoted("filter").put(':').put('"').put(filterNode).put('"');
         sink.put('}');
     }

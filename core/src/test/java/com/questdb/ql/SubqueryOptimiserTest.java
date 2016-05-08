@@ -41,6 +41,7 @@ import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class SubqueryOptimiserTest extends AbstractOptimiserTest {
@@ -66,9 +67,32 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testOneLevelAliasedSelectedSubquery() throws Exception {
+        sink.put(compiler.compileSource(factory, "(select x from tab order by x) a where a.x = 10"));
+        TestUtils.assertEquals("{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}}",
+                sink);
+    }
+
+    @Test
+    public void testOneLevelAliasedSubquery() throws Exception {
+        sink.put(compiler.compileSource(factory, "(tab order by x) a where a.x = 10"));
+        TestUtils.assertEquals("{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}",
+                sink);
+    }
+
+    @Test
     public void testOneLevelSimpleSubquery() throws Exception {
         sink.put(compiler.compileSource(factory, "(tab order by x) where x = 10"));
         TestUtils.assertEquals("{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}",
                 sink);
     }
+
+    @Test
+    @Ignore
+    public void testRecursiveAliasedSubquery() throws Exception {
+        sink.put(compiler.compileSource(factory, "((tab order by x) a where a.x = 10) b where b.y > 100"));
+        TestUtils.assertEquals("{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}",
+                sink);
+    }
+
 }

@@ -601,6 +601,18 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testInAsColumnAliased() throws Exception {
+        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
+        TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+        w.commit();
+
+        final String expected = "BP.L\t0.000000253226\t1022.955993652344\t2015-02-13T02:59:34.000Z\ttrue\n" +
+                "GKN.L\t688.000000000000\t256.000000000000\t2015-02-13T02:59:50.000Z\tfalse\n";
+
+        assertThat(expected, "select sym, bid, ask, timestamp, sym in ('BP.L', 'TLW.L', 'ABF.L') from q a latest by sym where a.sym in ('GKN.L', 'BP.L') and a.ask > 100");
+    }
+
+    @Test
     public void testIntComparison() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
