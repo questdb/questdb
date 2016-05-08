@@ -41,6 +41,7 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
+import com.questdb.std.Transient;
 import com.questdb.store.ColumnType;
 
 import java.util.Arrays;
@@ -64,7 +65,7 @@ class SelectedColumnsMetadata extends AbstractRecordMetadata {
      * @param names    list of column names to select
      * @param aliases  set of column aliases
      */
-    SelectedColumnsMetadata(RecordMetadata delegate, ObjList<CharSequence> names, CharSequenceHashSet aliases) {
+    SelectedColumnsMetadata(RecordMetadata delegate, @Transient ObjList<CharSequence> names, @Transient CharSequenceHashSet aliases) {
         this.delegate = delegate;
         int k = names.size();
         this.nameIndex = new CharSequenceIntHashMap(k);

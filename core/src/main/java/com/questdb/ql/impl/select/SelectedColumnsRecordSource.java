@@ -46,6 +46,7 @@ import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
+import com.questdb.std.Transient;
 
 public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource recordSource;
@@ -54,7 +55,7 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     private final SelectedColumnsStorageFacade storageFacade;
     private RecordCursor recordCursor;
 
-    public SelectedColumnsRecordSource(RecordSource recordSource, ObjList<CharSequence> names, CharSequenceHashSet aliases) {
+    public SelectedColumnsRecordSource(RecordSource recordSource, @Transient ObjList<CharSequence> names, @Transient CharSequenceHashSet aliases) {
         this.recordSource = recordSource;
         RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new SelectedColumnsMetadata(dm, names, aliases);
@@ -62,7 +63,7 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
         this.storageFacade = new SelectedColumnsStorageFacade(dm, metadata, names);
     }
 
-    public SelectedColumnsRecordSource(RecordSource recordSource, ObjList<CharSequence> names) {
+    public SelectedColumnsRecordSource(RecordSource recordSource, @Transient ObjList<CharSequence> names) {
         this.recordSource = recordSource;
         RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new SelectedColumnsMetadata(dm, names);

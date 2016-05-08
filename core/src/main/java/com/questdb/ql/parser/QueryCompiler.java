@@ -559,17 +559,56 @@ public class QueryCompiler {
         return factory.getOrCreateMetadata(new JournalKey<>(reader));
     }
 
+    private void collectSelectedColumns(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        selectedColumnAliases.clear();
+
+        // ok, there are selected columns
+        // literal columns will be narrowing down journal columns
+        // constant columns are interesting from narrowing down constant conditions point of view
+        // e.g. (select 'a' c from B) where c = 'b'
+        // this is the same as:
+        // select 'a' c from B where 'a' = 'c', which is intrinsic FALSE
+        int n = model.getColumns().size();
+        if (n > 0) {
+            for (int i = 0; i < n; i++) {
+                QueryColumn qc = model.getColumns().getQuick(i);
+                switch (qc.getAst().type) {
+                    case CONSTANT:
+                        if (qc.getAlias() != null) {
+                            selectedColumnAliases.add(qc.getAlias());
+                        }
+                        break;
+                    case LITERAL:
+                        if (qc.getAlias() != null) {
+                            selectedColumnAliases.add(qc.getAlias());
+                        } else {
+                            selectedColumnAliases.add(qc.getAst().token);
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+        } else if (model.getJournalName() != null) {
+            JournalMetadata m = collectJournalMetadata(model, factory);
+            for (int i = 0, k = m.getColumnCount(); i < k; i++) {
+                selectedColumnAliases.add(m.getColumnName(i));
+            }
+        } else {
+            collectSelectedColumns(model.getNestedModel(), factory);
+        }
+    }
+
     private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        return limit(
-                order(
-                        selectColumns(
-                                model.getJoinModels().size() > 1 ?
-                                        optimise(model, factory).compileJoins(model, factory) :
-                                        optimiseSubQueries(model, factory).compileSingleOrSubQuery(model, factory),
-                                model
-                        ), model
-                ), model
-        );
+        RecordSource rs;
+
+        if (model.getJoinModels().size() > 1) {
+            optimiseJoins(model, factory);
+            rs = compileJoins(model, factory);
+        } else {
+            rs = compileSingleOrSubQuery(model, factory);
+        }
+        return limit(order(selectColumns(rs, model), model), model);
     }
 
     private RecordSource compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
@@ -829,7 +868,12 @@ public class QueryCompiler {
             analyseLimit(model);
         }
 
-        return model.getJournalName() != null ? compileSingleJournal(model, factory) : compileSubQuery(model, factory);
+        if (model.getJournalName() != null) {
+            return compileSingleJournal(model, factory);
+        } else {
+            optimiseSubQueries(model, factory);
+            return compileSubQuery(model, factory);
+        }
     }
 
     private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
@@ -1236,9 +1280,10 @@ public class QueryCompiler {
         return result;
     }
 
-    private QueryCompiler optimise(QueryModel parent, JournalReaderFactory factory) throws JournalException, ParserException {
+    private void optimiseJoins(QueryModel parent, JournalReaderFactory factory) throws JournalException, ParserException {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
 
+        // todo: remove check, this method must not be called on single journal SQLs
         int n = joinModels.size();
         if (n > 1) {
 
@@ -1279,63 +1324,21 @@ public class QueryCompiler {
             alignJoinClauses(parent);
             addTransitiveFilters(parent);
         }
-        return this;
     }
 
     // todo: this is quite primitive (first cut), joins and multi-level subqueries
-    private QueryCompiler optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private void optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         QueryModel nm = model.getNestedModel();
-
-        if (nm == null || nm.getJournalName() == null) {
-            return this;
-        }
-
-        CharSequenceHashSet names = new CharSequenceHashSet();
-
-        // ok, there are selected columns
-        // literal columns will be narrowing down journal columns
-        // constant columns are interesting from narrowing down constant conditions point of view
-        // e.g. (select 'a' c from B) where c = 'b'
-        // this is the same as:
-        // select 'a' c from B where 'a' = 'c', which is intrinsic FALSE
-        int n = nm.getColumns().size();
-        if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                QueryColumn qc = nm.getColumns().getQuick(i);
-                switch (qc.getAst().type) {
-                    case CONSTANT:
-                        if (qc.getAlias() != null) {
-                            names.add(qc.getAlias());
-                        }
-                        break;
-                    case LITERAL:
-                        if (qc.getAlias() != null) {
-                            names.add(qc.getAlias());
-                        } else {
-                            names.add(qc.getAst().token);
-                        }
-                        break;
-                    default:
-                        break;
-                }
-            }
-        } else {
-            JournalMetadata m = collectJournalMetadata(nm, factory);
-            for (int i = 0, k = m.getColumnCount(); i < k; i++) {
-                names.add(m.getColumnName(i));
-            }
-        }
-
+        collectSelectedColumns(nm, factory);
         processAndConditions(model, model.getWhereClause());
         literalMatcher.of(model.getAlias() != null ? model.getAlias().token : null);
 
         ExprNode nmWhere = nm.getWhereClause();
         ExprNode thisWhere = null;
         ObjList<ExprNode> w = model.getParsedWhere();
-        n = w.size();
-        for (int i = 0; i < n; i++) {
+        for (int i = 0, n = w.size(); i < n; i++) {
             ExprNode node = w.getQuick(i);
-            if (literalMatcher.matches(node, names)) {
+            if (literalMatcher.matches(node, selectedColumnAliases)) {
                 nmWhere = concatFilters(nmWhere, node);
             } else {
                 thisWhere = concatFilters(thisWhere, node);
@@ -1345,7 +1348,9 @@ public class QueryCompiler {
         nm.setWhereClause(nmWhere);
         model.setWhereClause(thisWhere);
 
-        return optimiseSubQueries(nm, factory);
+        if (nm.getNestedModel() != null) {
+            optimiseSubQueries(nm, factory);
+        }
     }
 
     private RecordSource order(RecordSource rs, QueryModel model) throws ParserException {
@@ -1378,6 +1383,7 @@ public class QueryCompiler {
         }
     }
 
+    // todo: remove
     CharSequence plan(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
         QueryModel model = parser.parse(query).getQueryModel();
         resetAndOptimise(model, factory);
@@ -1644,7 +1650,7 @@ public class QueryCompiler {
 
     private void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         clearState();
-        optimise(model, factory);
+        optimiseJoins(model, factory);
     }
 
     private void resolveJoinMetadata(QueryModel parent, int index, JournalReaderFactory factory) throws JournalException, ParserException {

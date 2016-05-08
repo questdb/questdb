@@ -19,6 +19,8 @@ __lang__
 - [x] query parameters
 - [x] support for comments (both block /* */ and line --)
 - [ ] analytical clauses
+- [ ] __subquery optimiser (in progress)__
+- [ ] order by optimiser
 
 __server__
 
@@ -36,6 +38,7 @@ __server__
 - [x] C layer for linux (epoll)
 - [x] C layer for mac/bsd (kqueue)
 - [ ] MySQL wire protocol implementation
+- [ ] sql result export to delimited format
 
 __misc__
 
