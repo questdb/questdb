@@ -55,9 +55,18 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
                         $int("i1").
                         $int("i2").
                         $ts()
-
         );
         w.close();
+
+        w = factory.writer(
+                new JournalStructure("tex").
+                        $sym("id").index().valueCountHint(128).
+                        $double("amount").
+                        $ts()
+        );
+
+        w.close();
+
     }
 
     @Before
@@ -66,31 +75,51 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testOneLevelAliasedSelectedSubquery() throws Exception {
+    public void testJoinSubQueryFilter() throws Exception {
+        sink.put(compiler.compileSource(factory, "(tab a join tex b on a.id = b.id) a where a.x = 10"));
+        TestUtils.assertEquals("{\"op\":\"HashJoinRecordSource\",\"master\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}},\"slave\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tex\"},\"rsrc\":{\"op\":\"AllRowSource\"}},\"joinOn\":[id],[id]}",
+                sink);
+    }
+
+    @Test
+    public void testOneLevelAliasedSelectedSubQuery() throws Exception {
         sink.put(compiler.compileSource(factory, "(select x from tab order by x) a where a.x = 10"));
         TestUtils.assertEquals("{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}}",
                 sink);
     }
 
     @Test
-    public void testOneLevelAliasedSubquery() throws Exception {
+    public void testOneLevelAliasedSubQuery() throws Exception {
         sink.put(compiler.compileSource(factory, "(tab order by x) a where a.x = 10"));
         TestUtils.assertEquals("{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}",
                 sink);
     }
 
     @Test
-    public void testOneLevelSimpleSubquery() throws Exception {
+    public void testOneLevelSimpleSubQuery() throws Exception {
         sink.put(compiler.compileSource(factory, "(tab order by x) where x = 10"));
         TestUtils.assertEquals("{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}",
                 sink);
     }
 
     @Test
-    public void testRecursiveAliasedSubquery() throws Exception {
+    public void testRecursiveAliasedSubQuery() throws Exception {
         sink.put(compiler.compileSource(factory, "((tab order by x) a where a.x = 10) b where b.y > 100"));
         TestUtils.assertEquals("{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}",
                 sink);
     }
 
+    @Test
+    public void testSubQueryFilterOnAggregate() throws Exception {
+        sink.put(compiler.compileSource(factory, "(select sum(x) k from tab) a where a.k = 10"));
+        TestUtils.assertEquals("{\"op\":\"FilteredJournalRecordSource\",\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"AggregatedRecordSource\",\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}},\"filter\":\"a.k = 10\"}",
+                sink);
+    }
+
+    @Test
+    public void testSubQueryFilterOnConstant() throws Exception {
+        sink.put(compiler.compileSource(factory, "(select 1 k from tab) a where a.k = 10"));
+        TestUtils.assertEquals("{\"op\":\"FilteredJournalRecordSource\",\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"VirtualColumnRecordSource\",\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}},\"filter\":\"a.k = 10\"}",
+                sink);
+    }
 }

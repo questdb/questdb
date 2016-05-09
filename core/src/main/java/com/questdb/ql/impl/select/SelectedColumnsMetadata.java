@@ -93,6 +93,11 @@ class SelectedColumnsMetadata extends AbstractRecordMetadata {
     }
 
     @Override
+    public void setAlias(String alias) {
+        delegate.setAlias(alias);
+    }
+
+    @Override
     public RecordColumnMetadata getColumn(int index) {
         return columnMetadata[index];
     }

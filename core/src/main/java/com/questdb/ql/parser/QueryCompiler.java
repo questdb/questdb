@@ -561,23 +561,11 @@ public class QueryCompiler {
 
     private void collectSelectedColumns(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         selectedColumnAliases.clear();
-
-        // ok, there are selected columns
-        // literal columns will be narrowing down journal columns
-        // constant columns are interesting from narrowing down constant conditions point of view
-        // e.g. (select 'a' c from B) where c = 'b'
-        // this is the same as:
-        // select 'a' c from B where 'a' = 'c', which is intrinsic FALSE
         int n = model.getColumns().size();
         if (n > 0) {
             for (int i = 0; i < n; i++) {
                 QueryColumn qc = model.getColumns().getQuick(i);
                 switch (qc.getAst().type) {
-                    case CONSTANT:
-                        if (qc.getAlias() != null) {
-                            selectedColumnAliases.add(qc.getAlias());
-                        }
-                        break;
                     case LITERAL:
                         if (qc.getAlias() != null) {
                             selectedColumnAliases.add(qc.getAlias());
@@ -1326,7 +1314,6 @@ public class QueryCompiler {
         }
     }
 
-    // todo: this is quite primitive (first cut), joins and multi-level subqueries
     private void optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         QueryModel nm = model.getNestedModel();
         collectSelectedColumns(nm, factory);

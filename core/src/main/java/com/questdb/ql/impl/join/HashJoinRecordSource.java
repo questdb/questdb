@@ -166,7 +166,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         sink.putQuoted("op").put(':').putQuoted("HashJoinRecordSource").put(',');
         sink.putQuoted("master").put(':').put(master).put(',');
         sink.putQuoted("slave").put(':').put(slave).put(',');
-        sink.putQuoted("masterColumns").put(':');
+        sink.putQuoted("joinOn").put(':');
         sink.put('[');
         for (int i = 0, n = masterColumns.size(); i < n; i++) {
             if (i > 0) {
@@ -182,7 +182,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             }
             sink.put(slaveColumns.getQuick(i).getName());
         }
-        sink.put(']').put(',');
+        sink.put(']');
         sink.put('}');
     }
 
