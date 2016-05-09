@@ -19,8 +19,8 @@ __lang__
 - [x] query parameters
 - [x] support for comments (both block /* */ and line --)
 - [ ] analytical clauses
-- [ ] __subquery optimiser (in progress)__
-- [ ] order by optimiser
+- [x] subquery optimiser
+- [ ] __order by optimiser (in progress)__
 
 __server__
 

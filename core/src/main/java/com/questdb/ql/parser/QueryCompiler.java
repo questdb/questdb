@@ -1316,27 +1316,26 @@ public class QueryCompiler {
 
     private void optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         QueryModel nm = model.getNestedModel();
-        collectSelectedColumns(nm, factory);
-        processAndConditions(model, model.getWhereClause());
-        literalMatcher.of(model.getAlias() != null ? model.getAlias().token : null);
+        while (nm != null) {
+            collectSelectedColumns(nm, factory);
+            processAndConditions(model, model.getWhereClause());
+            literalMatcher.of(model.getAlias() != null ? model.getAlias().token : null);
 
-        ExprNode nmWhere = nm.getWhereClause();
-        ExprNode thisWhere = null;
-        ObjList<ExprNode> w = model.getParsedWhere();
-        for (int i = 0, n = w.size(); i < n; i++) {
-            ExprNode node = w.getQuick(i);
-            if (literalMatcher.matches(node, selectedColumnAliases)) {
-                nmWhere = concatFilters(nmWhere, node);
-            } else {
-                thisWhere = concatFilters(thisWhere, node);
+            ExprNode nmWhere = nm.getWhereClause();
+            ExprNode thisWhere = null;
+            ObjList<ExprNode> w = model.getParsedWhere();
+            for (int i = 0, n = w.size(); i < n; i++) {
+                ExprNode node = w.getQuick(i);
+                if (literalMatcher.matches(node, selectedColumnAliases)) {
+                    nmWhere = concatFilters(nmWhere, node);
+                } else {
+                    thisWhere = concatFilters(thisWhere, node);
+                }
             }
-        }
 
-        nm.setWhereClause(nmWhere);
-        model.setWhereClause(thisWhere);
-
-        if (nm.getNestedModel() != null) {
-            optimiseSubQueries(nm, factory);
+            nm.setWhereClause(nmWhere);
+            model.setWhereClause(thisWhere);
+            nm = nm.getNestedModel();
         }
     }
 
