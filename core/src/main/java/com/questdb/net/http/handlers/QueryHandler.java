@@ -139,6 +139,7 @@ public class QueryHandler implements ContextHandler {
         ctx.skip = skip;
         ctx.count = 0L;
         ctx.stop = stop;
+        ctx.fetchAll = Chars.equalsNc("true", context.request.getUrlParam("count"));
 
         ctx.info().$("Query: ").$(query).
                 $(", skip: ").$(skip).
@@ -206,6 +207,10 @@ public class QueryHandler implements ContextHandler {
                                 if (ctx.cursor.hasNext()) {
                                     ctx.record = ctx.cursor.next();
                                     ctx.count++;
+
+                                    if (ctx.fetchAll && ctx.count > ctx.stop) {
+                                        continue;
+                                    }
 
                                     if (ctx.count > ctx.skip) {
                                         break;
@@ -391,7 +396,7 @@ public class QueryHandler implements ContextHandler {
         if (ctx.count > -1) {
             r.bookmark();
             r.put(']');
-            r.put(',').putQuoted("more").put(':').put(ctx.count > ctx.stop);
+            r.put(',').putQuoted("count").put(':').put(ctx.count);
             r.put('}');
             ctx.count = -1;
             r.sendChunk();
@@ -418,6 +423,7 @@ public class QueryHandler implements ContextHandler {
         private QueryState state = QueryState.PREFIX;
         private int columnIndex;
         private boolean noMeta = false;
+        private boolean fetchAll = false;
 
         @Override
         public void clear() {
@@ -433,6 +439,7 @@ public class QueryHandler implements ContextHandler {
             }
             query = null;
             state = QueryState.PREFIX;
+            fetchAll = false;
         }
 
         @Override

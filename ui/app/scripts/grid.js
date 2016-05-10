@@ -63,8 +63,8 @@
         var loPage;
         var hiPage;
         var query;
-        var moreExists = true;
         var renderTimer;
+        var dbg;
 
         // viewport height
         var vp = defaults.viewportHeight;
@@ -104,7 +104,7 @@
             } else {
                 h = defaults.yMaxThreshold;
             }
-            M = Math.ceil(yMax / h);
+            M = yMax / h;
             canvas.css('height', h === 0 ? 1 : h);
         }
 
@@ -165,16 +165,11 @@
 
         function loadOnePage(pageToLoad) {
             purgeOutlierPages();
-            var append = (pageToLoad + 1) * pageSize > r;
             var lo = pageToLoad * pageSize;
             var hi = lo + pageSize;
             $.get('/js', {query, limit: lo + ',' + hi, nm: true})
                 .done(function (response) {
                     data[pageToLoad] = response.result;
-                    if (append && moreExists) {
-                        addRows(response.result.length);
-                        moreExists = response.more;
-                    }
                     delayedRenderViewportNoCompute();
                 })
                 .fail(function () {
@@ -186,7 +181,7 @@
             purgeOutlierPages();
             var lo = p1 * pageSize;
             var hi = lo + pageSize * (p2 - p1 + 1);
-            $.get('/js', {query, limit: lo + ',' + hi, np: true})
+            $.get('/js', {query, limit: lo + ',' + hi, nm: true})
                 .done(function (response) {
                     var l = response.result.length;
                     data[p1] = response.result.splice(0, pageSize);
@@ -396,7 +391,19 @@
             stretched = 0;
             data = [];
             query = null;
-            moreExists = true;
+        }
+
+        function logDebug() {
+            if (dbg) {
+                dbg.empty();
+                dbg.append('y = ' + y + '<br>');
+                dbg.append('M = ' + M + '<br>');
+                dbg.append('o = ' + o + '<br>');
+                dbg.append('h = ' + h + '<br>');
+                dbg.append('vp = ' + vp + '<br>');
+                dbg.append('yMax = ' + yMax + '<br>');
+                dbg.append('top = ' + top + '<br>');
+            }
         }
 
         function viewportScroll(force) {
@@ -405,18 +412,21 @@
             var scrollTop = viewport.scrollTop;
             if (scrollTop !== top || force) {
                 var oldY = y;
-                if (Math.abs(scrollTop - top) > vp) {
-                    // near scroll
+                if (Math.abs(scrollTop - top) > 4 * vp) {
                     y = scrollTop === 0 ? 0 : Math.ceil((scrollTop + vp) * M - vp);
                     top = scrollTop;
                     o = y - top;
+                } else if (scrollTop >= h - vp) {
+                    y = yMax - vp;
+                    top = scrollTop;
+                    o = y - top;
                 } else {
-                    // jump
                     y += scrollTop - top;
                     top = scrollTop;
                 }
                 renderViewport(y - oldY);
             }
+            logDebug();
         }
 
         function resize() {
@@ -476,7 +486,7 @@
                 activeRowContainer = rows[activeRow & dcn];
                 activeRowContainer.className = 'qg-r qg-r-active';
                 activeCellOn();
-                var scrollTop = activeRow * rh;
+                var scrollTop = activeRow * rh - o;
                 if (scrollTop < viewport.scrollTop) {
                     viewport.scrollTop = Math.max(0, scrollTop);
                 }
@@ -491,7 +501,7 @@
                 activeRowContainer = rows[activeRow & dcn];
                 activeRowContainer.className = 'qg-r qg-r-active';
                 activeCellOn();
-                var scrollTop = activeRow * rh - vp + rh;
+                var scrollTop = activeRow * rh - vp + rh - o;
                 if (scrollTop > viewport.scrollTop) {
                     viewport.scrollTop = scrollTop;
                 }
@@ -588,15 +598,15 @@
             query = m.r.query;
             data.push(m.r.result);
             columns = m.r.columns;
-            moreExists = m.r.more;
             addColumns();
-            addRows(m.r.result.length);
+            addRows(m.r.count);
             computeColumnWidths();
             viewport.scrollTop = 0;
             resize();
         }
 
         function bind() {
+            dbg = $('#debug');
             header = div.find('.qg-header-row');
             viewport = div.find('.qg-viewport')[0];
             viewport.onscroll = viewportScroll;

@@ -70,6 +70,7 @@
         }
 
         function handleServerResponse(r) {
+            console.log('count: ' + r.count);
             $(document).trigger('query.ok',
                 {
                     r,
@@ -98,6 +99,7 @@
             btn.removeClass('js-query-run').addClass('js-query-cancel');
             requestParams.query = qry.q;
             requestParams.limit = '0,' + batchSize;
+            requestParams.count = true;
             time = new Date().getTime();
             hActiveRequest = $.get('/js', requestParams).done(handleServerResponse).fail(handleServerError);
         }
