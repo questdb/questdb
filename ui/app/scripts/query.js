@@ -243,6 +243,60 @@
             }
         }
 
+        function computeQueryText() {
+            var text = edit.getValue();
+            var pos = edit.getCursorPosition();
+            var r = 0;
+            var c = 0;
+
+            var startRow = 0;
+            var startCol = 0;
+            var startPos = -1;
+            var sql = null;
+
+
+            for (var i = 0; i < text.length; i++) {
+                var char = text.charAt(i);
+
+                switch (char) {
+                    case ';':
+                        if (r < pos.row || (r === pos.row && c < pos.column)) {
+                            startRow = r;
+                            startCol = c;
+                            startPos = i + 1;
+                            c++;
+                        } else {
+                            if (startPos === -1) {
+                                sql = text.substring(0, i);
+                            } else {
+                                sql = text.substring(startPos, i);
+                            }
+                        }
+                        break;
+                    case '\n':
+                        r++;
+                        c = 0;
+                        break;
+                    default:
+                        c++;
+                        break;
+                }
+
+                if (sql !== null) {
+                    break;
+                }
+            }
+
+            if (sql === null) {
+                if (startPos === -1) {
+                    sql = text;
+                } else {
+                    sql = text.substring(startPos);
+                }
+            }
+            return {q: sql, r: startRow, c: startCol};
+        }
+
         function submitQuery() {
             save();
             clearMarker();
@@ -250,15 +304,13 @@
             var r;
             var c;
             if (q == null || q === '') {
-                q = edit.getValue();
-                r = 0;
-                c = 0;
+                $(document).trigger('query.execute', computeQueryText());
             } else {
                 var range = edit.getSelectionRange();
                 r = range.start.row;
                 c = range.start.column;
+                $(document).trigger('query.execute', {q, r, c});
             }
-            $(document).trigger('query.execute', {q, r, c});
         }
 
         //noinspection JSUnusedLocalSymbols
