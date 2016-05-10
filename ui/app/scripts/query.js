@@ -42,6 +42,7 @@
         var hPendingRequest = null;
         var time;
         var batchSize = qdb.queryBatchSize;
+        var btn;
 
         var requestParams = {
             'query': '',
@@ -62,6 +63,12 @@
             }
         }
 
+        function readyToExecuteAgain() {
+            hActiveRequest = null;
+            btn.html('<i class="fa fa-play"></i>Run');
+            btn.removeClass('js-query-cancel').addClass('js-query-run');
+        }
+
         function handleServerResponse(r) {
             $(document).trigger('query.ok',
                 {
@@ -69,6 +76,7 @@
                     delta: (new Date().getTime() - time)
                 }
             );
+            readyToExecuteAgain();
         }
 
         function handleServerError(jqXHR) {
@@ -77,13 +85,17 @@
                     query: qry,
                     r: jqXHR.responseJSON,
                     status: jqXHR.status,
+                    statusText: jqXHR.statusText,
                     delta: (new Date().getTime() - time)
                 }
             );
+            readyToExecuteAgain();
         }
 
         function qq() {
             abortActive();
+            btn.html('<i class="fa fa-stop"></i>Cancel');
+            btn.removeClass('js-query-run').addClass('js-query-cancel');
             requestParams.query = qry.q;
             requestParams.limit = '0,' + batchSize;
             time = new Date().getTime();
@@ -96,10 +108,25 @@
             hPendingRequest = setTimeout(qq, 50);
         }
 
+        function executeToggle() {
+            if (hActiveRequest !== null) {
+                abortActive();
+            } else {
+                $(document).trigger('editor.execute');
+            }
+        }
+
         function bind() {
             $(document).on('query.execute', function (x, q) {
                 sendQuery(q);
             });
+
+            $(document).on('query.toggle', function () {
+                executeToggle();
+            });
+
+            btn = $('.js-query-run');
+            btn.click(executeToggle);
         }
 
         bind();
@@ -143,15 +170,12 @@
         //noinspection JSUnusedLocalSymbols
         function error(x, m) {
             clearTimeout(timer);
-
-            if (m.statusText === 'abort') {
-                return;
-            }
-
             div.removeClass('query-progress-animated');
             divMsg.removeClass('query-message-ok').addClass('query-message-error');
             divTime.html('failed after <strong>' + (m.delta / 1000) + 's</strong>');
-            if (m.r) {
+            if (m.statusText === 'abort') {
+                divMsgText.html('Cancelled by user');
+            } else if (m.r) {
                 var pos = toTextPosition(m.query, m.r.position);
                 divMsgText.html('<strong>' + pos.r + ':' + pos.c + '</strong>&nbsp;&nbsp;' + m.r.error);
                 $(document).trigger('editor.show.error', pos);
@@ -255,6 +279,10 @@
             edit.renderer.setShowInvisibles(!edit.renderer.getShowInvisibles());
         }
 
+        function queryToggle() {
+            $(document).trigger('query.toggle');
+        }
+
         function bind() {
             $(document).on('editor.execute', submitQuery);
             $(document).on('editor.show.error', showError);
@@ -263,7 +291,7 @@
             edit.commands.addCommand({
                 name: 'editor.execute',
                 bindKey: 'F9',
-                exec: submitQuery
+                exec: queryToggle
             });
         }
 
@@ -287,10 +315,6 @@ $(document).ready(function () {
     qdb.query();
     qdb.spinner();
     qdb.editor();
-
-    $('.js-query-run').click(function () {
-        $(document).trigger('editor.execute');
-    });
 
     $('.js-editor-toggle-invisible').click(function () {
         $(document).trigger('editor.toggle.invisibles');

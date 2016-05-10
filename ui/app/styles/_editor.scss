@@ -114,3 +114,13 @@
   cursor: pointer !important;
   pointer-events: auto;
 }
+
+.js-query-run > .fa {
+  padding-right: 5px;
+  color: #3dc7ab;
+}
+
+.js-query-cancel > .fa {
+  padding-right: 5px;
+  color: #ED5565;
+}
