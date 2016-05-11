@@ -63,7 +63,6 @@
         var loPage;
         var hiPage;
         var query;
-        var renderTimer;
         var queryTimer;
         var dbg;
 
@@ -115,7 +114,6 @@
                 var offset = n % pageSize;
                 var k;
                 if (rowData) {
-
                     var d = rowData[offset];
                     for (k = 0; k < columns.length; k++) {
                         rowContainer.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
@@ -125,9 +123,9 @@
                     for (k = 0; k < columns.length; k++) {
                         rowContainer.childNodes[k].innerHTML = '';
                     }
+                    rowContainer.questIndex = -1;
                 }
                 rowContainer.style.top = (n * rh - o) + 'px';
-
                 if (rowContainer === activeRowContainer) {
                     if (n === activeRow) {
                         rowContainer.className = 'qg-r qg-r-active';
@@ -148,13 +146,6 @@
             for (var i = t; i < b; i++) {
                 renderRow(rows[i & dcn], i);
             }
-        }
-
-        function delayedRenderViewportNoCompute() {
-            if (renderTimer) {
-                clearTimeout(renderTimer);
-            }
-            renderTimer = setTimeout(renderViewportNoCompute, 10);
         }
 
         function purgeOutlierPages() {
@@ -182,23 +173,24 @@
                 f = function (response) {
                     data[p1] = response.result.splice(0, pageSize);
                     data[p2] = response.result;
-                    delayedRenderViewportNoCompute();
+                    renderViewportNoCompute();
                 };
             } else if (empty(p1) && (!empty(p2) || p1 === p2)) {
                 lo = p1 * pageSize;
                 hi = lo + pageSize;
                 f = function (response) {
                     data[p1] = response.result;
-                    delayedRenderViewportNoCompute();
+                    renderViewportNoCompute();
                 };
             } else if ((!empty(p1) || p1 === p2) && empty(p2)) {
                 lo = p2 * pageSize;
                 hi = lo + pageSize;
                 f = function (response) {
                     data[p2] = response.result;
-                    delayedRenderViewportNoCompute();
+                    renderViewportNoCompute();
                 };
             } else {
+                renderViewportNoCompute();
                 return;
             }
             $.get('/js', {query, limit: lo + ',' + hi, nm: true}).done(f);
@@ -210,7 +202,7 @@
             }
             queryTimer = setTimeout(function () {
                 loadPages(p1, p2);
-            }, 10);
+            }, 75);
         }
 
         function computePages(direction, t, b) {
