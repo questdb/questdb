@@ -164,7 +164,6 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         Assert.assertEquals("9223372036854775807", queryResponse.result.get(0)[3]);
         Assert.assertNull(queryResponse.result.get(0)[4]);
         Assert.assertEquals("1970-01-01T00:00:00.010Z", queryResponse.result.get(0)[5]);
-        Assert.assertEquals(false, queryResponse.more);
 
         Assert.assertEquals("id4", queryResponse.result.get(4)[0]);
         Assert.assertEquals("NaN", queryResponse.result.get(4)[2]);
@@ -175,7 +174,6 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         String query = "tab limit 10";
         QueryResponse queryResponse = download(query, 10, 5);
         Assert.assertEquals(0, queryResponse.result.size());
-        Assert.assertEquals(true, queryResponse.more);
     }
 
     @Test
@@ -183,7 +181,6 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         String query = "tab";
         QueryResponse r = download(query, 2, 4);
         Assert.assertEquals(2, r.result.size());
-        Assert.assertEquals(true, r.more);
         Assert.assertEquals("id2", r.result.get(0)[0]);
         Assert.assertEquals("id3", r.result.get(1)[0]);
     }
@@ -221,7 +218,6 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public void testJsonTakeLimit() throws Exception {
         QueryResponse queryResponse = download("tab limit 10", 2, -1);
         Assert.assertEquals(2, queryResponse.result.size());
-        Assert.assertEquals(true, queryResponse.more);
     }
 
     @Test

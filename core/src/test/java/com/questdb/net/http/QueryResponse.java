@@ -42,7 +42,6 @@ public class QueryResponse {
     public String error;
     public String query;
     public List<String[]> result;
-    public boolean more;
 
     public static class Tab {
         public String id;
