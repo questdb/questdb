@@ -64,6 +64,7 @@
         var hiPage;
         var query;
         var renderTimer;
+        var queryTimer;
         var dbg;
 
         // viewport height
@@ -114,6 +115,7 @@
                 var offset = n % pageSize;
                 var k;
                 if (rowData) {
+
                     var d = rowData[offset];
                     for (k = 0; k < columns.length; k++) {
                         rowContainer.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
@@ -152,7 +154,7 @@
             if (renderTimer) {
                 clearTimeout(renderTimer);
             }
-            renderTimer = setTimeout(renderViewportNoCompute, 50);
+            renderTimer = setTimeout(renderViewportNoCompute, 10);
         }
 
         function purgeOutlierPages() {
@@ -163,38 +165,52 @@
             }
         }
 
-        function loadOnePage(pageToLoad) {
-            purgeOutlierPages();
-            var lo = pageToLoad * pageSize;
-            var hi = lo + pageSize;
-            $.get('/js', {query, limit: lo + ',' + hi, nm: true})
-                .done(function (response) {
-                    data[pageToLoad] = response.result;
-                    delayedRenderViewportNoCompute();
-                })
-                .fail(function () {
-                    console.error('fetch failed');
-                });
+        function empty(x) {
+            return data[x] === null || data[x] === undefined || data[x].length === 0;
         }
 
-        function loadTwoPages(p1, p2) {
+        function loadPages(p1, p2) {
             purgeOutlierPages();
-            var lo = p1 * pageSize;
-            var hi = lo + pageSize * (p2 - p1 + 1);
-            $.get('/js', {query, limit: lo + ',' + hi, nm: true})
-                .done(function (response) {
-                    var l = response.result.length;
+
+            var lo;
+            var hi;
+            var f;
+
+            if (p1 !== p2 && empty(p1) && empty(p2)) {
+                lo = p1 * pageSize;
+                hi = lo + pageSize * (p2 - p1 + 1);
+                f = function (response) {
                     data[p1] = response.result.splice(0, pageSize);
                     data[p2] = response.result;
-                    // work out if we need to extend grid's virtual space
-                    if (r < lo + l) {
-                        addRows(lo + l - r);
-                    }
                     delayedRenderViewportNoCompute();
-                })
-                .fail(function () {
-                    console.error('fetch failed');
-                });
+                };
+            } else if (empty(p1) && (!empty(p2) || p1 === p2)) {
+                lo = p1 * pageSize;
+                hi = lo + pageSize;
+                f = function (response) {
+                    data[p1] = response.result;
+                    delayedRenderViewportNoCompute();
+                };
+            } else if ((!empty(p1) || p1 === p2) && empty(p2)) {
+                lo = p2 * pageSize;
+                hi = lo + pageSize;
+                f = function (response) {
+                    data[p2] = response.result;
+                    delayedRenderViewportNoCompute();
+                };
+            } else {
+                return;
+            }
+            $.get('/js', {query, limit: lo + ',' + hi, nm: true}).done(f);
+        }
+
+        function loadPagesDelayed(p1, p2) {
+            if (queryTimer) {
+                clearTimeout(queryTimer);
+            }
+            queryTimer = setTimeout(function () {
+                loadPages(p1, p2);
+            }, 10);
         }
 
         function computePages(direction, t, b) {
@@ -222,23 +238,23 @@
                     if (br > twoThirdsPage) {
                         hiPage = bp + 1;
                         loPage = bp;
-                        loadOnePage(bp + 1);
+                        loadPagesDelayed(bp, bp + 1);
                     }
                     return;
                 }
 
                 if (tp < bp) {
-                    loadTwoPages(tp, bp);
+                    loadPagesDelayed(tp, bp);
                     loPage = tp;
                     hiPage = bp;
                 } else if (br > twoThirdsPage) {
-                    loadTwoPages(bp, bp + 1);
+                    loadPagesDelayed(bp, bp + 1);
                     loPage = bp;
                     hiPage = bp + 1;
                 } else {
                     hiPage = tp;
                     loPage = tp;
-                    loadOnePage(tp);
+                    loadPagesDelayed(tp, tp);
                 }
             } else {
                 tr = t % pageSize;
@@ -251,23 +267,23 @@
                     if (tr < oneThirdPage && loPage > 0) {
                         loPage = Math.max(0, tp - 1);
                         hiPage = tp;
-                        loadOnePage(tp - 1);
+                        loadPagesDelayed(tp - 1, tp);
                     }
                     return;
                 }
 
                 if (tp < bp) {
-                    loadTwoPages(tp, bp);
+                    loadPagesDelayed(tp, bp);
                     loPage = tp;
                     hiPage = bp;
                 } else if (tr < oneThirdPage && tp > 0) {
-                    loadTwoPages(tp - 1, tp);
+                    loadPagesDelayed(tp - 1, tp);
                     loPage = Math.max(0, tp - 1);
                     hiPage = tp;
                 } else {
                     loPage = tp;
                     hiPage = tp;
-                    loadOnePage(tp);
+                    loadPagesDelayed(tp, tp);
                 }
             }
         }
@@ -417,7 +433,7 @@
                     top = scrollTop;
                     o = y - top;
                 } else if (scrollTop >= h - vp) {
-                    y = yMax - vp;
+                    y = Math.max(0, yMax - vp);
                     top = scrollTop;
                     o = y - top;
                 } else {

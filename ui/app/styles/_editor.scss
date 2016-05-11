@@ -108,6 +108,17 @@
   display: inline-block;
 }
 
+.query-time {
+  width: 20%;
+  display: inline-block;
+}
+
+.js-query-message-text {
+  width: 80%;
+  display: inline-block;
+  padding-left: 10px;
+}
+
 .js-syntax-error {
   border-bottom: 1px solid red;
   position: absolute;

@@ -70,11 +70,11 @@
         }
 
         function handleServerResponse(r) {
-            console.log('count: ' + r.count);
             $(document).trigger('query.ok',
                 {
                     r,
-                    delta: (new Date().getTime() - time)
+                    delta: (new Date().getTime() - time),
+                    count: r.count
                 }
             );
             readyToExecuteAgain();
@@ -194,7 +194,7 @@
             div.removeClass('query-progress-animated');
             divMsg.removeClass('query-message-error').addClass('query-message-ok');
             divTime.html('read in <strong>' + (m.delta / 1000) + 's</strong>');
-            divMsgText.html('OK');
+            divMsgText.html(m.count.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ' rows');
         }
 
         function bind() {
@@ -329,7 +329,6 @@
         }
 
         function toggleInvisibles() {
-            console.log('about to ask');
             edit.renderer.setShowInvisibles(!edit.renderer.getShowInvisibles());
         }
 
