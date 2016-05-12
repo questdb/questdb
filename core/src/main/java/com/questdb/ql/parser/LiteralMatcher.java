@@ -58,30 +58,28 @@ class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
 
     @Override
     public void visit(ExprNode node) throws ParserException {
-        if (node.type == ExprNode.NodeType.LITERAL) {
-            if (match) {
-                if (names.contains(node.token)) {
-                    return;
-                }
-
-                if (alias == null) {
-                    match = false;
-                    return;
-                }
-
-                ColumnName columnName = ColumnName.singleton(node.token);
-
-                if (columnName.alias() == null) {
-                    match = false;
-                    return;
-                }
-
-                if (Chars.equals(columnName.alias(), alias) && names.contains(columnName.name())) {
-                    node.token = columnName.name().toString();
-                    return;
-                }
-                match = false;
+        if (node.type == ExprNode.NodeType.LITERAL && match) {
+            if (names.contains(node.token)) {
+                return;
             }
+
+            if (alias == null) {
+                match = false;
+                return;
+            }
+
+            ColumnName columnName = ColumnName.singleton(node.token);
+
+            if (columnName.alias() == null) {
+                match = false;
+                return;
+            }
+
+            if (Chars.equals(columnName.alias(), alias) && names.contains(columnName.name())) {
+                node.token = columnName.name().toString();
+                return;
+            }
+            match = false;
         }
     }
 

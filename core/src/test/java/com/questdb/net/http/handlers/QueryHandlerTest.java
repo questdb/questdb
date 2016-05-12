@@ -209,8 +209,16 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
 
     @Test
     public void testJsonSimpleNoMeta() throws Exception {
-        QueryResponse queryResponse = download("select 1 z from tab limit 10", 0, 10, true, temp);
+        QueryResponse queryResponse = download("select 1 z from tab limit 10", 0, 10, true, false, temp);
         Assert.assertEquals(10, queryResponse.result.size());
+        Assert.assertNull(queryResponse.query);
+    }
+
+    @Test
+    public void testJsonSimpleNoMetaAndCount() throws Exception {
+        QueryResponse queryResponse = download("select 1 z from tab", 0, 10, true, true, temp);
+        Assert.assertEquals(10, queryResponse.result.size());
+        Assert.assertEquals(1000, queryResponse.count);
         Assert.assertNull(queryResponse.query);
     }
 
@@ -227,7 +235,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     }
 
     static QueryResponse download(String queryUrl, TemporaryFolder temp) throws Exception {
-        return download(queryUrl, -1, -1, false, temp);
+        return download(queryUrl, -1, -1, false, false, temp);
     }
 
     static void generateJournal(String name, int count) throws JournalException, NumericException {
@@ -245,7 +253,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         generateJournal(name, new QueryResponse.Tab[]{record}, 1000);
     }
 
-    private static QueryResponse download(String queryUrl, int limitFrom, int limitTo, boolean noMeta, TemporaryFolder temp) throws Exception {
+    private static QueryResponse download(String queryUrl, int limitFrom, int limitTo, boolean noMeta, boolean count, TemporaryFolder temp) throws Exception {
         File f = temp.newFile();
         String url = "http://localhost:9000/js?query=" + URLEncoder.encode(queryUrl, "UTF-8");
         if (limitFrom >= 0) {
@@ -257,6 +265,10 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
 
         if (noMeta) {
             url += "&nm=true";
+        }
+
+        if (count) {
+            url += "&count=true";
         }
 
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
@@ -317,6 +329,6 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     }
 
     private static QueryResponse download(String queryUrl, int limitFrom, int limitTo) throws Exception {
-        return download(queryUrl, limitFrom, limitTo, false, temp);
+        return download(queryUrl, limitFrom, limitTo, false, false, temp);
     }
 }

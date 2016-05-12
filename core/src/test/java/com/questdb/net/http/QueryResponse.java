@@ -42,6 +42,7 @@ public class QueryResponse {
     public String error;
     public String query;
     public List<String[]> result;
+    public long count;
 
     public static class Tab {
         public String id;
