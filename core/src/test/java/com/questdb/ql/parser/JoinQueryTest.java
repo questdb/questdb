@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.parser;
@@ -78,7 +79,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @Test
     public void testAmbiguousColumn() throws Exception {
         try {
-            assertPlan("", "orders join customers on customerId = customerId");
+            assertPlan2("", "orders join customers on customerId = customerId");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(25, QueryError.getPosition());
@@ -88,14 +89,122 @@ public class JoinQueryTest extends AbstractOptimiserTest {
 
     @Test
     public void testAsOfJoinOrder() throws Exception {
-        assertPlan("+ 0[ cross ] c\n" +
-                        "+ 1[ asof ] e ON e.employeeId = c.customerId\n" +
-                        "+ 2[ inner ] o ON o.customerId = c.customerId\n" +
-                        "\n",
+        assertPlan2("{\n" +
+                        "  \"op\": \"HashJoinRecordSource\",\n" +
+                        "  \"master\": {\n" +
+                        "    \"op\": \"AsOfPartitionedJoinRecordSource\",\n" +
+                        "    \"master\": {\n" +
+                        "      \"op\": \"JournalSource\",\n" +
+                        "      \"psrc\": {\n" +
+                        "        \"op\": \"JournalPartitionSource\",\n" +
+                        "        \"journal\": \"customers\"\n" +
+                        "      },\n" +
+                        "      \"rsrc\": {\n" +
+                        "        \"op\": \"AllRowSource\"\n" +
+                        "      }\n" +
+                        "    },\n" +
+                        "    \"slave\": {\n" +
+                        "      \"op\": \"JournalSource\",\n" +
+                        "      \"psrc\": {\n" +
+                        "        \"op\": \"JournalPartitionSource\",\n" +
+                        "        \"journal\": \"employees\"\n" +
+                        "      },\n" +
+                        "      \"rsrc\": {\n" +
+                        "        \"op\": \"AllRowSource\"\n" +
+                        "      }\n" +
+                        "    },\n" +
+                        "    \"masterTsIndex\": 7,\n" +
+                        "    \"slaveTsIndex\": 4\n" +
+                        "  },\n" +
+                        "  \"slave\": {\n" +
+                        "    \"op\": \"JournalSource\",\n" +
+                        "    \"psrc\": {\n" +
+                        "      \"op\": \"JournalPartitionSource\",\n" +
+                        "      \"journal\": \"orders\"\n" +
+                        "    },\n" +
+                        "    \"rsrc\": {\n" +
+                        "      \"op\": \"AllRowSource\"\n" +
+                        "    }\n" +
+                        "  },\n" +
+                        "  \"joinOn\": [\n" +
+                        "    [\n" +
+                        "      \"customerId\"\n" +
+                        "    ],\n" +
+                        "    [\n" +
+                        "      \"customerId\"\n" +
+                        "    ]\n" +
+                        "  ]\n" +
+                        "}",
                 "customers c" +
                         " asof join employees e on c.customerId = e.employeeId" +
                         " join orders o on c.customerId = o.customerId");
+    }
 
+    @Test
+    public void testAsOfJoinSubQuery() throws Exception {
+        assertPlan2("{\n" +
+                        "  \"op\": \"HashJoinRecordSource\",\n" +
+                        "  \"master\": {\n" +
+                        "    \"op\": \"FilteredJournalRecordSource\",\n" +
+                        "    \"src\": {\n" +
+                        "      \"op\": \"AsOfPartitionedJoinRecordSource\",\n" +
+                        "      \"master\": {\n" +
+                        "        \"op\": \"JournalSource\",\n" +
+                        "        \"psrc\": {\n" +
+                        "          \"op\": \"JournalPartitionSource\",\n" +
+                        "          \"journal\": \"customers\"\n" +
+                        "        },\n" +
+                        "        \"rsrc\": {\n" +
+                        "          \"op\": \"AllRowSource\"\n" +
+                        "        }\n" +
+                        "      },\n" +
+                        "      \"slave\": {\n" +
+                        "        \"op\": \"RBTreeSortedRecordSource\",\n" +
+                        "        \"byRowId\": true,\n" +
+                        "        \"src\": {\n" +
+                        "          \"op\": \"SelectedColumnsRecordSource\",\n" +
+                        "          \"src\": {\n" +
+                        "            \"op\": \"VirtualColumnRecordSource\",\n" +
+                        "            \"src\": {\n" +
+                        "              \"op\": \"JournalSource\",\n" +
+                        "              \"psrc\": {\n" +
+                        "                \"op\": \"JournalPartitionSource\",\n" +
+                        "                \"journal\": \"employees\"\n" +
+                        "              },\n" +
+                        "              \"rsrc\": {\n" +
+                        "                \"op\": \"AllRowSource\"\n" +
+                        "              }\n" +
+                        "            }\n" +
+                        "          }\n" +
+                        "        }\n" +
+                        "      },\n" +
+                        "      \"masterTsIndex\": 7,\n" +
+                        "      \"slaveTsIndex\": 3\n" +
+                        "    },\n" +
+                        "    \"filter\": \"e.lastName \\u003d \\u0027x\\u0027 and e.blah \\u003d \\u0027y\\u0027\"\n" +
+                        "  },\n" +
+                        "  \"slave\": {\n" +
+                        "    \"op\": \"JournalSource\",\n" +
+                        "    \"psrc\": {\n" +
+                        "      \"op\": \"JournalPartitionSource\",\n" +
+                        "      \"journal\": \"orders\"\n" +
+                        "    },\n" +
+                        "    \"rsrc\": {\n" +
+                        "      \"op\": \"AllRowSource\"\n" +
+                        "    }\n" +
+                        "  },\n" +
+                        "  \"joinOn\": [\n" +
+                        "    [\n" +
+                        "      \"customerId\"\n" +
+                        "    ],\n" +
+                        "    [\n" +
+                        "      \"customerId\"\n" +
+                        "    ]\n" +
+                        "  ]\n" +
+                        "}",
+                "customers c" +
+                        " asof join (select '1' blah, lastName, employeeId, timestamp from employees order by lastName) e on c.customerId = e.employeeId" +
+                        " join orders o on c.customerId = o.customerId where e.lastName = 'x' and e.blah = 'y'");
     }
 
     @Test
@@ -271,7 +380,8 @@ public class JoinQueryTest extends AbstractOptimiserTest {
 
     @Test
     public void testInnerJoin() throws Exception {
-        final String expected = "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t1605271283\t9619\t486\t\t2015-07-10T00:00:29.443Z\tYM\n" +
+        final String expected = "customerId\tcustomerName\tcontactName\taddress\tcity\tpostalCode\tcountry\ttimestamp\torderId\tcustomerId\tproductId\temployeeId\torderDate\tshipper\n" +
+                "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t1605271283\t9619\t486\t\t2015-07-10T00:00:29.443Z\tYM\n" +
                 "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t401073894\t9619\t1645\tDND\t2015-07-10T00:00:31.115Z\tFNMURHFGESODNWN\n" +
                 "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t921021073\t9619\t1860\tSR\t2015-07-10T00:00:41.263Z\tOJXJCNBLYTOIYI\n" +
                 "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t1986641415\t9619\t935\tUFUC\t2015-07-10T00:00:50.470Z\tFREQGOPJK\n" +
@@ -279,7 +389,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t189633559\t9619\t830\tRQMR\t2015-07-10T00:01:20.166Z\tQPL\n" +
                 "9619\tWTBHZVPVZZ\tT\tnull\tBMUPYPIZEPQKHZNGZGBUWDS\tPNKVDJOF\tFLRBROMNXKU\t2015-07-10T00:00:09.619Z\t960875992\t9619\t960\t\t2015-07-10T00:01:29.735Z\tYJZPHQDJKOM\n";
 
-        assertThat(expected, "customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'");
+        assertThat(expected, "customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'", true);
     }
 
     @Test

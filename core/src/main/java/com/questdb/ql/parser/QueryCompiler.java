@@ -359,16 +359,6 @@ public class QueryCompiler {
         }
     }
 
-    private void analyseLimit(QueryModel model) throws ParserException {
-        ExprNode lo = model.getLimitLo();
-        ExprNode hi = model.getLimitHi();
-        if (hi == null) {
-            model.setLimitVc(LONG_ZERO_CONST, limitToVirtualColumn(model, lo));
-        } else {
-            model.setLimitVc(limitToVirtualColumn(model, lo), limitToVirtualColumn(model, hi));
-        }
-    }
-
     private void analyseRegex(QueryModel parent, ExprNode node) throws ParserException {
         literalCollectorAIndexes.clear();
         literalCollectorBIndexes.clear();
@@ -389,6 +379,19 @@ public class QueryCompiler {
                 constNameToIndex.put(name, literalCollectorAIndexes.getQuick(0));
                 constNameToNode.put(name, node.rhs);
                 constNameToToken.put(name, node.token);
+            }
+        }
+    }
+
+    private void applyLimit(QueryModel model) throws ParserException {
+        // analyse limit first as it is easy win
+        if (model.getLimitLo() != null || model.getLimitHi() != null) {
+            ExprNode lo = model.getLimitLo();
+            ExprNode hi = model.getLimitHi();
+            if (hi == null) {
+                model.setLimitVc(LONG_ZERO_CONST, limitToVirtualColumn(model, lo));
+            } else {
+                model.setLimitVc(limitToVirtualColumn(model, lo), limitToVirtualColumn(model, hi));
             }
         }
     }
@@ -451,7 +454,8 @@ public class QueryCompiler {
                     }
                     if (qualifies) {
                         postFilterRemoved.add(k);
-                        parent.getJoinModels().getQuick(index).setPostJoinWhereClause(filterNodes.getQuick(k));
+                        QueryModel m = parent.getJoinModels().getQuick(index);
+                        m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), filterNodes.getQuick(k)));
                     }
                 }
             }
@@ -591,16 +595,18 @@ public class QueryCompiler {
         RecordSource rs;
 
         if (model.getJoinModels().size() > 1) {
-            optimiseJoins(model, factory);
             rs = compileJoins(model, factory);
+        } else if (model.getJournalName() != null) {
+            rs = compileJournal(model, factory);
         } else {
-            rs = compileSingleOrSubQuery(model, factory);
+            rs = compileSubQuery(model, factory);
         }
+
         return limit(order(selectColumns(rs, model), model), model);
     }
 
     private RecordSource compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-
+        optimiseJoins(model, factory);
         ObjList<QueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
         RecordSource master = null;
@@ -615,7 +621,8 @@ public class QueryCompiler {
             RecordSource slave = m.getRecordSource();
 
             if (slave == null) {
-                slave = compileSingleOrSubQuery(m, factory);
+                // subquery would have been compiled already
+                slave = compileJournal(m, factory);
                 if (m.getAlias() != null) {
                     slave.getMetadata().setAlias(m.getAlias().token);
                 }
@@ -659,7 +666,9 @@ public class QueryCompiler {
 
     @SuppressWarnings("ConstantConditions")
     @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY"})
-    private RecordSource compileSingleJournal(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource compileJournal(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+
+        applyLimit(model);
 
         RecordMetadata metadata = model.getMetadata();
         JournalMetadata journalMetadata;
@@ -850,25 +859,14 @@ public class QueryCompiler {
         return new JournalSource(ps, rs == null ? new AllRowSource() : rs);
     }
 
-    private RecordSource compileSingleOrSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        // analyse limit first as it is easy win
-        if (model.getLimitLo() != null || model.getLimitHi() != null) {
-            analyseLimit(model);
-        }
-
-        if (model.getJournalName() != null) {
-            return compileSingleJournal(model, factory);
-        } else {
-            optimiseSubQueries(model, factory);
-            return compileSubQuery(model, factory);
-        }
-    }
-
     private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
         return compile(parser.parseInternal(query).getQueryModel(), factory);
     }
 
     private RecordSource compileSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+
+        applyLimit(model);
+        optimiseSubQueries(model, factory);
 
         RecordSource rs = compile(model.getNestedModel(), factory);
         if (model.getWhereClause() == null) {
@@ -1052,6 +1050,37 @@ public class QueryCompiler {
             }
             return index;
         }
+    }
+
+    private boolean hasNonAggregates(ExprNode node) {
+
+        this.exprNodeStack.clear();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (!this.exprNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                switch (node.type) {
+                    case LITERAL:
+                        return true;
+                    case FUNCTION:
+                        if (FunctionFactories.isAggregate(node.token)) {
+                            node = null;
+                            continue;
+                        }
+                        break;
+                    default:
+                        this.exprNodeStack.push(node.rhs);
+                        break;
+                }
+
+                node = node.lhs;
+            } else {
+                node = this.exprNodeStack.poll();
+            }
+        }
+        return false;
     }
 
     private void homogenizeCrossJoins(QueryModel parent) {
@@ -1341,10 +1370,10 @@ public class QueryCompiler {
 
     private RecordSource order(RecordSource rs, QueryModel model) throws ParserException {
         ObjList<ExprNode> orderBy = model.getOrderBy();
-        IntList orderByDirection = model.getOrderByDirection();
-        IntList indices = model.getOrderColumnIndices();
         int n = orderBy.size();
         if (n > 0) {
+            IntList orderByDirection = model.getOrderByDirection();
+            IntList indices = model.getOrderColumnIndices();
             RecordMetadata m = rs.getMetadata();
             for (int i = 0; i < n; i++) {
                 ExprNode tok = orderBy.getQuick(i);
@@ -1778,7 +1807,6 @@ public class QueryCompiler {
         }
 
         RecordSource rs = recordSource;
-
 
         // if virtual columns are present, create record source to calculate them
         if (virtualColumns != null) {

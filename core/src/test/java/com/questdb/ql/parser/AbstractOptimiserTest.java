@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,10 +30,14 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.parser;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonParser;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.io.RecordSourcePrinter;
@@ -57,9 +61,18 @@ public abstract class AbstractOptimiserTest {
     protected static final StringSink sink = new StringSink();
     protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
     private static final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 16);
+    private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+    private static final JsonParser jp = new JsonParser();
 
     protected void assertPlan(String expected, String query) throws ParserException, JournalException {
         TestUtils.assertEquals(expected, compiler.plan(factory, query));
+    }
+
+    protected void assertPlan2(CharSequence expected, CharSequence query) throws JournalException, ParserException {
+        sink.clear();
+        compiler.compileSource(factory, query).toSink(sink);
+        String s = gson.toJson(jp.parse(sink.toString()));
+        TestUtils.assertEquals(expected, s);
     }
 
     protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {

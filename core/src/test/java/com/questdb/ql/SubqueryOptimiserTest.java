@@ -77,7 +77,7 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     @Test
     public void testJoinSubQueryFilter() throws Exception {
         sink.put(compiler.compileSource(factory, "(tab a join tex b on a.id = b.id) a where a.x = 10"));
-        TestUtils.assertEquals("{\"op\":\"HashJoinRecordSource\",\"master\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}},\"slave\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tex\"},\"rsrc\":{\"op\":\"AllRowSource\"}},\"joinOn\":[id],[id]}",
+        TestUtils.assertEquals("{\"op\":\"HashJoinRecordSource\",\"master\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}},\"slave\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tex\"},\"rsrc\":{\"op\":\"AllRowSource\"}},\"joinOn\":[[\"id\"],[\"id\"]]}",
                 sink);
     }
 
