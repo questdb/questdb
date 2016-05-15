@@ -77,6 +77,31 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAmbiguousColumn() throws Exception {
+        try {
+            compiler.compileSource(factory, "(((tab order by y) where y = 5) a join tex b on a.id = b.id) a where a.x = 10 and id > 100");
+        } catch (ParserException e) {
+            TestUtils.assertEquals("Ambiguous column name", QueryError.getMessage());
+        }
+    }
+
+    @Test
+    public void testJoinRecursiveJoinSubQueries() throws Exception {
+        RecordSource rs = compiler.compileSource(factory, "(((tab order by y) where y = 5) a join tex b on a.id = b.id) a where a.x = 10 and a.amount > 100");
+        sink.put(rs);
+        TestUtils.assertEquals("{\"op\":\"HashJoinRecordSource\",\"master\":{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}},\"slave\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tex\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}},\"joinOn\":[[\"id\"],[\"id\"]]}",
+                sink);
+    }
+
+    @Test
+    public void testJoinSubQueries() throws Exception {
+        RecordSource rs = compiler.compileSource(factory, "((tab order by y) a join tex b on a.id = b.id) a where a.x = 10 and a.amount > 100");
+        sink.put(rs);
+        TestUtils.assertEquals("{\"op\":\"HashJoinRecordSource\",\"master\":{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}},\"slave\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tex\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}},\"joinOn\":[[\"id\"],[\"id\"]]}",
+                sink);
+    }
+
+    @Test
     public void testJoinSubQueryFilter() throws Exception {
         sink.put(compiler.compileSource(factory, "(tab a join tex b on a.id = b.id) a where a.x = 10"));
         TestUtils.assertEquals("{\"op\":\"HashJoinRecordSource\",\"master\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}},\"slave\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tex\"},\"rsrc\":{\"op\":\"AllRowSource\"}},\"joinOn\":[[\"id\"],[\"id\"]]}",
@@ -85,14 +110,9 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
 
     @Test
     public void testJoinSubQueryFilter2() throws Exception {
-        try {
-            sink.put(compiler.compileSource(factory, "(tab a join tex b on a.id = b.id) a where a.amount = 10"));
-            TestUtils.assertEquals("{\"op\":\"HashJoinRecordSource\",\"master\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}},\"slave\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tex\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}},\"joinOn\":[[\"id\"],[\"id\"]]}",
-                    sink);
-        } catch (ParserException e) {
-            e.printStackTrace();
-            System.out.println(QueryError.getMessage());
-        }
+        sink.put(compiler.compileSource(factory, "(tab a join tex b on a.id = b.id) a where a.amount = 10"));
+        TestUtils.assertEquals("{\"op\":\"HashJoinRecordSource\",\"master\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}},\"slave\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tex\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}},\"joinOn\":[[\"id\"],[\"id\"]]}",
+                sink);
     }
 
     @Test
@@ -144,4 +164,5 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
         TestUtils.assertEquals("{\"op\":\"FilteredJournalRecordSource\",\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"VirtualColumnRecordSource\",\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}},\"filter\":\"a.k = 10\"}",
                 sink);
     }
+
 }

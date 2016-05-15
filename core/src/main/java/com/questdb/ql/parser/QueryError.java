@@ -50,6 +50,10 @@ public final class QueryError implements QueryErrorBuilder {
         return position(position).$(message).$();
     }
 
+    public static ParserException ambiguousColumn(int position) {
+        return position(position).$("Ambiguous column name").$();
+    }
+
     public static CharSequence getMessage() {
         return INSTANCE.tl.get().sink;
     }

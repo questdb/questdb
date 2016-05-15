@@ -535,6 +535,8 @@ public class QueryCompiler {
     private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         RecordSource rs;
 
+        optimiseSubQueries(model, factory);
+
         if (model.getJoinModels().size() > 1) {
             rs = compileJoins(model, factory);
         } else if (model.getJournalName() != null) {
@@ -570,7 +572,7 @@ public class QueryCompiler {
             }
 
             if (needColumnNameHistogram) {
-                createColumnNameHistogram(model, slave);
+                model.createColumnNameHistogram(slave);
             }
 
             // check if this is the root of joins
@@ -807,7 +809,7 @@ public class QueryCompiler {
     private RecordSource compileSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
         applyLimit(model);
-        optimiseSubQueries(model, factory);
+//        optimiseSubQueries(model, factory);
 
         RecordSource rs = compile(model.getNestedModel(), factory);
         if (model.getWhereClause() == null) {
@@ -894,14 +896,6 @@ public class QueryCompiler {
 
             // todo: extract config
             return new AsOfPartitionedJoinRecordSource(master, masterTimestampIndex, slave, slaveTimestampIndex, masterKeys, slaveKeys, 4 * 1024 * 1024);
-        }
-    }
-
-    private void createColumnNameHistogram(QueryModel model, RecordSource rs) {
-        CharSequenceIntHashMap map = model.getColumnNameHistogram();
-        RecordMetadata m = rs.getMetadata();
-        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
-            map.increment(m.getColumnName(i));
         }
     }
 
@@ -1293,28 +1287,54 @@ public class QueryCompiler {
     }
 
     private void optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        QueryModel m = model;
         QueryModel nm;
-        while ((nm = m.getNestedModel()) != null) {
-            m.createColumnNameHistogram(factory);
-            processAndConditions(m, m.getWhereClause());
-            literalMatcher.of(m.getAlias() != null ? m.getAlias().token : null);
+        ObjList<QueryModel> jm = model.getJoinModels();
+        ObjList<ExprNode> where = model.parseWhereClause();
+        ExprNode thisWhere = null;
 
-            ExprNode nmWhere = nm.getWhereClause();
-            ExprNode thisWhere = null;
-            ObjList<ExprNode> w = m.getParsedWhere();
-            for (int i = 0, n = w.size(); i < n; i++) {
-                ExprNode node = w.getQuick(i);
-                if (literalMatcher.matches(node, m.getColumnNameHistogram())) {
-                    nmWhere = concatFilters(nmWhere, node);
-                } else {
-                    thisWhere = concatFilters(thisWhere, node);
+        // create name histograms
+        for (int i = 0, n = jm.size(); i < n; i++) {
+            if ((nm = jm.getQuick(i).getNestedModel()) != null) {
+                nm.createColumnNameHistogram(factory);
+            }
+        }
+
+        // match each of where conditions to join models
+        // if "where" matches two models, we have ambiguous column name
+        for (int j = 0, k = where.size(); j < k; j++) {
+            ExprNode node = where.getQuick(j);
+            int matchModel = -1;
+            for (int i = 0, n = jm.size(); i < n; i++) {
+                QueryModel qm = jm.getQuick(i);
+                nm = qm.getNestedModel();
+                if (nm != null) {
+                    if (literalMatcher.matches(node, nm.getColumnNameHistogram(), qm.getAlias() != null ? qm.getAlias().token : null)) {
+                        if (matchModel > -1) {
+                            throw QueryError.ambiguousColumn(node.position);
+                        }
+                        matchModel = i;
+                    }
                 }
             }
 
-            nm.setWhereClause(nmWhere);
-            m.setWhereClause(thisWhere);
-            m = nm;
+            if (matchModel > -1) {
+                nm = jm.getQuick(matchModel).getNestedModel();
+                nm.setWhereClause(concatFilters(nm.getWhereClause(), node));
+            } else {
+                thisWhere = concatFilters(thisWhere, node);
+            }
+        }
+
+        model.getParsedWhere().clear();
+        model.setWhereClause(thisWhere);
+
+        // recursively apply same logic to nested model of each of join model
+        for (int i = 0, n = jm.size(); i < n; i++) {
+            QueryModel qm = jm.getQuick(i);
+            nm = qm.getNestedModel();
+            if (nm != null) {
+                optimiseSubQueries(nm, factory);
+            }
         }
     }
 
@@ -1353,35 +1373,6 @@ public class QueryCompiler {
         QueryModel model = parser.parse(query).getQueryModel();
         resetAndOptimise(model, factory);
         return model.plan();
-    }
-
-    /**
-     * Splits "where" clauses into "and" chunks
-     *
-     * @param node expression n
-     */
-    private void processAndConditions(QueryModel parent, ExprNode node) {
-        ExprNode n = node;
-        // pre-order traversal
-        exprNodeStack.clear();
-        while (!exprNodeStack.isEmpty() || n != null) {
-            if (n != null) {
-                switch (n.token) {
-                    case "and":
-                        if (n.rhs != null) {
-                            exprNodeStack.push(n.rhs);
-                        }
-                        n = n.lhs;
-                        break;
-                    default:
-                        parent.addParsedWhereNode(n);
-                        n = null;
-                        break;
-                }
-            } else {
-                n = exprNodeStack.poll();
-            }
-        }
     }
 
     private void processEmittedJoinClauses(QueryModel model) {
@@ -1650,7 +1641,7 @@ public class QueryCompiler {
                 }
 
                 if (index > -1) {
-                    throw QueryError.$(position, "Ambiguous column name");
+                    throw QueryError.ambiguousColumn(position);
                 }
 
                 index = i;
@@ -1709,7 +1700,7 @@ public class QueryCompiler {
 
                 // check if this column is exists in more than one journal/result set
                 if (columnNameHistogram.get(node.token) > 0) {
-                    throw QueryError.$(node.position, "Ambiguous column name");
+                    throw QueryError.ambiguousColumn(node.position);
                 }
 
                 // add to selected columns

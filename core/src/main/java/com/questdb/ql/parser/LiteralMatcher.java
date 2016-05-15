@@ -51,10 +51,6 @@ class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
         this.algo = algo;
     }
 
-    public void of(String alias) {
-        this.alias = alias;
-    }
-
     @Override
     public void visit(ExprNode node) throws ParserException {
         if (node.type == ExprNode.NodeType.LITERAL && match) {
@@ -65,7 +61,7 @@ class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
             }
 
             if (f > 0) {
-                throw QueryError.$(node.position, "Ambiguous column name");
+                throw QueryError.ambiguousColumn(node.position);
             }
 
             if (alias == null) {
@@ -82,7 +78,7 @@ class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (Chars.equals(columnName.alias(), alias) && (f = names.get(columnName.name())) > -1) {
                 if (f > 0) {
-                    throw QueryError.$(node.position, "Ambiguous column name");
+                    throw QueryError.ambiguousColumn(node.position);
                 }
                 node.token = columnName.name().toString();
                 return;
@@ -91,9 +87,10 @@ class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    boolean matches(ExprNode node, CharSequenceIntHashMap names) throws ParserException {
+    boolean matches(ExprNode node, CharSequenceIntHashMap names, String alias) throws ParserException {
         this.match = true;
         this.names = names;
+        this.alias = alias;
         algo.traverse(node, this);
         return match;
     }

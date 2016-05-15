@@ -52,6 +52,8 @@ import com.questdb.ql.parser.QueryError;
 import com.questdb.std.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
+import java.util.ArrayDeque;
+
 public class QueryModel implements Mutable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int ORDER_DIRECTION_ASCENDING = 0;
@@ -75,6 +77,7 @@ public class QueryModel implements Mutable {
     // list of "and" concatenated expressions
     private final ObjList<ExprNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConsts = new IntHashSet();
+    private final ArrayDeque<ExprNode> exprNodeStack = new ArrayDeque<>();
     private CharSequenceObjHashMap<Parameter> parameterMap = new CharSequenceObjHashMap<>();
     private ExprNode whereClause;
     private ExprNode postJoinWhereClause;
@@ -94,6 +97,7 @@ public class QueryModel implements Mutable {
     private ExprNode limitHi;
     private VirtualColumn limitLoVc;
     private VirtualColumn limitHiVc;
+
 
     private QueryModel() {
         joinModels.add(this);
@@ -161,6 +165,7 @@ public class QueryModel implements Mutable {
         parameterMap.clear();
         timestamp = null;
         orderColumnIndices.clear();
+        exprNodeStack.clear();
     }
 
     public JournalMetadata collectJournalMetadata(JournalReaderFactory factory) throws ParserException, JournalException {
@@ -185,7 +190,15 @@ public class QueryModel implements Mutable {
 
     public void createColumnNameHistogram(JournalReaderFactory factory) throws JournalException, ParserException {
         columnNameHistogram.clear();
-        createColumnNameHistogram0(columnNameHistogram, getNestedModel(), factory, false);
+        createColumnNameHistogram0(columnNameHistogram, this, factory, false);
+    }
+
+    public void createColumnNameHistogram(RecordSource rs) {
+        columnNameHistogram.clear();
+        RecordMetadata m = rs.getMetadata();
+        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+            columnNameHistogram.increment(m.getColumnName(i));
+        }
     }
 
     public ExprNode getAlias() {
@@ -383,6 +396,34 @@ public class QueryModel implements Mutable {
         return ordered;
     }
 
+    /**
+     * Splits "where" clauses into "and" chunks
+     */
+    public ObjList<ExprNode> parseWhereClause() {
+        ExprNode n = getWhereClause();
+        // pre-order traversal
+        exprNodeStack.clear();
+        while (!exprNodeStack.isEmpty() || n != null) {
+            if (n != null) {
+                switch (n.token) {
+                    case "and":
+                        if (n.rhs != null) {
+                            exprNodeStack.push(n.rhs);
+                        }
+                        n = n.lhs;
+                        break;
+                    default:
+                        addParsedWhereNode(n);
+                        n = null;
+                        break;
+                }
+            } else {
+                n = exprNodeStack.poll();
+            }
+        }
+        return getParsedWhere();
+    }
+
     public CharSequence plan() {
         planSink.clear();
         plan(planSink, 0);
@@ -545,7 +586,6 @@ public class QueryModel implements Mutable {
         }
         sink.put('\n');
     }
-
 
     public enum JoinType {
         INNER, OUTER, CROSS, ASOF

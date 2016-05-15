@@ -172,7 +172,10 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         "                \"journal\": \"employees\"\n" +
                         "              },\n" +
                         "              \"rsrc\": {\n" +
-                        "                \"op\": \"AllRowSource\"\n" +
+                        "                \"op\": \"FilteredRowSource\",\n" +
+                        "                \"rsrc\": {\n" +
+                        "                  \"op\": \"AllRowSource\"\n" +
+                        "                }\n" +
                         "              }\n" +
                         "            }\n" +
                         "          }\n" +
@@ -181,7 +184,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         "      \"masterTsIndex\": 7,\n" +
                         "      \"slaveTsIndex\": 3\n" +
                         "    },\n" +
-                        "    \"filter\": \"e.lastName \\u003d \\u0027x\\u0027 and e.blah \\u003d \\u0027y\\u0027\"\n" +
+                        "    \"filter\": \"e.blah \\u003d \\u0027y\\u0027\"\n" +
                         "  },\n" +
                         "  \"slave\": {\n" +
                         "    \"op\": \"JournalSource\",\n" +
@@ -320,7 +323,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @Test
     public void testDuplicateAlias() throws Exception {
         try {
-            assertPlan("", "customers a" +
+            assertPlan2("", "customers a" +
                     " cross join orders a");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
@@ -331,9 +334,29 @@ public class JoinQueryTest extends AbstractOptimiserTest {
 
     @Test
     public void testDuplicateJournals() throws Exception {
-        assertPlan("+ 0[ cross ] customers\n" +
-                        "+ 1[ cross ] customers\n" +
-                        "\n",
+        assertPlan2("{\n" +
+                        "  \"op\": \"CrossJoinRecordSource\",\n" +
+                        "  \"master\": {\n" +
+                        "    \"op\": \"JournalSource\",\n" +
+                        "    \"psrc\": {\n" +
+                        "      \"op\": \"JournalPartitionSource\",\n" +
+                        "      \"journal\": \"customers\"\n" +
+                        "    },\n" +
+                        "    \"rsrc\": {\n" +
+                        "      \"op\": \"AllRowSource\"\n" +
+                        "    }\n" +
+                        "  },\n" +
+                        "  \"slave\": {\n" +
+                        "    \"op\": \"JournalSource\",\n" +
+                        "    \"psrc\": {\n" +
+                        "      \"op\": \"JournalPartitionSource\",\n" +
+                        "      \"journal\": \"customers\"\n" +
+                        "    },\n" +
+                        "    \"rsrc\": {\n" +
+                        "      \"op\": \"AllRowSource\"\n" +
+                        "    }\n" +
+                        "  }\n" +
+                        "}",
                 "customers" +
                         " cross join customers");
     }
@@ -453,7 +476,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @Test
     public void testInvalidAlias() throws Exception {
         try {
-            assertPlan("", "orders join customers on orders.customerId = c.customerId");
+            assertPlan2("", "orders join customers on orders.customerId = c.customerId");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(45, QueryError.getPosition());
@@ -464,7 +487,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @Test
     public void testInvalidColumn() throws Exception {
         try {
-            assertPlan("", "orders join customers on customerIdx = customerId");
+            assertPlan2("", "orders join customers on customerIdx = customerId");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(25, QueryError.getPosition());
@@ -514,7 +537,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @Test
     public void testInvalidTableName() throws Exception {
         try {
-            assertPlan("", "orders join customer on customerId = customerId");
+            assertPlan2("", "orders join customer on customerId = customerId");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(12, QueryError.getPosition());
