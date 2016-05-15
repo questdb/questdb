@@ -42,7 +42,7 @@ import com.questdb.std.ThreadLocal;
 import org.jetbrains.annotations.NotNull;
 
 public class ColumnName implements CharSequence {
-    private static ThreadLocal<ColumnName> SINGLETON = new ThreadLocal<>(new ObjectFactory<ColumnName>() {
+    private static final ThreadLocal<ColumnName> SINGLETON = new ThreadLocal<>(new ObjectFactory<ColumnName>() {
         @Override
         public ColumnName newInstance() {
             return new ColumnName();

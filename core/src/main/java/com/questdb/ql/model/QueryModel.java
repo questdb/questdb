@@ -35,12 +35,20 @@
 
 package com.questdb.ql.model;
 
+import com.questdb.JournalKey;
+import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
+import com.questdb.ex.ParserException;
+import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.configuration.JournalConfiguration;
+import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.io.sink.StringSink;
+import com.questdb.misc.Chars;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.ops.Parameter;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.ql.parser.QueryError;
 import com.questdb.std.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -63,7 +71,7 @@ public class QueryModel implements Mutable {
     // and check if any of columns with frequency > 0 are selected
     // column name frequency of 1 corresponds to map value 0
     // column name frequency of 0 corresponds to map value -1
-    private final CharSequenceIntHashMap columnNameFrequencyMap = new CharSequenceIntHashMap();
+    private final CharSequenceIntHashMap columnNameHistogram = new CharSequenceIntHashMap();
     // list of "and" concatenated expressions
     private final ObjList<ExprNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConsts = new IntHashSet();
@@ -149,10 +157,35 @@ public class QueryModel implements Mutable {
         limitLo = null;
         limitHiVc = null;
         limitLoVc = null;
-        columnNameFrequencyMap.clear();
+        columnNameHistogram.clear();
         parameterMap.clear();
         timestamp = null;
         orderColumnIndices.clear();
+    }
+
+    public JournalMetadata collectJournalMetadata(JournalReaderFactory factory) throws ParserException, JournalException {
+        ExprNode readerNode = getJournalName();
+        if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
+            throw QueryError.$(readerNode.position, "Journal name must be either literal or string constant");
+        }
+
+        JournalConfiguration configuration = factory.getConfiguration();
+
+        String reader = Chars.stripQuotes(readerNode.token);
+        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
+            throw QueryError.$(readerNode.position, "Journal does not exist");
+        }
+
+        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.EXISTS_FOREIGN) {
+            throw QueryError.$(readerNode.position, "Journal directory is of unknown format");
+        }
+
+        return factory.getOrCreateMetadata(new JournalKey<>(reader));
+    }
+
+    public void createColumnNameHistogram(JournalReaderFactory factory) throws JournalException, ParserException {
+        columnNameHistogram.clear();
+        createColumnNameHistogram0(columnNameHistogram, getNestedModel(), factory, false);
     }
 
     public ExprNode getAlias() {
@@ -168,7 +201,7 @@ public class QueryModel implements Mutable {
     }
 
     public CharSequenceIntHashMap getColumnNameHistogram() {
-        return columnNameFrequencyMap;
+        return columnNameHistogram;
     }
 
     public ObjList<QueryColumn> getColumns() {
@@ -376,6 +409,40 @@ public class QueryModel implements Mutable {
         return alias != null ? alias.token : (journalName != null ? journalName.token : '{' + nestedModel.toString() + '}');
     }
 
+    private static void createColumnNameHistogram0(CharSequenceIntHashMap histogram, QueryModel model, JournalReaderFactory factory, boolean ignoreJoins) throws JournalException, ParserException {
+        ObjList<QueryModel> jm = model.getJoinModels();
+        int jmSize = ignoreJoins ? 0 : jm.size();
+
+        int n = model.getColumns().size();
+        if (n > 0) {
+            for (int i = 0; i < n; i++) {
+                QueryColumn qc = model.getColumns().getQuick(i);
+                switch (qc.getAst().type) {
+                    case LITERAL:
+                        if (qc.getAlias() != null) {
+                            histogram.increment(qc.getAlias());
+                        } else {
+                            histogram.increment(qc.getAst().token);
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+        } else if (jmSize > 0) {
+            for (int i = 0; i < jmSize; i++) {
+                createColumnNameHistogram0(histogram, jm.getQuick(i), factory, true);
+            }
+        } else if (model.getJournalName() != null) {
+            JournalMetadata m = model.collectJournalMetadata(factory);
+            for (int i = 0, k = m.getColumnCount(); i < k; i++) {
+                histogram.increment(m.getColumnName(i));
+            }
+        } else {
+            createColumnNameHistogram0(histogram, model.getNestedModel(), factory, false);
+        }
+    }
+
     private void plan(StringSink sink, int pad) {
         ObjList<QueryModel> joinModels = getJoinModels();
         if (joinModels.size() > 1) {
@@ -478,6 +545,7 @@ public class QueryModel implements Mutable {
         }
         sink.put('\n');
     }
+
 
     public enum JoinType {
         INNER, OUTER, CROSS, ASOF

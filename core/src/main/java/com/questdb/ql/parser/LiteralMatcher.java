@@ -39,11 +39,11 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.ColumnName;
 import com.questdb.misc.Chars;
 import com.questdb.ql.model.ExprNode;
-import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.CharSequenceIntHashMap;
 
 class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
     private final PostOrderTreeTraversalAlgo algo;
-    private CharSequenceHashSet names;
+    private CharSequenceIntHashMap names;
     private String alias;
     private boolean match;
 
@@ -51,16 +51,21 @@ class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
         this.algo = algo;
     }
 
-    public LiteralMatcher of(String alias) {
+    public void of(String alias) {
         this.alias = alias;
-        return this;
     }
 
     @Override
     public void visit(ExprNode node) throws ParserException {
         if (node.type == ExprNode.NodeType.LITERAL && match) {
-            if (names.contains(node.token)) {
+            int f = names.get(node.token);
+
+            if (f == 0) {
                 return;
+            }
+
+            if (f > 0) {
+                throw QueryError.$(node.position, "Ambiguous column name");
             }
 
             if (alias == null) {
@@ -75,7 +80,10 @@ class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
                 return;
             }
 
-            if (Chars.equals(columnName.alias(), alias) && names.contains(columnName.name())) {
+            if (Chars.equals(columnName.alias(), alias) && (f = names.get(columnName.name())) > -1) {
+                if (f > 0) {
+                    throw QueryError.$(node.position, "Ambiguous column name");
+                }
                 node.token = columnName.name().toString();
                 return;
             }
@@ -83,7 +91,7 @@ class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    boolean matches(ExprNode node, CharSequenceHashSet names) throws ParserException {
+    boolean matches(ExprNode node, CharSequenceIntHashMap names) throws ParserException {
         this.match = true;
         this.names = names;
         algo.traverse(node, this);

@@ -35,12 +35,10 @@
 
 package com.questdb.ql.parser;
 
-import com.questdb.JournalKey;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -534,63 +532,6 @@ public class QueryCompiler {
         constNameToToken.clear();
     }
 
-    private void collectColumnNameFrequency(QueryModel model, RecordSource rs) {
-        CharSequenceIntHashMap map = model.getColumnNameHistogram();
-        RecordMetadata m = rs.getMetadata();
-        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
-            CharSequence name = m.getColumnName(i);
-            map.put(name, map.get(name) + 1);
-        }
-    }
-
-    private JournalMetadata collectJournalMetadata(QueryModel model, JournalReaderFactory factory) throws ParserException, JournalException {
-        ExprNode readerNode = model.getJournalName();
-        if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
-            throw QueryError.$(readerNode.position, "Journal name must be either literal or string constant");
-        }
-
-        JournalConfiguration configuration = factory.getConfiguration();
-
-        String reader = Chars.stripQuotes(readerNode.token);
-        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
-            throw QueryError.$(readerNode.position, "Journal does not exist");
-        }
-
-        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.EXISTS_FOREIGN) {
-            throw QueryError.$(readerNode.position, "Journal directory is of unknown format");
-        }
-
-        return factory.getOrCreateMetadata(new JournalKey<>(reader));
-    }
-
-    private void collectSelectedColumns(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        selectedColumnAliases.clear();
-        int n = model.getColumns().size();
-        if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                QueryColumn qc = model.getColumns().getQuick(i);
-                switch (qc.getAst().type) {
-                    case LITERAL:
-                        if (qc.getAlias() != null) {
-                            selectedColumnAliases.add(qc.getAlias());
-                        } else {
-                            selectedColumnAliases.add(qc.getAst().token);
-                        }
-                        break;
-                    default:
-                        break;
-                }
-            }
-        } else if (model.getJournalName() != null) {
-            JournalMetadata m = collectJournalMetadata(model, factory);
-            for (int i = 0, k = m.getColumnCount(); i < k; i++) {
-                selectedColumnAliases.add(m.getColumnName(i));
-            }
-        } else {
-            collectSelectedColumns(model.getNestedModel(), factory);
-        }
-    }
-
     private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         RecordSource rs;
 
@@ -611,7 +552,7 @@ public class QueryCompiler {
         IntList ordered = model.getOrderedJoinModels();
         RecordSource master = null;
 
-        boolean collectColumnNameFrequency = model.getColumns().size() > 0;
+        boolean needColumnNameHistogram = model.getColumns().size() > 0;
 
         for (int i = 0, n = ordered.size(); i < n; i++) {
             int index = ordered.getQuick(i);
@@ -628,8 +569,8 @@ public class QueryCompiler {
                 }
             }
 
-            if (collectColumnNameFrequency) {
-                collectColumnNameFrequency(model, slave);
+            if (needColumnNameHistogram) {
+                createColumnNameHistogram(model, slave);
             }
 
             // check if this is the root of joins
@@ -674,7 +615,7 @@ public class QueryCompiler {
         JournalMetadata journalMetadata;
 
         if (metadata == null) {
-            journalMetadata = collectJournalMetadata(model, factory);
+            journalMetadata = model.collectJournalMetadata(factory);
         } else if (metadata instanceof JournalMetadata) {
             journalMetadata = (JournalMetadata) metadata;
         } else {
@@ -953,6 +894,14 @@ public class QueryCompiler {
 
             // todo: extract config
             return new AsOfPartitionedJoinRecordSource(master, masterTimestampIndex, slave, slaveTimestampIndex, masterKeys, slaveKeys, 4 * 1024 * 1024);
+        }
+    }
+
+    private void createColumnNameHistogram(QueryModel model, RecordSource rs) {
+        CharSequenceIntHashMap map = model.getColumnNameHistogram();
+        RecordMetadata m = rs.getMetadata();
+        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+            map.increment(m.getColumnName(i));
         }
     }
 
@@ -1344,18 +1293,19 @@ public class QueryCompiler {
     }
 
     private void optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        QueryModel nm = model.getNestedModel();
-        while (nm != null) {
-            collectSelectedColumns(nm, factory);
-            processAndConditions(model, model.getWhereClause());
-            literalMatcher.of(model.getAlias() != null ? model.getAlias().token : null);
+        QueryModel m = model;
+        QueryModel nm;
+        while ((nm = m.getNestedModel()) != null) {
+            m.createColumnNameHistogram(factory);
+            processAndConditions(m, m.getWhereClause());
+            literalMatcher.of(m.getAlias() != null ? m.getAlias().token : null);
 
             ExprNode nmWhere = nm.getWhereClause();
             ExprNode thisWhere = null;
-            ObjList<ExprNode> w = model.getParsedWhere();
+            ObjList<ExprNode> w = m.getParsedWhere();
             for (int i = 0, n = w.size(); i < n; i++) {
                 ExprNode node = w.getQuick(i);
-                if (literalMatcher.matches(node, selectedColumnAliases)) {
+                if (literalMatcher.matches(node, m.getColumnNameHistogram())) {
                     nmWhere = concatFilters(nmWhere, node);
                 } else {
                     thisWhere = concatFilters(thisWhere, node);
@@ -1363,8 +1313,8 @@ public class QueryCompiler {
             }
 
             nm.setWhereClause(nmWhere);
-            model.setWhereClause(thisWhere);
-            nm = nm.getNestedModel();
+            m.setWhereClause(thisWhere);
+            m = nm;
         }
     }
 
@@ -1409,9 +1359,8 @@ public class QueryCompiler {
      * Splits "where" clauses into "and" chunks
      *
      * @param node expression n
-     * @throws ParserException
      */
-    private void processAndConditions(QueryModel parent, ExprNode node) throws ParserException {
+    private void processAndConditions(QueryModel parent, ExprNode node) {
         ExprNode n = node;
         // pre-order traversal
         exprNodeStack.clear();
@@ -1672,7 +1621,7 @@ public class QueryCompiler {
         QueryModel model = parent.getJoinModels().getQuick(index);
         RecordMetadata metadata;
         if (model.getJournalName() != null) {
-            model.setMetadata(metadata = collectJournalMetadata(model, factory));
+            model.setMetadata(metadata = model.collectJournalMetadata(factory));
         } else {
             RecordSource rs = compile(model.getNestedModel(), factory);
             model.setMetadata(metadata = rs.getMetadata());

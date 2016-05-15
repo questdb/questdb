@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.std;
@@ -77,6 +78,7 @@ public class CharSequenceIntHashMap implements Mutable {
     public final void clear() {
         Arrays.fill(keys, noEntryKey);
         Arrays.fill(values, noEntryValue);
+        free = this.capacity;
     }
 
     public int get(CharSequence key) {
@@ -91,6 +93,26 @@ public class CharSequenceIntHashMap implements Mutable {
         }
 
         return probe(key, index);
+    }
+
+    public void increment(CharSequence key) {
+        int index = Chars.hashCode(key) & mask;
+        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+            Unsafe.arrayPut(keys, index, key);
+            Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
+            free--;
+            if (free == 0) {
+                rehash();
+            }
+            return;
+        }
+
+        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+            Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
+            return;
+        }
+
+        probeIncrement(key, index);
     }
 
     public boolean put(CharSequence key, int value) {
@@ -147,6 +169,26 @@ public class CharSequenceIntHashMap implements Mutable {
         } while (true);
     }
 
+    private void probeIncrement(CharSequence key, int index) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+                Unsafe.arrayPut(keys, index, key);
+                Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
+                free--;
+                if (free == 0) {
+                    rehash();
+                }
+                return;
+            }
+
+            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+                Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
+                return;
+            }
+        } while (true);
+    }
+
     private boolean probeInsert(CharSequence key, int index, int value) {
         do {
             index = (index + 1) & mask;
@@ -196,6 +238,7 @@ public class CharSequenceIntHashMap implements Mutable {
         this.keys = new CharSequence[newCapacity];
         this.values = new int[newCapacity];
         Arrays.fill(keys, noEntryKey);
+        Arrays.fill(values, noEntryValue);
 
         for (int i = oldKeys.length; i-- > 0; ) {
             if (Unsafe.arrayGet(oldKeys, i) != noEntryKey) {

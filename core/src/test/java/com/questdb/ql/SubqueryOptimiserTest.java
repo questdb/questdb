@@ -36,8 +36,10 @@
 package com.questdb.ql;
 
 import com.questdb.JournalWriter;
+import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.ql.parser.AbstractOptimiserTest;
+import com.questdb.ql.parser.QueryError;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -82,6 +84,18 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testJoinSubQueryFilter2() throws Exception {
+        try {
+            sink.put(compiler.compileSource(factory, "(tab a join tex b on a.id = b.id) a where a.amount = 10"));
+            TestUtils.assertEquals("{\"op\":\"HashJoinRecordSource\",\"master\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}},\"slave\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tex\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}},\"joinOn\":[[\"id\"],[\"id\"]]}",
+                    sink);
+        } catch (ParserException e) {
+            e.printStackTrace();
+            System.out.println(QueryError.getMessage());
+        }
+    }
+
+    @Test
     public void testOneLevelAliasedSelectedSubQuery() throws Exception {
         sink.put(compiler.compileSource(factory, "(select x from tab order by x) a where a.x = 10"));
         TestUtils.assertEquals("{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}}",
@@ -99,6 +113,14 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     public void testOneLevelSimpleSubQuery() throws Exception {
         sink.put(compiler.compileSource(factory, "(tab order by x) where x = 10"));
         TestUtils.assertEquals("{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}",
+                sink);
+    }
+
+    @Test
+    public void testRecursiveAliasedMixedSubQuery() throws Exception {
+        RecordSource rs = compiler.compileSource(factory, "(select y from (select 1+1 y, x from tab order by x) a where a.x = 10) b where b.y > 100");
+        sink.put(rs);
+        TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"FilteredJournalRecordSource\",\"src\":{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"VirtualColumnRecordSource\",\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}}},\"filter\":\"y > 100\"}}",
                 sink);
     }
 
