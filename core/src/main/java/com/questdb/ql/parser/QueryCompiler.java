@@ -532,7 +532,7 @@ public class QueryCompiler {
     }
 
     private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        optimiseOrderBy(model, 0);
+        optimiseOrderBy(model, OrderByState.UNKNOWN);
         optimiseSubQueries(model, factory);
         return compileNoOptimise(model, factory);
     }
@@ -1290,47 +1290,51 @@ public class QueryCompiler {
         }
     }
 
-    private void optimiseOrderBy(QueryModel model, int needOrder) {
+    private void optimiseOrderBy(QueryModel model, OrderByState state) {
         ObjList<QueryColumn> columns = model.getColumns();
-        int subNeedOrder;
+        OrderByState subQueryState;
 
         int n = columns.size();
         // determine if ordering is required
-        if (needOrder == 0 /* may be needed may be not */) {
-            // we have sample by, so expect sub-query has to be ordered
-            subNeedOrder = 1;
-            if (model.getSampleBy() == null) {
-                for (int i = 0; i < n; i++) {
-                    QueryColumn col = columns.getQuick(i);
-                    if (hasAggregates(col.getAst())) {
-                        subNeedOrder = 2;
-                        break;
+        switch (state) {
+            case UNKNOWN:
+                // we have sample by, so expect sub-query has to be ordered
+                subQueryState = OrderByState.NEED_ORDERED;
+                if (model.getSampleBy() == null) {
+                    for (int i = 0; i < n; i++) {
+                        QueryColumn col = columns.getQuick(i);
+                        if (hasAggregates(col.getAst())) {
+                            subQueryState = OrderByState.ORDER_INVARIANT;
+                            break;
+                        }
                     }
                 }
-            }
-        } else if (needOrder == 1) {
-            // parent requires order
-            // if this model forces ordering - sub-query ordering is not needed
-            if (model.getOrderBy().size() > 0) {
-                subNeedOrder = 2;
-            } else {
-                subNeedOrder = 1;
-            }
-        } else { // don't need order
-            // sub-query ordering is not needed
-            model.getOrderBy().clear();
-            if (model.getSampleBy() != null) {
-                subNeedOrder = 1;
-            } else {
-                subNeedOrder = 2;
-            }
+                break;
+            case NEED_ORDERED:
+                // parent requires order
+                // if this model forces ordering - sub-query ordering is not needed
+                if (model.getOrderBy().size() > 0) {
+                    subQueryState = OrderByState.ORDER_INVARIANT;
+                } else {
+                    subQueryState = OrderByState.NEED_ORDERED;
+                }
+                break;
+            default:
+                // sub-query ordering is not needed
+                model.getOrderBy().clear();
+                if (model.getSampleBy() != null) {
+                    subQueryState = OrderByState.NEED_ORDERED;
+                } else {
+                    subQueryState = OrderByState.ORDER_INVARIANT;
+                }
+                break;
         }
 
         ObjList<QueryModel> jm = model.getJoinModels();
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                optimiseOrderBy(qm, subNeedOrder);
+                optimiseOrderBy(qm, subQueryState);
             }
         }
     }
@@ -1368,13 +1372,11 @@ public class QueryCompiler {
             for (int i = 0, n = jm.size(); i < n; i++) {
                 QueryModel qm = jm.getQuick(i);
                 nm = qm.getNestedModel();
-                if (nm != null) {
-                    if (literalMatcher.matches(node, nm.getColumnNameHistogram(), qm.getAlias() != null ? qm.getAlias().token : null)) {
-                        if (matchModel > -1) {
-                            throw QueryError.ambiguousColumn(node.position);
-                        }
-                        matchModel = i;
+                if (nm != null && literalMatcher.matches(node, nm.getColumnNameHistogram(), qm.getAlias() != null ? qm.getAlias().token : null)) {
+                    if (matchModel > -1) {
+                        throw QueryError.ambiguousColumn(node.position);
                     }
+                    matchModel = i;
                 }
             }
 
@@ -1965,6 +1967,10 @@ public class QueryCompiler {
 
     private void unlinkDependencies(QueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).removeDependency(child);
+    }
+
+    private enum OrderByState {
+        UNKNOWN, NEED_ORDERED, ORDER_INVARIANT
     }
 
     private class LiteralCollector implements PostOrderTreeTraversalAlgo.Visitor {
