@@ -166,7 +166,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         Assert.assertEquals("1970-01-01T00:00:00.010Z", queryResponse.result.get(0)[5]);
 
         Assert.assertEquals("id4", queryResponse.result.get(4)[0]);
-        Assert.assertEquals("NaN", queryResponse.result.get(4)[2]);
+        Assert.assertEquals(null, queryResponse.result.get(4)[2]);
     }
 
     @Test

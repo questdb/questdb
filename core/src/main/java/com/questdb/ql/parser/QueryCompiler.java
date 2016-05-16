@@ -1,24 +1,24 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
+ * <p>
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,7 +30,6 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
- *
  ******************************************************************************/
 
 package com.questdb.ql.parser;
@@ -533,23 +532,12 @@ public class QueryCompiler {
     }
 
     private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        RecordSource rs;
-
+        optimiseOrderBy(model, 0);
         optimiseSubQueries(model, factory);
-
-        if (model.getJoinModels().size() > 1) {
-            rs = compileJoins(model, factory);
-        } else if (model.getJournalName() != null) {
-            rs = compileJournal(model, factory);
-        } else {
-            rs = compileSubQuery(model, factory);
-        }
-
-        return limit(order(selectColumns(rs, model), model), model);
+        return compileNoOptimise(model, factory);
     }
 
     private RecordSource compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
-        optimiseJoins(model, factory);
         ObjList<QueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
         RecordSource master = null;
@@ -802,6 +790,20 @@ public class QueryCompiler {
         return new JournalSource(ps, rs == null ? new AllRowSource() : rs);
     }
 
+    private RecordSource compileNoOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+        RecordSource rs;
+        if (model.getJoinModels().size() > 1) {
+            optimiseJoins(model, factory);
+            rs = compileJoins(model, factory);
+        } else if (model.getJournalName() != null) {
+            rs = compileJournal(model, factory);
+        } else {
+            rs = compileSubQuery(model, factory);
+        }
+
+        return limit(order(selectColumns(rs, model), model), model);
+    }
+
     private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
         return compile(parser.parseInternal(query).getQueryModel(), factory);
     }
@@ -809,9 +811,8 @@ public class QueryCompiler {
     private RecordSource compileSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
 
         applyLimit(model);
-//        optimiseSubQueries(model, factory);
 
-        RecordSource rs = compile(model.getNestedModel(), factory);
+        RecordSource rs = compileNoOptimise(model.getNestedModel(), factory);
         if (model.getWhereClause() == null) {
             return rs;
         }
@@ -995,7 +996,8 @@ public class QueryCompiler {
         }
     }
 
-    private boolean hasNonAggregates(ExprNode node) {
+
+    private boolean hasAggregates(ExprNode node) {
 
         this.exprNodeStack.clear();
 
@@ -1006,15 +1008,17 @@ public class QueryCompiler {
             if (node != null) {
                 switch (node.type) {
                     case LITERAL:
-                        return true;
+                        node = null;
+                        continue;
                     case FUNCTION:
                         if (FunctionFactories.isAggregate(node.token)) {
-                            node = null;
-                            continue;
+                            return true;
                         }
                         break;
                     default:
-                        this.exprNodeStack.push(node.rhs);
+                        if (node.rhs != null) {
+                            this.exprNodeStack.push(node.rhs);
+                        }
                         break;
                 }
 
@@ -1286,6 +1290,63 @@ public class QueryCompiler {
         }
     }
 
+    private void optimiseOrderBy(QueryModel model, int needOrder) {
+        ObjList<QueryColumn> columns = model.getColumns();
+        int subNeedOrder;
+
+        int n = columns.size();
+        // determine if ordering is required
+        if (needOrder == 0 /* may be needed may be not */) {
+            // we have sample by, so expect sub-query has to be ordered
+            subNeedOrder = 1;
+            if (model.getSampleBy() == null) {
+                for (int i = 0; i < n; i++) {
+                    QueryColumn col = columns.getQuick(i);
+                    if (hasAggregates(col.getAst())) {
+                        subNeedOrder = 2;
+                        break;
+                    }
+                }
+            }
+        } else if (needOrder == 1) {
+            // parent requires order
+            // if this model forces ordering - sub-query ordering is not needed
+            if (model.getOrderBy().size() > 0) {
+                subNeedOrder = 2;
+            } else {
+                subNeedOrder = 1;
+            }
+        } else { // don't need order
+            // sub-query ordering is not needed
+            model.getOrderBy().clear();
+            if (model.getSampleBy() != null) {
+                subNeedOrder = 1;
+            } else {
+                subNeedOrder = 2;
+            }
+        }
+
+        ObjList<QueryModel> jm = model.getJoinModels();
+        for (int i = 0, k = jm.size(); i < k; i++) {
+            QueryModel qm = jm.getQuick(i).getNestedModel();
+            if (qm != null) {
+                optimiseOrderBy(qm, subNeedOrder);
+            }
+        }
+    }
+
+    /**
+     * Objective of this method is to move filters inside of sub-queries where
+     * possible. This should reduce data flow into heavier algos such as
+     * sorting and hashing. Method achieves this by analysing columns returned by
+     * sub-queries and matching them to components of "where" clause.
+     * <p/>
+     *
+     * @param model   query model to analyse
+     * @param factory factory is used to collect journal columns.
+     * @throws JournalException
+     * @throws ParserException
+     */
     private void optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         QueryModel nm;
         ObjList<QueryModel> jm = model.getJoinModels();
@@ -1614,7 +1675,7 @@ public class QueryCompiler {
         if (model.getJournalName() != null) {
             model.setMetadata(metadata = model.collectJournalMetadata(factory));
         } else {
-            RecordSource rs = compile(model.getNestedModel(), factory);
+            RecordSource rs = compileNoOptimise(model.getNestedModel(), factory);
             model.setMetadata(metadata = rs.getMetadata());
             model.setRecordSource(rs);
         }

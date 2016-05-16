@@ -41,6 +41,7 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -80,6 +81,7 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     public void testAmbiguousColumn() throws Exception {
         try {
             compiler.compileSource(factory, "(((tab order by y) where y = 5) a join tex b on a.id = b.id) a where a.x = 10 and id > 100");
+            Assert.fail();
         } catch (ParserException e) {
             TestUtils.assertEquals("Ambiguous column name", QueryError.getMessage());
         }

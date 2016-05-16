@@ -60,6 +60,10 @@ public interface CharSink {
 
     CharSink putISODate(long value);
 
+    CharSink putJson(float value, int scale);
+
+    CharSink putJson(double value, int scale);
+
     CharSink putQuoted(CharSequence cs);
 
     CharSink putTrim(double value, int scale);

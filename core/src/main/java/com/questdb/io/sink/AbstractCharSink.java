@@ -125,6 +125,26 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
+    public CharSink putJson(float value, int scale) {
+        if (value == value) {
+            Numbers.append(this, value, scale);
+        } else {
+            put("null");
+        }
+        return this;
+    }
+
+    @Override
+    public CharSink putJson(double value, int scale) {
+        if (value == value) {
+            Numbers.append(this, value, scale);
+        } else {
+            put("null");
+        }
+        return this;
+    }
+
+    @Override
     public CharSink putQuoted(CharSequence cs) {
         put('\"').put(cs).put('\"');
         return this;
