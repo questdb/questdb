@@ -45,8 +45,8 @@
     <groupId>com.questdb</groupId>
     <artifactId>core</artifactId>
     <packaging>jar</packaging>
-    <name>QuestDB</name>
-    <description>High performance Time Series Database</description>
+
+    <description>QuestDB is High Performance Time Series Database</description>
 
     <url>http://www.questdb.org</url>
     <licenses>

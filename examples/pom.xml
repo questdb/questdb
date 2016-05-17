@@ -32,7 +32,6 @@
     <groupId>com.questdb</groupId>
     <artifactId>examples</artifactId>
     <packaging>jar</packaging>
-    <name>QuestDB.Examples</name>
     <description>Code examples and usage scenarios for QuestDB</description>
 
     <url>http://www.questdb.org</url>

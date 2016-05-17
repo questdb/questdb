@@ -41,7 +41,8 @@
     <groupId>com.questdb</groupId>
     <artifactId>parent</artifactId>
     <packaging>pom</packaging>
-    <name>QuestDB.Parent.POM</name>
+
+    <name>QuestDB</name>
 
     <build>
         <plugins>
