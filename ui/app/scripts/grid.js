@@ -65,6 +65,7 @@
         var query;
         var queryTimer;
         var dbg;
+        var downKey = [];
 
         // viewport height
         var vp = defaults.viewportHeight;
@@ -548,6 +549,11 @@
             }
         }
 
+
+        function onKeyUp(e) {
+            delete downKey[(('which' in e) ? e.which : e.keyCode)];
+        }
+
         function onKeyDown(e) {
             var keyCode = ('which' in e) ? e.which : e.keyCode;
             var preventDefault = true;
@@ -556,10 +562,18 @@
                     activeRowUp(rowsInView);
                     break;
                 case 38: // arrow up
-                    activeRowUp(1);
+                    if (downKey[91]) {
+                        activeRowUp(activeRow);
+                    } else {
+                        activeRowUp(1);
+                    }
                     break;
                 case 40: // arrow down
-                    activeRowDown(1);
+                    if (downKey[91]) {
+                        activeRowDown(r - activeRow);
+                    } else {
+                        activeRowDown(1);
+                    }
                     break;
                 case 34: // arrow down
                     activeRowDown(rowsInView);
@@ -571,12 +585,21 @@
                     activeCellLeft();
                     break;
                 case 35: // end? Fn+arrow right on mac
-                    activeCellEnd();
+                    if (downKey[17]) {
+                        activeRowDown(r - activeRow);
+                    } else {
+                        activeCellEnd();
+                    }
                     break;
                 case 36: // home ? Fn + arrow left on mac
-                    activeCellHome();
+                    if (downKey[17]) {
+                        activeRowUp(activeRow);
+                    } else {
+                        activeCellHome();
+                    }
                     break;
                 default:
+                    downKey[keyCode] = true;
                     preventDefault = false;
                     break;
             }
@@ -620,6 +643,7 @@
             viewport.onscroll = viewportScroll;
             canvas = div.find('.qg-canvas');
             canvas.bind('keydown', onKeyDown);
+            canvas.bind('keyup', onKeyUp);
             $(document).on('query.ok', update);
             $(window).resize(resize);
             $('.js-query-export').click(function (e) {
