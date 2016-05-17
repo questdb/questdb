@@ -52,44 +52,34 @@ import com.questdb.net.http.IOContext;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
-import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
-import com.questdb.std.*;
-import com.questdb.std.ThreadLocal;
+import com.questdb.std.CharSink;
+import com.questdb.std.LocalValue;
+import com.questdb.std.Mutable;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class QueryHandler implements ContextHandler {
-    public static final ThreadLocal<QueryCompiler> COMPILER = new ThreadLocal<>(new ObjectFactory<QueryCompiler>() {
-        @Override
-        public QueryCompiler newInstance() {
-            return new QueryCompiler();
-        }
-    });
-    public static final ThreadLocal<AssociativeCache<RecordSource>> CACHE = new ThreadLocal<>(new ObjectFactory<AssociativeCache<RecordSource>>() {
-        @Override
-        public AssociativeCache<RecordSource> newInstance() {
-            return new AssociativeCache<>(8, 128);
-        }
-    });
+import static com.questdb.net.http.handlers.QueryHandler.CACHE;
+import static com.questdb.net.http.handlers.QueryHandler.COMPILER;
 
+public class ExportHandler implements ContextHandler {
     private final JournalFactoryPool factoryPool;
-    private final LocalValue<JsonHandlerContext> localContext = new LocalValue<>();
+    private final LocalValue<ExportHandlerContext> localContext = new LocalValue<>();
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
 
-    public QueryHandler(JournalFactoryPool factoryPool) {
+    public ExportHandler(JournalFactoryPool factoryPool) {
         this.factoryPool = factoryPool;
     }
 
     @Override
     public void handle(IOContext context) throws IOException {
-        JsonHandlerContext ctx = localContext.get(context);
+        ExportHandlerContext ctx = localContext.get(context);
         if (ctx == null) {
-            localContext.set(context, ctx = new JsonHandlerContext());
+            localContext.set(context, ctx = new ExportHandlerContext());
         }
         ctx.fd = context.channel.getFd();
 
@@ -98,10 +88,7 @@ public class QueryHandler implements ContextHandler {
         CharSequence query = context.request.getUrlParam("query");
         if (query == null || query.length() == 0) {
             ctx.info().$("Empty query request received. Sending empty reply.").$();
-            r.status(200, "application/json; charset=utf-8");
-            r.sendHeader();
-            r.put('{').putQuoted("query").put(':').putQuoted("").put('}');
-            r.sendChunk();
+            header(r, 200);
             r.done();
             return;
         }
@@ -134,12 +121,10 @@ public class QueryHandler implements ContextHandler {
             skip = 0;
         }
 
-        ctx.noMeta = Chars.equalsNc("true", context.request.getUrlParam("nm"));
         ctx.query = query;
         ctx.skip = skip;
         ctx.count = 0L;
         ctx.stop = stop;
-        ctx.fetchAll = Chars.equalsNc("true", context.request.getUrlParam("count"));
 
         ctx.info().$("Query: ").$(query).
                 $(", skip: ").$(skip).
@@ -152,7 +137,7 @@ public class QueryHandler implements ContextHandler {
     @SuppressWarnings("ConstantConditions")
     @Override
     public void resume(IOContext context) throws IOException {
-        JsonHandlerContext ctx = localContext.get(context);
+        ExportHandlerContext ctx = localContext.get(context);
         if (ctx == null || ctx.cursor == null) {
             return;
         }
@@ -165,52 +150,26 @@ public class QueryHandler implements ContextHandler {
             try {
                 SWITCH:
                 switch (ctx.state) {
-                    case PREFIX:
-                        if (ctx.noMeta) {
-                            r.put("{\"result\":[");
-                            ctx.state = QueryState.RECORD_START;
-                            break;
-                        }
-                        r.bookmark();
-                        r.put('{').putQuoted("query").put(':').putUtf8EscapedAndQuoted(ctx.query);
-                        r.put(',').putQuoted("columns").put(':').put('[');
-                        ctx.state = QueryState.METADATA;
-                        ctx.columnIndex = 0;
-                        // fall through
                     case METADATA:
                         for (; ctx.columnIndex < columnCount; ctx.columnIndex++) {
                             RecordColumnMetadata column = ctx.metadata.getColumnQuick(ctx.columnIndex);
 
                             r.bookmark();
-
                             if (ctx.columnIndex > 0) {
                                 r.put(',');
                             }
-                            r.put('{').
-                                    putQuoted("name").put(':').putQuoted(column.getName()).
-                                    put(',').
-                                    putQuoted("type").put(':').putQuoted(column.getType().name());
-                            r.put('}');
+                            r.putQuoted(column.getName());
                         }
-                        ctx.state = QueryState.META_SUFFIX;
-                        // fall through
-                    case META_SUFFIX:
-                        r.bookmark();
-                        r.put("],\"result\":[");
+                        r.put(Misc.EOL);
                         ctx.state = QueryState.RECORD_START;
                         // fall through
                     case RECORD_START:
-
                         if (ctx.record == null) {
                             // check if cursor has any records
                             while (true) {
                                 if (ctx.cursor.hasNext()) {
                                     ctx.record = ctx.cursor.next();
                                     ctx.count++;
-
-                                    if (ctx.fetchAll && ctx.count > ctx.stop) {
-                                        continue;
-                                    }
 
                                     if (ctx.count > ctx.skip) {
                                         break;
@@ -227,12 +186,6 @@ public class QueryHandler implements ContextHandler {
                             break;
                         }
 
-                        r.bookmark();
-                        if (ctx.count > ctx.skip + 1) {
-                            r.put(',');
-                        }
-                        r.put('[');
-
                         ctx.state = QueryState.RECORD_COLUMNS;
                         ctx.columnIndex = 0;
                         // fall through
@@ -247,12 +200,7 @@ public class QueryHandler implements ContextHandler {
                             putValue(r, m.getType(), ctx.record, ctx.columnIndex);
                         }
 
-                        ctx.state = QueryState.RECORD_SUFFIX;
-                        // fall through
-
-                    case RECORD_SUFFIX:
-                        r.bookmark();
-                        r.put(']');
+                        r.put(Misc.EOL);
                         ctx.record = null;
                         ctx.state = QueryState.RECORD_START;
                         break;
@@ -277,14 +225,9 @@ public class QueryHandler implements ContextHandler {
         }
     }
 
-    private static void sendException(ChunkedResponse r, CharSequence query, int position, CharSequence message, int status) throws DisconnectedChannelException, SlowWritableChannelException {
-        r.status(status, "application/json; charset=utf-8");
-        r.sendHeader();
-        r.put('{').
-                putQuoted("query").put(':').putUtf8EscapedAndQuoted(query).put(',').
-                putQuoted("error").put(':').putQuoted(message).put(',').
-                putQuoted("position").put(':').put(position);
-        r.put('}');
+    private static void sendException(ChunkedResponse r, int position, CharSequence message, int status) throws DisconnectedChannelException, SlowWritableChannelException {
+        header(r, status);
+        r.put("Error at(").put(position).put("): ").put(message).put(Misc.EOL);
         r.sendChunk();
         r.done();
     }
@@ -298,62 +241,65 @@ public class QueryHandler implements ContextHandler {
                 sink.put(rec.get(col));
                 break;
             case DOUBLE:
-                sink.putJson(rec.getDouble(col), 10);
+                double d = rec.getDouble(col);
+                if (d == d) {
+                    sink.put(d, 10);
+                }
                 break;
             case FLOAT:
-                sink.putJson(rec.getFloat(col), 10);
+                float f = rec.getFloat(col);
+                if (f == f) {
+                    sink.put(f, 10);
+                }
                 break;
             case INT:
                 final int i = rec.getInt(col);
-                if (i == Integer.MIN_VALUE) {
-                    sink.put("null");
-                    break;
+                if (i > Integer.MIN_VALUE) {
+                    Numbers.append(sink, i);
                 }
-                Numbers.append(sink, i);
                 break;
             case LONG:
                 final long l = rec.getLong(col);
-                if (l == Long.MIN_VALUE) {
-                    sink.put("null");
-                    break;
+                if (l > Long.MIN_VALUE) {
+                    sink.put(l);
                 }
-                sink.put(l);
                 break;
             case DATE:
-                final long d = rec.getDate(col);
-                if (d == Long.MIN_VALUE) {
-                    sink.put("null");
-                    break;
+                final long dt = rec.getDate(col);
+                if (dt > Long.MIN_VALUE) {
+                    sink.put('"').putISODate(dt).put('"');
                 }
-                sink.put('"').putISODate(d).put('"');
                 break;
             case SHORT:
                 sink.put(rec.getShort(col));
                 break;
             case STRING:
-                putStringOrNull(sink, rec.getFlyweightStr(col));
+                CharSequence cs;
+                cs = rec.getFlyweightStr(col);
+                if (cs != null) {
+                    sink.put(cs);
+                }
                 break;
             case SYMBOL:
-                putStringOrNull(sink, rec.getSym(col));
+                cs = rec.getSym(col);
+                if (cs != null) {
+                    sink.put(cs);
+                }
                 break;
             case BINARY:
-                sink.put('[');
-                sink.put(']');
                 break;
             default:
                 break;
         }
     }
 
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str == null) {
-            r.put("null");
-        } else {
-            r.putUtf8EscapedAndQuoted(str);
-        }
+    private static void header(ChunkedResponse r, int code) throws DisconnectedChannelException, SlowWritableChannelException {
+        r.status(code, "text/csv; charset=utf-8");
+        r.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(System.currentTimeMillis()).put(".csv\"").put(Misc.EOL);
+        r.sendHeader();
     }
 
-    private void executeQuery(ChunkedResponse r, JsonHandlerContext ctx) throws IOException {
+    private void executeQuery(ChunkedResponse r, ExportHandlerContext ctx) throws IOException {
         try {
             // Prepare Context.
             JournalCachingFactory factory = factoryPool.get();
@@ -368,36 +314,24 @@ public class QueryHandler implements ContextHandler {
             }
             ctx.cursor = ctx.recordSource.prepareCursor(factory);
             ctx.metadata = ctx.cursor.getMetadata();
-            ctx.state = QueryState.PREFIX;
+            ctx.state = QueryState.METADATA;
+            ctx.columnIndex = 0;
 
-            r.status(200, "application/json; charset=utf-8");
-            r.sendHeader();
+            header(r, 200);
         } catch (ParserException e) {
             ctx.info().$("Parser error executing query ").$(ctx.query).$(": at (").$(QueryError.getPosition()).$(") ").$(QueryError.getMessage()).$();
-            sendException(r, ctx.query, QueryError.getPosition(), QueryError.getMessage(), 400);
+            sendException(r, QueryError.getPosition(), QueryError.getMessage(), 400);
         } catch (JournalException e) {
             ctx.error().$("Server error executing query ").$(ctx.query).$(e).$();
-            sendException(r, ctx.query, 0, e.getMessage(), 500);
+            sendException(r, 0, e.getMessage(), 500);
         } catch (InterruptedException e) {
             ctx.error().$("Error executing query. Server is shutting down. Query: ").$(ctx.query).$(e).$();
-            sendException(r, ctx.query, 0, "Server is shutting down.", 500);
+            sendException(r, 0, "Server is shutting down.", 500);
         }
     }
 
-    long getCacheHits() {
-        return cacheHits.longValue();
-    }
-
-    long getCacheMisses() {
-        return cacheMisses.longValue();
-    }
-
-    private void sendDone(ChunkedResponse r, JsonHandlerContext ctx) throws DisconnectedChannelException, SlowWritableChannelException {
+    private void sendDone(ChunkedResponse r, ExportHandlerContext ctx) throws DisconnectedChannelException, SlowWritableChannelException {
         if (ctx.count > -1) {
-            r.bookmark();
-            r.put(']');
-            r.put(',').putQuoted("count").put(':').put(ctx.count);
-            r.put('}');
             ctx.count = -1;
             r.sendChunk();
         }
@@ -405,11 +339,11 @@ public class QueryHandler implements ContextHandler {
     }
 
     private enum QueryState {
-        PREFIX, METADATA, META_SUFFIX, RECORD_START, RECORD_COLUMNS, RECORD_SUFFIX, DATA_SUFFIX
+        METADATA, RECORD_START, RECORD_COLUMNS, DATA_SUFFIX
     }
 
-    private static class JsonHandlerContext implements Mutable, Closeable {
-        private static final Log LOG = LogFactory.getLog(JsonHandlerContext.class);
+    private static class ExportHandlerContext implements Mutable, Closeable {
+        private static final Log LOG = LogFactory.getLog(ExportHandlerContext.class);
         private RecordSource recordSource;
         private CharSequence query;
         private RecordMetadata metadata;
@@ -420,10 +354,8 @@ public class QueryHandler implements ContextHandler {
         private Record record;
         private JournalCachingFactory factory;
         private long fd;
-        private QueryState state = QueryState.PREFIX;
+        private QueryState state = QueryState.METADATA;
         private int columnIndex;
-        private boolean noMeta = false;
-        private boolean fetchAll = false;
 
         @Override
         public void clear() {
@@ -438,8 +370,7 @@ public class QueryHandler implements ContextHandler {
                 recordSource = null;
             }
             query = null;
-            state = QueryState.PREFIX;
-            fetchAll = false;
+            state = QueryState.METADATA;
         }
 
         @Override

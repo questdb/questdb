@@ -622,6 +622,12 @@
             canvas.bind('keydown', onKeyDown);
             $(document).on('query.ok', update);
             $(window).resize(resize);
+            $('.js-query-export').click(function (e) {
+                e.preventDefault();
+                if (query) {
+                    window.location.href = '/csv?query=' + encodeURIComponent(query);
+                }
+            });
         }
 
         bind();
