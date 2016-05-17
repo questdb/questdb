@@ -245,7 +245,7 @@
             }
         }
 
-        function computeQueryText() {
+        function computeQueryTextFromCursor() {
             var text = edit.getValue();
             var pos = edit.getCursorPosition();
             var r = 0;
@@ -299,19 +299,34 @@
             return {q: sql, r: startRow, c: startCol};
         }
 
+        function computeQueryTextFromSelection() {
+            var q = edit.getSelectedText();
+            var n = q.length - 1;
+            var c;
+            while (n > 0 && ((c = q.charAt(n)) === ' ' || c === '\n' || c === ';')) {
+                n--;
+            }
+
+            if (n > 0) {
+                q = q.substr(0, n + 1);
+                var range = edit.getSelectionRange();
+                return {q, r: range.start.row, c: range.start.column};
+            }
+
+            return null;
+        }
+
         function submitQuery() {
             save();
             clearMarker();
             var q = edit.getSelectedText();
-            var r;
-            var c;
             if (q == null || q === '') {
-                $(document).trigger('query.execute', computeQueryText());
+                $(document).trigger('query.execute', computeQueryTextFromCursor());
             } else {
-                var range = edit.getSelectionRange();
-                r = range.start.row;
-                c = range.start.column;
-                $(document).trigger('query.execute', {q, r, c});
+                var o = computeQueryTextFromSelection();
+                if (o !== null) {
+                    $(document).trigger('query.execute', o);
+                }
             }
         }
 
