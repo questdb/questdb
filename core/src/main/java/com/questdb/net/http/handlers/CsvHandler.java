@@ -65,13 +65,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import static com.questdb.net.http.handlers.QueryHandler.CACHE;
 import static com.questdb.net.http.handlers.QueryHandler.COMPILER;
 
-public class ExportHandler implements ContextHandler {
+public class CsvHandler implements ContextHandler {
     private final JournalFactoryPool factoryPool;
     private final LocalValue<ExportHandlerContext> localContext = new LocalValue<>();
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
 
-    public ExportHandler(JournalFactoryPool factoryPool) {
+    public CsvHandler(JournalFactoryPool factoryPool) {
         this.factoryPool = factoryPool;
     }
 
@@ -200,6 +200,7 @@ public class ExportHandler implements ContextHandler {
                             putValue(r, m.getType(), ctx.record, ctx.columnIndex);
                         }
 
+                        r.bookmark();
                         r.put(Misc.EOL);
                         ctx.record = null;
                         ctx.state = QueryState.RECORD_START;

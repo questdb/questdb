@@ -1,0 +1,145 @@
+package com.questdb.test.tools;
+
+import com.questdb.misc.ByteBuffers;
+import com.questdb.misc.Unsafe;
+import com.questdb.net.NetworkChannel;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+
+public class TestChannel implements NetworkChannel {
+    private final long reqAddress;
+    private final int reqLen;
+    private final StringBuilder sb = new StringBuilder();
+    private final StringBuilder lenBuilder = new StringBuilder();
+    private boolean fullyRead = false;
+    private boolean contentStarted = false;
+    private int newLineCount = 0;
+    private long contentLen = 0;
+    private long contentReadLen = 0;
+    private boolean outOfChunk = true;
+    private boolean ignoreNext = false;
+
+    public TestChannel(CharSequence request) {
+        this.reqAddress = TestUtils.toMemory(request);
+        this.reqLen = request.length();
+    }
+
+    public void free() {
+        Unsafe.getUnsafe().freeMemory(reqAddress);
+    }
+
+    @Override
+    public long getFd() {
+        return 0;
+    }
+
+    @Override
+    public long getTotalWrittenAndReset() {
+        return 0;
+    }
+
+    public CharSequence getOutput() {
+        return sb;
+    }
+
+    @Override
+    public boolean isOpen() {
+        return false;
+    }
+
+    @Override
+    public void close() throws IOException {
+        reset();
+    }
+
+    @Override
+    public int read(ByteBuffer dst) throws IOException {
+        if (!fullyRead) {
+            Unsafe.getUnsafe().copyMemory(reqAddress, ByteBuffers.getAddress(dst), reqLen);
+            dst.position(reqLen);
+            fullyRead = true;
+            return reqLen;
+        }
+        return 0;
+    }
+
+    public void reset() {
+        sb.setLength(0);
+        lenBuilder.setLength(0);
+        fullyRead = false;
+        contentStarted = false;
+        newLineCount = 0;
+        contentLen = 0;
+        contentReadLen = 0;
+        outOfChunk = true;
+        ignoreNext = false;
+    }
+
+    @Override
+    public int write(ByteBuffer src) throws IOException {
+        int count = src.remaining();
+
+        while (src.hasRemaining()) {
+            char c = (char) src.get();
+            switch (c) {
+                case '\r':
+                    break;
+                case '\n':
+                    if (!contentStarted) {
+                        newLineCount++;
+                    }
+                    if (newLineCount == 2) {
+                        contentStarted = true;
+                    }
+                    break;
+                default:
+                    if (!contentStarted) {
+                        newLineCount = 0;
+                    }
+                    break;
+            }
+
+
+            if (contentStarted) {
+
+                if (ignoreNext) {
+                    ignoreNext = false;
+                    continue;
+                }
+
+                switch (c) {
+                    case '\r':
+                        if (outOfChunk) {
+                            contentReadLen = 0;
+                            contentLen = Long.parseLong(lenBuilder.toString().toUpperCase(), 16);
+                            ignoreNext = true;
+                            outOfChunk = false;
+                            continue;
+                        } else if (contentReadLen >= contentLen) {
+                            lenBuilder.setLength(0);
+                            outOfChunk = true;
+                            ignoreNext = true;
+                            continue;
+                        }
+                        break;
+                    case '\n':
+                        if (outOfChunk) {
+                            continue;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+
+                if (outOfChunk) {
+                    lenBuilder.append(c);
+                } else {
+                    sb.append(c);
+                    contentReadLen++;
+                }
+            }
+        }
+        return count;
+    }
+}

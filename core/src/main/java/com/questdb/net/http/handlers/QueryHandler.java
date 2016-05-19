@@ -77,7 +77,7 @@ public class QueryHandler implements ContextHandler {
     });
 
     private final JournalFactoryPool factoryPool;
-    private final LocalValue<JsonHandlerContext> localContext = new LocalValue<>();
+    private final LocalValue<QueryHandlerContext> localContext = new LocalValue<>();
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
 
@@ -87,9 +87,9 @@ public class QueryHandler implements ContextHandler {
 
     @Override
     public void handle(IOContext context) throws IOException {
-        JsonHandlerContext ctx = localContext.get(context);
+        QueryHandlerContext ctx = localContext.get(context);
         if (ctx == null) {
-            localContext.set(context, ctx = new JsonHandlerContext());
+            localContext.set(context, ctx = new QueryHandlerContext());
         }
         ctx.fd = context.channel.getFd();
 
@@ -152,7 +152,7 @@ public class QueryHandler implements ContextHandler {
     @SuppressWarnings("ConstantConditions")
     @Override
     public void resume(IOContext context) throws IOException {
-        JsonHandlerContext ctx = localContext.get(context);
+        QueryHandlerContext ctx = localContext.get(context);
         if (ctx == null || ctx.cursor == null) {
             return;
         }
@@ -353,7 +353,7 @@ public class QueryHandler implements ContextHandler {
         }
     }
 
-    private void executeQuery(ChunkedResponse r, JsonHandlerContext ctx) throws IOException {
+    private void executeQuery(ChunkedResponse r, QueryHandlerContext ctx) throws IOException {
         try {
             // Prepare Context.
             JournalCachingFactory factory = factoryPool.get();
@@ -392,7 +392,7 @@ public class QueryHandler implements ContextHandler {
         return cacheMisses.longValue();
     }
 
-    private void sendDone(ChunkedResponse r, JsonHandlerContext ctx) throws DisconnectedChannelException, SlowWritableChannelException {
+    private void sendDone(ChunkedResponse r, QueryHandlerContext ctx) throws DisconnectedChannelException, SlowWritableChannelException {
         if (ctx.count > -1) {
             r.bookmark();
             r.put(']');
@@ -408,8 +408,8 @@ public class QueryHandler implements ContextHandler {
         PREFIX, METADATA, META_SUFFIX, RECORD_START, RECORD_COLUMNS, RECORD_SUFFIX, DATA_SUFFIX
     }
 
-    private static class JsonHandlerContext implements Mutable, Closeable {
-        private static final Log LOG = LogFactory.getLog(JsonHandlerContext.class);
+    private static class QueryHandlerContext implements Mutable, Closeable {
+        private static final Log LOG = LogFactory.getLog(QueryHandlerContext.class);
         private RecordSource recordSource;
         private CharSequence query;
         private RecordMetadata metadata;

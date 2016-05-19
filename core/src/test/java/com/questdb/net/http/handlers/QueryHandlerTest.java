@@ -1,24 +1,24 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
+ * <p>
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,7 +30,6 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
- *
  ******************************************************************************/
 
 package com.questdb.net.http.handlers;
@@ -67,6 +66,49 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     private static JournalFactoryPool factoryPool;
     private static HttpServer server;
     private static QueryHandler handler;
+
+    public static void generateJournal(String name, QueryResponse.Tab[] recs, int count) throws JournalException, NumericException {
+        try (JournalWriter w = factory.writer(
+                new JournalStructure(name).
+                        $sym("id").
+                        $double("x").
+                        $double("y").
+                        $long("z").
+                        $int("w").
+                        $ts()
+
+        )) {
+
+            Rnd rnd = new Rnd();
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+            for (int i = 0; i < count; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putSym(0, recs.length > i ? recs[i].id : "id" + i);
+                ew.putDouble(1, recs.length > i ? recs[i].x : rnd.nextDouble());
+                if (recs.length > i) {
+                    ew.putDouble(2, recs[i].y);
+                    ew.putLong(3, recs[i].z);
+                } else {
+                    if (rnd.nextPositiveInt() % 10 == 0) {
+                        ew.putNull(2);
+                    } else {
+                        ew.putDouble(2, rnd.nextDouble());
+                    }
+                    if (rnd.nextPositiveInt() % 10 == 0) {
+                        ew.putNull(3);
+                    } else {
+                        ew.putLong(3, rnd.nextLong() % 500);
+                    }
+                }
+                ew.putInt(4, recs.length > i ? recs[i].w : rnd.nextInt() % 500);
+                ew.putDate(5, recs.length > i ? recs[i].timestamp.getTime() : t);
+                t += 10;
+                ew.append();
+            }
+            w.commit();
+        }
+    }
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -279,49 +321,6 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
 
     private static void generateJournal() throws JournalException, NumericException {
         generateJournal("tab", new QueryResponse.Tab[0], 1000);
-    }
-
-    private static void generateJournal(String name, QueryResponse.Tab[] recs, int count) throws JournalException, NumericException {
-        try (JournalWriter w = factory.writer(
-                new JournalStructure(name).
-                        $sym("id").
-                        $double("x").
-                        $double("y").
-                        $long("z").
-                        $int("w").
-                        $ts()
-
-        )) {
-
-            Rnd rnd = new Rnd();
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-            for (int i = 0; i < count; i++) {
-                JournalEntryWriter ew = w.entryWriter();
-                ew.putSym(0, recs.length > i ? recs[i].id : "id" + i);
-                ew.putDouble(1, recs.length > i ? recs[i].x : rnd.nextDouble());
-                if (recs.length > i) {
-                    ew.putDouble(2, recs[i].y);
-                    ew.putLong(3, recs[i].z);
-                } else {
-                    if (rnd.nextPositiveInt() % 10 == 0) {
-                        ew.putNull(2);
-                    } else {
-                        ew.putDouble(2, rnd.nextDouble());
-                    }
-                    if (rnd.nextPositiveInt() % 10 == 0) {
-                        ew.putNull(3);
-                    } else {
-                        ew.putLong(3, rnd.nextLong() % 500);
-                    }
-                }
-                ew.putInt(4, recs.length > i ? recs[i].w : rnd.nextInt() % 500);
-                ew.putDate(5, recs.length > i ? recs[i].timestamp.getTime() : t);
-                t += 10;
-                ew.append();
-            }
-            w.commit();
-        }
     }
 
     private static QueryResponse download(String queryUrl) throws Exception {

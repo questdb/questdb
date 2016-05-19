@@ -38,7 +38,7 @@ __server__
 - [x] C layer for linux (epoll)
 - [x] C layer for mac/bsd (kqueue)
 - [ ] MySQL wire protocol implementation
-- [ ] __sql result export to delimited format (in progress)__
+- [x] sql result export to delimited format
 
 __misc__
 
@@ -56,6 +56,7 @@ __Web UI__
 - [x] error reporting and interaction with query editor
 - [x] grid virtualisation
 - [x] file import UI
+- [ ] query URL sharing
 - [ ] charting UI
 
 __core__
