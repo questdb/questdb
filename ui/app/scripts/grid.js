@@ -400,6 +400,13 @@
             stretched = 0;
             data = [];
             query = null;
+            loPage = 0;
+            hiPage = 0;
+            downKey = [];
+            activeRowContainer = null;
+            activeCellContainer = null;
+            activeRow = 0;
+            activeCell = 0;
         }
 
         function logDebug() {
@@ -598,6 +605,10 @@
                         activeCellHome();
                     }
                     break;
+                case 113:
+                    unfocusCell();
+                    $(document).trigger('editor.focus');
+                    break;
                 default:
                     downKey[keyCode] = true;
                     preventDefault = false;
@@ -612,8 +623,14 @@
         function addColumns() {
             for (var i = 0; i < dc; i++) {
                 var rowDiv = $('<div class="qg-r" tabindex="' + i + '"/>');
+                if (i === 0) {
+                    activeRowContainer = rowDiv;
+                }
                 for (var k = 0; k < columns.length; k++) {
                     var cell = $('<div class="qg-c qg-w' + k + '"/>').click(rowClick).appendTo(rowDiv)[0];
+                    if (i === 0 && k === 0) {
+                        activeCellContainer = cell;
+                    }
                     cell.cellIndex = k;
                 }
                 rowDiv.css({top: -100, height: rh}).appendTo(canvas);
@@ -621,11 +638,22 @@
             }
         }
 
+        function focusCell() {
+            if (activeCellContainer && activeRowContainer) {
+                activeCellContainer.click();
+                activeRowContainer.focus();
+            }
+        }
+
+        function unfocusCell() {
+            if (activeCellContainer) {
+                activeCellOff();
+            }
+        }
+
         //noinspection JSUnusedLocalSymbols
         function update(x, m) {
             clear();
-            loPage = 0;
-            hiPage = 0;
             query = m.r.query;
             data.push(m.r.result);
             columns = m.r.columns;
@@ -634,6 +662,7 @@
             computeColumnWidths();
             viewport.scrollTop = 0;
             resize();
+            focusCell();
         }
 
         function bind() {
@@ -652,6 +681,7 @@
                     window.location.href = '/csv?query=' + encodeURIComponent(query);
                 }
             });
+            $(document).on('grid.focus', focusCell);
         }
 
         bind();

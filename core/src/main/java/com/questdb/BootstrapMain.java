@@ -109,6 +109,7 @@ class BootstrapMain {
         }
 
         System.out.println(welcome);
+        System.gc();
     }
 
     private static void configureLoggers(final HttpServerConfiguration configuration) {

@@ -52,6 +52,7 @@
         var btnRadio = $('input:radio[name="importAction"]');
         var lineHeight = 35;
         var select;
+        var location;
         var types = [
             {text: 'AUTO', value: null},
             {text: 'BOOLEAN', value: 'BOOLEAN'},
@@ -150,7 +151,7 @@
             }
 
             if (e.response && e.importState === 0) {
-                divTabName.html(e.response.location);
+                divTabName.html(location = e.response.location);
 
                 // update "chart"
                 var importedRows = e.response.rowsImported;
@@ -273,6 +274,16 @@
                     break;
             }
             $(document).trigger(msg, current);
+        });
+
+        divTabName.mouseover(function () {
+            divTabName.addClass('animated tada').one('webkitAnimationEnd mozAnimationEnd MSAnimationEnd oanimationend animationend', function () {
+                $(this).removeClass('animated').removeClass('tada');
+            });
+        });
+
+        divTabName.click(function () {
+            $(document).trigger('query.build.execute', location);
         });
 
         $(window).resize(resizeCanvas);

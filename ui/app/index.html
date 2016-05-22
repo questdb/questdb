@@ -43,6 +43,7 @@
     <!-- bower:css -->
     <link rel="stylesheet" href="../bower_components/fontawesome/css/font-awesome.css">
     <link rel="stylesheet" href="../bower_components/iCheck/skins/square/red.css">
+    <link rel="stylesheet" href="../bower_components/animate.css/animate.css">
     <!-- endbower -->
     <!--suppress HtmlUnknownTarget -->
     <link rel="stylesheet" href="styles/main.css">
@@ -64,10 +65,7 @@
             <ul class="nav metismenu" id="side-menu">
                 <li class="nav-header">
                     <div class="dropdown profile-element">
-                        <a data-toggle="dropdown" class="dropdown-toggle" href="#">
-              <span class="clear">
-                <h3>QuestDB</h3>
-              </span>
+                        <a data-toggle="dropdown" class="dropdown-toggle" href="#"> <span class="clear"><h3>QuestDB</h3></span>
                         </a>
                     </div>
                     <div class="logo-element">
@@ -128,7 +126,8 @@
                                 </button>
                                 <button class="btn btn-white btn-sm js-query-export"><i class="fa fa-download"></i>
                                 </button>
-                                <button class="btn btn-white btn-sm"><i class="fa fa-scissors"></i></button>
+                                <button class="btn btn-white btn-sm js-query-test"><i class="fa fa-scissors"></i>
+                                </button>
                                 <button class="btn btn-white btn-sm m-r-sm"><i class="fa fa-clipboard"></i></button>
                                 <button data-toggle="button" type="button"
                                         class="btn btn-white btn-sm js-editor-toggle-invisible"><i
@@ -206,7 +205,8 @@
                                                         <i class="fa fa-table fa-2x"></i>
                                                     </div>
                                                     <div class="col-xs-9 text-right">
-                                                        <h3 class="font-bold js-import-tab-name">ABCD</h3>
+                                                        <h3 class="font-bold"><i class="fa fa-link"></i><span
+                                                                class="js-import-tab-name"></span></h3>
                                                     </div>
                                                 </div>
                                                 <div class="import-stats">

@@ -34,10 +34,12 @@
     'use strict';
 
     var queryBatchSize = 1000;
+    var MSG_QUERY_EXEC = 'query.exec';
 
     $.extend(true, window, {
         qdb: {
-            queryBatchSize
+            queryBatchSize,
+            MSG_QUERY_EXEC
         }
     });
 }(jQuery));

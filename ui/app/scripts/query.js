@@ -119,7 +119,7 @@
         }
 
         function bind() {
-            $(document).on('query.execute', function (x, q) {
+            $(document).on(qdb.MSG_QUERY_EXEC, function (x, q) {
                 sendQuery(q);
             });
 
@@ -198,7 +198,7 @@
         }
 
         function bind() {
-            $(document).on('query.execute', start);
+            $(document).on(qdb.MSG_QUERY_EXEC, start);
             $(document).on('query.error', error);
             $(document).on('query.ok', ok);
         }
@@ -211,6 +211,14 @@
         var item = 'query.text';
         var Range = ace.require('ace/range').Range;
         var marker;
+        var searchOpts = {
+            wrap: true,
+            caseSensitive: true,
+            wholeWord: false,
+            regExp: false,
+            preventScroll: false
+        };
+
 
         function clearMarker() {
             if (marker) {
@@ -321,11 +329,11 @@
             clearMarker();
             var q = edit.getSelectedText();
             if (q == null || q === '') {
-                $(document).trigger('query.execute', computeQueryTextFromCursor());
+                $(document).trigger(qdb.MSG_QUERY_EXEC, computeQueryTextFromCursor());
             } else {
                 var o = computeQueryTextFromSelection();
                 if (o !== null) {
-                    $(document).trigger('query.execute', o);
+                    $(document).trigger(qdb.MSG_QUERY_EXEC, o);
                 }
             }
         }
@@ -351,15 +359,50 @@
             $(document).trigger('query.toggle');
         }
 
+        function focusGrid() {
+            $(document).trigger('grid.focus');
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function findOrInsertQuery(e, q) {
+            // "select" existing query or append text of new one
+            // "find" will select text if anything is found, so we just
+            // execute whats there
+            if (!edit.find('\'' + q + '\'', searchOpts)) {
+                var row = edit.session.getLength();
+                var text = '\n\'' + q + '\';';
+                edit.session.insert({
+                    row,
+                    column: 0
+                }, text);
+                edit.selection.moveCursorToPosition({
+                    row: row + 1,
+                    column: 0
+                });
+                edit.selection.selectLine();
+            }
+            submitQuery();
+        }
+
         function bind() {
             $(document).on('editor.execute', submitQuery);
             $(document).on('editor.show.error', showError);
             $(document).on('editor.toggle.invisibles', toggleInvisibles);
+            $(document).on('query.build.execute', findOrInsertQuery);
+            $(document).on('editor.focus', function () {
+                edit.focus();
+            });
 
             edit.commands.addCommand({
                 name: 'editor.execute',
                 bindKey: 'F9',
                 exec: queryToggle
+            });
+
+            edit.commands.addCommand({
+                name: 'editor.focus.grid',
+                bindKey: 'F2',
+                exec: focusGrid
             });
         }
 
