@@ -429,7 +429,7 @@
             if (scrollTop !== top || force) {
                 var oldY = y;
                 if (Math.abs(scrollTop - top) > 4 * vp) {
-                    y = scrollTop === 0 ? 0 : Math.ceil((scrollTop + vp) * M - vp);
+                    y = scrollTop === 0 ? 0 : Math.min(Math.ceil((scrollTop + vp) * M - vp), yMax - vp);
                     top = scrollTop;
                     o = y - top;
                 } else if (scrollTop >= h - vp) {
