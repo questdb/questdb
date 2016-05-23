@@ -36,10 +36,15 @@
     var queryBatchSize = 1000;
     var MSG_QUERY_EXEC = 'query.exec';
 
+    function toExportUrl(query) {
+        return window.location.protocol + '//' + window.location.host + '/csv?query=' + encodeURIComponent(query);
+    }
+
     $.extend(true, window, {
         qdb: {
             queryBatchSize,
-            MSG_QUERY_EXEC
+            MSG_QUERY_EXEC,
+            toExportUrl
         }
     });
 }(jQuery));

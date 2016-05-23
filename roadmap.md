@@ -56,7 +56,7 @@ __Web UI__
 - [x] error reporting and interaction with query editor
 - [x] grid virtualisation
 - [x] file import UI
-- [ ] query URL sharing
+- [x] copy SQL export url to clipboard for use in other applications
 - [ ] charting UI
 
 __core__

@@ -135,3 +135,26 @@
   padding-right: 5px;
   color: #ED5565;
 }
+
+.export-input-container {
+  display: inline-block;
+  padding: 0 0 0 10px;
+}
+
+.js-export-url {
+  font-size: 10px;
+  padding: 6px 10px;
+  border: 1px solid #e7eaec;
+  border-radius: 3px 0 0 3px;
+  line-height: 1.5;
+}
+
+.js-export-copy-url:focus, .js-export-copy-url:hover {
+  border-left: none;
+}
+
+.js-export-copy-url {
+  border-radius: 0 3px 3px 0;
+  border-left: none;
+  padding: 5px 10px 4px 10px;
+}

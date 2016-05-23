@@ -117,18 +117,19 @@
                     <div class="ibox">
                         <div class="ibox-content">
                             <div class="m-b-sm">
-                                <div class="btn-group pull-right">
-                                    <button class="btn btn-white btn-sm">
-                                        <i class="fa fa-arrow-left"></i>
-                                    </button>
-                                </div>
                                 <button class="btn btn-white btn-sm m-r-sm js-query-run"><i class="fa fa-play"></i>Run
+                                </button>
+                                <button class="btn btn-white btn-sm js-query-refresh"><i class="fa fa-refresh"></i>
                                 </button>
                                 <button class="btn btn-white btn-sm js-query-export"><i class="fa fa-download"></i>
                                 </button>
-                                <button class="btn btn-white btn-sm js-query-test"><i class="fa fa-scissors"></i>
                                 </button>
-                                <button class="btn btn-white btn-sm m-r-sm"><i class="fa fa-clipboard"></i></button>
+                                <div class="export-input-container">
+                                    <input id="export-url" class="js-export-url" type="text">
+                                </div>
+                                <button type="button" class="btn btn-white btn-sm js-export-copy-url"
+                                        data-clipboard-target="#export-url"><i
+                                        class="fa fa-files-o"></i></button>
                                 <button data-toggle="button" type="button"
                                         class="btn btn-white btn-sm js-editor-toggle-invisible"><i
                                         class="fa fa-paragraph"></i>
@@ -297,6 +298,7 @@
 <script src="/bower_components/ace-builds/src-noconflict/mode-sql.js"></script>
 <script src="/bower_components/ace-builds/src-noconflict/theme-merbivore_soft.js"></script>
 <script src="/bower_components/iCheck/icheck.js"></script>
+<script src="/bower_components/clipboard/dist/clipboard.min.js"></script>
 <!-- endbower -->
 <script src="scripts/globals.js"></script>
 <script src="scripts/grid.js"></script>

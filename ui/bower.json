@@ -23,7 +23,8 @@
     "ace-builds": "^1.2.3",
     "iCheck": "^1.0.2",
     "bootstrap": "^3.3.6",
-    "animate.css": "animate-css#^3.5.1"
+    "animate.css": "animate-css#^3.5.1",
+    "clipboard": "^1.5.10"
   },
   "overrides": {
     "bootstrap-sass": {

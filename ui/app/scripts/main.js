@@ -31,12 +31,14 @@
 /*globals $:false */
 /*globals qdb:false */
 /*globals jQuery:false */
+/*globals Clipboard:false */
 
 (function ($) {
     'use strict';
 
     var divSqlPanel = $('.js-sql-panel');
     var divImportPanel = $('.js-import-panel');
+    var divExportUrl = $('.js-export-url');
 
     function fixHeight() {
         var b = $('body');
@@ -103,6 +105,18 @@
         $('a#sql-editor').click(switchToEditor);
         $('a#file-upload').click(switchToImport);
         $(document).on('query.build.execute', switchToEditor);
+        $(document).on('query.ok', function (e, m) {
+            divExportUrl.val(qdb.toExportUrl(m.r.query));
+        });
+        divExportUrl.click(function () {
+            this.select();
+        });
+
+        /* eslint-disable no-new */
+        new Clipboard('.js-export-copy-url');
+        $('.js-export-copy-url').click(function () {
+            document.execCommand('copy');
+        });
     }
 
     $.extend(true, window, {
