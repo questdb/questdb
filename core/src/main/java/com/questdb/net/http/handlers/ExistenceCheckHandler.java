@@ -73,4 +73,8 @@ public class ExistenceCheckHandler implements ContextHandler {
     public void resume(IOContext context) throws IOException {
         // nothing to do
     }
+
+    @Override
+    public void setupThread() {
+    }
 }

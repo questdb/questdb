@@ -47,7 +47,7 @@ import java.nio.file.Files;
 import java.util.Properties;
 
 @SuppressFBWarnings("PATH_TRAVERSAL_IN")
-public class HttpServerConfiguration {
+public class ServerConfiguration {
     private final SslConfig sslConfig = new SslConfig();
     private String httpIP = "0.0.0.0";
     private int httpPort = 9000;
@@ -60,6 +60,16 @@ public class HttpServerConfiguration {
     private int httpTimeout = 10000000;
     private int httpMaxConnections = 128;
     private int journalPoolSize = 128;
+    private int httpQueueDepth = 1024;
+    private int httpSoRcvDownload = 8 * 1024;
+    private int httpSoRcvUpload = 4 * 1024 * 1024;
+    private int httpSoRetries = 1024;
+    private int dbAsOfDataPage = 4 * 1024 * 1024;
+    private int dbAsOfIndexPage = 1024 * 1024;
+    private int dbAsOfRowPage = 1024 * 1024;
+    private int dbSortKeyPage = 1024 * 1024;
+    private int dbSortDataPage = 4 * 1024 * 1024;
+    private int dbAggregatePage = 4 * 1024 * 1024;
 
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");
@@ -67,11 +77,11 @@ public class HttpServerConfiguration {
     private File accessLog = new File("log/access.log");
     private File errorLog = new File("log/error.log");
 
-    public HttpServerConfiguration() {
+    public ServerConfiguration() {
     }
 
     @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
-    public HttpServerConfiguration(File conf) throws Exception {
+    public ServerConfiguration(File conf) throws Exception {
 
         final Properties props = new Properties();
         final File root = conf.getParentFile().getParentFile();
@@ -107,6 +117,22 @@ public class HttpServerConfiguration {
             this.httpMaxConnections = n;
         }
 
+        if ((n = parseInt(props, "http.queue.depth")) > -1) {
+            this.httpQueueDepth = Numbers.ceilPow2(n);
+        }
+
+        if ((n = parseSize(props, "http.so.rcv.download")) > -1) {
+            this.httpSoRcvDownload = n;
+        }
+
+        if ((n = parseSize(props, "http.so.rcv.upload")) > -1) {
+            this.httpSoRcvUpload = n;
+        }
+
+        if ((n = parseInt(props, "http.so.retries")) > -1) {
+            this.httpSoRetries = n;
+        }
+
         if ((n = parseSize(props, "http.buf.req.content")) > -1) {
             this.httpBufReqContent = n;
         }
@@ -135,6 +161,30 @@ public class HttpServerConfiguration {
             this.journalPoolSize = httpMaxConnections;
         }
 
+        if ((n = parseSize(props, "db.asof.datapage")) > -1) {
+            this.dbAsOfDataPage = n;
+        }
+
+        if ((n = parseSize(props, "db.asof.indexpage")) > -1) {
+            this.dbAsOfIndexPage = n;
+        }
+
+        if ((n = parseSize(props, "db.asof.rowpage")) > -1) {
+            this.dbAsOfRowPage = n;
+        }
+
+        if ((n = parseSize(props, "db.sort.keypage")) > -1) {
+            this.dbSortKeyPage = n;
+        }
+
+        if ((n = parseSize(props, "db.sort.datapage")) > -1) {
+            this.dbSortDataPage = n;
+        }
+
+        if ((n = parseSize(props, "db.aggregate.page")) > -1) {
+            this.dbAggregatePage = n;
+        }
+
         if ((s = props.getProperty("mime.types")) != null) {
             this.mimeTypes = normalize(root, new File(s));
         } else {
@@ -161,6 +211,9 @@ public class HttpServerConfiguration {
         }
         mkdirs(this.accessLog.getParentFile());
 
+        if (this.httpMaxConnections > this.httpQueueDepth) {
+            throw new IllegalArgumentException("http.max.connections must be less than http.queue.depth");
+        }
 
         // SSL section
         sslConfig.setSecure("true".equals(props.getProperty("http.ssl.enabled")));
@@ -191,8 +244,32 @@ public class HttpServerConfiguration {
         return accessLog;
     }
 
+    public int getDbAggregatePage() {
+        return dbAggregatePage;
+    }
+
+    public int getDbAsOfDataPage() {
+        return dbAsOfDataPage;
+    }
+
+    public int getDbAsOfIndexPage() {
+        return dbAsOfIndexPage;
+    }
+
+    public int getDbAsOfRowPage() {
+        return dbAsOfRowPage;
+    }
+
     public File getDbPath() {
         return dbPath;
+    }
+
+    public int getDbSortDataPage() {
+        return dbSortDataPage;
+    }
+
+    public int getDbSortKeyPage() {
+        return dbSortKeyPage;
     }
 
     public File getErrorLog() {
@@ -243,6 +320,22 @@ public class HttpServerConfiguration {
         return httpPublic;
     }
 
+    public int getHttpQueueDepth() {
+        return httpQueueDepth;
+    }
+
+    public int getHttpSoRcvDownload() {
+        return httpSoRcvDownload;
+    }
+
+    public int getHttpSoRcvUpload() {
+        return httpSoRcvUpload;
+    }
+
+    public int getHttpSoRetries() {
+        return httpSoRetries;
+    }
+
     public int getHttpThreads() {
         return httpThreads;
     }
@@ -269,17 +362,35 @@ public class HttpServerConfiguration {
 
     @Override
     public String toString() {
-        return "HttpServerConfiguration{" +
-                "\n\thttpPort=" + httpPort +
-                ",\n\thttpBufReqHeader=" + httpBufReqHeader +
-                ",\n\thttpBufReqContent=" + httpBufReqContent +
-                ",\n\thttpBufReqMultipart=" + httpBufReqMultipart +
-                ",\n\thttpBufRespHeader=" + httpBufRespHeader +
-                ",\n\thttpBufRespContent=" + httpBufRespContent +
-                ",\n\thttpThreads=" + httpThreads +
-                ",\n\tdbPath=" + dbPath +
-                ",\n\tjournalPoolSize=" + journalPoolSize +
-                "\n}";
+        return "ServerConfiguration{" +
+                "sslConfig=" + sslConfig +
+                ", httpIP='" + httpIP + '\'' +
+                ", httpPort=" + httpPort +
+                ", httpBufReqHeader=" + httpBufReqHeader +
+                ", httpBufReqContent=" + httpBufReqContent +
+                ", httpBufReqMultipart=" + httpBufReqMultipart +
+                ", httpBufRespHeader=" + httpBufRespHeader +
+                ", httpBufRespContent=" + httpBufRespContent +
+                ", httpThreads=" + httpThreads +
+                ", httpTimeout=" + httpTimeout +
+                ", httpMaxConnections=" + httpMaxConnections +
+                ", journalPoolSize=" + journalPoolSize +
+                ", httpQueueDepth=" + httpQueueDepth +
+                ", httpSoRcvDownload=" + httpSoRcvDownload +
+                ", httpSoRcvUpload=" + httpSoRcvUpload +
+                ", httpSoRetries=" + httpSoRetries +
+                ", dbAsOfDataPage=" + dbAsOfDataPage +
+                ", dbAsOfIndexPage=" + dbAsOfIndexPage +
+                ", dbAsOfRowPage=" + dbAsOfRowPage +
+                ", dbSortKeyPage=" + dbSortKeyPage +
+                ", dbSortDataPage=" + dbSortDataPage +
+                ", dbAggregatePage=" + dbAggregatePage +
+                ", dbPath=" + dbPath +
+                ", mimeTypes=" + mimeTypes +
+                ", httpPublic=" + httpPublic +
+                ", accessLog=" + accessLog +
+                ", errorLog=" + errorLog +
+                '}';
     }
 
     private File mkdirs(File dir) throws IOException {
@@ -312,7 +423,7 @@ public class HttpServerConfiguration {
         String val = props.getProperty(name);
         if (val != null) {
             try {
-                return Numbers.parseIntSize(val);
+                return Numbers.ceilPow2(Numbers.parseIntSize(val));
             } catch (NumericException e) {
                 System.out.println(name + ": invalid value");
             }

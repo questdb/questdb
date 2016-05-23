@@ -64,8 +64,8 @@ public class LastRowIdRecordMap implements LastRecordMap {
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata,
             CharSequenceHashSet masterKeyColumns,
-            CharSequenceHashSet slaveKeyColumns
-    ) {
+            CharSequenceHashSet slaveKeyColumns,
+            int pageSize) {
         final int ksz = masterKeyColumns.size();
         this.masterKeyTypes = new ObjList<>(ksz);
         this.slaveKeyTypes = new ObjList<>(ksz);
@@ -86,7 +86,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
             slaveKeyTypes.add(slaveMetadata.getColumnQuick(idx).getType());
             keyCols.add(slaveMetadata.getColumnName(idx));
         }
-        this.map = new MultiMap(slaveMetadata, keyCols, valueMetadata, null);
+        this.map = new MultiMap(pageSize, slaveMetadata, keyCols, valueMetadata, null);
         this.metadata = slaveMetadata;
     }
 

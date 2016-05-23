@@ -1,24 +1,24 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
+ * <p>
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,7 +30,6 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
- *
  ******************************************************************************/
 
 package com.questdb.net.http;
@@ -119,7 +118,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testCompressedDownload() throws Exception {
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
         configuration.getSslConfig().setSecure(true);
         configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
 
@@ -138,7 +137,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testConcurrentImport() throws Exception {
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(factory));
         }});
         server.start();
@@ -189,7 +188,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testConnectionCount() throws Exception {
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
         final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         configuration.setHttpMaxConnections(10);
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
@@ -231,7 +230,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testFragmentedUrl() throws Exception {
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher());
+        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher());
         server.setClock(new Clock() {
 
             @Override
@@ -291,7 +290,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testIdleTimeout() throws Exception {
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
         final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         // 500ms timeout
         configuration.setHttpTimeout(500);
@@ -326,7 +325,8 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportAppend() throws Exception {
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+        final ServerConfiguration configuration = new ServerConfiguration();
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(factory));
         }});
         server.start();
@@ -337,7 +337,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null));
                 StringSink sink = new StringSink();
                 RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-                QueryCompiler qc = new QueryCompiler();
+                QueryCompiler qc = new QueryCompiler(configuration);
                 printer.printCursor(qc.compile(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'"));
                 TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
             } finally {
@@ -349,7 +349,7 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testImportIntoBusyJournal() throws Exception {
         try (JournalWriter w = factory.writer(new JournalStructure("test-import.csv").$int("x").$())) {
-            HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
                 put("/imp", new ImportHandler(factory));
             }});
             server.start();
@@ -375,7 +375,7 @@ public class HttpServerTest extends AbstractJournalTest {
             ew.append();
             w.commit();
 
-            HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+            HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
                 put("/imp", new ImportHandler(factory));
             }});
             server.start();
@@ -392,7 +392,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportUnknownFormat() throws Exception {
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(factory));
         }});
 
@@ -410,7 +410,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testLargeChunkedPlainDownload() throws Exception {
         final int count = 3;
         final int sz = 16 * 1026 * 1024 - 4;
-        HttpServerConfiguration conf = new HttpServerConfiguration();
+        ServerConfiguration conf = new ServerConfiguration();
         conf.setHttpBufRespContent(sz + 4);
         TestUtils.assertEquals(generateLarge(count, sz), downloadChunked(conf, count, sz, false, false));
     }
@@ -419,7 +419,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testLargeChunkedPlainGzipDownload() throws Exception {
         final int count = 3;
         final int sz = 16 * 1026 * 1024 - 4;
-        HttpServerConfiguration conf = new HttpServerConfiguration();
+        ServerConfiguration conf = new ServerConfiguration();
         conf.setHttpBufRespContent(sz + 4);
         TestUtils.assertEquals(generateLarge(count, sz), downloadChunked(conf, count, sz, false, true));
     }
@@ -428,7 +428,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testLargeChunkedSSLDownload() throws Exception {
         final int count = 3;
         final int sz = 16 * 1026 * 1024 - 4;
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
         configuration.getSslConfig().setSecure(true);
         configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
         configuration.setHttpBufRespContent(sz + 4);
@@ -439,7 +439,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testLargeChunkedSSLGzipDownload() throws Exception {
         final int count = 3;
         final int sz = 16 * 1026 * 1024 - 4;
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
         configuration.getSslConfig().setSecure(true);
         configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
         configuration.setHttpBufRespContent(sz + 4);
@@ -448,7 +448,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testMaxConnections() throws Exception {
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
         final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         configuration.setHttpMaxConnections(1);
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
@@ -472,7 +472,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testNativeConcurrentDownload() throws Exception {
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
         configuration.getSslConfig().setSecure(false);
         final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
@@ -485,8 +485,8 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testNativeNotModified() throws Exception {
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
             setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
         }});
         assertNotModified(configuration, server);
@@ -494,8 +494,8 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testRangesNative() throws Exception {
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/questdb.conf"));
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+        final ServerConfiguration configuration = new ServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/questdb.conf"));
+        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
             put("/upload", new UploadHandler(temp.getRoot()));
             setDefaultHandler(new StaticContentHandler(temp.getRoot(), new MimeTypes(configuration.getMimeTypes())));
         }});
@@ -504,7 +504,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testSslConcurrentDownload() throws Exception {
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
         configuration.getSslConfig().setSecure(true);
         configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
 
@@ -519,7 +519,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testStartStop() throws Exception {
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher());
+        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher());
         server.start();
         server.halt();
     }
@@ -527,7 +527,7 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testUpload() throws Exception {
         final File dir = temp.newFolder();
-        HttpServer server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
             put("/upload", new UploadHandler(dir));
         }});
         server.start();
@@ -584,14 +584,13 @@ public class HttpServerTest extends AbstractJournalTest {
         return new File(HttpServerTest.class.getResource(resource).getFile());
     }
 
-    private static int upload(File file, String url) throws IOException {
+    private static void upload(File file, String url) throws IOException {
         HttpPost post = new HttpPost(url);
         try (CloseableHttpClient client = HttpClients.createDefault()) {
             MultipartEntityBuilder b = MultipartEntityBuilder.create();
             b.addPart("data", new FileBody(file));
             post.setEntity(b.build());
-            HttpResponse r = client.execute(post);
-            return r.getStatusLine().getStatusCode();
+            client.execute(post);
         }
     }
 
@@ -668,7 +667,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
-    private void assertNotModified(HttpServerConfiguration configuration, HttpServer server) throws IOException {
+    private void assertNotModified(ServerConfiguration configuration, HttpServer server) throws IOException {
         server.start();
         try {
             File out = new File(temp.getRoot(), "get.html");
@@ -699,7 +698,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
-    private void assertRanges(HttpServerConfiguration configuration, HttpServer server) throws IOException {
+    private void assertRanges(ServerConfiguration configuration, HttpServer server) throws IOException {
         server.start();
         try {
 
@@ -751,7 +750,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
-    private File downloadChunked(HttpServerConfiguration conf, final int count, final int sz, boolean ssl, final boolean compressed) throws Exception {
+    private File downloadChunked(ServerConfiguration conf, final int count, final int sz, boolean ssl, final boolean compressed) throws Exception {
         HttpServer server = new HttpServer(conf, new SimpleUrlMatcher() {{
 
             put("/test", new ContextHandler() {
@@ -785,6 +784,10 @@ public class HttpServerTest extends AbstractJournalTest {
                         r.sendChunk();
                     }
                     r.done();
+                }
+
+                @Override
+                public void setupThread() {
                 }
             });
         }});

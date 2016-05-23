@@ -36,4 +36,6 @@ package com.questdb.net.http;
 
 interface UrlMatcher {
     ContextHandler get(CharSequence url);
+
+    void setupHandlers();
 }

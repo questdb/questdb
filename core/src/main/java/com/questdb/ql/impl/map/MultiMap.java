@@ -65,28 +65,28 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
     private int mask;
 
     public MultiMap(
+            int pageSize,
             @Transient RecordMetadata keySourceMetadata,
             @Transient ObjHashSet<String> keyNames,
             @Transient ObjList<RecordColumnMetadata> valueColumns,
             ObjList<MapRecordValueInterceptor> interceptors) {
-        //todo: extract config
-        this(16, 4 * 1024 * 1024, 0.5f, keySourceMetadata, keyNames, valueColumns, interceptors);
+        this(64, pageSize, 0.5f, keySourceMetadata, keyNames, valueColumns, interceptors);
     }
 
     private MultiMap(int capacity,
-                     long dataSize,
+                     int pageSize,
                      float loadFactor,
                      @Transient RecordMetadata keySourceMetadata,
                      @Transient ObjHashSet<String> keyNames,
                      @Transient ObjList<RecordColumnMetadata> valueColumns,
                      ObjList<MapRecordValueInterceptor> interceptors) {
-        if (dataSize <= 0) {
-            throw new IllegalArgumentException("dataSize must be > 0");
+        if (pageSize <= 0) {
+            throw new IllegalArgumentException("pageSize must be > 0");
         }
         this.loadFactor = loadFactor;
-        this.address = Unsafe.getUnsafe().allocateMemory(dataSize + Unsafe.CACHE_LINE_SIZE);
+        this.address = Unsafe.getUnsafe().allocateMemory(pageSize + Unsafe.CACHE_LINE_SIZE);
         this.kStart = kPos = this.address + (this.address & (Unsafe.CACHE_LINE_SIZE - 1));
-        this.kLimit = kStart + dataSize;
+        this.kLimit = kStart + pageSize;
 
         this.keyCapacity = (int) (capacity / loadFactor);
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);

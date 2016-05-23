@@ -4,6 +4,7 @@ import com.questdb.factory.JournalFactoryPool;
 import com.questdb.iter.clock.MilliClock;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.test.tools.TestChannel;
 import com.questdb.test.tools.TestUtils;
@@ -36,6 +37,7 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
     @Test
     public void testCsvOutput() throws Exception {
         ContextHandler handler = new CsvHandler(new JournalFactoryPool(factory.getConfiguration(), 1));
+        handler.setupThread();
         TestChannel channel = new TestChannel(QUERY1);
         String expected = "\"id\",\"x\",\"y\",\"z\",\"w\",\"timestamp\"\r\n" +
                 "id0,0.0000000019,0.0000011892,-498,171,\"2015-03-12T00:00:00.000Z\"\r\n" +
@@ -140,7 +142,7 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
                 "id99,-384.0000000000,0.0000000980,-264,355,\"2015-03-12T00:00:00.990Z\"\r\n";
         try {
             channel.reset();
-            try (IOContext context = new IOContext(channel, MilliClock.INSTANCE, 1024, 1024, 1024, 512, 1024)) {
+            try (IOContext context = new IOContext(channel, MilliClock.INSTANCE, 1024, 1024, 1024, 512, 1024, 128 * 1024, 4 * 1024 * 1024, 1024)) {
                 context.request.read();
                 handler.handle(context);
                 TestUtils.assertEquals(expected, channel.getOutput());
@@ -152,16 +154,17 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
 
     @Test
     public void testQueryHandlerConsistency() throws Exception {
-        testHandler(new QueryHandler(new JournalFactoryPool(factory.getConfiguration(), 1)));
+        testHandler(new QueryHandler(new JournalFactoryPool(factory.getConfiguration(), 1), new ServerConfiguration()));
     }
 
     private void testHandler(ContextHandler handler) throws Exception {
         TestChannel channel = new TestChannel(QUERY1);
         String expected = null;
+        handler.setupThread();
         try {
             for (int i = 128; i < 7500; i++) {
                 channel.reset();
-                try (IOContext context = new IOContext(channel, MilliClock.INSTANCE, 1024, 1024, 1024, 512, i)) {
+                try (IOContext context = new IOContext(channel, MilliClock.INSTANCE, 1024, 1024, 1024, 512, i, 128 * 1024, 4 * 1024 * 1024, 1024)) {
                     context.request.read();
                     handler.handle(context);
                     if (expected != null) {

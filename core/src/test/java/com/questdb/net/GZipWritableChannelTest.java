@@ -62,7 +62,7 @@ public class GZipWritableChannelTest {
                 FileOutputStream fos = new FileOutputStream(compressed);
                 FileChannel in = fis.getChannel();
                 FileChannel out = fos.getChannel();
-                GZipWritableChannel<FileChannel> gzip = new GZipWritableChannel<FileChannel>().of(out)
+                GZipWritableChannel<FileChannel> gzip = new GZipWritableChannel<FileChannel>(64 * 1024).of(out)
         ) {
             ByteBuffer buf = in.map(FileChannel.MapMode.READ_ONLY, 0, fis.available());
             gzip.write(buf);

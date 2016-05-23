@@ -37,8 +37,8 @@ package com.questdb.net.http.handlers;
 import com.google.gson.JsonSyntaxException;
 import com.questdb.factory.JournalFactoryPool;
 import com.questdb.net.http.HttpServer;
-import com.questdb.net.http.HttpServerConfiguration;
 import com.questdb.net.http.QueryResponse;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import org.apache.http.MalformedChunkCodingException;
@@ -59,9 +59,9 @@ public class QueryHandlerSmallBufferTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUp() throws Exception {
         factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
-        handler = new QueryHandler(factoryPool);
+        handler = new QueryHandler(factoryPool, new ServerConfiguration());
 
-        HttpServerConfiguration configuration = new HttpServerConfiguration();
+        ServerConfiguration configuration = new ServerConfiguration();
         configuration.setHttpBufRespContent(128);
         server = new HttpServer(configuration, new SimpleUrlMatcher() {{
             put("/js", handler);

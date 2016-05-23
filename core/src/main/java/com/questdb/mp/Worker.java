@@ -66,7 +66,7 @@ public class Worker extends Thread {
     @Override
     public void run() {
         if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {
-            // acquire CPU lock
+            setupJobs();
             int n = jobs.size();
             long uselessCounter = 0;
             while (running == 1) {
@@ -108,6 +108,19 @@ public class Worker extends Thread {
     @SuppressWarnings("UnusedReturnValue")
     private int loadFence() {
         return fence;
+    }
+
+    private void setupJobs() {
+        if (running == 1) {
+            for (int i = 0; i < jobs.size(); i++) {
+                loadFence();
+                try {
+                    jobs.get(i).setupThread();
+                } finally {
+                    storeFence();
+                }
+            }
+        }
     }
 
     private void storeFence() {

@@ -1,24 +1,24 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
+ * <p>
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,7 +30,6 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
- *
  ******************************************************************************/
 
 package com.questdb.net.http.handlers;
@@ -49,13 +48,16 @@ import com.questdb.misc.Numbers;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
-import com.questdb.std.*;
-import com.questdb.std.ThreadLocal;
+import com.questdb.std.AssociativeCache;
+import com.questdb.std.CharSink;
+import com.questdb.std.LocalValue;
+import com.questdb.std.Mutable;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
@@ -63,26 +65,18 @@ import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class QueryHandler implements ContextHandler {
-    public static final ThreadLocal<QueryCompiler> COMPILER = new ThreadLocal<>(new ObjectFactory<QueryCompiler>() {
-        @Override
-        public QueryCompiler newInstance() {
-            return new QueryCompiler();
-        }
-    });
-    public static final ThreadLocal<AssociativeCache<RecordSource>> CACHE = new ThreadLocal<>(new ObjectFactory<AssociativeCache<RecordSource>>() {
-        @Override
-        public AssociativeCache<RecordSource> newInstance() {
-            return new AssociativeCache<>(8, 128);
-        }
-    });
+    public static final ThreadLocal<QueryCompiler> COMPILER = new ThreadLocal<>();
+    public static final ThreadLocal<AssociativeCache<RecordSource>> CACHE = new ThreadLocal<>();
 
     private final JournalFactoryPool factoryPool;
     private final LocalValue<QueryHandlerContext> localContext = new LocalValue<>();
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
+    private final ServerConfiguration configuration;
 
-    public QueryHandler(JournalFactoryPool factoryPool) {
+    public QueryHandler(JournalFactoryPool factoryPool, ServerConfiguration configuration) {
         this.factoryPool = factoryPool;
+        this.configuration = configuration;
     }
 
     @Override
@@ -275,6 +269,12 @@ public class QueryHandler implements ContextHandler {
                 }
             }
         }
+    }
+
+    @Override
+    public void setupThread() {
+        COMPILER.set(new QueryCompiler(configuration));
+        CACHE.set(new AssociativeCache<RecordSource>(8, 128));
     }
 
     private static void sendException(ChunkedResponse r, CharSequence query, int position, CharSequence message, int status) throws DisconnectedChannelException, SlowWritableChannelException {

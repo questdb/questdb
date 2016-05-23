@@ -60,10 +60,12 @@ public class MultiRecordMap implements Closeable, Mutable {
     public MultiRecordMap(
             @Transient RecordMetadata keyMetadata,
             @Transient ObjHashSet<String> keyNames,
-            RecordMetadata valueMetadata) {
-        map = new MultiMap(keyMetadata, keyNames, valueCols, null);
-        //todo: extract config
-        records = new RecordDequeue(valueMetadata, 4 * 1024 * 1024);
+            RecordMetadata valueMetadata,
+            int keyPageSize,
+            int valuePageSize
+    ) {
+        map = new MultiMap(keyPageSize, keyMetadata, keyNames, valueCols, null);
+        records = new RecordDequeue(valueMetadata, valuePageSize);
     }
 
     public void add(MultiMap.KeyWriter key, Record record) {

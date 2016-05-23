@@ -59,11 +59,12 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     private final MPSequence interestPubSequence;
     private final SCSequence interestSubSequence = new SCSequence();
     private final Clock clock;
-    private final HttpServerConfiguration configuration;
+    private final ServerConfiguration configuration;
     private final Kqueue kqueue;
     private final int timeout;
     private final LongMatrix<IOContext> pending = new LongMatrix<>(2);
     private final int maxConnections;
+    private final int capacity;
     private int connectionCount = 0;
 
     public KQueueDispatcher(
@@ -72,7 +73,8 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
             RingQueue<IOEvent> ioQueue,
             Sequence ioSequence,
             Clock clock,
-            HttpServerConfiguration configuration
+            ServerConfiguration configuration,
+            int capacity
     ) {
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
@@ -84,9 +86,10 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         this.configuration = configuration;
         this.maxConnections = configuration.getHttpMaxConnections();
         this.timeout = configuration.getHttpTimeout();
+        this.capacity = capacity;
 
         // bind socket
-        this.kqueue = new Kqueue();
+        this.kqueue = new Kqueue(capacity);
         this.socketFd = Net.socketTcp(false);
         if (Net.bind(this.socketFd, ip, port)) {
             Net.listen(this.socketFd, 128);
@@ -168,7 +171,10 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
                         configuration.getHttpBufReqContent(),
                         configuration.getHttpBufReqMultipart(),
                         configuration.getHttpBufRespHeader(),
-                        configuration.getHttpBufRespContent()
+                configuration.getHttpBufRespContent(),
+                configuration.getHttpSoRcvDownload(),
+                configuration.getHttpSoRcvUpload(),
+                configuration.getHttpSoRetries()
                 )
         );
     }
@@ -185,7 +191,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
             kqueue.setOffset(offset);
             kqueue.readFD((int) pending.get(i, 1), pending.get(i, 0));
             LOG.debug().$("kqueued ").$(pending.get(i, 1)).$(" as ").$(index - 1).$();
-            if (++index > Kqueue.NUM_KEVENTS - 1) {
+            if (++index > capacity - 1) {
                 kqueue.register(index);
                 index = 0;
             }
@@ -257,7 +263,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
             pending.set(r, context);
 
 
-            if (count > Kqueue.NUM_KEVENTS - 1) {
+            if (count > capacity - 1) {
                 kqueue.register(count);
                 count = 0;
             }

@@ -48,4 +48,14 @@ public class SimpleUrlMatcher extends CharSequenceObjHashMap<ContextHandler> imp
     public void setDefaultHandler(ContextHandler defaultHandler) {
         this.defaultHandler = defaultHandler;
     }
+
+    @Override
+    public void setupHandlers() {
+        for (int i = 0, n = size(); i < n; i++) {
+            valueQuick(i).setupThread();
+        }
+        if (defaultHandler != null) {
+            defaultHandler.setupThread();
+        }
+    }
 }

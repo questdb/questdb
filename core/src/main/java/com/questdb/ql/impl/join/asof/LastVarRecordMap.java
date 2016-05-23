@@ -73,16 +73,16 @@ public class LastVarRecordMap implements LastRecordMap {
     private StorageFacade storageFacade;
     private long appendOffset;
 
-    // todo: extract config
     // todo: make sure blobs are not supported and not provided
     public LastVarRecordMap(
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata,
             CharSequenceHashSet masterKeyColumns,
             CharSequenceHashSet slaveKeyColumns,
-            int pageSize) {
-        this.pageSize = Numbers.ceilPow2(pageSize);
-        this.maxRecordSize = pageSize - 4;
+            int dataPageSize,
+            int offsetPageSize) {
+        this.pageSize = Numbers.ceilPow2(dataPageSize);
+        this.maxRecordSize = dataPageSize - 4;
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
 
@@ -137,7 +137,7 @@ public class LastVarRecordMap implements LastRecordMap {
         }
 
         this.varOffset = varOffset;
-        this.map = new MultiMap(slaveMetadata, keyCols, valueMetadata, null);
+        this.map = new MultiMap(offsetPageSize, slaveMetadata, keyCols, valueMetadata, null);
         this.metadata = slaveMetadata;
         this.record = new MapRecord(this.metadata);
     }

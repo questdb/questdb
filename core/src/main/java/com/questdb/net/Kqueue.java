@@ -44,7 +44,6 @@ import java.io.Closeable;
 
 public final class Kqueue implements Closeable {
     public static final short EVFILT_READ;
-    public static final int NUM_KEVENTS = 1024;
     public static final short SIZEOF_KEVENT;
     public static final int EV_EOF = -32751;
     private static final short EVFILT_WRITE;
@@ -57,10 +56,12 @@ public final class Kqueue implements Closeable {
     private static final short EV_ONESHOT;
     private final long eventList;
     private final int kq;
+    private final int capacity;
     private long _rPtr;
 
-    public Kqueue() {
-        this.eventList = this._rPtr = Unsafe.getUnsafe().allocateMemory(SIZEOF_KEVENT * NUM_KEVENTS);
+    public Kqueue(int capacity) {
+        this.capacity = capacity;
+        this.eventList = this._rPtr = Unsafe.getUnsafe().allocateMemory(SIZEOF_KEVENT * capacity);
         this.kq = kqueue();
     }
 
@@ -98,7 +99,7 @@ public final class Kqueue implements Closeable {
     }
 
     public int poll() {
-        return kevent(kq, 0, 0, eventList, NUM_KEVENTS);
+        return kevent(kq, 0, 0, eventList, capacity);
     }
 
     public void readFD(int fd, long data) {

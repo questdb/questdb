@@ -46,6 +46,7 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Interval;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.*;
 import com.questdb.ql.impl.aggregation.*;
@@ -126,12 +127,14 @@ public class QueryCompiler {
     private final ObjHashSet<String> groupKeyColumns = new ObjHashSet<>();
     private final ComparatorCompiler cc = new ComparatorCompiler();
     private final LiteralMatcher literalMatcher = new LiteralMatcher(traversalAlgo);
+    private final ServerConfiguration configuration;
 
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
 
-    public QueryCompiler() {
+    public QueryCompiler(ServerConfiguration configuration) {
         // seed column name assembly with default column prefix, which we will reuse
+        this.configuration = configuration;
         columnNameAssembly.put("col");
         columnNamePrefixLen = 3;
     }
@@ -895,8 +898,16 @@ public class QueryCompiler {
                 masterKeys.add(jc.bNames.getQuick(i));
             }
 
-            // todo: extract config
-            return new AsOfPartitionedJoinRecordSource(master, masterTimestampIndex, slave, slaveTimestampIndex, masterKeys, slaveKeys, 4 * 1024 * 1024);
+            return new AsOfPartitionedJoinRecordSource(
+                    master,
+                    masterTimestampIndex,
+                    slave,
+                    slaveTimestampIndex,
+                    masterKeys,
+                    slaveKeys,
+                    configuration.getDbAsOfDataPage(),
+                    configuration.getDbAsOfIndexPage(),
+                    configuration.getDbAsOfRowPage());
         }
     }
 
@@ -929,7 +940,7 @@ public class QueryCompiler {
             masterColIndices.add(ib);
             slaveColIndices.add(ia);
         }
-        return new HashJoinRecordSource(master, masterColIndices, slave, slaveColIndices, model.getJoinType() == QueryModel.JoinType.OUTER);
+        return new HashJoinRecordSource(master, masterColIndices, slave, slaveColIndices, model.getJoinType() == QueryModel.JoinType.OUTER, 1024 * 1024, 4 * 1024 * 1024);
     }
 
     /**
@@ -1425,7 +1436,10 @@ public class QueryCompiler {
 
                 indices.add(index);
             }
-            return new RBTreeSortedRecordSource(rs, cc.compile(RBTreeSortedRecordSource.class, m, indices));
+            return new RBTreeSortedRecordSource(rs,
+                    cc.compile(RBTreeSortedRecordSource.class, m, indices),
+                    configuration.getDbSortKeyPage(),
+                    configuration.getDbSortDataPage());
         } else {
             return rs;
         }
@@ -1834,13 +1848,18 @@ public class QueryCompiler {
             }
 
             if (sampleBy == null) {
-                rs = new AggregatedRecordSource(rs, groupKeyColumns, af);
+                rs = new AggregatedRecordSource(rs, groupKeyColumns, af, configuration.getDbAggregatePage());
             } else {
                 TimestampSampler sampler = SamplerFactory.from(sampleBy.token);
                 if (sampler == null) {
                     throw QueryError.$(sampleBy.position, "Invalid sample");
                 }
-                rs = new ResampledRecordSource(rs, getTimestampIndex(model, model.getTimestamp(), rs.getMetadata()), groupKeyColumns, af, sampler);
+                rs = new ResampledRecordSource(rs,
+                        getTimestampIndex(model, model.getTimestamp(), rs.getMetadata()),
+                        groupKeyColumns,
+                        af,
+                        sampler,
+                        configuration.getDbAggregatePage());
             }
         } else {
             if (sampleBy != null) {

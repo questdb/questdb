@@ -40,4 +40,6 @@ public interface ContextHandler {
     void handle(IOContext context) throws IOException;
 
     void resume(IOContext context) throws IOException;
+
+    void setupThread();
 }

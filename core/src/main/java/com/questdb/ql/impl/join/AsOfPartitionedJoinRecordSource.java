@@ -73,14 +73,16 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
             int slaveTimestampIndex,
             CharSequenceHashSet masterKeyColumns,
             CharSequenceHashSet slaveKeyColumns,
-            int pageSize
+            int dataPageSize,
+            int offsetPageSize,
+            int rowIdPageSize
     ) {
         this.master = master;
         this.masterTimestampIndex = masterTimestampIndex;
         this.slave = slave;
         this.slaveTimestampIndex = slaveTimestampIndex;
         if (slave.supportsRowIdAccess()) {
-            map = new LastRowIdRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns);
+            map = new LastRowIdRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, rowIdPageSize);
             holder = new RowidRecordHolder();
         } else {
             // check if slave has variable length columns
@@ -100,10 +102,10 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
                 }
             }
             if (var) {
-                this.map = new LastVarRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, pageSize);
+                this.map = new LastVarRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, dataPageSize, offsetPageSize);
                 this.holder = new VarRecordHolder(slave.getMetadata());
             } else {
-                this.map = new LastFixRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, pageSize);
+                this.map = new LastFixRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, dataPageSize, offsetPageSize);
                 this.holder = new FixRecordHolder(slave.getMetadata());
             }
         }

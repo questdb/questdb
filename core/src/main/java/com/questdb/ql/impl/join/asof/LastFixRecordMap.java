@@ -74,8 +74,9 @@ public class LastFixRecordMap implements LastRecordMap {
             RecordMetadata slaveMetadata,
             @Transient CharSequenceHashSet masterKeyColumns,
             @Transient CharSequenceHashSet slaveKeyColumns,
-            int pageSize) {
-        this.pageSize = Numbers.ceilPow2(pageSize);
+            int dataPageSize,
+            int offsetPageSize) {
+        this.pageSize = Numbers.ceilPow2(dataPageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
 
@@ -115,12 +116,12 @@ public class LastFixRecordMap implements LastRecordMap {
             varOffset += type.size();
         }
 
-        if (varOffset > pageSize) {
+        if (varOffset > dataPageSize) {
             throw new JournalRuntimeException("Record size is too large");
         }
 
         this.recordLen = varOffset;
-        this.map = new MultiMap(slaveMetadata, keyCols, valueMetadata, null);
+        this.map = new MultiMap(offsetPageSize, slaveMetadata, keyCols, valueMetadata, null);
         this.metadata = slaveMetadata;
         this.record = new MapRecord(this.metadata);
     }

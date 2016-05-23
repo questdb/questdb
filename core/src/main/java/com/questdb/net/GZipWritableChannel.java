@@ -44,16 +44,19 @@ import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
 
 public class GZipWritableChannel<T extends WritableByteChannel> implements WritableByteChannel {
-    private static final int outAvail = 64 * 1024;
-    private final ByteBuffer out = ByteBuffer.allocateDirect(outAvail);
-    private final long outAddr = ByteBuffers.getAddress(out);
+    private final ByteBuffer out;
+    private final long outAddr;
+    private final int outAvail;
     private T channel;
     private long z_streamp;
     private boolean flushed = false;
     private int crc = 0;
     private long total = 0;
 
-    public GZipWritableChannel() {
+    public GZipWritableChannel(int bufferSize) {
+        this.out = ByteBuffer.allocateDirect(bufferSize);
+        this.outAvail = bufferSize;
+        this.outAddr = ByteBuffers.getAddress(out);
         this.z_streamp = Zip.deflateInit();
         if (z_streamp <= 0) {
             throw new OutOfMemoryError();

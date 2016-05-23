@@ -46,8 +46,8 @@ import com.questdb.misc.Dates;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
 import com.questdb.net.http.HttpServer;
-import com.questdb.net.http.HttpServerConfiguration;
 import com.questdb.net.http.QueryResponse;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.test.tools.HttpTestUtils;
@@ -67,55 +67,13 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     private static HttpServer server;
     private static QueryHandler handler;
 
-    public static void generateJournal(String name, QueryResponse.Tab[] recs, int count) throws JournalException, NumericException {
-        try (JournalWriter w = factory.writer(
-                new JournalStructure(name).
-                        $sym("id").
-                        $double("x").
-                        $double("y").
-                        $long("z").
-                        $int("w").
-                        $ts()
-
-        )) {
-
-            Rnd rnd = new Rnd();
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-            for (int i = 0; i < count; i++) {
-                JournalEntryWriter ew = w.entryWriter();
-                ew.putSym(0, recs.length > i ? recs[i].id : "id" + i);
-                ew.putDouble(1, recs.length > i ? recs[i].x : rnd.nextDouble());
-                if (recs.length > i) {
-                    ew.putDouble(2, recs[i].y);
-                    ew.putLong(3, recs[i].z);
-                } else {
-                    if (rnd.nextPositiveInt() % 10 == 0) {
-                        ew.putNull(2);
-                    } else {
-                        ew.putDouble(2, rnd.nextDouble());
-                    }
-                    if (rnd.nextPositiveInt() % 10 == 0) {
-                        ew.putNull(3);
-                    } else {
-                        ew.putLong(3, rnd.nextLong() % 500);
-                    }
-                }
-                ew.putInt(4, recs.length > i ? recs[i].w : rnd.nextInt() % 500);
-                ew.putDate(5, recs.length > i ? recs[i].timestamp.getTime() : t);
-                t += 10;
-                ew.append();
-            }
-            w.commit();
-        }
-    }
-
     @BeforeClass
     public static void setUp() throws Exception {
+        final ServerConfiguration serverConfiguration = new ServerConfiguration();
         factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
-        handler = new QueryHandler(factoryPool);
+        handler = new QueryHandler(factoryPool, serverConfiguration);
 
-        server = new HttpServer(new HttpServerConfiguration(), new SimpleUrlMatcher() {{
+        server = new HttpServer(serverConfiguration, new SimpleUrlMatcher() {{
             put("/js", handler);
             put("/chk", new ExistenceCheckHandler(factory));
         }});
@@ -274,6 +232,49 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public void testOrderByEmpty() throws Exception {
         QueryResponse queryResponse = download("tab where 1 = 2 order by y", 0, 1000);
         Assert.assertEquals(0, queryResponse.result.size());
+    }
+
+    private static void generateJournal(String name, QueryResponse.Tab[] recs, int count) throws JournalException, NumericException {
+        try (JournalWriter w = factory.writer(
+                new JournalStructure(name).
+                        $sym("id").
+                        $double("x").
+                        $double("y").
+                        $long("z").
+                        $int("w").
+                        $ts()
+
+        )) {
+
+            Rnd rnd = new Rnd();
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+            for (int i = 0; i < count; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putSym(0, recs.length > i ? recs[i].id : "id" + i);
+                ew.putDouble(1, recs.length > i ? recs[i].x : rnd.nextDouble());
+                if (recs.length > i) {
+                    ew.putDouble(2, recs[i].y);
+                    ew.putLong(3, recs[i].z);
+                } else {
+                    if (rnd.nextPositiveInt() % 10 == 0) {
+                        ew.putNull(2);
+                    } else {
+                        ew.putDouble(2, rnd.nextDouble());
+                    }
+                    if (rnd.nextPositiveInt() % 10 == 0) {
+                        ew.putNull(3);
+                    } else {
+                        ew.putLong(3, rnd.nextLong() % 500);
+                    }
+                }
+                ew.putInt(4, recs.length > i ? recs[i].w : rnd.nextInt() % 500);
+                ew.putDate(5, recs.length > i ? recs[i].timestamp.getTime() : t);
+                t += 10;
+                ew.append();
+            }
+            w.commit();
+        }
     }
 
     static QueryResponse download(String queryUrl, TemporaryFolder temp) throws Exception {

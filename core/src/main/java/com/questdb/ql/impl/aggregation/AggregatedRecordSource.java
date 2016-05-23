@@ -76,7 +76,8 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     public AggregatedRecordSource(
             RecordSource recordSource,
             @Transient ObjHashSet<String> keyColumns,
-            ObjList<AggregatorFunction> aggregators
+            ObjList<AggregatorFunction> aggregators,
+            int pageSize
     ) {
         int keyColumnsSize = keyColumns.size();
         this.keyIndices = new int[keyColumnsSize];
@@ -104,7 +105,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
                 interceptors.add((MapRecordValueInterceptor) func);
             }
         }
-        this.map = new MultiMap(rm, keyColumns, columns, interceptors);
+        this.map = new MultiMap(pageSize, rm, keyColumns, columns, interceptors);
         this.recordSource = recordSource;
     }
 

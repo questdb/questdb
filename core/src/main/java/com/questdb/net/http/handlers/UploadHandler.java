@@ -67,6 +67,10 @@ public class UploadHandler extends AbstractMultipartHandler {
     }
 
     @Override
+    public void setupThread() {
+    }
+
+    @Override
     protected void onComplete0(IOContext context) throws IOException {
         ResponseSink sink = context.responseSink();
         sink.status(200, "text/html; charset=utf-8");

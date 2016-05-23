@@ -27,6 +27,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalFactory;
 import com.questdb.io.ExportManager;
 import com.questdb.io.TextFileFormat;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.parser.QueryCompiler;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -38,7 +39,7 @@ public class ExportCsvMain {
     public static void main(String[] args) throws JournalException, IOException, ParserException {
 
         JournalFactory factory = new JournalFactory(args[0]);
-        QueryCompiler compiler = new QueryCompiler();
+        QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
         String from = args[1];
         String toDir = args[2];
         TextFileFormat format = TextFileFormat.valueOf(args[3]);

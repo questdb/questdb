@@ -42,8 +42,8 @@ import com.questdb.misc.Os;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.net.http.HttpServer;
-import com.questdb.net.http.HttpServerConfiguration;
 import com.questdb.net.http.MimeTypes;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.net.http.handlers.*;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -85,20 +85,20 @@ class BootstrapMain {
             return;
         }
 
-        final HttpServerConfiguration configuration = new HttpServerConfiguration(conf);
+        final ServerConfiguration configuration = new ServerConfiguration(conf);
         configureLoggers(configuration);
 
         final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
         JournalFactory factory = new JournalFactory(configuration.getDbPath().getAbsolutePath());
         JournalFactoryPool pool = new JournalFactoryPool(factory.getConfiguration(), configuration.getJournalPoolSize());
         matcher.put("/imp", new ImportHandler(factory));
-        matcher.put("/js", new QueryHandler(pool));
+        matcher.put("/js", new QueryHandler(pool, configuration));
         matcher.put("/csv", new CsvHandler(pool));
         matcher.put("/chk", new ExistenceCheckHandler(factory));
         matcher.setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
 
         HttpServer server = new HttpServer(configuration, matcher);
-        server.start(LogFactory.INSTANCE.getJobs());
+        server.start(LogFactory.INSTANCE.getJobs(), configuration.getHttpQueueDepth());
 
         StringBuilder welcome = new StringBuilder();
         welcome.append("Listening on ").append(configuration.getHttpIP()).append(':').append(configuration.getHttpPort());
@@ -112,7 +112,7 @@ class BootstrapMain {
         System.gc();
     }
 
-    private static void configureLoggers(final HttpServerConfiguration configuration) {
+    private static void configureLoggers(final ServerConfiguration configuration) {
         LogFactory.INSTANCE.add(new LogWriterConfig("access", LogLevel.LOG_LEVEL_ALL, new LogWriterFactory() {
             @Override
             public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {

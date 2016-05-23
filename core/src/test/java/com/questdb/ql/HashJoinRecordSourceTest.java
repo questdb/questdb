@@ -108,7 +108,9 @@ public class HashJoinRecordSourceTest {
                         new IntList() {{
                             add(aw.getMetadata().getColumnIndex("band"));
                         }},
-                        false
+                        false,
+                        1024 * 1024,
+                        4 * 1024 * 1024
                 ),
                 new ObjList<CharSequence>() {{
                     add("genre");
@@ -140,7 +142,9 @@ public class HashJoinRecordSourceTest {
                 new IntList() {{
                     w2.getMetadata().getColumnIndex("sym");
                 }},
-                false
+                false,
+                1024 * 1024,
+                4 * 1024 * 1024
         );
 
         long t = System.currentTimeMillis();
@@ -187,7 +191,9 @@ public class HashJoinRecordSourceTest {
                         new IntList() {{
                             add(aw.getMetadata().getColumnIndex("band"));
                         }},
-                        false
+                        false,
+                        1024 * 1024,
+                        4 * 1024 * 1024
                 ),
                 new ObjList<CharSequence>() {{
                     add("genre");
@@ -229,7 +235,9 @@ public class HashJoinRecordSourceTest {
                         new IntList() {{
                             add(aw.getMetadata().getColumnIndex("band"));
                         }},
-                        true
+                        true,
+                        1024 * 1024,
+                        4 * 1024 * 1024
                 ),
                 new ObjList<CharSequence>() {{
                     add("genre");

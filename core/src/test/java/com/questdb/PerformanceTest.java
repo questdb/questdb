@@ -43,6 +43,7 @@ import com.questdb.log.LogFactory;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Interval;
 import com.questdb.model.Quote;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.parser.QueryCompiler;
@@ -102,7 +103,7 @@ public class PerformanceTest extends AbstractTest {
         w.commit();
 
         JournalCachingFactory cf = new JournalCachingFactory(factory.getConfiguration());
-        QueryCompiler compiler = new QueryCompiler();
+        QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
         int count = 1000;
         long t = 0;
         for (int i = -count; i < count; i++) {

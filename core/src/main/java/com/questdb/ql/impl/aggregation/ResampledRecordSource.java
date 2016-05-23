@@ -75,7 +75,8 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
             int timestampColumnIndex,
             @Transient ObjHashSet<String> keyColumns,
             ObjList<AggregatorFunction> aggregators,
-            TimestampSampler sampler
+            TimestampSampler sampler,
+            int pageSize
     ) {
         int keyColumnsSize = keyColumns.size();
         this.keyIndices = new IntList(keyColumnsSize);
@@ -113,7 +114,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
             }
         }
 
-        this.map = new MultiMap(rm, keyCols, columns, interceptors);
+        this.map = new MultiMap(pageSize, rm, keyCols, columns, interceptors);
         this.recordSource = recordSource;
     }
 

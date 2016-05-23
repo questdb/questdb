@@ -55,9 +55,18 @@ public class IOContext implements Closeable, Mutable, Locality {
     private final Response response;
     private final AtomicBoolean open = new AtomicBoolean(true);
 
-    public IOContext(NetworkChannel channel, Clock clock, int reqHeaderSize, int reqContentSize, int reqMultipartHeaderSize, int respHeaderSize, int respContentSize) {
+    public IOContext(NetworkChannel channel,
+                     Clock clock,
+                     int reqHeaderSize,
+                     int reqContentSize,
+                     int reqMultipartHeaderSize,
+                     int respHeaderSize,
+                     int respContentSize,
+                     int soRcvDownload,
+                     int soRcvuUpload,
+                     int soRetries) {
         this.channel = channel;
-        this.request = new Request(channel, reqHeaderSize, reqContentSize, reqMultipartHeaderSize);
+        this.request = new Request(channel, reqHeaderSize, reqContentSize, reqMultipartHeaderSize, soRcvDownload, soRcvuUpload, soRetries);
         this.response = new Response(channel, respHeaderSize, respContentSize, clock);
     }
 

@@ -104,7 +104,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         }
         RecordSource rs = compiler.compileSource(factory, "xyz");
         RecordComparator rc = cc.compile(ComparatorCompilerTest.class, rs.getMetadata(), indices);
-        RBTreeSortedRecordSource map = new RBTreeSortedRecordSource(rs, rc);
+        RBTreeSortedRecordSource map = new RBTreeSortedRecordSource(rs, rc, 1024 * 1024, 4 * 1024 * 1024);
 
         sink.clear();
         printer.printCursor(map.prepareCursor(factory));

@@ -55,6 +55,10 @@ public abstract class SynchronizedJob implements Job {
         return false;
     }
 
+    @Override
+    public void setupThread() {
+    }
+
     protected abstract boolean runSerially();
 
     static {
@@ -64,4 +68,5 @@ public abstract class SynchronizedJob implements Job {
             throw new FatalError(e);
         }
     }
+
 }

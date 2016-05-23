@@ -45,6 +45,7 @@ import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Files;
 import com.questdb.misc.Misc;
 import com.questdb.model.configuration.ModelConfiguration;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.AssociativeCache;
 import com.questdb.test.tools.JournalTestFactory;
@@ -57,7 +58,7 @@ public abstract class AbstractOptimiserTest {
 
     @ClassRule
     public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
-    protected static final QueryCompiler compiler = new QueryCompiler();
+    protected static final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
     protected static final StringSink sink = new StringSink();
     protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
     private static final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 16);

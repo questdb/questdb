@@ -79,6 +79,12 @@ public class IOHttpJob implements Job {
         return true;
     }
 
+    @Override
+    public void setupThread() {
+        ioDispatcher.setupThread();
+        urlMatcher.setupHandlers();
+    }
+
     private static void logAccess(IOContext context) {
         ACCESS.xinfo().
                 $ip(Net.getPeerIP(context.channel.getFd())).

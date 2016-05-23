@@ -51,9 +51,6 @@ import java.nio.ByteBuffer;
 
 @SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 public class Request implements Closeable, Mutable {
-    private static final int SO_RVCBUF_DOWNLD = 128 * 1024;
-    private static final int SO_RCVBUF_UPLOAD = 4 * 1024 * 1024;
-    private static final int SO_READ_RETRY_COUNT = 1000;
     private final static Log LOG = LogFactory.getLog(Request.class);
     private final ByteBuffer in;
     private final long inAddr;
@@ -62,13 +59,19 @@ public class Request implements Closeable, Mutable {
     private final MultipartParser multipartParser;
     private final BoundaryAugmenter augmenter = new BoundaryAugmenter();
     private final NetworkChannel channel;
+    private final int soRcvDownload;
+    private final int soRcvUpload;
+    private final int soRetries;
 
-    public Request(NetworkChannel channel, int headerBufferSize, int contentBufferSize, int multipartHeaderBufferSize) {
+    public Request(NetworkChannel channel, int headerBufferSize, int contentBufferSize, int multipartHeaderBufferSize, int soRcvDownload, int soRcvUpload, int soRetries) {
         this.channel = channel;
         this.hb = new RequestHeaderBuffer(headerBufferSize, pool);
         this.in = ByteBuffer.allocateDirect(Numbers.ceilPow2(contentBufferSize));
         this.inAddr = ByteBuffers.getAddress(in);
         this.multipartParser = new MultipartParser(multipartHeaderBufferSize, pool);
+        this.soRcvDownload = soRcvDownload;
+        this.soRcvUpload = soRcvUpload;
+        this.soRetries = soRetries;
     }
 
     @Override
@@ -114,7 +117,7 @@ public class Request implements Closeable, Mutable {
     public void parseMultipart(IOContext context, MultipartListener handler)
             throws HeadersTooLargeException, IOException, MalformedHeaderException {
         final long fd = channel.getFd();
-        if (Net.setRcvBuf(fd, SO_RCVBUF_UPLOAD) != 0) {
+        if (Net.setRcvBuf(fd, soRcvUpload) != 0) {
             LOG.error().$("Could not set SO_RCVBUF on ").$(fd).$();
         }
         try {
@@ -127,7 +130,7 @@ public class Request implements Closeable, Mutable {
                 drainChannel();
             }
         } finally {
-            if (Net.setRcvBuf(fd, SO_RVCBUF_DOWNLD) != 0) {
+            if (Net.setRcvBuf(fd, soRcvDownload) != 0) {
                 LOG.error().$("Could not reset SO_RCVBUF on ").$(fd).$();
             }
         }
@@ -142,7 +145,7 @@ public class Request implements Closeable, Mutable {
 
     private void drainChannel() throws IOException {
         in.clear();
-        ByteBuffers.copyNonBlocking(channel, in, SO_READ_RETRY_COUNT);
+        ByteBuffers.copyNonBlocking(channel, in, soRetries);
         in.flip();
     }
 

@@ -42,6 +42,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
 import com.questdb.misc.Unsafe;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.join.hash.MemoryRecordAccessor;
 import com.questdb.ql.parser.QueryCompiler;
@@ -67,7 +68,7 @@ public class MemoryRecordAccessorTest {
             this.factory = new JournalTestFactory(
                     new JournalConfigurationBuilder().build(Files.makeTempDir())
             );
-            this.compiler = new QueryCompiler();
+            this.compiler = new QueryCompiler(new ServerConfiguration());
         } catch (JournalConfigurationException e) {
             throw new JournalRuntimeException(e);
         }

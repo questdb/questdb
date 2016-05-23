@@ -74,13 +74,12 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private long root = -1;
     private RecordCursor sourceCursor;
 
-    public RBTreeSortedRecordSource(RecordSource recordSource, RecordComparator comparator) {
+    public RBTreeSortedRecordSource(RecordSource recordSource, RecordComparator comparator, int keyPageSize, int valuePageSize) {
         this.recordSource = recordSource;
         this.comparator = comparator;
-        // todo: extract config
-        this.mem = new MemoryPages(1024 * 1024);
+        this.mem = new MemoryPages(keyPageSize);
         this.byRowId = recordSource.supportsRowIdAccess();
-        this.records = new RecordDequeue(byRowId ? fakeRecord.getMetadata() : recordSource.getMetadata(), 4 * 1024 * 1024);
+        this.records = new RecordDequeue(byRowId ? fakeRecord.getMetadata() : recordSource.getMetadata(), valuePageSize);
     }
 
     @Override

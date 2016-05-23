@@ -62,7 +62,7 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
     private final MPSequence interestPubSequence;
     private final SCSequence interestSubSequence = new SCSequence();
     private final Clock clock;
-    private final HttpServerConfiguration configuration;
+    private final ServerConfiguration configuration;
     private final Epoll epoll;
     private final int timeout;
     private final LongMatrix<IOContext> pending = new LongMatrix<>(4);
@@ -76,7 +76,8 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
             RingQueue<IOEvent> ioQueue,
             Sequence ioSequence,
             Clock clock,
-            HttpServerConfiguration configuration
+            ServerConfiguration configuration,
+            int capacity
     ) {
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
@@ -90,7 +91,7 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
         this.timeout = configuration.getHttpTimeout();
 
         // bind socket
-        this.epoll = new Epoll();
+        this.epoll = new Epoll(capacity);
         this.socketFd = Net.socketTcp(false);
         if (Net.bind(this.socketFd, ip, port)) {
             Net.listen(this.socketFd, 128);
@@ -176,7 +177,10 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
                         configuration.getHttpBufReqContent(),
                         configuration.getHttpBufReqMultipart(),
                         configuration.getHttpBufRespHeader(),
-                        configuration.getHttpBufRespContent()
+                configuration.getHttpBufRespContent(),
+                configuration.getHttpSoRcvDownload(),
+                configuration.getHttpSoRcvUpload(),
+                configuration.getHttpSoRetries()
                 )
         );
     }

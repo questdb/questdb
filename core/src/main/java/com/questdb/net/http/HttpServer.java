@@ -52,20 +52,19 @@ import java.util.concurrent.CountDownLatch;
 
 public class HttpServer {
     private final static Log LOG = LogFactory.getLog(HttpServer.class);
-    private final static int ioQueueSize = 1024;
     private final InetSocketAddress address;
     private final ObjList<Worker> workers;
     private final CountDownLatch haltLatch;
     private final int workerCount;
     private final CountDownLatch startComplete = new CountDownLatch(1);
     private final UrlMatcher urlMatcher;
-    private final HttpServerConfiguration configuration;
+    private final ServerConfiguration configuration;
     private volatile boolean running = true;
     private Clock clock = MilliClock.INSTANCE;
     private IODispatcher dispatcher;
     private RingQueue<IOEvent> ioQueue;
 
-    public HttpServer(HttpServerConfiguration configuration, UrlMatcher urlMatcher) {
+    public HttpServer(ServerConfiguration configuration, UrlMatcher urlMatcher) {
         this.address = new InetSocketAddress(configuration.getHttpIP(), configuration.getHttpPort());
         this.urlMatcher = urlMatcher;
         this.workerCount = configuration.getHttpThreads();
@@ -101,16 +100,16 @@ public class HttpServer {
         this.clock = clock;
     }
 
-    public void start(ObjHashSet<? extends Job> extraJobs) {
+    public void start(ObjHashSet<? extends Job> extraJobs, int queueDepth) {
         this.running = true;
-        ioQueue = new RingQueue<>(IOEvent.FACTORY, ioQueueSize);
-        SPSequence ioPubSequence = new SPSequence(ioQueueSize);
-        MCSequence ioSubSequence = new MCSequence(ioQueueSize, null);
+        ioQueue = new RingQueue<>(IOEvent.FACTORY, queueDepth);
+        SPSequence ioPubSequence = new SPSequence(ioQueue.getCapacity());
+        MCSequence ioSubSequence = new MCSequence(ioQueue.getCapacity(), null);
         ioPubSequence.followedBy(ioSubSequence);
         ioSubSequence.followedBy(ioPubSequence);
 
         try {
-            this.dispatcher = createDispatcher("0.0.0.0", address.getPort(), ioQueue, ioPubSequence, clock, configuration);
+            this.dispatcher = createDispatcher("0.0.0.0", address.getPort(), ioQueue, ioPubSequence, clock, configuration, queueDepth);
         } catch (NetworkError e) {
             LOG.error().$("Server failed to start: ").$(e.getMessage()).$();
             running = false;
@@ -136,7 +135,7 @@ public class HttpServer {
     }
 
     public void start() {
-        start(null);
+        start(null, 1024);
     }
 
     private IODispatcher createDispatcher(
@@ -145,16 +144,17 @@ public class HttpServer {
             RingQueue<IOEvent> ioQueue,
             Sequence ioSequence,
             Clock clock,
-            HttpServerConfiguration configuration
+            ServerConfiguration configuration,
+            int capacity
     ) {
 
         switch (Os.type) {
             case Os.OSX:
-                return new KQueueDispatcher(ip, port, ioQueue, ioSequence, clock, configuration);
+                return new KQueueDispatcher(ip, port, ioQueue, ioSequence, clock, configuration, capacity);
             case Os.WINDOWS:
-                return new Win32SelectDispatcher(ip, port, ioQueue, ioSequence, clock, configuration);
+                return new Win32SelectDispatcher(ip, port, ioQueue, ioSequence, clock, configuration, capacity);
             case Os.LINUX:
-                return new EpollDispatcher(ip, port, ioQueue, ioSequence, clock, configuration);
+                return new EpollDispatcher(ip, port, ioQueue, ioSequence, clock, configuration, capacity);
             default:
                 throw new FatalError("Unsupported operating system");
         }

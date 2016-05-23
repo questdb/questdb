@@ -57,8 +57,8 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
     private static final int ARRAY_OFFSET;
     private static final int FD_READ = 1;
     private static final int FD_WRITE = 2;
-    private final FDSet readFdSet = new FDSet(1024);
-    private final FDSet writeFdSet = new FDSet(1024);
+    private final FDSet readFdSet;
+    private final FDSet writeFdSet;
     private final long socketFd;
     private final RingQueue<IOEvent> ioQueue;
     private final Sequence ioSequence;
@@ -66,7 +66,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
     private final MPSequence interestPubSequence;
     private final SCSequence interestSubSequence = new SCSequence();
     private final Clock clock;
-    private final HttpServerConfiguration configuration;
+    private final ServerConfiguration configuration;
     private final int timeout;
     private final LongMatrix<IOContext> pending = new LongMatrix<>(4);
     private final int maxConnections;
@@ -79,8 +79,11 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
             RingQueue<IOEvent> ioQueue,
             Sequence ioSequence,
             Clock clock,
-            HttpServerConfiguration configuration
+            ServerConfiguration configuration,
+            int capacity
     ) {
+        this.readFdSet = new FDSet(capacity);
+        this.writeFdSet = new FDSet(capacity);
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
         this.interestQueue = new RingQueue<>(IOEvent.FACTORY, ioQueue.getCapacity());
@@ -190,7 +193,10 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                         configuration.getHttpBufReqContent(),
                         configuration.getHttpBufReqMultipart(),
                         configuration.getHttpBufRespHeader(),
-                        configuration.getHttpBufRespContent()
+                configuration.getHttpBufRespContent(),
+                configuration.getHttpSoRcvDownload(),
+                configuration.getHttpSoRcvUpload(),
+                configuration.getHttpSoRetries()
                 )
         );
     }

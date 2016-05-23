@@ -49,6 +49,7 @@ import com.questdb.misc.Dates;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.ObjHashSet;
 import com.questdb.test.tools.AbstractTest;
@@ -62,7 +63,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     private final StringSink sink = new StringSink();
     private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-    private final QueryCompiler compiler = new QueryCompiler();
+    private final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
 
     @Test
     public void testAddDoubleAndIntConst() throws Exception {

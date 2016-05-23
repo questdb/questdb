@@ -36,6 +36,7 @@ package com.questdb.test.tools;
 
 import com.questdb.misc.Files;
 import com.questdb.model.configuration.ModelConfiguration;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.parser.QueryCompiler;
 import org.junit.Rule;
 
@@ -43,5 +44,5 @@ public abstract class AbstractTest {
     @Rule
     public final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
 
-    protected final QueryCompiler compiler = new QueryCompiler();
+    protected final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
 }
