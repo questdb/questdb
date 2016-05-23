@@ -148,12 +148,10 @@ public class Partition<T> implements Closeable {
     }
 
     public FixedColumn fixCol(int i) {
-        checkColumnIndex(i);
         return (FixedColumn) Unsafe.arrayGet(columns, i);
     }
 
     public AbstractColumn getAbstractColumn(int i) {
-        checkColumnIndex(i);
         return Unsafe.arrayGet(columns, i);
     }
 
@@ -409,7 +407,6 @@ public class Partition<T> implements Closeable {
     }
 
     public VariableColumn varCol(int i) {
-        checkColumnIndex(i);
         return (VariableColumn) Unsafe.arrayGet(columns, i);
     }
 
@@ -495,13 +492,6 @@ public class Partition<T> implements Closeable {
         } else {
             ((VariableColumn) Unsafe.arrayGet(columns, i)).putBin(buf);
         }
-    }
-
-    private void checkColumnIndex(int i) {
-        if (i > -1 && i < columnCount) {
-            return;
-        }
-        throw new JournalRuntimeException("Invalid column index: %d in %s", i, this);
     }
 
     private void clearTx() {

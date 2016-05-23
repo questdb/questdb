@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.map;
@@ -54,7 +55,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
     private final MapMetadata metadata;
     private int keyBlockOffset;
     private int keyDataOffset;
-    private LongList offsets;
+    private DirectLongList offsets;
     private long kStart;
     private long kLimit;
     private long kPos;
@@ -91,9 +92,9 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
         this.mask = keyCapacity - 1;
         this.free = (int) (keyCapacity * loadFactor);
-        this.offsets = new LongList(keyCapacity);
+        this.offsets = new DirectLongList(keyCapacity);
         this.offsets.setPos(keyCapacity);
-        this.offsets.zero((byte) -1);
+        this.offsets.zero(-1);
         int columnSplit = valueColumns.size();
         int[] valueOffsets = new int[columnSplit];
 
@@ -134,6 +135,12 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         offsets.zero(-1);
     }
 
+    @Override
+    public void close() {
+        offsets.close();
+        super.close();
+    }
+
     public RecordCursor getCursor() {
         return recordSource.init(kStart, size);
     }
@@ -147,10 +154,10 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
         int index = Hash.hashMem(keyWriter.startAddr + keyBlockOffset, keyWriter.len - keyBlockOffset) & mask;
-        long offset = offsets.getQuick(index);
+        long offset = offsets.get(index);
 
         if (offset == -1) {
-            offsets.setQuick(index, keyWriter.startAddr - kStart);
+            offsets.set(index, keyWriter.startAddr - kStart);
             if (--free == 0) {
                 rehash();
             }
@@ -228,7 +235,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
                 return values.of(kStart + offset, false);
             }
         }
-        offsets.setQuick(index, keyWriter.startAddr - kStart);
+        offsets.set(index, keyWriter.startAddr - kStart);
         free--;
         if (free == 0) {
             rehash();
@@ -251,7 +258,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
     private void rehash() {
         int capacity = keyCapacity << 1;
         mask = capacity - 1;
-        LongList pointers = new LongList(capacity);
+        DirectLongList pointers = new DirectLongList(capacity);
         pointers.setPos(capacity);
         pointers.zero(-1);
 
@@ -264,8 +271,9 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
             while (pointers.get(index) != -1) {
                 index = (index + 1) & mask;
             }
-            pointers.setQuick(index, offset);
+            pointers.set(index, offset);
         }
+        this.offsets.close();
         this.offsets = pointers;
         this.free += (capacity - keyCapacity) * loadFactor;
         this.keyCapacity = capacity;
