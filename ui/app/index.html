@@ -50,6 +50,13 @@
     <!-- endbuild -->
 
     <script type="text/javascript">
+        /*
+         Disable "back" button.
+         On some platforms use left to right swipe
+         to "go back", which interferes with scrolling grid from side to side
+         accidental swipe would clear state of javascript app, which is inconvenient.
+         User can still go back via browser's menu system.
+         */
         history.pushState(null, null, 'index.html');
         window.addEventListener('popstate', function () {
             history.pushState(null, null, 'index.html');
@@ -122,7 +129,6 @@
                                 <button class="btn btn-white btn-sm js-query-refresh"><i class="fa fa-refresh"></i>
                                 </button>
                                 <button class="btn btn-white btn-sm js-query-export"><i class="fa fa-download"></i>
-                                </button>
                                 </button>
                                 <div class="export-input-container">
                                     <input id="export-url" class="js-export-url" type="text">

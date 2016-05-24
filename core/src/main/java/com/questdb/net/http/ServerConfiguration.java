@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.net.http;
@@ -61,8 +62,8 @@ public class ServerConfiguration {
     private int httpMaxConnections = 128;
     private int journalPoolSize = 128;
     private int httpQueueDepth = 1024;
-    private int httpSoRcvDownload = 8 * 1024;
-    private int httpSoRcvUpload = 4 * 1024 * 1024;
+    private int httpSoRcvSmall = 8 * 1024;
+    private int httpSoRcvLarge = 4 * 1024 * 1024;
     private int httpSoRetries = 1024;
     private int dbAsOfDataPage = 4 * 1024 * 1024;
     private int dbAsOfIndexPage = 1024 * 1024;
@@ -70,6 +71,9 @@ public class ServerConfiguration {
     private int dbSortKeyPage = 1024 * 1024;
     private int dbSortDataPage = 4 * 1024 * 1024;
     private int dbAggregatePage = 4 * 1024 * 1024;
+    private int dbHashKeyPage = 4 * 1024 * 1024;
+    private int dbHashDataPage = 8 * 1024 * 1024;
+    private int dbHashRowPage = 1024 * 1024;
 
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");
@@ -121,12 +125,12 @@ public class ServerConfiguration {
             this.httpQueueDepth = Numbers.ceilPow2(n);
         }
 
-        if ((n = parseSize(props, "http.so.rcv.download")) > -1) {
-            this.httpSoRcvDownload = n;
+        if ((n = parseSize(props, "http.so.rcv.small")) > -1) {
+            this.httpSoRcvSmall = n;
         }
 
-        if ((n = parseSize(props, "http.so.rcv.upload")) > -1) {
-            this.httpSoRcvUpload = n;
+        if ((n = parseSize(props, "http.so.rcv.large")) > -1) {
+            this.httpSoRcvLarge = n;
         }
 
         if ((n = parseInt(props, "http.so.retries")) > -1) {
@@ -183,6 +187,18 @@ public class ServerConfiguration {
 
         if ((n = parseSize(props, "db.aggregate.page")) > -1) {
             this.dbAggregatePage = n;
+        }
+
+        if ((n = parseSize(props, "db.hash.keypage")) > -1) {
+            this.dbHashKeyPage = n;
+        }
+
+        if ((n = parseSize(props, "db.hash.datapage")) > -1) {
+            this.dbHashDataPage = n;
+        }
+
+        if ((n = parseSize(props, "db.hash.rowpage")) > -1) {
+            this.dbHashRowPage = n;
         }
 
         if ((s = props.getProperty("mime.types")) != null) {
@@ -260,6 +276,18 @@ public class ServerConfiguration {
         return dbAsOfRowPage;
     }
 
+    public int getDbHashDataPage() {
+        return dbHashDataPage;
+    }
+
+    public int getDbHashKeyPage() {
+        return dbHashKeyPage;
+    }
+
+    public int getDbHashRowPage() {
+        return dbHashRowPage;
+    }
+
     public File getDbPath() {
         return dbPath;
     }
@@ -324,12 +352,12 @@ public class ServerConfiguration {
         return httpQueueDepth;
     }
 
-    public int getHttpSoRcvDownload() {
-        return httpSoRcvDownload;
+    public int getHttpSoRcvLarge() {
+        return httpSoRcvLarge;
     }
 
-    public int getHttpSoRcvUpload() {
-        return httpSoRcvUpload;
+    public int getHttpSoRcvSmall() {
+        return httpSoRcvSmall;
     }
 
     public int getHttpSoRetries() {
@@ -376,8 +404,8 @@ public class ServerConfiguration {
                 ", httpMaxConnections=" + httpMaxConnections +
                 ", journalPoolSize=" + journalPoolSize +
                 ", httpQueueDepth=" + httpQueueDepth +
-                ", httpSoRcvDownload=" + httpSoRcvDownload +
-                ", httpSoRcvUpload=" + httpSoRcvUpload +
+                ", httpSoRcvSmall=" + httpSoRcvSmall +
+                ", httpSoRcvLarge=" + httpSoRcvLarge +
                 ", httpSoRetries=" + httpSoRetries +
                 ", dbAsOfDataPage=" + dbAsOfDataPage +
                 ", dbAsOfIndexPage=" + dbAsOfIndexPage +

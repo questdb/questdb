@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.join;
@@ -86,8 +87,10 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             RecordSource slave,
             IntList slaveColIndices,
             boolean outer,
-            int rowIdPageSize,
-            int dataPageSize) {
+            int keyPageSize,
+            int dataPageSize,
+            int rowIdPageSize
+    ) {
         this.master = master;
         this.slave = slave;
         this.metadata = new SplitRecordMetadata(master.getMetadata(), slave.getMetadata());
@@ -95,7 +98,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         this.byRowId = slave.supportsRowIdAccess();
         this.masterColIndex = masterColIndices;
         this.slaveColIndex = slaveColIndices;
-        this.recordMap = createRecordMap(master, slave, rowIdPageSize, dataPageSize);
+        this.recordMap = createRecordMap(master, slave, keyPageSize, dataPageSize, rowIdPageSize);
         this.outer = outer;
         this.nullRecord = new NullRecord(slave.getMetadata());
         this.storageFacade = new SplitRecordStorageFacade(metadata, master.getMetadata().getColumnCount());
@@ -202,8 +205,9 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
 
     private MultiRecordMap createRecordMap(RecordSource masterSource,
                                            RecordSource slaveSource,
-                                           int rowIdPageSize,
-                                           int dataPageSize) {
+                                           int keyPageSize,
+                                           int dataPageSize,
+                                           int rowIdPageSize) {
         RecordMetadata mm = masterSource.getMetadata();
         for (int i = 0, k = masterColIndex.size(); i < k; i++) {
             this.masterColumns.add(mm.getColumnQuick(masterColIndex.getQuick(i)));
@@ -216,8 +220,8 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             this.slaveColumns.add(sm.getColumnQuick(index));
             keyCols.add(sm.getColumnName(index));
         }
-        return byRowId ? new MultiRecordMap(sm, keyCols, fakeRecord.getMetadata(), rowIdPageSize, rowIdPageSize) :
-                new MultiRecordMap(sm, keyCols, slaveSource.getMetadata(), dataPageSize, dataPageSize);
+        return byRowId ? new MultiRecordMap(sm, keyCols, fakeRecord.getMetadata(), keyPageSize, rowIdPageSize) :
+                new MultiRecordMap(sm, keyCols, slaveSource.getMetadata(), keyPageSize, dataPageSize);
     }
 
     private boolean hasNext0() {
