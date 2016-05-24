@@ -682,6 +682,11 @@
                 }
             });
             $(document).on('grid.focus', focusCell);
+            $(document).on('grid.refresh', function () {
+                if (query) {
+                    $(document).trigger(qdb.MSG_QUERY_EXEC, {q: query});
+                }
+            });
         }
 
         bind();

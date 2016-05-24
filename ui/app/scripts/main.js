@@ -114,8 +114,8 @@
 
         /* eslint-disable no-new */
         new Clipboard('.js-export-copy-url');
-        $('.js-export-copy-url').click(function () {
-            document.execCommand('copy');
+        $('.js-query-refresh').click(function () {
+            $(document).trigger('grid.refresh');
         });
     }
 
