@@ -33,7 +33,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.join.hash;
+package com.questdb.ql.impl;
 
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -53,7 +53,7 @@ import org.jetbrains.annotations.NotNull;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class MemoryRecordAccessor extends AbstractRecord {
+public class RecordListRecord extends AbstractRecord {
     private final DirectCharSequence csA = new DirectCharSequence();
     private final DirectCharSequence csB = new DirectCharSequence();
     private final MemoryPages mem;
@@ -64,7 +64,7 @@ public class MemoryRecordAccessor extends AbstractRecord {
     private long address;
     private StorageFacade storageFacade;
 
-    public MemoryRecordAccessor(RecordMetadata metadata, MemoryPages mem) {
+    public RecordListRecord(RecordMetadata metadata, MemoryPages mem) {
         super(metadata);
         this.mem = mem;
         offsets = new int[metadata.getColumnCount()];
@@ -152,7 +152,7 @@ public class MemoryRecordAccessor extends AbstractRecord {
     @Override
     public byte get(int col) {
         assert offsets[col] >= 0;
-        return Unsafe.getUnsafe().getByte(address + offsets[col]);
+        return Unsafe.getUnsafe().getByte(address + Unsafe.arrayGet(offsets, col));
     }
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
@@ -186,25 +186,25 @@ public class MemoryRecordAccessor extends AbstractRecord {
     @Override
     public boolean getBool(int col) {
         assert offsets[col] >= 0;
-        return Unsafe.getBool(address + offsets[col]);
+        return Unsafe.getBool(address + Unsafe.arrayGet(offsets, col));
     }
 
     @Override
     public long getDate(int col) {
         assert offsets[col] >= 0;
-        return Unsafe.getUnsafe().getLong(address + offsets[col]);
+        return Unsafe.getUnsafe().getLong(address + Unsafe.arrayGet(offsets, col));
     }
 
     @Override
     public double getDouble(int col) {
         assert offsets[col] >= 0;
-        return Unsafe.getUnsafe().getDouble(address + offsets[col]);
+        return Unsafe.getUnsafe().getDouble(address + Unsafe.arrayGet(offsets, col));
     }
 
     @Override
     public float getFloat(int col) {
         assert offsets[col] >= 0;
-        return Unsafe.getUnsafe().getFloat(address + offsets[col]);
+        return Unsafe.getUnsafe().getFloat(address + Unsafe.arrayGet(offsets, col));
     }
 
     @Override
@@ -226,13 +226,13 @@ public class MemoryRecordAccessor extends AbstractRecord {
     @Override
     public int getInt(int col) {
         assert offsets[col] >= 0;
-        return Unsafe.getUnsafe().getInt(address + offsets[col]);
+        return Unsafe.getUnsafe().getInt(address + Unsafe.arrayGet(offsets, col));
     }
 
     @Override
     public long getLong(int col) {
         assert offsets[col] >= 0;
-        return Unsafe.getUnsafe().getLong(address + offsets[col]);
+        return Unsafe.getUnsafe().getLong(address + Unsafe.arrayGet(offsets, col));
     }
 
     @Override
@@ -243,7 +243,7 @@ public class MemoryRecordAccessor extends AbstractRecord {
     @Override
     public short getShort(int col) {
         assert offsets[col] >= 0;
-        return Unsafe.getUnsafe().getShort(address + offsets[col]);
+        return Unsafe.getUnsafe().getShort(address + Unsafe.arrayGet(offsets, col));
     }
 
     @Override
@@ -274,6 +274,10 @@ public class MemoryRecordAccessor extends AbstractRecord {
         return storageFacade.getSymbolTable(col).value(getInt(col));
     }
 
+    public int getFixedBlockLength() {
+        return fixedBlockLen;
+    }
+
     public void of(long offset) {
         this.address = mem.addressOf(offset) + headerSize;
     }
@@ -284,10 +288,6 @@ public class MemoryRecordAccessor extends AbstractRecord {
 
     private long addressOf(int index) {
         return mem.addressOf(offsetOf(index));
-    }
-
-    int getFixedBlockLength() {
-        return fixedBlockLen;
     }
 
     private long offsetOf(int index) {
@@ -361,5 +361,75 @@ public class MemoryRecordAccessor extends AbstractRecord {
         Chars.put(mem.addressOf(offset), item);
     }
 
+    private static class DirectPagedBufferStream extends DirectInputStream {
+        private final long length;
+        private final MemoryPages buffer;
+        private final long offset;
+        private long blockStartAddress;
+        private long blockEndOffset;
+        private long blockStartOffset;
+        private long position;
 
+        private DirectPagedBufferStream(MemoryPages buffer, long offset, long length) {
+            this.buffer = buffer;
+            this.offset = offset;
+            this.blockStartAddress = buffer.addressOf(offset);
+            this.blockStartOffset = 0;
+            this.length = length;
+        }
+
+        @Override
+        public long copyTo(final long address, long start, long len) {
+            if (start < 0 || len < 0) {
+                throw new IndexOutOfBoundsException();
+            }
+
+            long res;
+            long rem = this.length - start;
+            long size = res = len > rem ? rem : len;
+            long offset = this.offset + start;
+
+            long p = address;
+            do {
+                int remaining = buffer.pageRemaining(offset);
+                int sz = size > remaining ? remaining : (int) size;
+                Unsafe.getUnsafe().copyMemory(buffer.addressOf(offset), p, sz);
+                p += sz;
+                offset += sz;
+                size -= sz;
+            } while (size > 0);
+
+            return res;
+        }
+
+        @Override
+        public long size() {
+            return (int) length - position;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (position < length) {
+                if (position < blockEndOffset) {
+                    return Unsafe.getUnsafe().getByte(blockStartAddress + offset + position++ - blockStartOffset);
+                }
+                return readFromNextBlock();
+            }
+            return -1;
+        }
+
+        private int readFromNextBlock() {
+            blockStartOffset = offset + position;
+            blockStartAddress = buffer.addressOf(blockStartOffset);
+            long blockLen = buffer.pageRemaining(blockStartOffset);
+            if (blockLen < 0) {
+                return -1;
+            }
+
+            blockEndOffset += blockLen;
+            assert position < blockEndOffset;
+            return Unsafe.getUnsafe().getByte(blockStartAddress + offset + position++ - blockStartOffset);
+        }
+
+    }
 }

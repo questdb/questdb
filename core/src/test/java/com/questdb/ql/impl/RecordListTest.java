@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,49 +30,30 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl;
 
 import com.questdb.JournalWriter;
-import com.questdb.ex.JournalConfigurationException;
 import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
-import com.questdb.misc.Files;
 import com.questdb.misc.Unsafe;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.join.hash.MemoryRecordAccessor;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.LongList;
-import com.questdb.store.MemoryPages;
-import com.questdb.test.tools.JournalTestFactory;
+import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
-import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
 
-public class MemoryRecordAccessorTest {
-    @Rule
-    public final JournalTestFactory factory;
-    private final QueryCompiler compiler;
-
-    public MemoryRecordAccessorTest() {
-        try {
-            this.factory = new JournalTestFactory(
-                    new JournalConfigurationBuilder().build(Files.makeTempDir())
-            );
-            this.compiler = new QueryCompiler(new ServerConfiguration());
-        } catch (JournalConfigurationException e) {
-            throw new JournalRuntimeException(e);
-        }
-    }
+public class RecordListTest extends AbstractTest {
+    private final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
 
     @Test
     public void testAllFieldTypesField() throws JournalException, IOException, ParserException {
@@ -251,17 +232,17 @@ public class MemoryRecordAccessorTest {
         }
         journal.commit();
 
-        try (MemoryPages buffer = new MemoryPages(pageSize)) {
-            MemoryRecordAccessor a = new MemoryRecordAccessor(journal.getMetadata(), buffer);
+        try (RecordList records = new RecordList(journal.getMetadata(), pageSize)) {
             LongList offsets = new LongList();
 
+            long o = -1;
             for (Record rec : compiler.compile(factory, journal.getLocation().getName())) {
-                offsets.add(a.append(rec));
+                offsets.add(o = records.append(rec, o));
             }
 
-            for (int i = 0; i < count; i++) {
-                a.of(offsets.getQuick(i));
-                generator.assertRecord(a, i);
+            int i = 0;
+            while (records.hasNext()) {
+                generator.assertRecord(records.next(), i++);
             }
         }
     }

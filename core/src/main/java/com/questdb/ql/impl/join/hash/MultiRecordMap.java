@@ -41,6 +41,7 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
+import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.impl.map.MultiMap;
 import com.questdb.std.Mutable;
@@ -55,7 +56,7 @@ import java.io.IOException;
 public class MultiRecordMap implements Closeable, Mutable {
     private static final ObjList<RecordColumnMetadata> valueCols = new ObjList<>(2);
     private final MultiMap map;
-    private final RecordDequeue records;
+    private final RecordList records;
 
     public MultiRecordMap(
             @Transient RecordMetadata keyMetadata,
@@ -65,7 +66,7 @@ public class MultiRecordMap implements Closeable, Mutable {
             int valuePageSize
     ) {
         map = new MultiMap(keyPageSize, keyMetadata, keyNames, valueCols, null);
-        records = new RecordDequeue(valueMetadata, valuePageSize);
+        records = new RecordList(valueMetadata, valuePageSize);
     }
 
     public void add(MultiMap.KeyWriter key, Record record) {

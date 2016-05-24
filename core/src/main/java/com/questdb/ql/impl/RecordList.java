@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,9 +30,10 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
-package com.questdb.ql.impl.join.hash;
+package com.questdb.ql.impl;
 
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
@@ -45,25 +46,25 @@ import com.questdb.store.MemoryPages;
 
 import java.io.Closeable;
 
-public class RecordDequeue extends AbstractImmutableIterator<Record> implements Closeable, RecordCursor, Mutable {
+public class RecordList extends AbstractImmutableIterator<Record> implements Closeable, RecordCursor, Mutable {
     private final MemoryPages mem;
-    private final MemoryRecordAccessor accessor;
+    private final RecordListRecord record;
     private final RecordMetadata metadata;
     private long readOffset = -1;
 
-    public RecordDequeue(RecordMetadata recordMetadata, int pageSize) {
+    public RecordList(RecordMetadata recordMetadata, int pageSize) {
         this.metadata = recordMetadata;
         this.mem = new MemoryPages(pageSize);
-        accessor = new MemoryRecordAccessor(recordMetadata, mem);
+        record = new RecordListRecord(recordMetadata, mem);
     }
 
     public long append(Record record, long prevOffset) {
-        long offset = mem.allocate(8 + accessor.getFixedBlockLength());
+        long offset = mem.allocate(8 + this.record.getFixedBlockLength());
         if (prevOffset != -1) {
             Unsafe.getUnsafe().putLong(mem.addressOf(prevOffset), offset);
         }
         Unsafe.getUnsafe().putLong(mem.addressOf(offset), -1L);
-        accessor.append(record, offset + 8);
+        this.record.append(record, offset + 8);
         return offset;
     }
 
@@ -93,7 +94,7 @@ public class RecordDequeue extends AbstractImmutableIterator<Record> implements 
     }
 
     public void setStorageFacade(StorageFacade storageFacade) {
-        accessor.setStorageFacade(storageFacade);
+        record.setStorageFacade(storageFacade);
     }
 
     @Override
@@ -103,9 +104,9 @@ public class RecordDequeue extends AbstractImmutableIterator<Record> implements 
 
     @Override
     public Record next() {
-        accessor.of(readOffset + 8);
+        record.of(readOffset + 8);
         readOffset = Unsafe.getUnsafe().getLong(mem.addressOf(readOffset));
-        return accessor;
+        return record;
     }
 
     public void of(long offset) {
@@ -113,7 +114,7 @@ public class RecordDequeue extends AbstractImmutableIterator<Record> implements 
     }
 
     public Record recordAt(long offset) {
-        accessor.of(offset + 8);
-        return accessor;
+        record.of(offset + 8);
+        return record;
     }
 }

@@ -43,8 +43,8 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.StorageFacade;
+import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.join.hash.FakeRecord;
-import com.questdb.ql.impl.join.hash.RecordDequeue;
 import com.questdb.ql.ops.AbstractRecordSource;
 import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.CharSink;
@@ -64,7 +64,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     private static final byte RED = 1;
     private static final byte BLACK = 0;
-    private final RecordDequeue records;
+    private final RecordList records;
     private final MemoryPages mem;
     private final RecordComparator comparator;
     private final RecordSource recordSource;
@@ -79,7 +79,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         this.comparator = comparator;
         this.mem = new MemoryPages(keyPageSize);
         this.byRowId = recordSource.supportsRowIdAccess();
-        this.records = new RecordDequeue(byRowId ? fakeRecord.getMetadata() : recordSource.getMetadata(), valuePageSize);
+        this.records = new RecordList(byRowId ? fakeRecord.getMetadata() : recordSource.getMetadata(), valuePageSize);
     }
 
     @Override
