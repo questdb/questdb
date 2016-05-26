@@ -273,7 +273,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
             }
             pointers.set(index, offset);
         }
-        this.offsets.close();
+        this.offsets.free();
         this.offsets = pointers;
         this.free += (capacity - keyCapacity) * loadFactor;
         this.keyCapacity = capacity;
