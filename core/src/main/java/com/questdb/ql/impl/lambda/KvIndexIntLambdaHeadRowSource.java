@@ -125,14 +125,14 @@ public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
 
     @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CHECKED")
     @Override
-    public void prepare(StorageFacade fa) {
+    public void prepare(StorageFacade fa, CancellationHandler cancellationHandler) {
         if (filter != null) {
             filter.prepare(fa);
         }
 
         keys.clear();
         try {
-            for (Record r : recordSource.prepareCursor(fa.getFactory())) {
+            for (Record r : recordSource.prepareCursor(fa.getFactory(), cancellationHandler)) {
                 keys.add(r.getInt(recordSourceColumn));
             }
         } catch (JournalException e) {

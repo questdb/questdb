@@ -38,10 +38,7 @@ package com.questdb.ql.impl;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
@@ -83,8 +80,8 @@ public class FilteredJournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        this.cursor = delegate.prepareCursor(factory);
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        this.cursor = delegate.prepareCursor(factory, cancellationHandler);
         filter.prepare(cursor.getStorageFacade());
         return this;
     }

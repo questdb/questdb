@@ -33,18 +33,54 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.net.http.handlers;
 
-import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.std.Sinkable;
+import com.questdb.ex.DisconnectedChannelException;
+import com.questdb.ex.SlowWritableChannelException;
+import com.questdb.misc.Chars;
+import com.questdb.net.http.ChunkedResponse;
+import com.questdb.net.http.Request;
 
-public interface RowSource extends Sinkable {
+public class QueryHandlerContext extends AbstractQueryContext {
+    boolean fetchAll = false;
+    boolean noMeta = false;
 
-    void configure(JournalMetadata metadata);
+    public QueryHandlerContext(long fd, int cyclesBeforeCancel) {
+        super(fd, cyclesBeforeCancel);
+    }
 
-    void prepare(StorageFacade storageFacade, CancellationHandler cancellationHandler);
+    @Override
+    public void clear() {
+        super.clear();
+        state = QueryState.PREFIX;
+        fetchAll = false;
+    }
 
-    RowCursor prepareCursor(PartitionSlice slice);
+    @Override
+    public boolean parseUrl(ChunkedResponse r, Request request) throws DisconnectedChannelException, SlowWritableChannelException {
+        if (super.parseUrl(r, request)) {
+            noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
+            fetchAll = Chars.equalsNc("true", request.getUrlParam("count"));
+            return true;
+        }
+        return false;
+    }
 
-    void reset();
+    @Override
+    protected void header(ChunkedResponse r, int status) throws DisconnectedChannelException, SlowWritableChannelException {
+        r.status(status, "application/json; charset=utf-8");
+        r.sendHeader();
+    }
+
+    @Override
+    protected void sendException(ChunkedResponse r, int position, CharSequence message, int status) throws DisconnectedChannelException, SlowWritableChannelException {
+        header(r, status);
+        r.put('{').
+                putQuoted("query").put(':').putUtf8EscapedAndQuoted(query == null ? "" : query).put(',').
+                putQuoted("error").put(':').putQuoted(message).put(',').
+                putQuoted("position").put(':').put(position);
+        r.put('}');
+        r.sendChunk();
+        r.done();
+    }
 }

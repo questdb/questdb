@@ -145,7 +145,7 @@ public class QueryCompiler {
     }
 
     public RecordCursor compile(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
-        return compileSource(factory, query).prepareCursor(factory);
+        return compileSource(factory, query).prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
     }
 
     public RecordSource compileSource(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {

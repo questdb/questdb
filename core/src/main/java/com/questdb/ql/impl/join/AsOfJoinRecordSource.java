@@ -40,10 +40,7 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.ql.impl.join.asof.FixRecordHolder;
 import com.questdb.ql.impl.join.asof.RecordHolder;
 import com.questdb.ql.impl.join.asof.RowidRecordHolder;
@@ -133,9 +130,9 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        this.masterCursor = master.prepareCursor(factory);
-        this.slaveCursor = slave.prepareCursor(factory);
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        this.masterCursor = master.prepareCursor(factory, cancellationHandler);
+        this.slaveCursor = slave.prepareCursor(factory, cancellationHandler);
         this.recordHolder.setCursor(slaveCursor);
         this.delayedHolder.setCursor(slaveCursor);
         this.storageFacade.prepare(factory, masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());

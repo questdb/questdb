@@ -39,10 +39,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.ops.AbstractRecordSource;
@@ -101,13 +98,13 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        sourceCursor = recordSource.prepareCursor(factory);
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        sourceCursor = recordSource.prepareCursor(factory, cancellationHandler);
         records.setStorageFacade(sourceCursor.getStorageFacade());
         if (byRowId) {
-            buildMapByRowId(sourceCursor);
+            buildMapByRowId(sourceCursor, cancellationHandler);
         } else {
-            buildMap(sourceCursor);
+            buildMap(sourceCursor, cancellationHandler);
         }
         cursor.setup();
         return cursor;
@@ -218,14 +215,16 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         return p;
     }
 
-    private void buildMap(RecordCursor cursor) {
+    private void buildMap(RecordCursor cursor, CancellationHandler cancellationHandler) {
         while (cursor.hasNext()) {
+            cancellationHandler.check();
             put(cursor.next());
         }
     }
 
-    private void buildMapByRowId(RecordCursor cursor) {
+    private void buildMapByRowId(RecordCursor cursor, CancellationHandler cancellationHandler) {
         while (cursor.hasNext()) {
+            cancellationHandler.check();
             put(cursor.next().getRowId());
         }
     }

@@ -80,7 +80,7 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
         partitionCursor = partitionSource.prepareCursor(factory);
         computeCount();
         return this;

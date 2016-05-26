@@ -36,10 +36,7 @@
 package com.questdb.ql.impl.latest;
 
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.ql.PartitionSlice;
-import com.questdb.ql.RowCursor;
-import com.questdb.ql.RowSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.std.CharSink;
 
 public class MergingRowSource implements RowSource, RowCursor {
@@ -62,9 +59,9 @@ public class MergingRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void prepare(StorageFacade facade) {
-        lhs.prepare(facade);
-        rhs.prepare(facade);
+    public void prepare(StorageFacade facade, CancellationHandler cancellationHandler) {
+        lhs.prepare(facade, cancellationHandler);
+        rhs.prepare(facade, cancellationHandler);
     }
 
     @Override

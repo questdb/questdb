@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,28 +30,23 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.net.http.handlers;
 
-import com.questdb.ex.*;
-import com.questdb.factory.JournalCachingFactory;
+import com.questdb.ex.DisconnectedChannelException;
+import com.questdb.ex.ResponseContentBufferTooSmallException;
+import com.questdb.ex.SlowWritableChannelException;
 import com.questdb.factory.JournalFactoryPool;
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.log.Log;
-import com.questdb.log.LogFactory;
-import com.questdb.log.LogRecord;
-import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.parser.QueryError;
 import com.questdb.std.CharSink;
 import com.questdb.std.LocalValue;
 import com.questdb.std.Mutable;
@@ -61,76 +56,30 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static com.questdb.net.http.handlers.QueryHandler.CACHE;
-import static com.questdb.net.http.handlers.QueryHandler.COMPILER;
-
 public class CsvHandler implements ContextHandler {
     private final JournalFactoryPool factoryPool;
     private final LocalValue<ExportHandlerContext> localContext = new LocalValue<>();
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
+    private final ServerConfiguration configuration;
 
-    public CsvHandler(JournalFactoryPool factoryPool) {
+
+    public CsvHandler(JournalFactoryPool factoryPool, ServerConfiguration configuration) {
         this.factoryPool = factoryPool;
+        this.configuration = configuration;
     }
 
     @Override
     public void handle(IOContext context) throws IOException {
         ExportHandlerContext ctx = localContext.get(context);
         if (ctx == null) {
-            localContext.set(context, ctx = new ExportHandlerContext());
+            localContext.set(context, ctx = new ExportHandlerContext(context.channel.getFd(), context.getServerConfiguration().getDbCyclesBeforeCancel()));
         }
-        ctx.fd = context.channel.getFd();
-
-        // Query text.
         ChunkedResponse r = context.chunkedResponse();
-        CharSequence query = context.request.getUrlParam("query");
-        if (query == null || query.length() == 0) {
-            ctx.info().$("Empty query request received. Sending empty reply.").$();
-            header(r, 200);
-            r.done();
-            return;
+        if (ctx.parseUrl(r, context.request)) {
+            ctx.compileQuery(r, factoryPool, cacheMisses, cacheHits);
+            resume(context);
         }
-
-        // Url Params.
-        long skip = 0;
-        long stop = Long.MAX_VALUE;
-
-        CharSequence limit = context.request.getUrlParam("limit");
-        if (limit != null) {
-            int sepPos = Chars.indexOf(limit, ',');
-            try {
-                if (sepPos > 0) {
-                    skip = Numbers.parseLong(limit, 0, sepPos);
-                    if (sepPos + 1 < limit.length()) {
-                        stop = Numbers.parseLong(limit, sepPos + 1, limit.length());
-                    }
-                } else {
-                    stop = Numbers.parseLong(limit);
-                }
-            } catch (NumericException ex) {
-                // Skip or stop will have default value.
-            }
-        }
-        if (stop < 0) {
-            stop = 0;
-        }
-
-        if (skip < 0) {
-            skip = 0;
-        }
-
-        ctx.query = query;
-        ctx.skip = skip;
-        ctx.count = 0L;
-        ctx.stop = stop;
-
-        ctx.info().$("Query: ").$(query).
-                $(", skip: ").$(skip).
-                $(", stop: ").$(stop).$();
-
-        executeQuery(r, ctx);
-        resume(context);
     }
 
     @SuppressWarnings("ConstantConditions")
@@ -160,7 +109,7 @@ public class CsvHandler implements ContextHandler {
                             r.putQuoted(column.getName());
                         }
                         r.put(Misc.EOL);
-                        ctx.state = QueryState.RECORD_START;
+                        ctx.state = AbstractQueryContext.QueryState.RECORD_START;
                         // fall through
                     case RECORD_START:
                         if (ctx.record == null) {
@@ -174,18 +123,18 @@ public class CsvHandler implements ContextHandler {
                                         break;
                                     }
                                 } else {
-                                    ctx.state = QueryState.DATA_SUFFIX;
+                                    ctx.state = AbstractQueryContext.QueryState.DATA_SUFFIX;
                                     break SWITCH;
                                 }
                             }
                         }
 
                         if (ctx.count > ctx.stop) {
-                            ctx.state = QueryState.DATA_SUFFIX;
+                            ctx.state = AbstractQueryContext.QueryState.DATA_SUFFIX;
                             break;
                         }
 
-                        ctx.state = QueryState.RECORD_COLUMNS;
+                        ctx.state = AbstractQueryContext.QueryState.RECORD_COLUMNS;
                         ctx.columnIndex = 0;
                         // fall through
                     case RECORD_COLUMNS:
@@ -202,7 +151,7 @@ public class CsvHandler implements ContextHandler {
                         r.bookmark();
                         r.put(Misc.EOL);
                         ctx.record = null;
-                        ctx.state = QueryState.RECORD_START;
+                        ctx.state = AbstractQueryContext.QueryState.RECORD_START;
                         break;
                     case DATA_SUFFIX:
                         sendDone(r, ctx);
@@ -227,14 +176,9 @@ public class CsvHandler implements ContextHandler {
 
     @Override
     public void setupThread() {
+        AbstractQueryContext.setupThread(configuration);
     }
 
-    private static void sendException(ChunkedResponse r, int position, CharSequence message, int status) throws DisconnectedChannelException, SlowWritableChannelException {
-        header(r, status);
-        r.put("Error at(").put(position).put("): ").put(message).put(Misc.EOL);
-        r.sendChunk();
-        r.done();
-    }
 
     private static void putValue(CharSink sink, ColumnType type, Record rec, int col) {
         switch (type) {
@@ -297,43 +241,6 @@ public class CsvHandler implements ContextHandler {
         }
     }
 
-    private static void header(ChunkedResponse r, int code) throws DisconnectedChannelException, SlowWritableChannelException {
-        r.status(code, "text/csv; charset=utf-8");
-        r.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(System.currentTimeMillis()).put(".csv\"").put(Misc.EOL);
-        r.sendHeader();
-    }
-
-    private void executeQuery(ChunkedResponse r, ExportHandlerContext ctx) throws IOException {
-        try {
-            // Prepare Context.
-            JournalCachingFactory factory = factoryPool.get();
-            ctx.factory = factory;
-            ctx.recordSource = CACHE.get().poll(ctx.query);
-            if (ctx.recordSource == null) {
-                ctx.recordSource = COMPILER.get().compileSource(factory, ctx.query);
-                cacheMisses.incrementAndGet();
-            } else {
-                ctx.recordSource.reset();
-                cacheHits.incrementAndGet();
-            }
-            ctx.cursor = ctx.recordSource.prepareCursor(factory);
-            ctx.metadata = ctx.cursor.getMetadata();
-            ctx.state = QueryState.METADATA;
-            ctx.columnIndex = 0;
-
-            header(r, 200);
-        } catch (ParserException e) {
-            ctx.info().$("Parser error executing query ").$(ctx.query).$(": at (").$(QueryError.getPosition()).$(") ").$(QueryError.getMessage()).$();
-            sendException(r, QueryError.getPosition(), QueryError.getMessage(), 400);
-        } catch (JournalException e) {
-            ctx.error().$("Server error executing query ").$(ctx.query).$(e).$();
-            sendException(r, 0, e.getMessage(), 500);
-        } catch (InterruptedException e) {
-            ctx.error().$("Error executing query. Server is shutting down. Query: ").$(ctx.query).$(e).$();
-            sendException(r, 0, "Server is shutting down.", 500);
-        }
-    }
-
     private void sendDone(ChunkedResponse r, ExportHandlerContext ctx) throws DisconnectedChannelException, SlowWritableChannelException {
         if (ctx.count > -1) {
             ctx.count = -1;
@@ -342,38 +249,15 @@ public class CsvHandler implements ContextHandler {
         r.done();
     }
 
-    private enum QueryState {
-        METADATA, RECORD_START, RECORD_COLUMNS, DATA_SUFFIX
-    }
-
-    private static class ExportHandlerContext implements Mutable, Closeable {
-        private static final Log LOG = LogFactory.getLog(ExportHandlerContext.class);
-        private RecordSource recordSource;
-        private CharSequence query;
-        private RecordMetadata metadata;
-        private RecordCursor cursor;
-        private long count;
-        private long skip;
-        private long stop;
-        private Record record;
-        private JournalCachingFactory factory;
-        private long fd;
-        private QueryState state = QueryState.METADATA;
-        private int columnIndex;
+    private static class ExportHandlerContext extends AbstractQueryContext implements Mutable, Closeable {
+        public ExportHandlerContext(long fd, int cyclesBeforeCancel) {
+            super(fd, cyclesBeforeCancel);
+            state = QueryState.METADATA;
+        }
 
         @Override
         public void clear() {
-            debug().$("Cleaning context").$();
-            metadata = null;
-            cursor = null;
-            record = null;
-            debug().$("Closing journal factory").$();
-            factory = Misc.free(factory);
-            if (recordSource != null) {
-                CACHE.get().put(query.toString(), recordSource);
-                recordSource = null;
-            }
-            query = null;
+            super.clear();
             state = QueryState.METADATA;
         }
 
@@ -383,16 +267,20 @@ public class CsvHandler implements ContextHandler {
             clear();
         }
 
-        private LogRecord debug() {
-            return LOG.debug().$('[').$(fd).$("] ");
+        @Override
+        protected void header(ChunkedResponse r, int code) throws DisconnectedChannelException, SlowWritableChannelException {
+            state = QueryState.METADATA;
+            r.status(code, "text/csv; charset=utf-8");
+            r.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(System.currentTimeMillis()).put(".csv\"").put(Misc.EOL);
+            r.sendHeader();
         }
 
-        private LogRecord error() {
-            return LOG.error().$('[').$(fd).$("] ");
-        }
-
-        private LogRecord info() {
-            return LOG.info().$('[').$(fd).$("] ");
+        @Override
+        protected void sendException(ChunkedResponse r, int position, CharSequence message, int status) throws DisconnectedChannelException, SlowWritableChannelException {
+            header(r, status);
+            r.put("Error at(").put(position).put("): ").put(message).put(Misc.EOL);
+            r.sendChunk();
+            r.done();
         }
     }
 }

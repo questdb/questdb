@@ -117,7 +117,7 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
 
     @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CHECKED")
     @Override
-    public void prepare(StorageFacade fa) {
+    public void prepare(StorageFacade fa, CancellationHandler cancellationHandler) {
 
         if (filter != null) {
             filter.prepare(fa);
@@ -126,7 +126,7 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
         SymbolTable tab = fa.getSymbolTable(column);
         keys.clear();
         try {
-            for (Record r : recordSource.prepareCursor(fa.getFactory())) {
+            for (Record r : recordSource.prepareCursor(fa.getFactory(), cancellationHandler)) {
                 int k = tab.getQuick(getKey(r, recordSourceColumn));
                 if (k > -1) {
                     keys.add(k);

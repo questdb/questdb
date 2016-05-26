@@ -38,6 +38,7 @@ package com.questdb.ql.impl.latest;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.JournalMetadata;
+import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.PartitionSlice;
 import com.questdb.ql.RowCursor;
 import com.questdb.ql.StorageFacade;
@@ -127,7 +128,7 @@ public class KvIndexSymLookupRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void prepare(StorageFacade facade) {
+    public void prepare(StorageFacade facade, CancellationHandler cancellationHandler) {
         symbolKey = facade.getSymbolTable(symbol).getQuick(value);
     }
 

@@ -33,18 +33,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.ex;
 
-import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.std.Sinkable;
+@SuppressWarnings("ThrowableInstanceNeverThrown")
+public final class DisconnectedChannelRuntimeException extends RuntimeException {
+    public final static DisconnectedChannelRuntimeException INSTANCE = new DisconnectedChannelRuntimeException();
 
-public interface RowSource extends Sinkable {
-
-    void configure(JournalMetadata metadata);
-
-    void prepare(StorageFacade storageFacade, CancellationHandler cancellationHandler);
-
-    RowCursor prepareCursor(PartitionSlice slice);
-
-    void reset();
+    private DisconnectedChannelRuntimeException() {
+    }
 }

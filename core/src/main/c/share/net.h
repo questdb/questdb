@@ -79,6 +79,14 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_recv
 
 /*
  * Class:     com_questdb_misc_Net
+ * Method:    recv
+ * Signature: (JJI)I
+ */
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_isDead
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Net
  * Method:    send
  * Signature: (JJI)I
  */

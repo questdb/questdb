@@ -38,10 +38,7 @@ package com.questdb.ql.impl;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
@@ -77,10 +74,10 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
         this._top = lo.getLong(null);
         this._count = hi.getLong(null) - this._top;
-        this.recordCursor = recordSource.prepareCursor(factory);
+        this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
         return this;
     }
 

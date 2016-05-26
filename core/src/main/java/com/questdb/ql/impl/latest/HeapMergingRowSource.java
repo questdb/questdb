@@ -37,10 +37,7 @@ package com.questdb.ql.impl.latest;
 
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.PartitionSlice;
-import com.questdb.ql.RowCursor;
-import com.questdb.ql.RowSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.std.CharSink;
 import com.questdb.std.IntLongPriorityQueue;
 
@@ -57,15 +54,15 @@ public class HeapMergingRowSource implements RowSource, RowCursor {
 
     @Override
     public void configure(JournalMetadata metadata) {
-        for (RowSource src : sources) {
-            src.configure(metadata);
+        for (int i = 0, n = sources.length; i < n; i++) {
+            Unsafe.arrayGet(sources, i).configure(metadata);
         }
     }
 
     @Override
-    public void prepare(StorageFacade facade) {
-        for (RowSource src : sources) {
-            src.prepare(facade);
+    public void prepare(StorageFacade facade, CancellationHandler cancellationHandler) {
+        for (int i = 0, n = sources.length; i < n; i++) {
+            Unsafe.arrayGet(sources, i).prepare(facade, cancellationHandler);
         }
     }
 

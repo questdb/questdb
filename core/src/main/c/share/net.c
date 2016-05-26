@@ -106,6 +106,12 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_recv
     return convert_error(recv((int) fd, (void *) ptr, (size_t) len, 0));
 }
 
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_isDead
+        (JNIEnv *e, jclass cl, jlong fd) {
+    int c;
+    return (jboolean) (recv((int) fd, &c, 1, 0) == 0);
+}
+
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_configureNonBlocking
         (JNIEnv *e, jclass cl, jlong fd) {
     int flags;

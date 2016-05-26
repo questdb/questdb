@@ -35,16 +35,6 @@
 
 package com.questdb.ql;
 
-import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.std.Sinkable;
-
-public interface RowSource extends Sinkable {
-
-    void configure(JournalMetadata metadata);
-
-    void prepare(StorageFacade storageFacade, CancellationHandler cancellationHandler);
-
-    RowCursor prepareCursor(PartitionSlice slice);
-
-    void reset();
+public interface CancellationHandler {
+    void check();
 }

@@ -74,7 +74,7 @@ public class ServerConfiguration {
     private int dbHashKeyPage = 4 * 1024 * 1024;
     private int dbHashDataPage = 8 * 1024 * 1024;
     private int dbHashRowPage = 1024 * 1024;
-
+    private int dbCyclesBeforeCancel = 1024 * 1024;
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");
     private File httpPublic = new File("public");
@@ -201,6 +201,10 @@ public class ServerConfiguration {
             this.dbHashRowPage = n;
         }
 
+        if ((n = parseInt(props, "db.cycles.before.cancel")) > -1) {
+            this.dbCyclesBeforeCancel = Numbers.ceilPow2(n);
+        }
+
         if ((s = props.getProperty("mime.types")) != null) {
             this.mimeTypes = normalize(root, new File(s));
         } else {
@@ -274,6 +278,10 @@ public class ServerConfiguration {
 
     public int getDbAsOfRowPage() {
         return dbAsOfRowPage;
+    }
+
+    public int getDbCyclesBeforeCancel() {
+        return dbCyclesBeforeCancel;
     }
 
     public int getDbHashDataPage() {

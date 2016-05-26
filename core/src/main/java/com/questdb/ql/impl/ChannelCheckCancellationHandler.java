@@ -33,18 +33,38 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.ql.impl;
 
-import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.std.Sinkable;
+import com.questdb.ex.DisconnectedChannelRuntimeException;
+import com.questdb.misc.Net;
+import com.questdb.misc.Numbers;
+import com.questdb.ql.CancellationHandler;
 
-public interface RowSource extends Sinkable {
+public class ChannelCheckCancellationHandler implements CancellationHandler {
+    private final long fd;
+    private long loop = 0;
+    private long mask;
 
-    void configure(JournalMetadata metadata);
+    public ChannelCheckCancellationHandler(long fd, int cyclesBeforeCheck) {
+        this.fd = fd;
+        this.mask = Numbers.ceilPow2(cyclesBeforeCheck) - 1;
+    }
 
-    void prepare(StorageFacade storageFacade, CancellationHandler cancellationHandler);
+    @Override
+    public void check() {
+        if (loop > 0 && (loop & mask) == 0) {
+            checkChannel();
+        }
+        loop++;
+    }
 
-    RowCursor prepareCursor(PartitionSlice slice);
+    public void reset() {
+        this.loop = 0;
+    }
 
-    void reset();
+    private void checkChannel() {
+        if (Net.isDead(fd)) {
+            throw DisconnectedChannelRuntimeException.INSTANCE;
+        }
+    }
 }

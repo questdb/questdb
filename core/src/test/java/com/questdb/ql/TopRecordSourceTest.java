@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql;
@@ -38,6 +39,7 @@ import com.questdb.JournalWriter;
 import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.StringSink;
 import com.questdb.model.Quote;
+import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.TopRecordSource;
 import com.questdb.ql.ops.constant.LongConstant;
 import com.questdb.test.tools.AbstractTest;
@@ -54,7 +56,7 @@ public class TopRecordSourceTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(99997), new LongConstant(100000)).prepareCursor(factory));
+        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(99997), new LongConstant(100000)).prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
 
         final String expected = "2013-11-04T10:00:00.000Z\tBT-A.L\t168.000000000000\t0.001307277009\t319936098\t1456039311\tFast trading\tLXE\n" +
                 "2013-11-04T10:00:00.000Z\tAGK.L\t0.000031983279\t878.000000000000\t819380635\t1732419403\tFast trading\tLXE\n" +
@@ -69,7 +71,7 @@ public class TopRecordSourceTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(102), new LongConstant(112)).prepareCursor(factory));
+        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(102), new LongConstant(112)).prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
 
         final String expected = "2013-09-04T10:00:00.000Z\tTLW.L\t0.003675992833\t0.000000006044\t233699709\t984001343\tFast trading\tLXE\n" +
                 "2013-09-04T10:00:00.000Z\tGKN.L\t0.000001392326\t0.000000010696\t1921077830\t83098719\tFast trading\tLXE\n" +
@@ -91,7 +93,7 @@ public class TopRecordSourceTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(99997), new LongConstant(10)).prepareCursor(factory));
+        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(99997), new LongConstant(10)).prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
 
         Assert.assertEquals("", sink.toString());
     }
@@ -103,7 +105,7 @@ public class TopRecordSourceTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(0), new LongConstant(10)).prepareCursor(factory));
+        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(0), new LongConstant(10)).prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
 
         final String expected = "2013-09-04T10:00:00.000Z\tBT-A.L\t0.000001189157\t1.050231933594\t1326447242\t948263339\tFast trading\tLXE\n" +
                 "2013-09-04T10:00:00.000Z\tADM.L\t104.021850585938\t0.006688738358\t1575378703\t1436881714\tFast trading\tLXE\n" +

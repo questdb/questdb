@@ -80,19 +80,19 @@ public class Response implements Closeable, Mutable {
     private long total = 0;
     private boolean header = true;
 
-    public Response(WritableByteChannel channel, int headerBufferSize, int contentBufferSize, Clock clock) {
-        if (headerBufferSize <= 0) {
+    public Response(WritableByteChannel channel, ServerConfiguration configuration, Clock clock) {
+        if (configuration.getHttpBufRespHeader() <= 0) {
             throw new IllegalArgumentException("headerBufferSize");
         }
 
-        if (contentBufferSize <= 0) {
+        if (configuration.getHttpBufRespContent() <= 0) {
             throw new IllegalArgumentException("contentBufferSize");
         }
 
         this.channel = channel;
-        this.sz = Numbers.ceilPow2(contentBufferSize);
+        this.sz = Numbers.ceilPow2(configuration.getHttpBufRespContent());
         this.out = ByteBuffer.allocateDirect(sz);
-        this.hb = new ResponseHeaderBuffer(headerBufferSize, clock);
+        this.hb = new ResponseHeaderBuffer(configuration.getHttpBufRespHeader(), clock);
         // size is 32bit int, as hex string max 8 bytes
         this.chunkHeader = ByteBuffer.allocateDirect(8 + 2 * Misc.EOL.length());
         this.chunkSink = new DirectUnboundedAnsiSink(ByteBuffers.getAddress(chunkHeader));

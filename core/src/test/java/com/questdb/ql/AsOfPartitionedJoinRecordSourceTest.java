@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql;
@@ -43,6 +44,7 @@ import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Rnd;
+import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.NoRowidSource;
 import com.questdb.ql.impl.join.AsOfJoinRecordSource;
 import com.questdb.ql.impl.join.AsOfPartitionedJoinRecordSource;
@@ -291,11 +293,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 128
                 , 128
         )) {
-            printer.printCursor(source.prepareCursor(factory));
+            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
             TestUtils.assertEquals(expected, sink);
             source.reset();
             sink.clear();
-            printer.printCursor(source.prepareCursor(factory));
+            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -319,11 +321,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , new NoRowidSource().of(compiler.compileSource(factory, "select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
                 , 0
         )) {
-            printer.printCursor(source.prepareCursor(factory));
+            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
             TestUtils.assertEquals(expected, sink);
             source.reset();
             sink.clear();
-            printer.printCursor(source.prepareCursor(factory));
+            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -383,11 +385,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 512
                 , 512
         )) {
-            printer.printCursor(source.prepareCursor(factory), true);
+            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), true);
             TestUtils.assertEquals(expected, sink);
             sink.clear();
             source.reset();
-            printer.printCursor(source.prepareCursor(factory), true);
+            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), true);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -412,11 +414,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:08:00.000Z\tSWHYRX\t-810.375000000000\tPULKHMJLLKQZJIONCLBYNYYWYBEPKPNZXNYWIGPCMLCBMUPYMRIGQWSZMUMXMSYXCEEDCL\t2015-03-10T00:07:50.000Z\tPEHNRX\t-969.125000000000\t0.207036912441\tSUZHUEVVELXBCOGQQGZZNTEZNOOZGQPKNLKUWCXHYPNZEBESMTXULVCTMKCZJGHRIMUNWUUQHXCRSLYJFTDNSEPESIUROKI\tVTJWCP\t0.3852\t27447\t3768436831039810156\ttrue\n" +
                 "2015-03-10T00:09:00.000Z\tSWHYRX\t-384.000000000000\tZGUJBKNTPYXUBYXGDDULXVVSCNJINCQSDOQILSLXZEMDBLNXHYUUTVSXURFLRJLIUC\t2015-03-10T00:08:50.000Z\tVTJWCP\t-1024.000000000000\t0.000000084048\tJOZWRXKMTFXRYPHFPUYWNLBVVHNSJLVKRTLXHBHDHIMFYOJREFU\tSWHYRX\t0.4008\t-25237\t-2694211234414702926\ttrue\n" +
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\tVTJWCP\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
-        printer.printCursor(source.prepareCursor(factory));
+        printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
         TestUtils.assertEquals(expected, sink);
         source.reset();
         sink.clear();
-        printer.printCursor(source.prepareCursor(factory));
+        printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
         TestUtils.assertEquals(expected, sink);
     }
 
@@ -435,7 +437,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         )) {
             StringSink testSink = new StringSink();
             int idx = source.getMetadata().getColumnIndex("trader");
-            for (Record r : source.prepareCursor(factory)) {
+            for (Record r : source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE)) {
                 testSink.clear();
                 r.getStr(idx, testSink);
 
@@ -474,11 +476,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 512
                 , 512
         )) {
-            printer.printCursor(source.prepareCursor(factory), true);
+            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), true);
             TestUtils.assertEquals(expected, sink);
             source.reset();
             sink.clear();
-            printer.printCursor(source.prepareCursor(factory), true);
+            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), true);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -503,7 +505,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:08:00.000Z\tSWHYRX\t-810.375000000000\tPULKHMJLLKQZJIONCLBYNYYWYBEPKPNZXNYWIGPCMLCBMUPYMRIGQWSZMUMXMSYXCEEDCL\t2015-03-10T00:07:50.000Z\tPEHNRX\t-969.125000000000\t0.207036912441\tSUZHUEVVELXBCOGQQGZZNTEZNOOZGQPKNLKUWCXHYPNZEBESMTXULVCTMKCZJGHRIMUNWUUQHXCRSLYJFTDNSEPESIUROKI\tVTJWCP\t0.3852\t27447\t3768436831039810156\ttrue\n" +
                 "2015-03-10T00:09:00.000Z\tSWHYRX\t-384.000000000000\tZGUJBKNTPYXUBYXGDDULXVVSCNJINCQSDOQILSLXZEMDBLNXHYUUTVSXURFLRJLIUC\t2015-03-10T00:08:50.000Z\tVTJWCP\t-1024.000000000000\t0.000000084048\tJOZWRXKMTFXRYPHFPUYWNLBVVHNSJLVKRTLXHBHDHIMFYOJREFU\tSWHYRX\t0.4008\t-25237\t-2694211234414702926\ttrue\n" +
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\tVTJWCP\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
-        printer.printCursor(source.prepareCursor(factory));
+        printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
         TestUtils.assertEquals(expected, sink);
     }
 

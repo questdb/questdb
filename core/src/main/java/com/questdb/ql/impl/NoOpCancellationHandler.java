@@ -33,18 +33,17 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.ql.impl;
 
-import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.std.Sinkable;
+import com.questdb.ql.CancellationHandler;
 
-public interface RowSource extends Sinkable {
+public class NoOpCancellationHandler implements CancellationHandler {
+    public static final NoOpCancellationHandler INSTANCE = new NoOpCancellationHandler();
 
-    void configure(JournalMetadata metadata);
+    private NoOpCancellationHandler() {
+    }
 
-    void prepare(StorageFacade storageFacade, CancellationHandler cancellationHandler);
-
-    RowCursor prepareCursor(PartitionSlice slice);
-
-    void reset();
+    @Override
+    public void check() {
+    }
 }

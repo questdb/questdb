@@ -38,6 +38,7 @@ package com.questdb.ql.impl;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.ops.Parameter;
@@ -59,8 +60,8 @@ public class NoRowidSource implements RecordSource {
 
     @SuppressWarnings("unchecked")
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        return delegate.prepareCursor(factory);
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        return delegate.prepareCursor(factory, cancellationHandler);
     }
 
     @Override

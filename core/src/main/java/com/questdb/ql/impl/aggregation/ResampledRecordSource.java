@@ -134,8 +134,8 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        this.recordCursor = recordSource.prepareCursor(factory);
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
         return this;
     }
 

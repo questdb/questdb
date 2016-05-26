@@ -46,7 +46,6 @@ import com.questdb.misc.Os;
 import com.questdb.mp.*;
 import com.questdb.net.Epoll;
 import com.questdb.net.NetworkChannelImpl;
-import com.questdb.net.NonBlockingSecureSocketChannel;
 import com.questdb.std.LongMatrix;
 
 import java.io.IOException;
@@ -169,21 +168,7 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
         pending.set(r, M_ID, fdid++);
 
         NetworkChannelImpl channel = new NetworkChannelImpl(_fd);
-        pending.set(r, new IOContext(
-                        configuration.getSslConfig().isSecure() ?
-                                new NonBlockingSecureSocketChannel(channel, configuration.getSslConfig()) :
-                                channel,
-                        clock,
-                        configuration.getHttpBufReqHeader(),
-                        configuration.getHttpBufReqContent(),
-                        configuration.getHttpBufReqMultipart(),
-                        configuration.getHttpBufRespHeader(),
-                configuration.getHttpBufRespContent(),
-                configuration.getHttpSoRcvSmall(),
-                configuration.getHttpSoRcvLarge(),
-                configuration.getHttpSoRetries()
-                )
-        );
+        pending.set(r, new IOContext(channel, configuration, clock));
     }
 
     private void disconnect(IOContext context, DisconnectReason reason) {

@@ -39,10 +39,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Interval;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -81,8 +78,8 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        this.cursor = delegate.prepareCursor(factory);
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        this.cursor = delegate.prepareCursor(factory, cancellationHandler);
         return this;
     }
 

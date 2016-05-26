@@ -40,10 +40,7 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.join.hash.MultiRecordMap;
 import com.questdb.ql.impl.join.hash.NullRecord;
@@ -127,10 +124,10 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        this.slaveCursor = slave.prepareCursor(factory);
-        this.masterCursor = master.prepareCursor(factory);
-        buildHashTable();
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        this.slaveCursor = slave.prepareCursor(factory, cancellationHandler);
+        this.masterCursor = master.prepareCursor(factory, cancellationHandler);
+        buildHashTable(cancellationHandler);
         recordMap.setStorageFacade(slaveCursor.getStorageFacade());
         storageFacade.prepare(factory, masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
         return this;
@@ -189,8 +186,9 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         sink.put("]]}");
     }
 
-    private void buildHashTable() {
+    private void buildHashTable(CancellationHandler cancellationHandler) {
         for (Record r : slaveCursor) {
+            cancellationHandler.check();
             MultiMap.KeyWriter key = recordMap.claimKey();
             for (int i = 0, k = slaveColumns.size(); i < k; i++) {
                 setKey(key, r, slaveColIndex.getQuick(i), slaveColumns.getQuick(i).getType());

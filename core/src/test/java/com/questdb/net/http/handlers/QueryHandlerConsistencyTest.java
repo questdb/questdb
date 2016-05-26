@@ -1,3 +1,38 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2016 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * As a special exception, the copyright holders give permission to link the
+ * code of portions of this program with the OpenSSL library under certain
+ * conditions as described in each individual source file and distribute
+ * linked combinations including the program with the OpenSSL library. You
+ * must comply with the GNU Affero General Public License in all respects for
+ * all of the code used other than as permitted herein. If you modify file(s)
+ * with this exception, you may extend this exception to your version of the
+ * file(s), but you are not obligated to do so. If you do not wish to do so,
+ * delete this exception statement from your version. If you delete this
+ * exception statement from all source files in the program, then also delete
+ * it in the license file.
+ *
+ ******************************************************************************/
+
 package com.questdb.net.http.handlers;
 
 import com.questdb.factory.JournalFactoryPool;
@@ -31,12 +66,12 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
 
     @Test
     public void testCsvHandlerConsistency() throws Exception {
-        testHandler(new CsvHandler(new JournalFactoryPool(factory.getConfiguration(), 1)));
+        testHandler(new CsvHandler(new JournalFactoryPool(factory.getConfiguration(), 1), new ServerConfiguration()));
     }
 
     @Test
     public void testCsvOutput() throws Exception {
-        ContextHandler handler = new CsvHandler(new JournalFactoryPool(factory.getConfiguration(), 1));
+        ContextHandler handler = new CsvHandler(new JournalFactoryPool(factory.getConfiguration(), 1), new ServerConfiguration());
         handler.setupThread();
         TestChannel channel = new TestChannel(QUERY1);
         String expected = "\"id\",\"x\",\"y\",\"z\",\"w\",\"timestamp\"\r\n" +
@@ -142,7 +177,7 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
                 "id99,-384.0000000000,0.0000000980,-264,355,\"2015-03-12T00:00:00.990Z\"\r\n";
         try {
             channel.reset();
-            try (IOContext context = new IOContext(channel, MilliClock.INSTANCE, 1024, 1024, 1024, 512, 1024, 128 * 1024, 4 * 1024 * 1024, 1024)) {
+            try (IOContext context = new IOContext(channel, new ServerConfiguration(), MilliClock.INSTANCE)) {
                 context.request.read();
                 handler.handle(context);
                 TestUtils.assertEquals(expected, channel.getOutput());
@@ -162,9 +197,11 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
         String expected = null;
         handler.setupThread();
         try {
+            ServerConfiguration configuration = new ServerConfiguration();
             for (int i = 128; i < 7500; i++) {
                 channel.reset();
-                try (IOContext context = new IOContext(channel, MilliClock.INSTANCE, 1024, 1024, 1024, 512, i, 128 * 1024, 4 * 1024 * 1024, 1024)) {
+                configuration.setHttpBufRespContent(i);
+                try (IOContext context = new IOContext(channel, configuration, MilliClock.INSTANCE)) {
                     context.request.read();
                     handler.handle(context);
                     if (expected != null) {
@@ -177,5 +214,6 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
         } finally {
             channel.free();
         }
+        System.out.println(expected);
     }
 }

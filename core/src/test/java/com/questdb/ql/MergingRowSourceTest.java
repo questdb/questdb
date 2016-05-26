@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.ql;
@@ -41,6 +42,7 @@ import com.questdb.misc.Dates;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalSource;
+import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.latest.HeapMergingRowSource;
 import com.questdb.ql.impl.latest.KvIndexSymLookupRowSource;
 import com.questdb.ql.impl.latest.MergingRowSource;
@@ -61,7 +63,7 @@ public class MergingRowSourceTest extends AbstractTest {
         RecordSource rs = new JournalSource(new JournalPartitionSource(w.getMetadata(), true), new HeapMergingRowSource(srcA, srcB));
 
         long last = 0;
-        RecordCursor c = rs.prepareCursor(factory);
+        RecordCursor c = rs.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
         int ts = rs.getMetadata().getColumnIndex("timestamp");
         while (c.hasNext()) {
             long r = c.next().getDate(ts);
@@ -81,7 +83,7 @@ public class MergingRowSourceTest extends AbstractTest {
         RecordSource rs = new JournalSource(new JournalPartitionSource(w.getMetadata(), true), new MergingRowSource(srcA, srcB));
 
         long last = 0;
-        RecordCursor c = rs.prepareCursor(factory);
+        RecordCursor c = rs.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
         int ts = rs.getMetadata().getColumnIndex("timestamp");
         while (c.hasNext()) {
             long r = c.next().getDate(ts);

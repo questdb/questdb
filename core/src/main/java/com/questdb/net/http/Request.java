@@ -64,15 +64,15 @@ public class Request implements Closeable, Mutable {
     private final int soRcvLarge;
     private final int soRetries;
 
-    public Request(NetworkChannel channel, int headerBufferSize, int contentBufferSize, int multipartHeaderBufferSize, int soRcvSmall, int soRcvLarge, int soRetries) {
+    public Request(NetworkChannel channel, ServerConfiguration configuration) {
         this.channel = channel;
-        this.hb = new RequestHeaderBuffer(headerBufferSize, pool);
-        this.in = ByteBuffer.allocateDirect(Numbers.ceilPow2(contentBufferSize));
+        this.hb = new RequestHeaderBuffer(configuration.getHttpBufReqHeader(), pool);
+        this.in = ByteBuffer.allocateDirect(Numbers.ceilPow2(configuration.getHttpBufReqContent()));
         this.inAddr = ByteBuffers.getAddress(in);
-        this.multipartParser = new MultipartParser(multipartHeaderBufferSize, pool);
-        this.soRcvSmall = soRcvSmall;
-        this.soRcvLarge = soRcvLarge;
-        this.soRetries = soRetries;
+        this.multipartParser = new MultipartParser(configuration.getHttpBufReqMultipart(), pool);
+        this.soRcvSmall = configuration.getHttpSoRcvSmall();
+        this.soRcvLarge = configuration.getHttpSoRcvLarge();
+        this.soRetries = configuration.getHttpSoRetries();
     }
 
     @Override

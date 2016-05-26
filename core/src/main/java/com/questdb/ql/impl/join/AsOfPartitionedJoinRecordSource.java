@@ -40,10 +40,7 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.ql.impl.join.asof.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSequenceHashSet;
@@ -141,9 +138,9 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        this.masterCursor = master.prepareCursor(factory);
-        this.slaveCursor = slave.prepareCursor(factory);
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        this.masterCursor = master.prepareCursor(factory, cancellationHandler);
+        this.slaveCursor = slave.prepareCursor(factory, cancellationHandler);
         map.setSlaveCursor(slaveCursor);
         holder.setCursor(slaveCursor);
         storageFacade.prepare(factory, masterCursor.getStorageFacade(), map.getStorageFacade());

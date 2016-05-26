@@ -38,10 +38,7 @@ package com.questdb.ql.impl.join;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 
@@ -77,9 +74,9 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        masterCursor = masterSource.prepareCursor(factory);
-        slaveCursor = slaveSource.prepareCursor(factory);
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        masterCursor = masterSource.prepareCursor(factory, cancellationHandler);
+        slaveCursor = slaveSource.prepareCursor(factory, cancellationHandler);
         return this;
     }
 

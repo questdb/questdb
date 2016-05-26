@@ -39,6 +39,7 @@ import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.JournalMetadata;
+import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.PartitionSlice;
 import com.questdb.ql.RowCursor;
 import com.questdb.ql.StorageFacade;
@@ -115,7 +116,7 @@ public class KvIndexSymAllHeadRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void prepare(StorageFacade facade) {
+    public void prepare(StorageFacade facade, CancellationHandler cancellationHandler) {
         if (filter != null) {
             filter.prepare(facade);
         }

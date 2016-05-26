@@ -47,6 +47,7 @@ import com.questdb.misc.Misc;
 import com.questdb.model.configuration.ModelConfiguration;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.RecordSource;
+import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.std.AssociativeCache;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
@@ -84,7 +85,7 @@ public abstract class AbstractOptimiserTest {
         } else {
             rs.reset();
         }
-        printer.printCursor(rs.prepareCursor(factory), header);
+        printer.printCursor(rs.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), header);
         TestUtils.assertEquals(expected, sink);
     }
 

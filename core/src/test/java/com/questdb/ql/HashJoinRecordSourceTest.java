@@ -48,6 +48,7 @@ import com.questdb.model.Quote;
 import com.questdb.ql.impl.AllRowSource;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalSource;
+import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.join.HashJoinRecordSource;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.std.IntList;
@@ -118,7 +119,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.printCursor(joinResult.prepareCursor(factory));
+        p.printCursor(joinResult.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -153,7 +154,7 @@ public class HashJoinRecordSourceTest {
         long t = System.currentTimeMillis();
         int count = 0;
 //        ExportManager.export(j, new File("c:/temp/join.csv"), TextFileFormat.TAB);
-        RecordCursor c = j.prepareCursor(factory);
+        RecordCursor c = j.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
         while (c.hasNext()) {
             c.next();
             count++;
@@ -203,7 +204,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.printCursor(joinResult.prepareCursor(factory));
+        p.printCursor(joinResult.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -249,7 +250,7 @@ public class HashJoinRecordSourceTest {
                     add("url");
                 }}
         );
-        p.printCursor(joinResult.prepareCursor(factory));
+        p.printCursor(joinResult.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
         Assert.assertEquals("pop\thttp://band1.com\n" +
                 "rock\thttp://band1.com\n" +
                 "\thttp://band2.com\n" +

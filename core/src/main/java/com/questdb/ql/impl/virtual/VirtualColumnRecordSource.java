@@ -38,10 +38,7 @@ package com.questdb.ql.impl.virtual;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
@@ -80,8 +77,8 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        this.recordCursor = recordSource.prepareCursor(factory);
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
         current.prepare(recordCursor.getStorageFacade());
         return this;
     }

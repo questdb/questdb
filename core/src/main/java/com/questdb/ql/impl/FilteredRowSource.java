@@ -36,10 +36,7 @@
 package com.questdb.ql.impl;
 
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.ql.PartitionSlice;
-import com.questdb.ql.RowCursor;
-import com.questdb.ql.RowSource;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 
@@ -90,8 +87,8 @@ public class FilteredRowSource extends AbstractRowSource {
     }
 
     @Override
-    public void prepare(StorageFacade facade) {
-        delegate.prepare(facade);
+    public void prepare(StorageFacade facade, CancellationHandler cancellationHandler) {
+        delegate.prepare(facade, cancellationHandler);
         filter.prepare(facade);
     }
 

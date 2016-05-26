@@ -78,9 +78,9 @@ public class JournalSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
         this.partitionCursor = partitionSource.prepareCursor(factory);
-        this.rowSource.prepare(partitionCursor.getStorageFacade());
+        this.rowSource.prepare(partitionCursor.getStorageFacade(), cancellationHandler);
         return this;
     }
 

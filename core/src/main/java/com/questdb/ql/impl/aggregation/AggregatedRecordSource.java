@@ -131,9 +131,9 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        this.recordCursor = recordSource.prepareCursor(factory);
-        buildMap();
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
+        buildMap(cancellationHandler);
         return this;
     }
 
@@ -166,9 +166,11 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
         sink.put('}');
     }
 
-    private void buildMap() {
+    private void buildMap(CancellationHandler cancellationHandler) {
 
         while (recordCursor.hasNext()) {
+
+            cancellationHandler.check();
 
             Record rec = recordCursor.next();
 

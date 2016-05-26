@@ -72,6 +72,8 @@ public final class Net {
 
     public native static int getPeerPort(long fd);
 
+    public static native boolean isDead(long fd);
+
     public native static void listen(long fd, int backlog);
 
     public static native int recv(long fd, long ptr, int len);

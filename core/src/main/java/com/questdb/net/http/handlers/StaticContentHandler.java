@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.net.http.handlers;
@@ -50,6 +51,8 @@ public class StaticContentHandler implements ContextHandler {
     private final MimeTypes mimeTypes;
     private final ThreadLocal<PrefixedPath> tlPrefixedPath = new ThreadLocal<>();
     private final ThreadLocal<RangeParser> tlRangeParser = new ThreadLocal<>();
+    private final ThreadLocal<FlyweightCharSequence> tlExt = new ThreadLocal<>();
+
     private final LocalValue<FileDescriptorHolder> lvFd = new LocalValue<>();
     private final File publicDir;
 
@@ -103,6 +106,7 @@ public class StaticContentHandler implements ContextHandler {
     public void setupThread() {
         tlRangeParser.set(RangeParser.FACTORY.newInstance());
         tlPrefixedPath.set(new PrefixedPath(publicDir.getAbsolutePath()));
+        tlExt.set(new FlyweightCharSequence());
     }
 
     private void send(IOContext context, LPSZ path, boolean asAttachment) throws IOException {
@@ -112,8 +116,7 @@ public class StaticContentHandler implements ContextHandler {
             return;
         }
 
-        CharSequence contentType = mimeTypes.get(context.ext.of(path, n + 1, path.length() - n - 1));
-
+        CharSequence contentType = mimeTypes.get(tlExt.get().of(path, n + 1, path.length() - n - 1));
         CharSequence val;
         if ((val = context.request.getHeader("Range")) != null) {
             sendRange(context, val, path, contentType, asAttachment);

@@ -40,7 +40,7 @@ import com.questdb.ex.SlowWritableChannelException;
 import com.questdb.iter.clock.Clock;
 import com.questdb.misc.Misc;
 import com.questdb.net.NetworkChannel;
-import com.questdb.std.FlyweightCharSequence;
+import com.questdb.net.NonBlockingSecureSocketChannel;
 import com.questdb.std.LocalValueMap;
 import com.questdb.std.Locality;
 import com.questdb.std.Mutable;
@@ -51,24 +51,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class IOContext implements Closeable, Mutable, Locality {
     public final NetworkChannel channel;
     public final Request request;
-    public final FlyweightCharSequence ext = new FlyweightCharSequence();
+    private final ServerConfiguration serverConfiguration;
     private final LocalValueMap map = new LocalValueMap();
     private final Response response;
     private final AtomicBoolean open = new AtomicBoolean(true);
 
-    public IOContext(NetworkChannel channel,
-                     Clock clock,
-                     int reqHeaderSize,
-                     int reqContentSize,
-                     int reqMultipartHeaderSize,
-                     int respHeaderSize,
-                     int respContentSize,
-                     int soRcvSmall,
-                     int soRcvLarge,
-                     int soRetries) {
-        this.channel = channel;
-        this.request = new Request(channel, reqHeaderSize, reqContentSize, reqMultipartHeaderSize, soRcvSmall, soRcvLarge, soRetries);
-        this.response = new Response(channel, respHeaderSize, respContentSize, clock);
+    public IOContext(NetworkChannel channel, ServerConfiguration configuration, Clock clock) {
+        this.channel = configuration.getSslConfig().isSecure() ?
+                new NonBlockingSecureSocketChannel(channel, configuration.getSslConfig()) :
+                channel;
+        this.serverConfiguration = configuration;
+        this.request = new Request(this.channel, configuration);
+        this.response = new Response(this.channel, configuration, clock);
     }
 
     public ChunkedResponse chunkedResponse() {
@@ -104,6 +98,10 @@ public class IOContext implements Closeable, Mutable, Locality {
     @Override
     public LocalValueMap getMap() {
         return map;
+    }
+
+    public ServerConfiguration getServerConfiguration() {
+        return serverConfiguration;
     }
 
     public ResponseSink responseSink() {
