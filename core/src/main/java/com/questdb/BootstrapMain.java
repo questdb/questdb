@@ -63,7 +63,7 @@ class BootstrapMain {
 
     @SuppressFBWarnings("PATH_TRAVERSAL_IN")
     public static void main(String[] args) throws Exception {
-        System.out.printf("QDB HTTP Server 3.0\nCopyright (C) Appsicle 2014-2016, all rights reserved.\n\n");
+        System.out.printf("QDB HTTP Server 3.0%nCopyright (C) Appsicle 2014-2016, all rights reserved.%n%n");
         if (args.length < 1) {
             System.out.println("Root directory name expected");
             return;

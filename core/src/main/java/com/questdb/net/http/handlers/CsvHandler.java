@@ -51,6 +51,7 @@ import com.questdb.std.CharSink;
 import com.questdb.std.LocalValue;
 import com.questdb.std.Mutable;
 import com.questdb.store.ColumnType;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -82,6 +83,7 @@ public class CsvHandler implements ContextHandler {
         }
     }
 
+    @SuppressFBWarnings("SF_SWITCH_FALLTHROUGH")
     @SuppressWarnings("ConstantConditions")
     @Override
     public void resume(IOContext context) throws IOException {

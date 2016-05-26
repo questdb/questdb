@@ -156,7 +156,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                 break;
             }
 
-            LOG.debug().$(" Connected ").$(_fd).$();
+            LOG.info().$(" Connected ").$(_fd).$();
 
             if (Net.configureNonBlocking(_fd) < 0) {
                 LOG.error().$("Cannot make FD non-blocking").$();
@@ -188,7 +188,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
     }
 
     private void disconnect(IOContext context, DisconnectReason reason) {
-        LOG.debug().$("Disconnected ").$(context.channel.getFd()).$(": ").$(reason).$();
+        LOG.info().$("Disconnected ").$(context.channel.getFd()).$(": ").$(reason).$();
         context.close();
         connectionCount--;
     }

@@ -128,7 +128,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
 
     private long accept() {
         long _fd = Net.accept(socketFd);
-        LOG.debug().$(" Connected ").$(_fd).$();
+        LOG.info().$(" Connected ").$(_fd).$();
 
         // something not right
         if (_fd < 0) {
@@ -166,7 +166,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     }
 
     private void disconnect(IOContext context, DisconnectReason reason) {
-        LOG.debug().$("Disconnected ").$(context.channel.getFd()).$(": ").$(reason).$();
+        LOG.info().$("Disconnected ").$(context.channel.getFd()).$(": ").$(reason).$();
         context.close();
         connectionCount--;
     }
