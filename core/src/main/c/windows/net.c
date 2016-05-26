@@ -118,6 +118,12 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_recv
     return convert_error(recv((SOCKET) fd, (char *) addr, len, 0));
 }
 
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_isDead
+        (JNIEnv *e, jclass cl, jlong fd) {
+    int c;
+    return (jboolean) (recv((SOCKET) fd, (char *) &c, 1, 0) == 0);
+}
+
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_send
         (JNIEnv *e, jclass cl, jlong fd, jlong addr, jint len) {
     return convert_error(send((SOCKET) fd, (const char *) addr, len, 0));
