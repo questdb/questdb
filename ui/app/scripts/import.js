@@ -262,7 +262,7 @@ function nopropagation(e) {
                     var c = current.response.columns[i];
                     if (c.altType && c.type !== c.altType.text && c.altType.text !== 'AUTO') {
                         schema += c.name + '=' + c.altType.value + '&';
-                    } else if (c.errors === 0 && (c.altType === undefined || c.altType.text !== 'AUTO')) {
+                    } else if (c.errors === 0 && c.type !== 'DATE' && (c.altType === undefined || c.altType.text !== 'AUTO')) {
                         schema += c.name + '=' + c.type + '&';
                     }
                 }
