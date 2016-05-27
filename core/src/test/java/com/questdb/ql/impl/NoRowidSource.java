@@ -65,6 +65,11 @@ public class NoRowidSource implements RecordSource {
     }
 
     @Override
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
+        return delegate.prepareCursor(factory);
+    }
+
+    @Override
     public void reset() {
         delegate.reset();
     }

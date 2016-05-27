@@ -83,13 +83,15 @@ public class SchemaImpl implements Schema, Closeable, Mutable {
 
         for (int i = 0, n = map.size(); i < n; i++) {
             map.keys().getQuick(i);
-
-            ImportedColumnMetadata m = mPool.next();
-            m.name = map.keys().getQuick(i);
-            m.type = ImportedColumnType.valueOf(map.get(m.name).toString());
-            metadata.add(m);
+            CharSequence name = map.keys().getQuick(i);
+            int ordinal = ImportedColumnTypeUtil.LOOKUP.get(map.get(name));
+            if (ordinal > -1) {
+                ImportedColumnMetadata m = mPool.next();
+                m.name = name;
+                m.type = ImportedColumnType.values()[ordinal];
+                metadata.add(m);
+            }
         }
-
     }
 
     public void put(CharSequence cs) {

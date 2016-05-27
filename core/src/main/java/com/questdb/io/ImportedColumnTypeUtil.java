@@ -33,35 +33,19 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops;
+package com.questdb.io;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.JournalReaderFactory;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
-import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.CharSequenceIntHashMap;
 
-public abstract class AbstractRecordSource implements RecordSource {
-    private CharSequenceObjHashMap<Parameter> parameterMap;
+public final class ImportedColumnTypeUtil {
+    public static final CharSequenceIntHashMap LOOKUP = new CharSequenceIntHashMap();
 
-    @Override
-    public Parameter getParam(CharSequence name) {
-        Parameter p = parameterMap.get(name);
-        if (p == null) {
-            throw new JournalRuntimeException("Parameter does not exist");
+    private ImportedColumnTypeUtil() {
+    }
+
+    static {
+        for (int i = 0, n = ImportedColumnType.values().length; i < n; i++) {
+            LOOKUP.put(ImportedColumnType.values()[i].name(), i);
         }
-        return p;
-    }
-
-    @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        return prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
-    }
-
-    @Override
-    public void setParameterMap(CharSequenceObjHashMap<Parameter> map) {
-        this.parameterMap = map;
     }
 }

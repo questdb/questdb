@@ -50,6 +50,8 @@ public interface RecordSource extends Sinkable {
 
     RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException;
 
+    RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException;
+
     void reset();
 
     void setParameterMap(CharSequenceObjHashMap<Parameter> map);

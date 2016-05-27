@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.net.http;
@@ -52,7 +53,9 @@ import com.questdb.net.ha.AbstractJournalTest;
 import com.questdb.net.http.handlers.ImportHandler;
 import com.questdb.net.http.handlers.StaticContentHandler;
 import com.questdb.net.http.handlers.UploadHandler;
+import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
+import com.questdb.store.ColumnType;
 import com.questdb.test.tools.HttpTestUtils;
 import com.questdb.test.tools.TestUtils;
 import org.apache.http.Header;
@@ -151,7 +154,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null));
+                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null, null));
                         latch.countDown();
                     } catch (Exception e) {
                         Assert.fail(e.getMessage());
@@ -164,7 +167,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void run() {
                     try {
                         barrier.await();
-                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-nan.csv", "http://localhost:9000/imp", null));
+                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-nan.csv", "http://localhost:9000/imp", null, null));
                         latch.countDown();
                     } catch (Exception e) {
                         Assert.fail(e.getMessage());
@@ -333,8 +336,8 @@ public class HttpServerTest extends AbstractJournalTest {
 
         try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
             try {
-                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", null));
-                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", null, null));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null, null));
                 StringSink sink = new StringSink();
                 RecordSourcePrinter printer = new RecordSourcePrinter(sink);
                 QueryCompiler qc = new QueryCompiler(configuration);
@@ -356,7 +359,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
             StringBuilder response = new StringBuilder();
             try {
-                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", response));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", null, response));
                 TestUtils.assertEquals("{\"status\":\"Journal exists and column count does not mismatch\"}", response);
             } finally {
                 server.halt();
@@ -382,7 +385,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
             StringBuilder response = new StringBuilder();
             try {
-                Assert.assertEquals(200, HttpTestUtils.upload("/csv/small.csv", "http://localhost:9000/imp?fmt=json", response));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/small.csv", "http://localhost:9000/imp?fmt=json", null, response));
                 Assert.assertTrue(Chars.startsWith(response, "{\"status\":\"com.questdb.ex.JournalException: Journal is already open for APPEND"));
             } finally {
                 server.halt();
@@ -399,10 +402,45 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
         StringBuilder response = new StringBuilder();
         try {
-            Assert.assertEquals(200, HttpTestUtils.upload("/com/questdb/std/AssociativeCache.class", "http://localhost:9000/imp", response));
+            Assert.assertEquals(200, HttpTestUtils.upload("/com/questdb/std/AssociativeCache.class", "http://localhost:9000/imp", null, response));
             TestUtils.assertEquals("Unsupported data format", response);
         } finally {
             server.halt();
+        }
+    }
+
+    @Test
+    public void testImportWrongType() throws Exception {
+        final ServerConfiguration configuration = new ServerConfiguration();
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(factory));
+        }});
+        server.start();
+
+        try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
+            try {
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", "IsoDate=DATE&IntCol=DOUBLE", null));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", "IsoDate=DATE", null));
+                StringSink sink = new StringSink();
+                RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+                QueryCompiler qc = new QueryCompiler(configuration);
+                RecordSource src1 = qc.compileSource(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'");
+                try {
+                    printer.printCursor(src1.prepareCursor(factory));
+                    TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
+                } finally {
+                    Misc.free(src1);
+                }
+
+                RecordSource src2 = qc.compileSource(factory, "'test-import.csv'");
+                try {
+                    Assert.assertEquals(ColumnType.DOUBLE, src2.getMetadata().getColumn("IntCol").getType());
+                } finally {
+                    Misc.free(src2);
+                }
+            } finally {
+                server.halt();
+            }
         }
     }
 
@@ -702,7 +740,7 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
         try {
 
-            HttpTestUtils.upload("/large.csv", "http://localhost:9000/upload", null);
+            HttpTestUtils.upload("/large.csv", "http://localhost:9000/upload", null, null);
 
             File out = new File(temp.getRoot(), "out.csv");
 

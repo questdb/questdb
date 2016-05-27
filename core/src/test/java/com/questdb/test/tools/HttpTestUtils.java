@@ -1,24 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * <p>
+ *
  * As a special exception, the copyright holders give permission to link the
  * code of portions of this program with the OpenSSL library under certain
  * conditions as described in each individual source file and distribute
@@ -30,6 +30,7 @@
  * delete this exception statement from your version. If you delete this
  * exception statement from all source files in the program, then also delete
  * it in the license file.
+ *
  ******************************************************************************/
 
 package com.questdb.test.tools;
@@ -44,8 +45,10 @@ import org.apache.http.config.RegistryBuilder;
 import org.apache.http.conn.socket.ConnectionSocketFactory;
 import org.apache.http.conn.socket.PlainConnectionSocketFactory;
 import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
+import org.apache.http.entity.ContentType;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
 import org.apache.http.entity.mime.content.FileBody;
+import org.apache.http.entity.mime.content.StringBody;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.impl.client.HttpClients;
@@ -93,8 +96,8 @@ public class HttpTestUtils {
         return null;
     }
 
-    public static int upload(String resource, String url, StringBuilder reponse) throws IOException {
-        return upload(resourceFile(resource), url, reponse);
+    public static int upload(String resource, String url, String schema, StringBuilder reponse) throws IOException {
+        return upload(resourceFile(resource), url, schema, reponse);
     }
 
     private static HttpClientBuilder createHttpClient_AcceptsUntrustedCerts() throws Exception {
@@ -136,10 +139,13 @@ public class HttpTestUtils {
         return new File(HttpTestUtils.class.getResource(resource).getFile());
     }
 
-    private static int upload(File file, String url, StringBuilder response) throws IOException {
+    private static int upload(File file, String url, String schema, StringBuilder response) throws IOException {
         HttpPost post = new HttpPost(url);
         try (CloseableHttpClient client = HttpClients.createDefault()) {
             MultipartEntityBuilder b = MultipartEntityBuilder.create();
+            if (schema != null) {
+                b.addPart("schema", new StringBody(schema, ContentType.TEXT_PLAIN));
+            }
             b.addPart("data", new FileBody(file));
             post.setEntity(b.build());
             HttpResponse r = client.execute(post);
