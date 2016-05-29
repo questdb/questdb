@@ -272,7 +272,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         do {
             parent = p;
             long r = refOf(p);
-            cmp = comparator.compare(records.recordAt(r));
+            cmp = comparator.compare(records.getByRowId(r));
             if (cmp < 0) {
                 p = leftOf(p);
             } else if (cmp > 0) {
@@ -311,7 +311,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         do {
             parent = p;
             long r = refOf(p);
-            cmp = comparator.compare(sourceCursor.getByRowId(records.recordAt(r).getLong(0)));
+            cmp = comparator.compare(sourceCursor.getByRowId(records.getByRowId(r).getLong(0)));
             if (cmp < 0) {
                 p = leftOf(p);
             } else if (cmp > 0) {
@@ -392,7 +392,9 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
         @Override
         public Record getByRowId(long rowId) {
-            return null;
+            return byRowId ?
+                    sourceCursor.getByRowId(rowId) :
+                    records.getByRowId(rowId);
         }
 
         @Override

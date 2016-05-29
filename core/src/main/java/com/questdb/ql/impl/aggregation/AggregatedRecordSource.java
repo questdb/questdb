@@ -31,7 +31,6 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.*;
-import com.questdb.ql.impl.join.hash.KeyWriterHelper;
 import com.questdb.ql.impl.map.MapRecordValueInterceptor;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.impl.map.MultiMap;
@@ -166,8 +165,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
             MultiMap.KeyWriter keyWriter = map.keyWriter();
             for (int i = 0; i < keyIndices.length; i++) {
                 int index;
-                KeyWriterHelper.setKey(
-                        keyWriter,
+                keyWriter.put(
                         rec,
                         index = Unsafe.arrayGet(keyIndices, i),
                         recordSource.getMetadata().getColumnQuick(index).getType()

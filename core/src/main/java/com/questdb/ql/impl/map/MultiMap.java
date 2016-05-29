@@ -29,8 +29,10 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Hash;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.std.*;
+import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
 
 public class MultiMap extends DirectMemoryStructure implements Mutable {
@@ -311,6 +313,46 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
             Unsafe.getUnsafe().copyMemory(address, appendAddr, len);
             appendAddr += len;
             writeOffset();
+        }
+
+        public void put(Record r, int columnIndex, ColumnType columnType) {
+            switch (columnType) {
+                case BOOLEAN:
+                    putBoolean(r.getBool(columnIndex));
+                    break;
+                case BYTE:
+                    putByte(r.get(columnIndex));
+                    break;
+                case DOUBLE:
+                    putDouble(r.getDouble(columnIndex));
+                    break;
+                case INT:
+                    putInt(r.getInt(columnIndex));
+                    break;
+                case LONG:
+                    putLong(r.getLong(columnIndex));
+                    break;
+                case SHORT:
+                    putShort(r.getShort(columnIndex));
+                    break;
+                case FLOAT:
+                    putFloat(r.getFloat(columnIndex));
+                    break;
+                case STRING:
+                    putStr(r.getFlyweightStr(columnIndex));
+                    break;
+                case SYMBOL:
+                    putInt(r.getInt(columnIndex));
+                    break;
+                case BINARY:
+                    putBin(r.getBin(columnIndex));
+                    break;
+                case DATE:
+                    putLong(r.getDate(columnIndex));
+                    break;
+                default:
+                    throw new JournalRuntimeException("Unsupported type: " + columnType);
+            }
         }
 
         public KeyWriter putBin(DirectInputStream stream) {

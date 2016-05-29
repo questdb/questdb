@@ -312,6 +312,7 @@ public final class FunctionFactories {
         unSig("atoi", ColumnType.STRING, AtoIFunction.FACTORY);
         unSig("ltod", ColumnType.LONG, LtoDFunction.FACTORY);
         unSig("dtol", ColumnType.DATE, DtoLFunction.FACTORY);
+        unSig("round", ColumnType.DOUBLE, RoundFunction.FACTORY);
 
         factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.STRING, true), StrRegexOperator.FACTORY);
         factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymRegexOperator.FACTORY);

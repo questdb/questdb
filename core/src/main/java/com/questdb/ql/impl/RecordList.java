@@ -68,7 +68,8 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
 
     @Override
     public Record getByRowId(long rowId) {
-        return null;
+        record.of(rowId + 8);
+        return record;
     }
 
     @Override
@@ -101,8 +102,4 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
         this.readOffset = offset;
     }
 
-    public Record recordAt(long offset) {
-        record.of(offset + 8);
-        return record;
-    }
 }

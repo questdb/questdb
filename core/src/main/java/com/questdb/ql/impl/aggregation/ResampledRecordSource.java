@@ -29,7 +29,6 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.*;
-import com.questdb.ql.impl.join.hash.KeyWriterHelper;
 import com.questdb.ql.impl.map.MapRecordValueInterceptor;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.impl.map.MultiMap;
@@ -190,8 +189,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
             kw.putLong(sample);
             for (int i = 0, n = keyIndices.size(); i < n; i++) {
                 int index;
-                KeyWriterHelper.setKey(
-                        kw,
+                kw.put(
                         rec,
                         index = keyIndices.getQuick(i),
                         recordSource.getMetadata().getColumnQuick(index).getType()

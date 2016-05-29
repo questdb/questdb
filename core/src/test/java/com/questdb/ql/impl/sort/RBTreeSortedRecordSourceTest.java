@@ -27,6 +27,7 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
+import com.questdb.misc.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.ql.parser.QueryError;
@@ -38,12 +39,12 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
 
     @BeforeClass
     public static void setUp() throws Exception {
-        Rnd rnd = new Rnd();
         try (JournalWriter w = factory.bulkWriter(new JournalStructure("xyz")
                 .$int("i")
                 .$str("str")
                 .$())) {
             int n = 100;
+            Rnd rnd = new Rnd();
 
             for (int i = 0; i < n; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -68,6 +69,48 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
             ew.append();
             w.commit();
         }
+
+        try (JournalWriter w = factory.bulkWriter(new JournalStructure("timeseries")
+                .$double("d")
+                .$ts()
+                .$()
+        )) {
+            Rnd rnd = new Rnd();
+            long ts = Dates.toMillis(2016, 3, 12, 0, 0);
+            for (int i = 0; i < 1000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putDouble(0, rnd.nextDouble());
+                ew.putDate(1, ts + (rnd.nextPositiveInt() % Dates.DAY_MILLIS));
+                ew.append();
+            }
+            w.commit();
+        }
+    }
+
+    @Test
+    public void testBaseRowIdNestedOrder() throws Exception {
+        assertThat("-10\t34\t2016-03-12T07:40:06.028Z\n" +
+                        "-9\t18\t2016-03-12T20:30:19.422Z\n" +
+                        "-8\t11\t2016-03-12T13:03:05.265Z\n" +
+                        "-7\t13\t2016-03-12T09:45:28.391Z\n" +
+                        "-6\t27\t2016-03-12T01:09:44.659Z\n" +
+                        "-5\t23\t2016-03-12T17:40:21.589Z\n" +
+                        "-4\t14\t2016-03-12T12:19:13.427Z\n" +
+                        "-3\t20\t2016-03-12T19:26:07.812Z\n" +
+                        "-2\t10\t2016-03-12T09:23:09.879Z\n" +
+                        "-1\t14\t2016-03-12T12:25:09.894Z\n" +
+                        "0\t560\t2016-03-12T14:47:52.891Z\n" +
+                        "1\t47\t2016-03-12T19:13:21.813Z\n" +
+                        "2\t30\t2016-03-12T15:58:53.134Z\n" +
+                        "3\t33\t2016-03-12T05:05:26.412Z\n" +
+                        "4\t26\t2016-03-12T16:52:51.947Z\n" +
+                        "5\t28\t2016-03-12T13:51:07.787Z\n" +
+                        "6\t23\t2016-03-12T18:26:11.749Z\n" +
+                        "7\t15\t2016-03-12T15:04:24.613Z\n" +
+                        "8\t28\t2016-03-12T06:12:55.118Z\n" +
+                        "9\t16\t2016-03-12T22:14:00.570Z\n" +
+                        "10\t10\t2016-03-12T06:04:33.309Z\n",
+                "(select round(d/100) r, count() count, last(timestamp) ts from timeseries order by ts) order by r");
     }
 
     @Test
@@ -299,6 +342,40 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
         } catch (ParserException e) {
             Assert.assertEquals(45, QueryError.getPosition());
         }
+    }
+
+    @Test
+    public void testRowIdPassThru() throws Exception {
+        assertThat("2016-03-12T00:00:00.000Z\t997.471052482297\n" +
+                        "2016-03-12T03:00:00.000Z\t-3263.256266783491\n" +
+                        "2016-03-12T06:00:00.000Z\t2356.131512016518\n" +
+                        "2016-03-12T09:00:00.000Z\t929.843516548567\n" +
+                        "2016-03-12T12:00:00.000Z\t589.176100472390\n" +
+                        "2016-03-12T15:00:00.000Z\t2177.881065221333\n" +
+                        "2016-03-12T18:00:00.000Z\t1411.259807112342\n" +
+                        "2016-03-12T21:00:00.000Z\t645.325834388574\n",
+                "select timestamp, sum(d) from (timeseries order by timestamp) sample by 3h");
+
+    }
+
+    @Test
+    public void testSampleWithNestedOrder() throws Exception {
+        assertThat("2016-03-12T01:00:00.000Z\t27\n" +
+                        "2016-03-12T05:00:00.000Z\t33\n" +
+                        "2016-03-12T06:00:00.000Z\t38\n" +
+                        "2016-03-12T07:00:00.000Z\t34\n" +
+                        "2016-03-12T09:00:00.000Z\t23\n" +
+                        "2016-03-12T12:00:00.000Z\t28\n" +
+                        "2016-03-12T13:00:00.000Z\t39\n" +
+                        "2016-03-12T14:00:00.000Z\t560\n" +
+                        "2016-03-12T15:00:00.000Z\t45\n" +
+                        "2016-03-12T16:00:00.000Z\t26\n" +
+                        "2016-03-12T17:00:00.000Z\t23\n" +
+                        "2016-03-12T18:00:00.000Z\t23\n" +
+                        "2016-03-12T19:00:00.000Z\t67\n" +
+                        "2016-03-12T20:00:00.000Z\t18\n" +
+                        "2016-03-12T22:00:00.000Z\t16\n",
+                "select ts, sum(count) from (select round(d/100) r, count() count, last(timestamp) ts from timeseries order by ts) timestamp(ts) sample by 1h");
     }
 
     @Test

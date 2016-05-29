@@ -43,9 +43,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.Closeable;
 import java.io.IOException;
 
-import static com.questdb.ql.impl.join.hash.KeyWriterHelper.setKey;
-
-
 public class HashJoinRecordSource extends AbstractCombinedRecordSource implements Closeable {
     private final RecordSource master;
     private final RecordSource slave;
@@ -179,7 +176,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             cancellationHandler.check();
             MultiMap.KeyWriter key = recordMap.claimKey();
             for (int i = 0, k = slaveColumns.size(); i < k; i++) {
-                setKey(key, r, slaveColIndex.getQuick(i), slaveColumns.getQuick(i).getType());
+                key.put(r, slaveColIndex.getQuick(i), slaveColumns.getQuick(i).getType());
             }
             if (byRowId) {
                 recordMap.add(key, fakeRecord.of(r.getRowId()));
@@ -218,7 +215,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             MultiMap.KeyWriter key = recordMap.claimKey();
 
             for (int i = 0, k = masterColumns.size(); i < k; i++) {
-                setKey(key, r, masterColIndex.getQuick(i), masterColumns.getQuick(i).getType());
+                key.put(r, masterColIndex.getQuick(i), masterColumns.getQuick(i).getType());
             }
 
             hashTableCursor = recordMap.get(key);
