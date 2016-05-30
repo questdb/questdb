@@ -24,6 +24,7 @@
 package com.questdb.ql.impl.select;
 
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Unsafe;
 import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
 import com.questdb.std.CharSink;
@@ -49,62 +50,62 @@ public class SelectedColumnsRecord extends AbstractRecord {
 
     @Override
     public byte get(int col) {
-        return base.get(reindex[col]);
+        return base.get(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public void getBin(int col, OutputStream s) {
-        base.getBin(reindex[col], s);
+        base.getBin(Unsafe.arrayGet(reindex, col), s);
     }
 
     @Override
     public DirectInputStream getBin(int col) {
-        return base.getBin(reindex[col]);
+        return base.getBin(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public long getBinLen(int col) {
-        return base.getBinLen(reindex[col]);
+        return base.getBinLen(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public boolean getBool(int col) {
-        return base.getBool(reindex[col]);
+        return base.getBool(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public long getDate(int col) {
-        return base.getDate(reindex[col]);
+        return base.getDate(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public double getDouble(int col) {
-        return base.getDouble(reindex[col]);
+        return base.getDouble(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public float getFloat(int col) {
-        return base.getFloat(reindex[col]);
+        return base.getFloat(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public CharSequence getFlyweightStr(int col) {
-        return base.getFlyweightStr(reindex[col]);
+        return base.getFlyweightStr(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public CharSequence getFlyweightStrB(int col) {
-        return base.getFlyweightStrB(reindex[col]);
+        return base.getFlyweightStrB(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public int getInt(int col) {
-        return base.getInt(reindex[col]);
+        return base.getInt(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public long getLong(int col) {
-        return base.getLong(reindex[col]);
+        return base.getLong(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
@@ -114,27 +115,27 @@ public class SelectedColumnsRecord extends AbstractRecord {
 
     @Override
     public short getShort(int col) {
-        return base.getShort(reindex[col]);
+        return base.getShort(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public CharSequence getStr(int col) {
-        return base.getStr(reindex[col]);
+        return base.getStr(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public void getStr(int col, CharSink sink) {
-        base.getStr(reindex[col], sink);
+        base.getStr(Unsafe.arrayGet(reindex, col), sink);
     }
 
     @Override
     public int getStrLen(int col) {
-        return base.getStrLen(reindex[col]);
+        return base.getStrLen(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
     public String getSym(int col) {
-        return base.getSym(reindex[col]);
+        return base.getSym(Unsafe.arrayGet(reindex, col));
     }
 
     public SelectedColumnsRecord of(Record base) {

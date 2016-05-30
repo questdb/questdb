@@ -76,13 +76,13 @@ public class RecordListRecord extends AbstractRecord {
     }
 
     public long append(@NotNull Record record) {
-        long offset = mem.allocate(headerSize + fixedSize);
-        append(record, offset);
-        return offset;
+        long address = mem.addressOf(mem.allocate(headerSize + fixedSize));
+        append(record, address);
+        return address;
     }
 
-    public void append(Record record, long offset) {
-        long headerAddress = mem.addressOf(offset);
+    public void append(Record record, long address) {
+        long headerAddress = address;
         long writeAddress = headerAddress + headerSize;
 
         for (int i = 0, n = offsets.length; i < n; i++) {
@@ -225,7 +225,7 @@ public class RecordListRecord extends AbstractRecord {
 
     @Override
     public long getRowId() {
-        return address - headerSize;
+        return address - headerSize - 8;
     }
 
     @Override
@@ -266,8 +266,8 @@ public class RecordListRecord extends AbstractRecord {
         return fixedBlockLen;
     }
 
-    public void of(long offset) {
-        this.address = mem.addressOf(offset) + headerSize;
+    public void of(long address) {
+        this.address = address + headerSize;
     }
 
     public void setStorageFacade(StorageFacade storageFacade) {
@@ -281,7 +281,7 @@ public class RecordListRecord extends AbstractRecord {
     private long offsetOf(int index) {
         // Not fixed len.
         assert offsets[index] <= 0;
-        return Unsafe.getUnsafe().getLong(address - headerSize + (-offsets[index]) * 8);
+        return Unsafe.getUnsafe().getLong(address - headerSize + (-Unsafe.arrayGet(offsets, index)) * 8);
     }
 
     private void writeBin(OutputStream stream, long offset, final long len) throws IOException {

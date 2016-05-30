@@ -161,7 +161,7 @@ final class MapRecord extends AbstractRecord {
     private long address0(int index) {
 
         if (index < split) {
-            return address0 + valueOffsets[index];
+            return address0 + Unsafe.arrayGet(valueOffsets, index);
         }
 
         if (index == split) {

@@ -38,7 +38,7 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
     private final MemoryPages mem;
     private final RecordListRecord record;
     private final RecordMetadata metadata;
-    private long readOffset = -1;
+    private long readAddress = -1;
 
     public RecordList(RecordMetadata recordMetadata, int pageSize) {
         this.metadata = recordMetadata;
@@ -46,19 +46,19 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
         record = new RecordListRecord(recordMetadata, mem);
     }
 
-    public long append(Record record, long prevOffset) {
-        long offset = mem.allocate(8 + this.record.getFixedBlockLength());
-        if (prevOffset != -1) {
-            Unsafe.getUnsafe().putLong(mem.addressOf(prevOffset), offset);
+    public long append(Record record, long prevAddress) {
+        long thisAddress = mem.addressOf(mem.allocate(8 + this.record.getFixedBlockLength()));
+        if (prevAddress != -1) {
+            Unsafe.getUnsafe().putLong(prevAddress, thisAddress);
         }
-        Unsafe.getUnsafe().putLong(mem.addressOf(offset), -1L);
-        this.record.append(record, offset + 8);
-        return offset;
+        Unsafe.getUnsafe().putLong(thisAddress, -1L);
+        this.record.append(record, thisAddress + 8);
+        return thisAddress;
     }
 
     public void clear() {
         mem.clear();
-        readOffset = -1;
+        readAddress = -1;
     }
 
     @Override
@@ -88,18 +88,18 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
 
     @Override
     public boolean hasNext() {
-        return readOffset > -1;
+        return readAddress > -1;
     }
 
     @Override
     public Record next() {
-        record.of(readOffset + 8);
-        readOffset = Unsafe.getUnsafe().getLong(mem.addressOf(readOffset));
+        record.of(readAddress + 8);
+        readAddress = Unsafe.getUnsafe().getLong(readAddress);
         return record;
     }
 
     public void of(long offset) {
-        this.readOffset = offset;
+        this.readAddress = offset;
     }
 
 }

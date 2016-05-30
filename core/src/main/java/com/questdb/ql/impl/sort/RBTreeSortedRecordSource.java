@@ -106,7 +106,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     @Override
     public boolean supportsRowIdAccess() {
-        return false;
+        return true;
     }
 
     public void setStorageFacade(StorageFacade facade) {

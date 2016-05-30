@@ -111,6 +111,7 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
                         "9\t16\t2016-03-12T22:14:00.570Z\n" +
                         "10\t10\t2016-03-12T06:04:33.309Z\n",
                 "(select round(d/100) r, count() count, last(timestamp) ts from timeseries order by ts) order by r");
+
     }
 
     @Test
