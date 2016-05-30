@@ -25,10 +25,8 @@ package com.questdb.ql.impl;
 
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.AbstractRecord;
-import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
@@ -36,7 +34,6 @@ import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
 import com.questdb.store.MemoryPages;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -75,68 +72,6 @@ public class RecordListRecord extends AbstractRecord {
         fixedBlockLen = fixedSize + headerSize;
     }
 
-    public long append(@NotNull Record record) {
-        long address = mem.addressOf(mem.allocate(headerSize + fixedSize));
-        append(record, address);
-        return address;
-    }
-
-    public void append(Record record, long address) {
-        long headerAddress = address;
-        long writeAddress = headerAddress + headerSize;
-
-        for (int i = 0, n = offsets.length; i < n; i++) {
-            switch (metadata.getColumnQuick(i).getType()) {
-                case BOOLEAN:
-                    Unsafe.getUnsafe().putByte(writeAddress, (byte) (record.getBool(i) ? 1 : 0));
-                    writeAddress += 1;
-                    break;
-                case BYTE:
-                    Unsafe.getUnsafe().putByte(writeAddress, record.get(i));
-                    writeAddress += 1;
-                    break;
-                case DOUBLE:
-                    Unsafe.getUnsafe().putDouble(writeAddress, record.getDouble(i));
-                    writeAddress += 8;
-                    break;
-                case INT:
-                    Unsafe.getUnsafe().putInt(writeAddress, record.getInt(i));
-                    writeAddress += 4;
-                    break;
-                case LONG:
-                    Unsafe.getUnsafe().putLong(writeAddress, record.getLong(i));
-                    writeAddress += 8;
-                    break;
-                case SHORT:
-                    Unsafe.getUnsafe().putShort(writeAddress, record.getShort(i));
-                    writeAddress += 2;
-                    break;
-                case SYMBOL:
-                    Unsafe.getUnsafe().putInt(writeAddress, record.getInt(i));
-                    writeAddress += 4;
-                    break;
-                case DATE:
-                    Unsafe.getUnsafe().putLong(writeAddress, record.getDate(i));
-                    writeAddress += 8;
-                    break;
-                case FLOAT:
-                    Unsafe.getUnsafe().putFloat(writeAddress, record.getFloat(i));
-                    writeAddress += 4;
-                    break;
-                case STRING:
-                    writeString(headerAddress, record.getFlyweightStr(i));
-                    headerAddress += 8;
-                    break;
-                case BINARY:
-                    writeBin(headerAddress, record.getBin(i));
-                    headerAddress += 8;
-                    break;
-                default:
-                    throw new JournalRuntimeException("Unsupported type: " + metadata.getColumnQuick(i).getType());
-            }
-        }
-    }
-
     @Override
     public byte get(int col) {
         assert offsets[col] >= 0;
@@ -151,7 +86,7 @@ public class RecordListRecord extends AbstractRecord {
         try {
             long len = Unsafe.getUnsafe().getLong(readAddress);
             if (len > 0) {
-                writeBin(s, readAddress + 8, len);
+                streamBin(s, readAddress + 8, len);
             }
         } catch (IOException ex) {
             throw new JournalRuntimeException("Reading binary column failed", ex);
@@ -266,6 +201,14 @@ public class RecordListRecord extends AbstractRecord {
         return fixedBlockLen;
     }
 
+    public int getFixedSize() {
+        return fixedSize;
+    }
+
+    public int getHeaderSize() {
+        return headerSize;
+    }
+
     public void of(long address) {
         this.address = address + headerSize;
     }
@@ -284,7 +227,7 @@ public class RecordListRecord extends AbstractRecord {
         return Unsafe.getUnsafe().getLong(address - headerSize + (-Unsafe.arrayGet(offsets, index)) * 8);
     }
 
-    private void writeBin(OutputStream stream, long offset, final long len) throws IOException {
+    private void streamBin(OutputStream stream, long offset, final long len) throws IOException {
         long position = offset;
         long copied = 0;
         long l = len;
@@ -296,57 +239,6 @@ public class RecordListRecord extends AbstractRecord {
                 stream.write(Unsafe.getUnsafe().getByte(mem.addressOf(offset) + position++));
             }
         }
-    }
-
-    private void writeBin(long headerAddress, DirectInputStream value) {
-        long offset = mem.allocate(8);
-        long len = value.size();
-
-        // Write header offset.
-        Unsafe.getUnsafe().putLong(headerAddress, offset);
-
-        // Write length.
-        Unsafe.getUnsafe().putLong(mem.addressOf(offset), len);
-
-        if (len < 1) {
-            return;
-        }
-
-        offset = mem.allocate(1);
-        long p = 0;
-        do {
-            int remaining = mem.pageRemaining(offset);
-            int sz = remaining < len ? remaining : (int) len;
-            value.copyTo(mem.addressOf(offset), p, sz);
-            p += sz;
-            mem.allocate(sz);
-            offset += sz;
-            len -= sz;
-        } while (len > 0);
-    }
-
-    private void writeNullString(long headerAddress) {
-        long offset = mem.allocate(4);
-        Unsafe.getUnsafe().putLong(headerAddress, offset);
-        Unsafe.getUnsafe().putInt(mem.addressOf(offset), -1);
-    }
-
-    private void writeString(long headerAddress, CharSequence item) {
-
-        if (item == null) {
-            writeNullString(headerAddress);
-            return;
-        }
-
-        // Allocate.
-        final int k = item.length();
-        if (k > mem.pageSize()) {
-            throw new JournalRuntimeException("String larger than pageSize");
-        }
-        long offset = mem.allocate(k * 2 + 4);
-        // Save the address in the header.
-        Unsafe.getUnsafe().putLong(headerAddress, offset);
-        Chars.put(mem.addressOf(offset), item);
     }
 
     private static class DirectPagedBufferStream extends DirectInputStream {
