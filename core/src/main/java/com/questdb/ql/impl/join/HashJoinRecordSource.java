@@ -29,9 +29,10 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
+import com.questdb.ql.impl.NullRecord;
+import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.join.hash.MultiRecordMap;
-import com.questdb.ql.impl.join.hash.NullRecord;
 import com.questdb.ql.impl.map.MultiMap;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
@@ -56,7 +57,6 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private final FakeRecord fakeRecord = new FakeRecord();
     private final boolean byRowId;
     private final boolean outer;
-    private final NullRecord nullRecord;
     private final MultiRecordMap recordMap;
     private RecordCursor slaveCursor;
     private RecordCursor masterCursor;
@@ -82,7 +82,6 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         this.slaveColIndex = slaveColIndices;
         this.recordMap = createRecordMap(master, slave, keyPageSize, dataPageSize, rowIdPageSize);
         this.outer = outer;
-        this.nullRecord = new NullRecord(slave.getMetadata());
         this.storageFacade = new SplitRecordStorageFacade(metadata, master.getMetadata().getColumnCount());
     }
 
@@ -229,7 +228,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
                 return true;
             } else if (outer) {
                 hashTableCursor = null;
-                currentRecord.setB(nullRecord);
+                currentRecord.setB(NullRecord.INSTANCE);
                 return true;
             }
         }

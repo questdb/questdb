@@ -21,29 +21,36 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.join.hash;
+package com.questdb.ql.impl.analytic;
 
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.misc.Numbers;
 import com.questdb.ql.AbstractRecord;
+import com.questdb.ql.Record;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
+import com.questdb.std.ObjList;
 
 import java.io.OutputStream;
 
-public class NullRecord extends AbstractRecord {
+public class AnalyticRecord extends AbstractRecord {
+    private final ObjList<AnalyticFunction> functions;
+    private final int split;
+    private Record base;
 
-    public NullRecord(RecordMetadata metadata) {
+    public AnalyticRecord(RecordMetadata metadata, int split, ObjList<AnalyticFunction> functions) {
         super(metadata);
+        this.functions = functions;
+        this.split = split;
     }
 
     @Override
     public byte get(int col) {
-        return 0;
+        return col < split ? base.get(col) : functions.getQuick(col - split).get();
     }
 
     @Override
     public void getBin(int col, OutputStream s) {
+
     }
 
     @Override
@@ -53,7 +60,7 @@ public class NullRecord extends AbstractRecord {
 
     @Override
     public long getBinLen(int col) {
-        return -1L;
+        return 0;
     }
 
     @Override
@@ -63,17 +70,17 @@ public class NullRecord extends AbstractRecord {
 
     @Override
     public long getDate(int col) {
-        return Numbers.LONG_NaN;
+        return 0;
     }
 
     @Override
     public double getDouble(int col) {
-        return Double.NaN;
+        return 0;
     }
 
     @Override
     public float getFloat(int col) {
-        return Float.NaN;
+        return 0;
     }
 
     @Override
@@ -88,17 +95,17 @@ public class NullRecord extends AbstractRecord {
 
     @Override
     public int getInt(int col) {
-        return Numbers.INT_NaN;
+        return col < split ? base.getInt(col) : functions.getQuick(col - split).getInt();
     }
 
     @Override
     public long getLong(int col) {
-        return Numbers.LONG_NaN;
+        return 0;
     }
 
     @Override
     public long getRowId() {
-        return -1;
+        return 0;
     }
 
     @Override
@@ -113,16 +120,24 @@ public class NullRecord extends AbstractRecord {
 
     @Override
     public void getStr(int col, CharSink sink) {
-
+        if (col < split) {
+            base.getStr(col, sink);
+        } else {
+            functions.getQuick(col - split).getStr(sink);
+        }
     }
 
     @Override
     public int getStrLen(int col) {
-        return -1;
+        return 0;
     }
 
     @Override
     public String getSym(int col) {
         return null;
+    }
+
+    public void of(Record base) {
+        this.base = base;
     }
 }

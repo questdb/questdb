@@ -66,23 +66,13 @@ public class RecordSourcePrinter {
             if (i > 0) {
                 sink.put(delimiter);
             }
-            printRecord(r, m, i);
+            printColumn(r, m, i);
         }
         sink.put("\n");
         sink.flush();
     }
 
-    private void printHeader(RecordMetadata metadata) {
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (i > 0) {
-                sink.put(delimiter);
-            }
-            sink.put(metadata.getColumnName(i));
-        }
-        sink.put('\n');
-    }
-
-    private void printRecord(Record r, RecordMetadata m, int i) {
+    private void printColumn(Record r, RecordMetadata m, int i) {
         switch (m.getColumnQuick(i).getType()) {
             case DATE:
                 Dates.appendDateTime(sink, r.getDate(i));
@@ -117,5 +107,15 @@ public class RecordSourcePrinter {
             default:
                 break;
         }
+    }
+
+    private void printHeader(RecordMetadata metadata) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i > 0) {
+                sink.put(delimiter);
+            }
+            sink.put(metadata.getColumnName(i));
+        }
+        sink.put('\n');
     }
 }

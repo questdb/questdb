@@ -177,7 +177,7 @@ public class LastFixRecordMap implements LastRecordMap {
             values.putLong(0, appendOffset);
         }
         appendOffset += recordLen;
-        // allocate if necessary
+        // allocateOffset if necessary
         if (pgInx == pages.size()) {
             pages.add(Unsafe.getUnsafe().allocateMemory(pageSize));
         }

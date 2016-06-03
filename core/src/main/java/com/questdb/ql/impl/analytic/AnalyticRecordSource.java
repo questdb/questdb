@@ -21,35 +21,42 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.join;
+package com.questdb.ql.impl.analytic;
 
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.*;
+import com.questdb.ql.impl.CollectionRecordMetadata;
+import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
+import com.questdb.std.ObjList;
 
-public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
-    private final RecordSource masterSource;
-    private final RecordSource slaveSource;
-    private final SplitRecordMetadata metadata;
-    private final SplitRecord record;
-    private RecordCursor masterCursor;
-    private RecordCursor slaveCursor;
-    private boolean nextSlave = false;
+public class AnalyticRecordSource extends AbstractCombinedRecordSource {
+    private final RecordList records;
+    private final RecordSource parentSource;
+    private final ObjList<AnalyticFunction> functions;
+    private final RecordMetadata metadata;
+    private final AnalyticRecord record;
 
-    public CrossJoinRecordSource(RecordSource masterSource, RecordSource slaveSource) {
-        this.masterSource = masterSource;
-        this.slaveSource = slaveSource;
-        this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
-        this.record = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
+    public AnalyticRecordSource(int pageSize, RecordSource parentSource, ObjList<AnalyticFunction> functions) {
+        this.parentSource = parentSource;
+        this.records = new RecordList(parentSource.getMetadata(), pageSize);
+        this.functions = functions;
+
+        CollectionRecordMetadata funcMetadata = new CollectionRecordMetadata();
+        for (int i = 0; i < functions.size(); i++) {
+            funcMetadata.add(functions.getQuick(i).getMetadata());
+        }
+        this.metadata = new SplitRecordMetadata(parentSource.getMetadata(), funcMetadata);
+        this.record = new AnalyticRecord(this.metadata, parentSource.getMetadata().getColumnCount(), functions);
     }
 
     @Override
     public Record getByRowId(long rowId) {
-        return null;
+        return records.getByRowId(rowId);
     }
 
     @Override
@@ -64,51 +71,55 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
-        masterCursor = masterSource.prepareCursor(factory, cancellationHandler);
-        slaveCursor = slaveSource.prepareCursor(factory, cancellationHandler);
+        RecordCursor cursor = this.parentSource.prepareCursor(factory, cancellationHandler);
+        int n = functions.size();
+        long rowid = -1;
+        while (cursor.hasNext()) {
+            Record record = cursor.next();
+            rowid = records.append(record, rowid);
+            for (int i = 0; i < n; i++) {
+                functions.getQuick(i).addRecord(record, rowid);
+            }
+        }
+
+        for (int i = 0; i < n; i++) {
+            functions.getQuick(i).prepare(records);
+        }
+
+        records.toTop();
         return this;
     }
 
     @Override
     public void reset() {
-        masterSource.reset();
-        slaveSource.reset();
-        nextSlave = false;
+        records.clear();
+        parentSource.reset();
     }
 
     @Override
     public boolean supportsRowIdAccess() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean hasNext() {
-        return nextSlave || masterCursor.hasNext();
+        if (records.hasNext()) {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                functions.getQuick(i).scroll();
+            }
+            return true;
+        }
+        return false;
     }
 
     @Override
     public Record next() {
-        if (!nextSlave) {
-            record.setA(masterCursor.next());
-            slaveSource.reset();
-        }
-
-        if (nextSlave || slaveCursor.hasNext()) {
-            record.setB(slaveCursor.next());
-            nextSlave = slaveCursor.hasNext();
-        } else {
-            record.setB(null);
-            nextSlave = false;
-        }
+        record.of(records.next());
         return record;
     }
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put('{');
-        sink.putQuoted("op").put(':').putQuoted("CrossJoinRecordSource").put(',');
-        sink.putQuoted("master").put(':').put(masterSource).put(',');
-        sink.putQuoted("slave").put(':').put(slaveSource);
-        sink.put('}');
+
     }
 }

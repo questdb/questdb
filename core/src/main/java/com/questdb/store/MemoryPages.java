@@ -42,7 +42,7 @@ public class MemoryPages implements Closeable, Mutable {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
-        allocateAddress(0);
+        allocate0(0);
     }
 
     public long addressOf(long offset) {
@@ -50,8 +50,12 @@ public class MemoryPages implements Closeable, Mutable {
     }
 
     public long allocate(long length) {
+        return addressOf(allocateOffset(length));
+    }
+
+    public long allocateOffset(long length) {
         if (cachePageLo + length > cachePageHi) {
-            allocateAddress((cachePageLo + length) >>> bits);
+            allocate0((cachePageLo + length) >>> bits);
         }
         return (cachePageLo += length) - length;
     }
@@ -80,7 +84,7 @@ public class MemoryPages implements Closeable, Mutable {
         return pageSize;
     }
 
-    private void allocateAddress(long index) {
+    private void allocate0(long index) {
         if (index > Integer.MAX_VALUE) {
             throw new OutOfMemoryError();
         }

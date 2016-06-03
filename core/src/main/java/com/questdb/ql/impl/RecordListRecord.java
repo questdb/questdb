@@ -44,7 +44,6 @@ public class RecordListRecord extends AbstractRecord {
     private final MemoryPages mem;
     private final int headerSize;
     private final int[] offsets;
-    private final int fixedBlockLen;
     private int fixedSize;
     private long address;
     private StorageFacade storageFacade;
@@ -69,7 +68,6 @@ public class RecordListRecord extends AbstractRecord {
         // Pad header size to 8 bytes.
         fixedSize = ((fixedSize + 7) >> 3) << 3;
         headerSize = varColIndex * 8;
-        fixedBlockLen = fixedSize + headerSize;
     }
 
     @Override
@@ -160,7 +158,7 @@ public class RecordListRecord extends AbstractRecord {
 
     @Override
     public long getRowId() {
-        return address - headerSize - 8;
+        return address - headerSize;
     }
 
     @Override
@@ -197,10 +195,6 @@ public class RecordListRecord extends AbstractRecord {
         return storageFacade.getSymbolTable(col).value(getInt(col));
     }
 
-    public int getFixedBlockLength() {
-        return fixedBlockLen;
-    }
-
     public int getFixedSize() {
         return fixedSize;
     }
@@ -218,7 +212,7 @@ public class RecordListRecord extends AbstractRecord {
     }
 
     private long addressOf(int index) {
-        return mem.addressOf(offsetOf(index));
+        return offsetOf(index);
     }
 
     private long offsetOf(int index) {

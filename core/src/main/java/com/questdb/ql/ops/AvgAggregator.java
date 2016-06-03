@@ -27,6 +27,7 @@ import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.ql.Record;
+import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.map.MapRecordValueInterceptor;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.std.ObjList;
@@ -42,8 +43,8 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
         }
     };
 
-    private final static ColumnMetadata INTERNAL_COL_COUNT = new ColumnMetadata().setName("$count").setType(ColumnType.LONG);
-    private final static ColumnMetadata INTERNAL_COL_SUM = new ColumnMetadata().setName("$sum").setType(ColumnType.DOUBLE);
+    private final static RecordColumnMetadata INTERNAL_COL_COUNT = new RecordColumnMetadataImpl("$count", ColumnType.LONG);
+    private final static RecordColumnMetadata INTERNAL_COL_SUM = new RecordColumnMetadataImpl("$sum", ColumnType.DOUBLE);
     private int countIdx;
     private int sumIdx;
     private int avgIdx;

@@ -196,7 +196,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     }
 
     private long allocateBlock() {
-        long p = mem.addressOf(mem.allocate(BLOCK_SIZE));
+        long p = mem.allocate(BLOCK_SIZE);
         setLeft(p, -1);
         setRight(p, -1);
         setColor(p, BLACK);

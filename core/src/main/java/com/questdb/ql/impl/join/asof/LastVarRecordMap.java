@@ -242,7 +242,7 @@ public class LastVarRecordMap implements LastRecordMap {
 
         appendOffset += size;
 
-        // allocate if necessary
+        // allocateOffset if necessary
         if (pgInx == pages.size()) {
             pages.add(Unsafe.getUnsafe().allocateMemory(pageSize));
         }

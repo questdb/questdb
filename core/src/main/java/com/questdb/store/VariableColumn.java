@@ -265,7 +265,7 @@ public class VariableColumn extends AbstractColumn {
                     }
 
                     if (blockRemaining < 1) {
-                        throw new JournalRuntimeException("Internal error. Unable to allocate disk block");
+                        throw new JournalRuntimeException("Internal error. Unable to allocateOffset disk block");
                     }
 
                     int len = bufRemaining > blockRemaining ? blockRemaining : bufRemaining;

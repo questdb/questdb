@@ -23,12 +23,12 @@
 
 package com.questdb.ql.impl.join.hash;
 
-import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
+import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.impl.map.MultiMap;
@@ -94,15 +94,7 @@ public class MultiRecordMap implements Closeable, Mutable {
     }
 
     static {
-        ColumnMetadata top = new ColumnMetadata();
-        top.setName("top");
-        top.setType(ColumnType.LONG);
-
-        ColumnMetadata curr = new ColumnMetadata();
-        curr.setName("current");
-        curr.setType(ColumnType.LONG);
-
-        valueCols.add(top);
-        valueCols.add(curr);
+        valueCols.add(new RecordColumnMetadataImpl("top", ColumnType.LONG));
+        valueCols.add(new RecordColumnMetadataImpl("current", ColumnType.LONG));
     }
 }

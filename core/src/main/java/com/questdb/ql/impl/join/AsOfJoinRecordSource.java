@@ -29,6 +29,7 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
+import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.join.asof.FixRecordHolder;
 import com.questdb.ql.impl.join.asof.RecordHolder;
 import com.questdb.ql.impl.join.asof.RowidRecordHolder;

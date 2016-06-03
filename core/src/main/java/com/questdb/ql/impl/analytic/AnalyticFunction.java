@@ -21,25 +21,25 @@
  *
  ******************************************************************************/
 
-package com.questdb.store;
+package com.questdb.ql.impl.analytic;
 
-import org.junit.Assert;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.ExpectedException;
+import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.ql.Record;
+import com.questdb.ql.impl.RecordList;
+import com.questdb.std.CharSink;
 
-public class MemoryPagesTest {
-    @Rule
-    public final ExpectedException exception = ExpectedException.none();
+public interface AnalyticFunction {
+    void addRecord(Record record, long rowid);
 
-    @Test
-    public void testGetWriteOffsetQuick() throws Exception {
-        int pageLen = 128;
+    byte get();
 
-        try (MemoryPages mem = new MemoryPages(127)) {
-            Assert.assertEquals(0, mem.allocateOffset(pageLen - 4));
-            Assert.assertEquals(pageLen, mem.allocateOffset(5));
-            Assert.assertEquals(pageLen + 5, mem.allocateOffset(8));
-        }
-    }
+    int getInt();
+
+    RecordColumnMetadata getMetadata();
+
+    void getStr(CharSink sink);
+
+    void prepare(RecordList base);
+
+    void scroll();
 }

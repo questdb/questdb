@@ -23,15 +23,14 @@
 
 package com.questdb.ql.impl.join;
 
-import com.questdb.factory.configuration.ColumnMetadata;
+import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.store.ColumnType;
 
-public final class LongMetadata extends ColumnMetadata {
+public final class LongMetadata extends RecordColumnMetadataImpl {
 
     public static final LongMetadata INSTANCE = new LongMetadata();
 
     private LongMetadata() {
-        this.name = "KY_0C81_";
-        this.type = ColumnType.LONG;
+        super("KY_0C81_", ColumnType.LONG);
     }
 }

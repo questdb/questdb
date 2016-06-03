@@ -27,6 +27,7 @@ import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.ql.Record;
+import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.map.MapRecordValueInterceptor;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.std.ObjList;
@@ -42,8 +43,8 @@ public final class VwapAggregator extends AbstractBinaryOperator implements Aggr
         }
     };
 
-    private final static ColumnMetadata INTERNAL_COL_AMOUNT = new ColumnMetadata().setName("$sumAmt").setType(ColumnType.DOUBLE);
-    private final static ColumnMetadata INTERNAL_COL_QUANTITY = new ColumnMetadata().setName("$sumQty").setType(ColumnType.DOUBLE);
+    private final static RecordColumnMetadata INTERNAL_COL_AMOUNT = new RecordColumnMetadataImpl("$sumAmt", ColumnType.DOUBLE);
+    private final static RecordColumnMetadata INTERNAL_COL_QUANTITY = new RecordColumnMetadataImpl("$sumQty", ColumnType.DOUBLE);
     private int sumAmtIdx;
     private int sumQtyIdx;
     private int vwap;

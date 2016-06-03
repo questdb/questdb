@@ -25,10 +25,10 @@ package com.questdb.ql.impl.aggregation;
 
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
+import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
@@ -45,10 +45,7 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
 
     public CountRecordSource(String columnName, PartitionSource partitionSource) {
         CollectionRecordMetadata metadata = new CollectionRecordMetadata();
-        ColumnMetadata m = new ColumnMetadata();
-        m.name = columnName;
-        m.type = ColumnType.LONG;
-        metadata.add(m);
+        metadata.add(new RecordColumnMetadataImpl(columnName, ColumnType.LONG));
         this.record = new CountRecord(metadata);
         this.partitionSource = partitionSource;
     }

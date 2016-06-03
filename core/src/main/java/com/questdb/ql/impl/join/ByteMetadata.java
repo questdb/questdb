@@ -23,15 +23,14 @@
 
 package com.questdb.ql.impl.join;
 
-import com.questdb.factory.configuration.ColumnMetadata;
+import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.store.ColumnType;
 
-public final class ByteMetadata extends ColumnMetadata {
+public final class ByteMetadata extends RecordColumnMetadataImpl {
 
     public static final ByteMetadata INSTANCE = new ByteMetadata();
 
     private ByteMetadata() {
-        this.name = "KY_0C82_";
-        this.type = ColumnType.BYTE;
+        super("KY_0C82_", ColumnType.BYTE);
     }
 }

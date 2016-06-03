@@ -21,21 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.join;
+package com.questdb.ql.impl;
 
 import com.questdb.factory.configuration.AbstractRecordMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 
-class SplitRecordMetadata extends AbstractRecordMetadata {
+public class SplitRecordMetadata extends AbstractRecordMetadata {
     private final int columnCount;
     private final RecordColumnMetadata[] columns;
     private final RecordMetadata a;
     private final RecordMetadata b;
     private final int split;
 
-    SplitRecordMetadata(RecordMetadata a, RecordMetadata b) {
+    public SplitRecordMetadata(RecordMetadata a, RecordMetadata b) {
         this.a = a;
         this.b = b;
 

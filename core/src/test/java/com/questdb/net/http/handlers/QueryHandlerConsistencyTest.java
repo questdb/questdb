@@ -202,6 +202,5 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
         } finally {
             channel.free();
         }
-        System.out.println(expected);
     }
 }

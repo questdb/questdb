@@ -21,25 +21,43 @@
  *
  ******************************************************************************/
 
-package com.questdb.store;
+package com.questdb.ql.impl;
 
-import org.junit.Assert;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.ExpectedException;
+import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.store.ColumnType;
+import com.questdb.store.SymbolTable;
 
-public class MemoryPagesTest {
-    @Rule
-    public final ExpectedException exception = ExpectedException.none();
+public class RecordColumnMetadataImpl implements RecordColumnMetadata {
+    private final String name;
+    private final ColumnType type;
 
-    @Test
-    public void testGetWriteOffsetQuick() throws Exception {
-        int pageLen = 128;
+    public RecordColumnMetadataImpl(String name, ColumnType type) {
+        this.name = name;
+        this.type = type;
+    }
 
-        try (MemoryPages mem = new MemoryPages(127)) {
-            Assert.assertEquals(0, mem.allocateOffset(pageLen - 4));
-            Assert.assertEquals(pageLen, mem.allocateOffset(5));
-            Assert.assertEquals(pageLen + 5, mem.allocateOffset(8));
-        }
+    @Override
+    public int getBucketCount() {
+        return 0;
+    }
+
+    @Override
+    public String getName() {
+        return name;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return null;
+    }
+
+    @Override
+    public ColumnType getType() {
+        return type;
+    }
+
+    @Override
+    public boolean isIndexed() {
+        return false;
     }
 }

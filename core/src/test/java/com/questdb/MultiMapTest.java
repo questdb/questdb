@@ -23,7 +23,6 @@
 
 package com.questdb;
 
-import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.StringSink;
@@ -32,6 +31,7 @@ import com.questdb.model.Quote;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.CollectionRecordMetadata;
+import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.impl.map.MultiMap;
 import com.questdb.std.CharSink;
@@ -126,10 +126,7 @@ public class MultiMapTest extends AbstractTest {
                 keyMeta,
                 keyMeta.getColumnNames(),
                 new ObjList<RecordColumnMetadata>() {{
-                    add(new ColumnMetadata() {{
-                        name = "count";
-                        type = ColumnType.INT;
-                    }});
+                    add(new RecordColumnMetadataImpl("count", ColumnType.INT));
                 }},
                 null);
 
