@@ -33,6 +33,7 @@ import com.questdb.misc.Numbers;
 import com.questdb.ql.model.*;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.ObjList;
 import com.questdb.std.ObjectPool;
 import com.questdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -40,7 +41,8 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 public final class QueryParser {
 
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
-    private static final CharSequenceHashSet aliasStopSet = new CharSequenceHashSet();
+    private static final CharSequenceHashSet journalAliasStop = new CharSequenceHashSet();
+    private static final CharSequenceHashSet columnAliasStop = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
     private static final CharSequenceObjHashMap<QueryModel.JoinType> joinStartSet = new CharSequenceObjHashMap<>();
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 128);
@@ -49,6 +51,7 @@ public final class QueryParser {
     private final ExprAstBuilder astBuilder = new ExprAstBuilder();
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
     private final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
+    private final ObjectPool<AnalyticColumn> analyticColumnPool = new ObjectPool<>(AnalyticColumn.FACTORY, 8);
 
     private ParserException err(String msg) {
         return QueryError.$(lexer.position(), msg);
@@ -99,6 +102,7 @@ public final class QueryParser {
         queryModelPool.clear();
         queryColumnPool.clear();
         exprNodePool.clear();
+        analyticColumnPool.clear();
         return parseInternal(query);
     }
 
@@ -180,7 +184,7 @@ public final class QueryParser {
 
         tok = lexer.optionTok();
 
-        if (tok != null && !aliasStopSet.contains(tok)) {
+        if (tok != null && !journalAliasStop.contains(tok)) {
             lexer.unparse();
             joinModel.setAlias(expr());
         } else {
@@ -303,7 +307,7 @@ public final class QueryParser {
 
             // check if tok is not "where" - should be alias
 
-            if (tok != null && !aliasStopSet.contains(tok)) {
+            if (tok != null && !journalAliasStop.contains(tok)) {
                 lexer.unparse();
                 model.setAlias(literal());
                 tok = lexer.optionTok();
@@ -322,7 +326,7 @@ public final class QueryParser {
 
             tok = lexer.optionTok();
 
-            if (tok != null && !aliasStopSet.contains(tok)) {
+            if (tok != null && !journalAliasStop.contains(tok)) {
                 lexer.unparse();
                 model.setAlias(literal());
                 tok = lexer.optionTok();
@@ -431,23 +435,52 @@ public final class QueryParser {
             ExprNode expr = expr();
             tok = tok();
 
-            // expect (from | , | [column name])
-
-            if (Chars.equals(tok, "from")) {
-                model.addColumn(queryColumnPool.next().of(null, expr));
-                break;
+            String alias;
+            if (!columnAliasStop.contains(tok)) {
+                alias = tok.toString();
+                tok = tok();
+            } else {
+                alias = null;
             }
 
-            if (Chars.equals(tok, ',')) {
-                model.addColumn(queryColumnPool.next().of(null, expr));
-                continue;
+            if (Chars.equals(tok, "over")) {
+                // analytic
+                expectTok(tok(), "(");
+
+                AnalyticColumn col = analyticColumnPool.next().of(alias, expr);
+                tok = tok();
+
+                if (Chars.equals(tok, "partition")) {
+                    expectTok(tok(), "by");
+
+                    ObjList<ExprNode> partitionBy = col.getPartitionBy();
+
+                    do {
+                        partitionBy.add(expectExpr());
+                        tok = tok();
+                    } while (Chars.equals(tok, ','));
+                }
+
+                if (Chars.equals(tok, "order")) {
+                    expectTok(tok(), "by");
+
+                    ObjList<ExprNode> orderBy = col.getOrderBy();
+                    do {
+                        orderBy.add(expectExpr());
+                        tok = tok();
+                    } while (Chars.equals(tok, ','));
+                }
+
+                if (!Chars.equals(tok, ')')) {
+                    throw err(") expected");
+                }
+
+                model.addAnalyticColumn(col);
+
+                tok = tok();
+            } else {
+                model.addColumn(queryColumnPool.next().of(alias, expr));
             }
-
-            model.addColumn(queryColumnPool.next().of(tok.toString(), expr));
-
-            tok = tok();
-
-            // expect (from | , )
 
             if (Chars.equals(tok, "from")) {
                 break;
@@ -478,19 +511,23 @@ public final class QueryParser {
     }
 
     static {
-        aliasStopSet.add("where");
-        aliasStopSet.add("latest");
-        aliasStopSet.add("join");
-        aliasStopSet.add("inner");
-        aliasStopSet.add("outer");
-        aliasStopSet.add("asof");
-        aliasStopSet.add("cross");
-        aliasStopSet.add("sample");
-        aliasStopSet.add("order");
-        aliasStopSet.add("on");
-        aliasStopSet.add("timestamp");
-        aliasStopSet.add("limit");
-        aliasStopSet.add(")");
+        journalAliasStop.add("where");
+        journalAliasStop.add("latest");
+        journalAliasStop.add("join");
+        journalAliasStop.add("inner");
+        journalAliasStop.add("outer");
+        journalAliasStop.add("asof");
+        journalAliasStop.add("cross");
+        journalAliasStop.add("sample");
+        journalAliasStop.add("order");
+        journalAliasStop.add("on");
+        journalAliasStop.add("timestamp");
+        journalAliasStop.add("limit");
+        journalAliasStop.add(")");
+        //
+        columnAliasStop.add("from");
+        columnAliasStop.add(",");
+        columnAliasStop.add("over");
         //
         groupByStopSet.add("order");
         groupByStopSet.add(")");

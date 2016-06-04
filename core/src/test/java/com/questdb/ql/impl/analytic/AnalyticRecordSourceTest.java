@@ -25,6 +25,7 @@ package com.questdb.ql.impl.analytic;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
+import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Rnd;
@@ -32,10 +33,12 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.parser.AbstractOptimiserTest;
+import com.questdb.ql.parser.QueryError;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
 import com.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class AnalyticRecordSourceTest extends AbstractOptimiserTest {
@@ -59,6 +62,16 @@ public class AnalyticRecordSourceTest extends AbstractOptimiserTest {
                 ew.append();
             }
             w.commit();
+        }
+    }
+
+    @Test
+    @Ignore
+    public void testCompilation() throws Exception {
+        try {
+            assertThat("", "select i, str, next(i) over (partition by str) from xyz");
+        } catch (ParserException e) {
+            System.out.println(QueryError.getMessage());
         }
     }
 

@@ -24,25 +24,30 @@
 package com.questdb.ql.model;
 
 import com.questdb.std.Mutable;
+import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 
-public final class QueryColumn implements Mutable {
-    public final static ObjectFactory<QueryColumn> FACTORY = new ObjectFactory<QueryColumn>() {
+public final class AnalyticColumn implements Mutable {
+    public final static ObjectFactory<AnalyticColumn> FACTORY = new ObjectFactory<AnalyticColumn>() {
         @Override
-        public QueryColumn newInstance() {
-            return new QueryColumn();
+        public AnalyticColumn newInstance() {
+            return new AnalyticColumn();
         }
     };
+    private final ObjList<ExprNode> partitionBy = new ObjList<>(2);
+    private final ObjList<ExprNode> orderBy = new ObjList<>(2);
     private String alias;
     private ExprNode ast;
 
-    private QueryColumn() {
+    private AnalyticColumn() {
     }
 
     @Override
     public void clear() {
         alias = null;
         ast = null;
+        partitionBy.clear();
+        orderBy.clear();
     }
 
     public String getAlias() {
@@ -53,22 +58,15 @@ public final class QueryColumn implements Mutable {
         return ast;
     }
 
-    @Override
-    public int hashCode() {
-        int result = alias != null ? alias.hashCode() : 0;
-        result = 31 * result + (ast != null ? ast.hashCode() : 0);
-        return result;
+    public ObjList<ExprNode> getOrderBy() {
+        return orderBy;
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        QueryColumn that = (QueryColumn) o;
-        return alias != null ? alias.equals(that.alias) : that.alias == null && (ast != null ? ast.equals(that.ast) : that.ast == null);
+    public ObjList<ExprNode> getPartitionBy() {
+        return partitionBy;
     }
 
-    public QueryColumn of(String alias, ExprNode ast) {
+    public AnalyticColumn of(String alias, ExprNode ast) {
         this.alias = alias;
         this.ast = ast;
         return this;

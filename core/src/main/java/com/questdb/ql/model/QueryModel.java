@@ -48,6 +48,7 @@ public class QueryModel implements Mutable {
     public static final int ORDER_DIRECTION_DESCENDING = 1;
 
     private final ObjList<QueryColumn> columns = new ObjList<>();
+    private final ObjList<AnalyticColumn> analyticColumns = new ObjList<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
     private final IntList orderByDirection = new IntList();
@@ -95,6 +96,10 @@ public class QueryModel implements Mutable {
         return aliasIndexes.put(node.token, index);
     }
 
+    public void addAnalyticColumn(AnalyticColumn column) {
+        analyticColumns.add(column);
+    }
+
     public void addColumn(QueryColumn column) {
         columns.add(column);
     }
@@ -122,6 +127,7 @@ public class QueryModel implements Mutable {
 
     public void clear() {
         columns.clear();
+        analyticColumns.clear();
         joinModels.clear();
         joinModels.add(this);
         sampleBy = null;
@@ -204,6 +210,10 @@ public class QueryModel implements Mutable {
 
     public int getAliasIndex(CharSequence alias) {
         return aliasIndexes.get(alias);
+    }
+
+    public ObjList<AnalyticColumn> getAnalyticColumns() {
+        return analyticColumns;
     }
 
     public CharSequenceIntHashMap getColumnNameHistogram() {

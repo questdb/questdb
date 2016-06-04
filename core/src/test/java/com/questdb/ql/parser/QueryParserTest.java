@@ -25,10 +25,7 @@ package com.questdb.ql.parser;
 
 import com.questdb.ex.ParserException;
 import com.questdb.misc.Chars;
-import com.questdb.ql.model.ExprNode;
-import com.questdb.ql.model.QueryModel;
-import com.questdb.ql.model.Statement;
-import com.questdb.ql.model.StatementType;
+import com.questdb.ql.model.*;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -56,6 +53,23 @@ public class QueryParserTest extends AbstractTest {
         } catch (ParserException e) {
             Assert.assertEquals(7, QueryError.getPosition());
         }
+    }
+
+    @Test
+    public void testAliasedAnalyticColumn() throws Exception {
+        Statement statement = parser.parse("select a,b, f(c) my over (partition by b order by ts) from xyz");
+        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(1, statement.getQueryModel().getAnalyticColumns().size());
+        Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
+
+        AnalyticColumn col = statement.getQueryModel().getAnalyticColumns().get(0);
+        Assert.assertEquals("my", col.getAlias());
+        Assert.assertEquals(ExprNode.NodeType.FUNCTION, col.getAst().type);
+        Assert.assertEquals(1, col.getPartitionBy().size());
+        Assert.assertEquals("b", col.getPartitionBy().get(0).token);
+
+        Assert.assertEquals(1, col.getOrderBy().size());
+        Assert.assertEquals("ts", col.getOrderBy().get(0).token);
     }
 
     @Test
@@ -125,6 +139,36 @@ public class QueryParserTest extends AbstractTest {
         } catch (ParserException e) {
             Assert.assertEquals(27, QueryError.getPosition());
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "end of input"));
+        }
+    }
+
+    @Test
+    public void testExtraComma2OrderByInAnalyticFunction() throws Exception {
+        try {
+            parser.parse("select a,b, f(c) my over (partition by b order by ts,) from xyz");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(53, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testExtraCommaOrderByInAnalyticFunction() throws Exception {
+        try {
+            parser.parse("select a,b, f(c) my over (partition by b order by ,ts) from xyz");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(50, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testExtraCommaPartitionByInAnalyticFunction() throws Exception {
+        try {
+            parser.parse("select a,b, f(c) my over (partition by b, order by ts) from xyz");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(48, QueryError.getPosition());
         }
     }
 
@@ -375,6 +419,23 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
+    public void testOneAnalyticColumn() throws Exception {
+        Statement statement = parser.parse("select a,b, f(c) over (partition by b order by ts) from xyz");
+        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(1, statement.getQueryModel().getAnalyticColumns().size());
+        Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
+
+        AnalyticColumn col = statement.getQueryModel().getAnalyticColumns().get(0);
+
+        Assert.assertEquals(ExprNode.NodeType.FUNCTION, col.getAst().type);
+        Assert.assertEquals(1, col.getPartitionBy().size());
+        Assert.assertEquals("b", col.getPartitionBy().get(0).token);
+
+        Assert.assertEquals(1, col.getOrderBy().size());
+        Assert.assertEquals("ts", col.getOrderBy().get(0).token);
+    }
+
+    @Test
     public void testOptionalSelect() throws Exception {
         Statement statement = parser.parse("tab t2 latest by x where x > 100");
         Assert.assertNotNull(statement.getQueryModel());
@@ -592,6 +653,28 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
+    public void testTwoAnalyticColumns() throws Exception {
+        Statement statement = parser.parse("select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz");
+        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(2, statement.getQueryModel().getAnalyticColumns().size());
+        Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
+
+        AnalyticColumn col = statement.getQueryModel().getAnalyticColumns().get(0);
+        Assert.assertEquals("my", col.getAlias());
+        Assert.assertEquals(ExprNode.NodeType.FUNCTION, col.getAst().type);
+        Assert.assertEquals(1, col.getPartitionBy().size());
+        Assert.assertEquals("b", col.getPartitionBy().get(0).token);
+        Assert.assertEquals(1, col.getOrderBy().size());
+        Assert.assertEquals("ts", col.getOrderBy().get(0).token);
+
+        col = statement.getQueryModel().getAnalyticColumns().get(1);
+        Assert.assertEquals("d", col.getAst().token);
+        Assert.assertNull(col.getAlias());
+        Assert.assertEquals(0, col.getPartitionBy().size());
+        Assert.assertEquals(0, col.getOrderBy().size());
+    }
+
+    @Test
     public void testUnbalancedBracketInSubQuery() throws Exception {
         try {
             parser.parse("select x from (tab where x > 10 t1");
@@ -599,6 +682,36 @@ public class QueryParserTest extends AbstractTest {
         } catch (ParserException e) {
             Assert.assertEquals(32, QueryError.getPosition());
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "expected"));
+        }
+    }
+
+    @Test
+    public void testUnderTerminatedOver() throws Exception {
+        try {
+            parser.parse("select a,b, f(c) my over (partition by b order by ts from xyz");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(53, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testUnderTerminatedOver2() throws Exception {
+        try {
+            parser.parse("select a,b, f(c) my over (partition by b order by ts");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(50, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testUnexpectedTokenInAnalyticFunction() throws Exception {
+        try {
+            parser.parse("select a,b, f(c) my over (by b order by ts) from xyz");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(26, QueryError.getPosition());
         }
     }
 
@@ -615,5 +728,4 @@ public class QueryParserTest extends AbstractTest {
         // where
         Assert.assertEquals("axyinb10=and", TestUtils.toRpn(statement.getQueryModel().getWhereClause()));
     }
-
 }
