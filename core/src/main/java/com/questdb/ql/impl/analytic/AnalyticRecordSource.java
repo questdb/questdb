@@ -61,7 +61,7 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public StorageFacade getStorageFacade() {
-        return null;
+        return records.getStorageFacade();
     }
 
     @Override
@@ -72,7 +72,13 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
         RecordCursor cursor = this.parentSource.prepareCursor(factory, cancellationHandler);
+        final StorageFacade storageFacade = cursor.getStorageFacade();
+        records.setStorageFacade(storageFacade);
         int n = functions.size();
+        for (int i = 0; i < n; i++) {
+            functions.getQuick(i).setStorageFacade(storageFacade);
+        }
+
         long rowid = -1;
         while (cursor.hasNext()) {
             Record record = cursor.next();
@@ -94,6 +100,10 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
     public void reset() {
         records.clear();
         parentSource.reset();
+
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).reset();
+        }
     }
 
     @Override

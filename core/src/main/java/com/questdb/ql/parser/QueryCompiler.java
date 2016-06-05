@@ -39,6 +39,9 @@ import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.*;
 import com.questdb.ql.impl.aggregation.*;
+import com.questdb.ql.impl.analytic.AnalyticFunction;
+import com.questdb.ql.impl.analytic.AnalyticFunctionFactory;
+import com.questdb.ql.impl.analytic.AnalyticRecordSource;
 import com.questdb.ql.impl.interval.IntervalRecordSource;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.questdb.ql.impl.interval.SingleIntervalSource;
@@ -370,6 +373,22 @@ public class QueryCompiler {
                 constNameToToken.put(name, node.token);
             }
         }
+    }
+
+    private RecordSource analyticColumns(RecordSource rs, QueryModel model) throws ParserException {
+        return model.getAnalyticColumns().size() == 0 ? rs : analyticColumns0(rs, model);
+    }
+
+    private RecordSource analyticColumns0(RecordSource rs, QueryModel model) throws ParserException {
+        final ObjList<AnalyticColumn> columns = model.getAnalyticColumns();
+        final int n = columns.size();
+        final ObjList<AnalyticFunction> functions = new ObjList<>(n);
+        final RecordMetadata metadata = rs.getMetadata();
+
+        for (int i = 0; i < n; i++) {
+            functions.add(AnalyticFunctionFactory.newInstance(configuration, metadata, columns.getQuick(i)));
+        }
+        return new AnalyticRecordSource(configuration.getDbAnalyticWindowPage(), rs, functions);
     }
 
     private void applyLimit(QueryModel model) throws ParserException {
@@ -793,7 +812,7 @@ public class QueryCompiler {
             rs = compileSubQuery(model, factory);
         }
 
-        return limit(order(selectColumns(rs, model), model), model);
+        return limit(order(analyticColumns(selectColumns(rs, model), model), model), model);
     }
 
     private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
@@ -1003,7 +1022,6 @@ public class QueryCompiler {
             return index;
         }
     }
-
 
     private boolean hasAggregates(ExprNode node) {
 

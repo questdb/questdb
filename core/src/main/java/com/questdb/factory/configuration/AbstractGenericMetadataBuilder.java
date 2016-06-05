@@ -43,6 +43,10 @@ public abstract class AbstractGenericMetadataBuilder {
         return parent.$bin(name);
     }
 
+    public JournalStructure $bool(String name) {
+        return parent.$bool(name);
+    }
+
     public JournalStructure $date(String name) {
         return parent.$date(name);
     }
@@ -61,6 +65,10 @@ public abstract class AbstractGenericMetadataBuilder {
 
     public JournalStructure $long(String name) {
         return parent.$long(name);
+    }
+
+    public JournalStructure $short(String name) {
+        return parent.$short(name);
     }
 
     public GenericStringBuilder $str(String name) {

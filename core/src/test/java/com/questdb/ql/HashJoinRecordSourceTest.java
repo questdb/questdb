@@ -115,8 +115,8 @@ public class HashJoinRecordSourceTest {
                 "rock\n", sink.toString());
     }
 
-    @Test
     @Ignore
+    @Test
     public void testHashJoinPerformance() throws Exception {
         final JournalWriter<Quote> w1 = factory.writer(Quote.class, "q1");
         TestUtils.generateQuoteData(w1, 100000);

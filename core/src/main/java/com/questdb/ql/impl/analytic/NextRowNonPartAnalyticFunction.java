@@ -23,21 +23,30 @@
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.std.CharSink;
+import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Unsafe;
+import com.questdb.ql.Record;
 
-public abstract class AbstractAnalyticFunction implements AnalyticFunction {
-    @Override
-    public byte get() {
-        throw new UnsupportedOperationException();
+public class NextRowNonPartAnalyticFunction extends AbstractNextRowAnalyticFunction {
+
+    private long prevAddress = -1;
+
+    public NextRowNonPartAnalyticFunction(int pageSize, RecordMetadata parentMetadata, String columnName) {
+        super(pageSize, parentMetadata, columnName);
     }
 
     @Override
-    public int getInt() {
-        throw new UnsupportedOperationException();
+    public void addRecord(Record record, long rowid) {
+        if (prevAddress != -1) {
+            Unsafe.getUnsafe().putLong(prevAddress, rowid);
+        }
+        prevAddress = pages.allocate(8);
+        Unsafe.getUnsafe().putLong(prevAddress, -1);
     }
 
     @Override
-    public void getStr(CharSink sink) {
-        throw new UnsupportedOperationException();
+    public void reset() {
+        super.reset();
+        prevAddress = -1;
     }
 }

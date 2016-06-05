@@ -50,47 +50,51 @@ public class AnalyticRecord extends AbstractRecord {
 
     @Override
     public void getBin(int col, OutputStream s) {
-
+        if (col < split) {
+            base.getBin(col, s);
+        } else {
+            functions.getQuick(col - split).getBin(s);
+        }
     }
 
     @Override
     public DirectInputStream getBin(int col) {
-        return null;
+        return col < split ? base.getBin(col) : functions.getQuick(col - split).getBin();
     }
 
     @Override
     public long getBinLen(int col) {
-        return 0;
+        return col < split ? base.getBinLen(col) : functions.getQuick(col - split).getBinLen();
     }
 
     @Override
     public boolean getBool(int col) {
-        return false;
+        return col < split ? base.getBool(col) : functions.getQuick(col - split).getBool();
     }
 
     @Override
     public long getDate(int col) {
-        return 0;
+        return col < split ? base.getDate(col) : functions.getQuick(col - split).getDate();
     }
 
     @Override
     public double getDouble(int col) {
-        return 0;
+        return col < split ? base.getDouble(col) : functions.getQuick(col - split).getDouble();
     }
 
     @Override
     public float getFloat(int col) {
-        return 0;
+        return col < split ? base.getFloat(col) : functions.getQuick(col - split).getFloat();
     }
 
     @Override
     public CharSequence getFlyweightStr(int col) {
-        return null;
+        return col < split ? base.getFlyweightStr(col) : functions.getQuick(col - split).getFlyweightStr();
     }
 
     @Override
     public CharSequence getFlyweightStrB(int col) {
-        return null;
+        return col < split ? base.getFlyweightStrB(col) : functions.getQuick(col - split).getFlyweightStrB();
     }
 
     @Override
@@ -100,22 +104,22 @@ public class AnalyticRecord extends AbstractRecord {
 
     @Override
     public long getLong(int col) {
-        return 0;
+        return col < split ? base.getLong(col) : functions.getQuick(col - split).getLong();
     }
 
     @Override
     public long getRowId() {
-        return 0;
+        return base.getRowId();
     }
 
     @Override
     public short getShort(int col) {
-        return 0;
+        return col < split ? base.getShort(col) : functions.getQuick(col - split).getShort();
     }
 
     @Override
     public CharSequence getStr(int col) {
-        return null;
+        return col < split ? base.getStr(col) : functions.getQuick(col - split).getStr();
     }
 
     @Override
@@ -129,12 +133,12 @@ public class AnalyticRecord extends AbstractRecord {
 
     @Override
     public int getStrLen(int col) {
-        return 0;
+        return col < split ? base.getStrLen(col) : functions.getQuick(col - split).getStrLen();
     }
 
     @Override
     public String getSym(int col) {
-        return null;
+        return col < split ? base.getSym(col) : functions.getQuick(col - split).getSym();
     }
 
     public void of(Record base) {

@@ -63,6 +63,8 @@ public class ServerConfiguration {
     private int dbHashDataPage = 8 * 1024 * 1024;
     private int dbHashRowPage = 1024 * 1024;
     private int dbCyclesBeforeCancel = 1024 * 1024;
+    private int dbAnalyticFuncPage = 2 * 1024 * 1024;
+    private int dbAnalyticWindowPage = 4 * 1024 * 1024;
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");
     private File httpPublic = new File("public");
@@ -193,6 +195,14 @@ public class ServerConfiguration {
             this.dbCyclesBeforeCancel = Numbers.ceilPow2(n);
         }
 
+        if ((n = parseSize(props, "db.analytic.func.page")) > -1) {
+            this.dbAnalyticFuncPage = n;
+        }
+
+        if ((n = parseSize(props, "db.analytic.window.page")) > -1) {
+            this.dbAnalyticWindowPage = n;
+        }
+
         if ((s = props.getProperty("mime.types")) != null) {
             this.mimeTypes = normalize(root, new File(s));
         } else {
@@ -254,6 +264,14 @@ public class ServerConfiguration {
 
     public int getDbAggregatePage() {
         return dbAggregatePage;
+    }
+
+    public int getDbAnalyticFuncPage() {
+        return dbAnalyticFuncPage;
+    }
+
+    public int getDbAnalyticWindowPage() {
+        return dbAnalyticWindowPage;
     }
 
     public int getDbAsOfDataPage() {

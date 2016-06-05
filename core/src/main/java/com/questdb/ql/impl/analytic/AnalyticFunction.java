@@ -25,21 +25,57 @@ package com.questdb.ql.impl.analytic;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.Record;
+import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.std.CharSink;
+import com.questdb.std.DirectInputStream;
+
+import java.io.OutputStream;
 
 public interface AnalyticFunction {
     void addRecord(Record record, long rowid);
 
     byte get();
 
+    void getBin(OutputStream s);
+
+    DirectInputStream getBin();
+
+    long getBinLen();
+
+    boolean getBool();
+
+    long getDate();
+
+    double getDouble();
+
+    float getFloat();
+
+    CharSequence getFlyweightStr();
+
+    CharSequence getFlyweightStrB();
+
     int getInt();
+
+    long getLong();
 
     RecordColumnMetadata getMetadata();
 
+    short getShort();
+
     void getStr(CharSink sink);
+
+    CharSequence getStr();
+
+    int getStrLen();
+
+    String getSym();
 
     void prepare(RecordList base);
 
+    void reset();
+
     void scroll();
+
+    void setStorageFacade(StorageFacade storageFacade);
 }

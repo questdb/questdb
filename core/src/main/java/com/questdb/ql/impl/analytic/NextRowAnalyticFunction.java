@@ -27,32 +27,23 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.NullRecord;
-import com.questdb.ql.impl.RecordColumnMetadataImpl;
-import com.questdb.ql.impl.RecordList;
-import com.questdb.ql.impl.RecordListRecord;
 import com.questdb.ql.impl.join.LongMetadata;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.impl.map.MultiMap;
-import com.questdb.std.*;
+import com.questdb.std.IntList;
+import com.questdb.std.ObjHashSet;
+import com.questdb.std.ObjList;
+import com.questdb.std.Transient;
 import com.questdb.store.ColumnType;
-import com.questdb.store.MemoryPages;
 
-public class NextRowAnalyticFunction extends AbstractAnalyticFunction {
-
+public class NextRowAnalyticFunction extends AbstractNextRowAnalyticFunction {
     private static ObjList<RecordColumnMetadata> valueColumn = new ObjList<>();
-    private final MemoryPages pages;
     private final MultiMap map;
     private final IntList indices;
     private final ObjList<ColumnType> types;
-    private final RecordColumnMetadata metadata;
-    private final int columnIndex;
-    private long offset;
-    private RecordListRecord record;
-    private Record next;
 
     public NextRowAnalyticFunction(int pageSize, RecordMetadata parentMetadata, @Transient ObjHashSet<String> partitionBy, String columnName) {
-        this.pages = new MemoryPages(pageSize);
+        super(pageSize, parentMetadata, columnName);
         this.map = new MultiMap(pageSize, parentMetadata, partitionBy, valueColumn, null);
         this.indices = new IntList(partitionBy.size());
         this.types = new ObjList<>(partitionBy.size());
@@ -62,8 +53,6 @@ public class NextRowAnalyticFunction extends AbstractAnalyticFunction {
             indices.add(index);
             types.add(parentMetadata.getColumn(index).getType());
         }
-        this.columnIndex = parentMetadata.getColumnIndex(columnName);
-        this.metadata = new RecordColumnMetadataImpl(columnName, parentMetadata.getColumnQuick(this.columnIndex).getType());
     }
 
     @Override
@@ -83,41 +72,15 @@ public class NextRowAnalyticFunction extends AbstractAnalyticFunction {
     }
 
     @Override
-    public RecordColumnMetadata getMetadata() {
-        return metadata;
+    public void close() {
+        super.close();
+        map.close();
     }
 
     @Override
-    public void prepare(RecordList base) {
-        this.record = base.newRecord();
-        this.offset = 0;
-    }
-
-    @Override
-    public void scroll() {
-        long rowid = Unsafe.getUnsafe().getLong(pages.addressOf(this.offset));
-        if (rowid == -1) {
-            next = NullRecord.INSTANCE;
-        } else {
-            record.of(rowid);
-            next = record;
-        }
-        this.offset += 8;
-    }
-
-    @Override
-    public byte get() {
-        return next.get(columnIndex);
-    }
-
-    @Override
-    public int getInt() {
-        return next.getInt(columnIndex);
-    }
-
-    @Override
-    public void getStr(CharSink sink) {
-        next.getStr(columnIndex, sink);
+    public void reset() {
+        super.reset();
+        map.clear();
     }
 
     static {
