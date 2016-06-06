@@ -40,7 +40,7 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.*;
 import com.questdb.ql.impl.aggregation.*;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.ql.impl.analytic.AnalyticFunctionFactory;
+import com.questdb.ql.impl.analytic.AnalyticFunctionFactories;
 import com.questdb.ql.impl.analytic.AnalyticRecordSource;
 import com.questdb.ql.impl.interval.IntervalRecordSource;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
@@ -386,7 +386,7 @@ public class QueryCompiler {
         final RecordMetadata metadata = rs.getMetadata();
 
         for (int i = 0; i < n; i++) {
-            functions.add(AnalyticFunctionFactory.newInstance(configuration, metadata, columns.getQuick(i)));
+            functions.add(AnalyticFunctionFactories.newInstance(configuration, metadata, columns.getQuick(i)));
         }
         return new AnalyticRecordSource(configuration.getDbAnalyticWindowPage(), rs, functions);
     }

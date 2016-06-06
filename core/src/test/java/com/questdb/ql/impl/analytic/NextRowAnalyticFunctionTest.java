@@ -1,47 +1,40 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.JournalEntryWriter;
-import com.questdb.JournalWriter;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.misc.Dates;
-import com.questdb.misc.Rnd;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.impl.NoOpCancellationHandler;
-import com.questdb.ql.parser.AbstractOptimiserTest;
+import com.questdb.ql.impl.analytic.next.NextRowAnalyticFunction;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class AnalyticRecordSourceTest extends AbstractOptimiserTest {
+public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
 
     private final static String expected = "-1148479920\tBZ\t2016-05-01T10:21:00.000Z\t-409854405\n" +
             "1548800833\tKK\t2016-05-01T10:22:00.000Z\t73575701\n" +
@@ -144,63 +137,6 @@ public class AnalyticRecordSourceTest extends AbstractOptimiserTest {
             "-640305320\tKK\t2016-05-01T11:59:00.000Z\tNaN\n" +
             "1751526583\tBZ\t2016-05-01T12:00:00.000Z\tNaN\n";
 
-    @BeforeClass
-    public static void setUp() throws Exception {
-        try (JournalWriter w = factory.bulkWriter(new JournalStructure("xyz")
-                .$int("i")
-                .$str("str")
-                .$ts()
-                .$())) {
-            int n = 100;
-            String[] sym = {"AX", "XX", "BZ", "KK"};
-            Rnd rnd = new Rnd();
-
-            long t = Dates.toMillis(2016, 5, 1, 10, 20);
-            for (int i = 0; i < n; i++) {
-                JournalEntryWriter ew = w.entryWriter(t += 60000);
-                ew.putInt(0, rnd.nextInt());
-                ew.putStr(1, sym[rnd.nextPositiveInt() % sym.length]);
-                ew.append();
-            }
-            w.commit();
-        }
-
-
-        try (JournalWriter w = factory.bulkWriter(new JournalStructure("abc")
-                .$int("i")
-                .$double("d")
-                .$float("f")
-                .$byte("b")
-                .$long("l")
-                .$str("str")
-                .$bool("boo")
-                .$sym("sym")
-                .$short("sho")
-                .$date("date")
-                .$ts()
-                .$())) {
-            int n = 20;
-            String[] sym = {"AX", "XX", "BZ", "KK"};
-            Rnd rnd = new Rnd();
-
-            long t = Dates.toMillis(2016, 5, 1, 10, 20);
-            for (int i = 0; i < n; i++) {
-                JournalEntryWriter ew = w.entryWriter(t += 60000);
-                ew.putInt(0, rnd.nextInt());
-                ew.putDouble(1, rnd.nextDouble());
-                ew.putFloat(2, rnd.nextFloat());
-                ew.put(3, (byte) rnd.nextInt());
-                ew.putLong(4, rnd.nextLong());
-                ew.putStr(5, sym[rnd.nextPositiveInt() % sym.length]);
-                ew.putBool(6, rnd.nextBoolean());
-                ew.putSym(7, sym[rnd.nextPositiveInt() % sym.length]);
-                ew.putShort(8, (short) rnd.nextInt());
-                ew.putDate(9, rnd.nextLong());
-                ew.append();
-            }
-            w.commit();
-        }
-    }
 
     @Test
     public void testBoolean() throws Exception {
@@ -599,4 +535,5 @@ public class AnalyticRecordSourceTest extends AbstractOptimiserTest {
             Assert.assertEquals(58, QueryError.getPosition());
         }
     }
+
 }

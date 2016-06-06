@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic;
+package com.questdb.ql.impl.analytic.next;
 
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;

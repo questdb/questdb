@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic;
+package com.questdb.ql.impl.analytic.next;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -32,6 +32,7 @@ import com.questdb.ql.impl.NullRecord;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.RecordListRecord;
+import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.store.MemoryPages;
@@ -163,7 +164,7 @@ public abstract class AbstractNextRowAnalyticFunction implements AnalyticFunctio
     }
 
     @Override
-    public void scroll() {
+    public void scroll(Record rec) {
         long rowid = Unsafe.getUnsafe().getLong(pages.addressOf(this.offset));
         if (rowid == -1) {
             next = NullRecord.INSTANCE;

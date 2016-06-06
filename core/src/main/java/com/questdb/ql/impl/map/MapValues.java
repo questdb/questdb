@@ -56,6 +56,10 @@ public final class MapValues {
         return Unsafe.getUnsafe().getLong(address0(index));
     }
 
+    public short getShort(int index) {
+        return Unsafe.getUnsafe().getShort(address0(index));
+    }
+
     public void incrementLong(int index) {
         long p = address0(index);
         Unsafe.getUnsafe().putLong(p, Unsafe.getUnsafe().getLong(p));
@@ -83,6 +87,10 @@ public final class MapValues {
 
     public void putLong(int index, long value) {
         Unsafe.getUnsafe().putLong(address0(index), value);
+    }
+
+    public void putShort(int index, short value) {
+        Unsafe.getUnsafe().putShort(address0(index), value);
     }
 
     private long address0(int index) {

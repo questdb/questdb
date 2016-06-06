@@ -75,7 +75,7 @@ public interface AnalyticFunction {
 
     void reset();
 
-    void scroll();
+    void scroll(Record record);
 
     void setStorageFacade(StorageFacade storageFacade);
 }
