@@ -67,10 +67,11 @@ public class IOContext implements Closeable, Mutable, Locality {
     @Override
     public void close() {
         if (open.compareAndSet(true, false)) {
+            // !!! it is important not to close request before closing local value map !!!
+            Misc.free(map);
             Misc.free(channel);
             Misc.free(request);
             Misc.free(response);
-            Misc.free(map);
         }
     }
 
