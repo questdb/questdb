@@ -32,7 +32,7 @@ import com.questdb.ql.impl.NullRecord;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.RecordListRecord;
-import com.questdb.ql.impl.analytic.AnalyticFunction;
+import com.questdb.ql.impl.analytic.TwoPassAnalyticFunction;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.store.MemoryPages;
@@ -40,7 +40,7 @@ import com.questdb.store.MemoryPages;
 import java.io.Closeable;
 import java.io.OutputStream;
 
-public abstract class AbstractNextRowAnalyticFunction implements AnalyticFunction, Closeable {
+public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalyticFunction, Closeable {
 
     protected final MemoryPages pages;
     private final RecordColumnMetadata metadata;
@@ -152,13 +152,6 @@ public abstract class AbstractNextRowAnalyticFunction implements AnalyticFunctio
     }
 
     @Override
-    public void prepare(RecordList base) {
-        this.record = base.newRecord();
-        this.record.setStorageFacade(storageFacade);
-        this.offset = 0;
-    }
-
-    @Override
     public void reset() {
         pages.clear();
     }
@@ -178,5 +171,12 @@ public abstract class AbstractNextRowAnalyticFunction implements AnalyticFunctio
     @Override
     public void setStorageFacade(StorageFacade storageFacade) {
         this.storageFacade = storageFacade;
+    }
+
+    @Override
+    public void prepare(RecordList base) {
+        this.record = base.newRecord();
+        this.record.setStorageFacade(storageFacade);
+        this.offset = 0;
     }
 }

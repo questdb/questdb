@@ -4,10 +4,8 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
-import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
@@ -40,7 +38,12 @@ public abstract class AbstractPrevRowAnalyticFunction implements AnalyticFunctio
     }
 
     @Override
-    public void addRecord(Record record, long rowid) {
+    public void close() throws IOException {
+        if (closed) {
+            return;
+        }
+        Unsafe.getUnsafe().freeMemory(bufPtr);
+        closed = true;
     }
 
     @Override
@@ -134,10 +137,6 @@ public abstract class AbstractPrevRowAnalyticFunction implements AnalyticFunctio
     }
 
     @Override
-    public void prepare(RecordList base) {
-    }
-
-    @Override
     public void reset() {
         nextNull = true;
     }
@@ -145,14 +144,5 @@ public abstract class AbstractPrevRowAnalyticFunction implements AnalyticFunctio
     @Override
     public void setStorageFacade(StorageFacade storageFacade) {
         this.storageFacade = storageFacade;
-    }
-
-    @Override
-    public void close() throws IOException {
-        if (closed) {
-            return;
-        }
-        Unsafe.getUnsafe().freeMemory(bufPtr);
-        closed = true;
     }
 }

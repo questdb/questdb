@@ -27,21 +27,23 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
+import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class AnalyticRecordSource extends AbstractCombinedRecordSource {
+public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
+    private final RecordList records;
     private final RecordSource parentSource;
     private final ObjList<AnalyticFunction> functions;
     private final RecordMetadata metadata;
     private final AnalyticRecord record;
-    private RecordCursor parentCursor;
 
-    public AnalyticRecordSource(RecordSource parentSource, ObjList<AnalyticFunction> functions) {
+    public CachingAnalyticRecordSource(int pageSize, RecordSource parentSource, ObjList<AnalyticFunction> functions) {
         this.parentSource = parentSource;
+        this.records = new RecordList(parentSource.getMetadata(), pageSize);
         this.functions = functions;
 
         CollectionRecordMetadata funcMetadata = new CollectionRecordMetadata();
@@ -54,12 +56,12 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public Record getByRowId(long rowId) {
-        return null;
+        return records.getByRowId(rowId);
     }
 
     @Override
     public StorageFacade getStorageFacade() {
-        return parentCursor.getStorageFacade();
+        return records.getStorageFacade();
     }
 
     @Override
@@ -69,18 +71,42 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
-        this.parentCursor = this.parentSource.prepareCursor(factory, cancellationHandler);
-        final StorageFacade storageFacade = parentCursor.getStorageFacade();
+        RecordCursor cursor = this.parentSource.prepareCursor(factory, cancellationHandler);
+        final StorageFacade storageFacade = cursor.getStorageFacade();
+        records.setStorageFacade(storageFacade);
         int n = functions.size();
         for (int i = 0; i < n; i++) {
             functions.getQuick(i).setStorageFacade(storageFacade);
         }
+
+        long rowid = -1;
+        while (cursor.hasNext()) {
+            Record record = cursor.next();
+            rowid = records.append(record, rowid);
+            for (int i = 0; i < n; i++) {
+                AnalyticFunction f = functions.getQuick(i);
+                if (f instanceof TwoPassAnalyticFunction) {
+                    ((TwoPassAnalyticFunction) f).addRecord(record, rowid);
+                }
+            }
+        }
+
+        for (int i = 0; i < n; i++) {
+            AnalyticFunction f = functions.getQuick(i);
+            if (f instanceof TwoPassAnalyticFunction) {
+                ((TwoPassAnalyticFunction) f).prepare(records);
+            }
+        }
+
+        records.toTop();
         return this;
     }
 
     @Override
     public void reset() {
+        records.clear();
         parentSource.reset();
+
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).reset();
         }
@@ -88,13 +114,13 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public boolean supportsRowIdAccess() {
-        return false;
+        return true;
     }
 
     @Override
     public boolean hasNext() {
-        if (parentCursor.hasNext()) {
-            record.of(parentCursor.next());
+        if (records.hasNext()) {
+            record.of(records.next());
             for (int i = 0, n = functions.size(); i < n; i++) {
                 functions.getQuick(i).scroll(record);
             }

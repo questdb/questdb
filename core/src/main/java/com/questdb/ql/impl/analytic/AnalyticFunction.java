@@ -26,14 +26,12 @@ package com.questdb.ql.impl.analytic;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.RecordList;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 
 public interface AnalyticFunction {
-    void addRecord(Record record, long rowid);
 
     byte get();
 
@@ -70,8 +68,6 @@ public interface AnalyticFunction {
     int getStrLen();
 
     String getSym();
-
-    void prepare(RecordList base);
 
     void reset();
 

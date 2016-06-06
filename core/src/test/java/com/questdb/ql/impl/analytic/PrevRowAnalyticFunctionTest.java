@@ -23,7 +23,14 @@
 package com.questdb.ql.impl.analytic;
 
 import com.questdb.ex.ParserException;
+import com.questdb.ql.RecordCursor;
+import com.questdb.ql.RecordSource;
+import com.questdb.ql.impl.NoOpCancellationHandler;
+import com.questdb.ql.impl.analytic.prev.PrevRowAnalyticFunction;
 import com.questdb.ql.parser.QueryError;
+import com.questdb.std.ObjHashSet;
+import com.questdb.std.ObjList;
+import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -444,6 +451,24 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    public void testSimple() throws Exception {
+        final RecordSource recordSource = compiler.compileSource(factory, "xyz");
+        sink.clear();
+
+        final AnalyticRecordSource as = new AnalyticRecordSource(recordSource, new ObjList<AnalyticFunction>() {{
+            add(new PrevRowAnalyticFunction(1024 * 1024, recordSource.getMetadata(), new ObjHashSet<String>() {{
+                add("str");
+            }}, "i", null));
+        }});
+
+        sink.clear();
+        RecordCursor cursor = as.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
+        printer.printCursor(cursor);
+
+        TestUtils.assertEquals(expected, sink);
+    }
+
+    @Test
     @Ignore
     public void testStr() throws Exception {
         final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tXX\n" +
@@ -517,6 +542,33 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tBZ\n" +
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\n";
         assertThat(expected, "select str, sym, timestamp , prev(sym) over (partition by str) from abc");
+    }
+
+    @Test
+    public void testSymbolSubQuery() throws Exception {
+        final String expectd = "str\tsym\tp\n" +
+                "BZ\tBZ\tnull\n" +
+                "XX\tBZ\tnull\n" +
+                "KK\tXX\tnull\n" +
+                "AX\tXX\tnull\n" +
+                "AX\tXX\tXX\n" +
+                "AX\tBZ\tXX\n" +
+                "BZ\tXX\tBZ\n" +
+                "BZ\tKK\tXX\n" +
+                "AX\tKK\tBZ\n" +
+                "BZ\tAX\tKK\n" +
+                "XX\tKK\tBZ\n" +
+                "KK\tAX\tXX\n" +
+                "AX\tAX\tKK\n" +
+                "BZ\tBZ\tAX\n" +
+                "XX\tAX\tKK\n" +
+                "AX\tAX\tAX\n" +
+                "XX\tKK\tAX\n" +
+                "AX\tAX\tAX\n" +
+                "BZ\tBZ\tBZ\n" +
+                "BZ\tAX\tBZ\n";
+
+        assertThat(expectd, "select str, sym, p from (select str, sym, timestamp , prev(sym) p over (partition by str) from abc)", true);
     }
 
     @Test

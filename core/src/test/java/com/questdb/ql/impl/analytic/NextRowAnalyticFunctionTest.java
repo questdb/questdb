@@ -454,7 +454,7 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
         final RecordSource recordSource = compiler.compileSource(factory, "xyz");
         sink.clear();
 
-        final AnalyticRecordSource as = new AnalyticRecordSource(1024 * 1024, recordSource, new ObjList<AnalyticFunction>() {{
+        final CachingAnalyticRecordSource as = new CachingAnalyticRecordSource(1024 * 1024, recordSource, new ObjList<AnalyticFunction>() {{
             add(new NextRowAnalyticFunction(1024 * 1024, recordSource.getMetadata(), new ObjHashSet<String>() {{
                 add("str");
             }}, "i", null));

@@ -39,9 +39,7 @@ import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.*;
 import com.questdb.ql.impl.aggregation.*;
-import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.ql.impl.analytic.AnalyticFunctionFactories;
-import com.questdb.ql.impl.analytic.AnalyticRecordSource;
+import com.questdb.ql.impl.analytic.*;
 import com.questdb.ql.impl.interval.IntervalRecordSource;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.questdb.ql.impl.interval.SingleIntervalSource;
@@ -385,10 +383,20 @@ public class QueryCompiler {
         final ObjList<AnalyticFunction> functions = new ObjList<>(n);
         final RecordMetadata metadata = rs.getMetadata();
 
+        boolean hasTwoPassFunctions = false;
         for (int i = 0; i < n; i++) {
-            functions.add(AnalyticFunctionFactories.newInstance(configuration, metadata, columns.getQuick(i)));
+            AnalyticFunction f = AnalyticFunctionFactories.newInstance(configuration, metadata, columns.getQuick(i));
+            if (!hasTwoPassFunctions && (f instanceof TwoPassAnalyticFunction)) {
+                hasTwoPassFunctions = true;
+            }
+            functions.add(f);
+
         }
-        return new AnalyticRecordSource(configuration.getDbAnalyticWindowPage(), rs, functions);
+        if (hasTwoPassFunctions) {
+            return new CachingAnalyticRecordSource(configuration.getDbAnalyticWindowPage(), rs, functions);
+        } else {
+            return new AnalyticRecordSource(rs, functions);
+        }
     }
 
     private void applyLimit(QueryModel model) throws ParserException {
