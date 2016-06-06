@@ -424,6 +424,32 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    public void testShortAliased() throws Exception {
+        final String expected = "sho\tstr\tsym\ttimestamp\tblah\n" +
+                "-19496\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t-391\n" +
+                "-24357\tXX\tBZ\t2016-05-01T10:22:00.000Z\t-4874\n" +
+                "21781\tKK\tXX\t2016-05-01T10:23:00.000Z\t25102\n" +
+                "-19127\tAX\tXX\t2016-05-01T10:24:00.000Z\t-15458\n" +
+                "-15458\tAX\tXX\t2016-05-01T10:25:00.000Z\t-22934\n" +
+                "-22934\tAX\tBZ\t2016-05-01T10:26:00.000Z\t-19136\n" +
+                "-391\tBZ\tXX\t2016-05-01T10:27:00.000Z\t-26951\n" +
+                "-26951\tBZ\tKK\t2016-05-01T10:28:00.000Z\t-15331\n" +
+                "-19136\tAX\tKK\t2016-05-01T10:29:00.000Z\t-20409\n" +
+                "-15331\tBZ\tAX\t2016-05-01T10:30:00.000Z\t-29572\n" +
+                "-4874\tXX\tKK\t2016-05-01T10:31:00.000Z\t25974\n" +
+                "25102\tKK\tAX\t2016-05-01T10:32:00.000Z\t0\n" +
+                "-20409\tAX\tAX\t2016-05-01T10:33:00.000Z\t5869\n" +
+                "-29572\tBZ\tBZ\t2016-05-01T10:34:00.000Z\t11755\n" +
+                "25974\tXX\tAX\t2016-05-01T10:35:00.000Z\t-22894\n" +
+                "5869\tAX\tAX\t2016-05-01T10:36:00.000Z\t-18600\n" +
+                "-22894\tXX\tKK\t2016-05-01T10:37:00.000Z\t0\n" +
+                "-18600\tAX\tAX\t2016-05-01T10:38:00.000Z\t0\n" +
+                "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-24455\n" +
+                "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0\n";
+        assertThat(expected, "select sho, str, sym, timestamp , next(sho) blah over (partition by str) from abc", true);
+    }
+
+    @Test
     public void testSimple() throws Exception {
         final RecordSource recordSource = compiler.compileSource(factory, "xyz");
         sink.clear();
@@ -431,7 +457,7 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
         final AnalyticRecordSource as = new AnalyticRecordSource(1024 * 1024, recordSource, new ObjList<AnalyticFunction>() {{
             add(new NextRowAnalyticFunction(1024 * 1024, recordSource.getMetadata(), new ObjHashSet<String>() {{
                 add("str");
-            }}, "i"));
+            }}, "i", null));
         }});
 
         sink.clear();

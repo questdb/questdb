@@ -50,10 +50,10 @@ public abstract class AbstractNextRowAnalyticFunction implements AnalyticFunctio
     private Record next;
     private StorageFacade storageFacade;
 
-    public AbstractNextRowAnalyticFunction(int pageSize, RecordMetadata parentMetadata, String columnName) {
+    public AbstractNextRowAnalyticFunction(int pageSize, RecordMetadata parentMetadata, String columnName, String alias) {
         this.pages = new MemoryPages(pageSize);
         this.columnIndex = parentMetadata.getColumnIndex(columnName);
-        this.metadata = new RecordColumnMetadataImpl(columnName, parentMetadata.getColumnQuick(this.columnIndex).getType());
+        this.metadata = new RecordColumnMetadataImpl(alias == null ? columnName : alias, parentMetadata.getColumnQuick(this.columnIndex).getType());
     }
 
     @Override

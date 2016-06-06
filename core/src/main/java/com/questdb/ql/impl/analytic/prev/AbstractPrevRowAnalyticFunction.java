@@ -1,9 +1,7 @@
 package com.questdb.ql.impl.analytic.prev;
 
-import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
@@ -11,9 +9,8 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.ql.impl.map.MapValues;
-import com.questdb.ql.impl.map.MultiMap;
-import com.questdb.std.*;
+import com.questdb.std.CharSink;
+import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
@@ -21,47 +18,29 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 public abstract class AbstractPrevRowAnalyticFunction implements AnalyticFunction, Closeable {
-    private final MultiMap map;
-    private final IntList indices;
-    private final ObjList<ColumnType> types;
-    private final ColumnType valueType;
-    private final int valueIndex;
+    protected final ColumnType valueType;
+    protected final int valueIndex;
+    protected final long bufPtr;
     private final RecordColumnMetadata valueMetadata;
-    private final long bufPtr;
-    private boolean nextNull = true;
+    protected boolean nextNull = true;
+    protected boolean closed = false;
     private StorageFacade storageFacade;
-    private boolean closed = false;
 
-    public AbstractPrevRowAnalyticFunction(int pageSize, RecordMetadata parentMetadata, @Transient ObjHashSet<String> partitionBy, String columnName) {
-
+    public AbstractPrevRowAnalyticFunction(RecordMetadata parentMetadata, String columnName, String alias) {
         // value column particulars
         this.valueIndex = parentMetadata.getColumnIndex(columnName);
         RecordColumnMetadata m = parentMetadata.getColumn(columnName);
         this.valueType = m.getType();
-        ObjList<RecordColumnMetadata> valueColumns = new ObjList<>(1);
-        valueColumns.add(m);
-
-        this.map = new MultiMap(pageSize, parentMetadata, partitionBy, valueColumns, null);
-
-        // key column particulars
-        this.indices = new IntList(partitionBy.size());
-        this.types = new ObjList<>(partitionBy.size());
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            int index = parentMetadata.getColumnIndexQuiet(partitionBy.get(i));
-            indices.add(index);
-            types.add(parentMetadata.getColumn(index).getType());
-        }
 
         // buffer where "current" value is kept
         this.bufPtr = Unsafe.getUnsafe().allocateMemory(8);
 
         // metadata
-        this.valueMetadata = new RecordColumnMetadataImpl(columnName, valueType);
+        this.valueMetadata = new RecordColumnMetadataImpl(alias == null ? columnName : alias, valueType);
     }
 
     @Override
     public void addRecord(Record record, long rowid) {
-
     }
 
     @Override
@@ -71,17 +50,17 @@ public abstract class AbstractPrevRowAnalyticFunction implements AnalyticFunctio
 
     @Override
     public void getBin(OutputStream s) {
-
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public DirectInputStream getBin() {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getBinLen() {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -106,12 +85,12 @@ public abstract class AbstractPrevRowAnalyticFunction implements AnalyticFunctio
 
     @Override
     public CharSequence getFlyweightStr() {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getFlyweightStrB() {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -136,17 +115,17 @@ public abstract class AbstractPrevRowAnalyticFunction implements AnalyticFunctio
 
     @Override
     public void getStr(CharSink sink) {
-
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStr() {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getStrLen() {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -160,58 +139,7 @@ public abstract class AbstractPrevRowAnalyticFunction implements AnalyticFunctio
 
     @Override
     public void reset() {
-        map.clear();
         nextNull = true;
-    }
-
-    @Override
-    public void scroll(Record record) {
-        MultiMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = types.size(); i < n; i++) {
-            kw.put(record, indices.getQuick(i), types.getQuick(i));
-        }
-
-        MapValues values = map.getOrCreateValues(kw);
-        if (values.isNew()) {
-            nextNull = true;
-            store(record, values);
-        } else {
-            nextNull = false;
-            switch (valueType) {
-                case BOOLEAN:
-                    Unsafe.getUnsafe().putByte(bufPtr, values.getByte(0));
-                    values.putByte(0, (byte) (record.getBool(valueIndex) ? 1 : 0));
-                    break;
-                case BYTE:
-                    Unsafe.getUnsafe().putByte(bufPtr, values.getByte(0));
-                    values.putByte(0, record.get(valueIndex));
-                    break;
-                case DOUBLE:
-                    Unsafe.getUnsafe().putDouble(bufPtr, values.getDouble(0));
-                    values.putDouble(0, record.getDouble(valueIndex));
-                    break;
-                case FLOAT:
-                    Unsafe.getUnsafe().putFloat(bufPtr, values.getFloat(0));
-                    values.putFloat(0, record.getFloat(valueIndex));
-                    break;
-                case SYMBOL:
-                case INT:
-                    Unsafe.getUnsafe().putInt(bufPtr, values.getInt(0));
-                    values.putInt(0, record.getInt(valueIndex));
-                    break;
-                case LONG:
-                case DATE:
-                    Unsafe.getUnsafe().putLong(bufPtr, values.getLong(0));
-                    values.putLong(0, record.getLong(valueIndex));
-                    break;
-                case SHORT:
-                    Unsafe.getUnsafe().putShort(bufPtr, (short) values.getInt(0));
-                    values.putInt(0, record.getShort(valueIndex));
-                    break;
-                default:
-                    throw new JournalRuntimeException("Unsupported type: " + valueType);
-            }
-        }
     }
 
     @Override
@@ -225,38 +153,6 @@ public abstract class AbstractPrevRowAnalyticFunction implements AnalyticFunctio
             return;
         }
         Unsafe.getUnsafe().freeMemory(bufPtr);
-        Misc.free(map);
         closed = true;
-    }
-
-    private void store(Record record, MapValues values) {
-        switch (valueType) {
-            case BOOLEAN:
-                values.putByte(0, (byte) (record.getBool(valueIndex) ? 1 : 0));
-                break;
-            case BYTE:
-                values.putByte(0, record.get(valueIndex));
-                break;
-            case DOUBLE:
-                values.putDouble(0, record.getDouble(valueIndex));
-                break;
-            case FLOAT:
-                values.putFloat(0, record.getFloat(valueIndex));
-                break;
-            case SYMBOL:
-            case INT:
-                values.putInt(0, record.getInt(valueIndex));
-                break;
-            case LONG:
-            case DATE:
-                values.putLong(0, record.getLong(valueIndex));
-                break;
-            case SHORT:
-                values.putInt(0, record.getShort(valueIndex));
-                break;
-            default:
-                throw new JournalRuntimeException("Unsupported type: " + valueType);
-        }
-
     }
 }

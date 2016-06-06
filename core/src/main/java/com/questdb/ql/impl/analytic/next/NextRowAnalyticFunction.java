@@ -41,8 +41,8 @@ public class NextRowAnalyticFunction extends AbstractNextRowAnalyticFunction {
     private final IntList indices;
     private final ObjList<ColumnType> types;
 
-    public NextRowAnalyticFunction(int pageSize, RecordMetadata parentMetadata, @Transient ObjHashSet<String> partitionBy, String columnName) {
-        super(pageSize, parentMetadata, columnName);
+    public NextRowAnalyticFunction(int pageSize, RecordMetadata parentMetadata, @Transient ObjHashSet<String> partitionBy, String columnName, String alias) {
+        super(pageSize, parentMetadata, columnName, alias);
         this.map = new MultiMap(pageSize, parentMetadata, partitionBy, valueColumn, null);
         this.indices = new IntList(partitionBy.size());
         this.types = new ObjList<>(partitionBy.size());

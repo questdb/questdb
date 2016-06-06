@@ -48,9 +48,9 @@ public class NextRowAnalyticFunctionFactory implements AnalyticFunctionFactory {
                 partitionBy.add(node.token);
             }
 
-            return new NextRowAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token);
+            return new NextRowAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
         } else {
-            return new NextRowNonPartAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, ast.rhs.token);
+            return new NextRowNonPartAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, ast.rhs.token, column.getAlias());
         }
     }
 }

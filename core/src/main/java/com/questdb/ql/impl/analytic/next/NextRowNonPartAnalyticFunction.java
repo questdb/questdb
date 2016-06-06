@@ -31,8 +31,8 @@ public class NextRowNonPartAnalyticFunction extends AbstractNextRowAnalyticFunct
 
     private long prevAddress = -1;
 
-    public NextRowNonPartAnalyticFunction(int pageSize, RecordMetadata parentMetadata, String columnName) {
-        super(pageSize, parentMetadata, columnName);
+    public NextRowNonPartAnalyticFunction(int pageSize, RecordMetadata parentMetadata, String columnName, String alias) {
+        super(pageSize, parentMetadata, columnName, alias);
     }
 
     @Override

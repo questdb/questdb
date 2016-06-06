@@ -6,7 +6,6 @@ import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.impl.analytic.AnalyticFunctionFactory;
 import com.questdb.ql.impl.analytic.AnalyticUtils;
-import com.questdb.ql.impl.analytic.next.NextRowNonPartAnalyticFunction;
 import com.questdb.ql.model.AnalyticColumn;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.parser.QueryError;
@@ -49,9 +48,9 @@ public class PrevRowAnalyticFunctionFactory implements AnalyticFunctionFactory {
                 partitionBy.add(node.token);
             }
 
-            return new PrevRowAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token);
+            return new PrevRowAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
         } else {
-            return new NextRowNonPartAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, ast.rhs.token);
+            return new PrevRowNonPartAnalyticFunction(metadata, ast.rhs.token, column.getAlias());
         }
     }
 }
