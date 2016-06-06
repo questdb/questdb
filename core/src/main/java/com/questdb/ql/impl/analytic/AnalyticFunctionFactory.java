@@ -55,6 +55,10 @@ public class AnalyticFunctionFactory {
                     throw QueryError.$(ast.position, "Column name expected");
                 }
 
+                if (metadata.getColumnIndexQuiet(ast.rhs.token) == -1) {
+                    throw QueryError.invalidColumn(ast.rhs.position, ast.rhs.token);
+                }
+
                 ObjList<ExprNode> pby = column.getPartitionBy();
                 int n = pby.size();
 
@@ -67,6 +71,11 @@ public class AnalyticFunctionFactory {
                         if (node.type != ExprNode.NodeType.LITERAL) {
                             throw QueryError.$(node.position, "Column name expected");
                         }
+
+                        if (metadata.getColumnIndexQuiet(node.token) == -1) {
+                            throw QueryError.invalidColumn(node.position, node.token);
+                        }
+
                         partitionBy.add(node.token);
                     }
 

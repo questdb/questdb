@@ -25,6 +25,7 @@ package com.questdb.ql.impl.analytic;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
+import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Rnd;
@@ -32,9 +33,11 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.parser.AbstractOptimiserTest;
+import com.questdb.ql.parser.QueryError;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
 import com.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -575,5 +578,25 @@ public class AnalyticRecordSourceTest extends AbstractOptimiserTest {
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\n" +
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\tnull\n";
         assertThat(expected, "select str, sym, timestamp , next(sym) over (partition by str) from abc");
+    }
+
+    @Test
+    public void testWrongColumnInFunc() throws Exception {
+        try {
+            compiler.compile(factory, "select str, sym, timestamp , next(symx) over (partition by str) from abc");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(34, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testWrongColumnInPartition() throws Exception {
+        try {
+            compiler.compile(factory, "select str, sym, timestamp , next(sym) over (partition by strx) from abc");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(58, QueryError.getPosition());
+        }
     }
 }
