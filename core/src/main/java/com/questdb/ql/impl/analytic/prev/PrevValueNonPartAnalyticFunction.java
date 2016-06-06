@@ -8,19 +8,13 @@ import com.questdb.ql.Record;
 import java.io.Closeable;
 import java.io.IOException;
 
-public class PrevRowNonPartAnalyticFunction extends AbstractPrevRowAnalyticFunction implements Closeable {
+public class PrevValueNonPartAnalyticFunction extends AbstractPrevValueAnalyticFunction implements Closeable {
     private final long prevPtr;
     private boolean firstPass = true;
 
-    public PrevRowNonPartAnalyticFunction(RecordMetadata parentMetadata, String columnName, String alias) {
+    public PrevValueNonPartAnalyticFunction(RecordMetadata parentMetadata, String columnName, String alias) {
         super(parentMetadata, columnName, alias);
         this.prevPtr = Unsafe.getUnsafe().allocateMemory(8);
-    }
-
-    @Override
-    public void reset() {
-        super.reset();
-        firstPass = true;
     }
 
     @Override
@@ -30,6 +24,12 @@ public class PrevRowNonPartAnalyticFunction extends AbstractPrevRowAnalyticFunct
         }
         super.close();
         Unsafe.getUnsafe().freeMemory(prevPtr);
+    }
+
+    @Override
+    public void reset() {
+        super.reset();
+        firstPass = true;
     }
 
     @Override

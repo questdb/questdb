@@ -15,7 +15,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public abstract class AbstractPrevRowAnalyticFunction implements AnalyticFunction, Closeable {
+public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunction, Closeable {
     protected final ColumnType valueType;
     protected final int valueIndex;
     protected final long bufPtr;
@@ -24,7 +24,7 @@ public abstract class AbstractPrevRowAnalyticFunction implements AnalyticFunctio
     protected boolean closed = false;
     private StorageFacade storageFacade;
 
-    public AbstractPrevRowAnalyticFunction(RecordMetadata parentMetadata, String columnName, String alias) {
+    public AbstractPrevValueAnalyticFunction(RecordMetadata parentMetadata, String columnName, String alias) {
         // value column particulars
         this.valueIndex = parentMetadata.getColumnIndex(columnName);
         RecordColumnMetadata m = parentMetadata.getColumn(columnName);

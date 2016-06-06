@@ -12,7 +12,7 @@ import com.questdb.ql.parser.QueryError;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
 
-public class PrevRowAnalyticFunctionFactory implements AnalyticFunctionFactory {
+public class PrevValueAnalyticFunctionFactory implements AnalyticFunctionFactory {
     @Override
     public AnalyticFunction newInstance(ServerConfiguration configuration, RecordMetadata metadata, AnalyticColumn column) throws ParserException {
         ExprNode ast = column.getAst();
@@ -48,9 +48,9 @@ public class PrevRowAnalyticFunctionFactory implements AnalyticFunctionFactory {
                 partitionBy.add(node.token);
             }
 
-            return new PrevRowAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
+            return new PrevValueAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
         } else {
-            return new PrevRowNonPartAnalyticFunction(metadata, ast.rhs.token, column.getAlias());
+            return new PrevValueNonPartAnalyticFunction(metadata, ast.rhs.token, column.getAlias());
         }
     }
 }

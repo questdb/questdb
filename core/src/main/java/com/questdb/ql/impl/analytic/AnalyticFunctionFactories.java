@@ -26,7 +26,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.impl.analytic.next.NextRowAnalyticFunctionFactory;
-import com.questdb.ql.impl.analytic.prev.PrevRowAnalyticFunctionFactory;
+import com.questdb.ql.impl.analytic.prev.PrevValueAnalyticFunctionFactory;
 import com.questdb.ql.model.AnalyticColumn;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.parser.QueryError;
@@ -50,6 +50,6 @@ public class AnalyticFunctionFactories {
 
     static {
         factories.put("next", new NextRowAnalyticFunctionFactory());
-        factories.put("prev", new PrevRowAnalyticFunctionFactory());
+        factories.put("prev", new PrevValueAnalyticFunctionFactory());
     }
 }

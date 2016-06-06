@@ -17,12 +17,12 @@ import com.questdb.store.ColumnType;
 import java.io.Closeable;
 import java.io.IOException;
 
-public class PrevRowAnalyticFunction extends AbstractPrevRowAnalyticFunction implements Closeable {
+public class PrevStrAnalyticFunction extends AbstractPrevValueAnalyticFunction implements Closeable {
     private final MultiMap map;
     private final IntList indices;
     private final ObjList<ColumnType> types;
 
-    public PrevRowAnalyticFunction(int pageSize, RecordMetadata parentMetadata, @Transient ObjHashSet<String> partitionBy, String columnName, String alias) {
+    public PrevStrAnalyticFunction(int pageSize, RecordMetadata parentMetadata, @Transient ObjHashSet<String> partitionBy, String columnName, String alias) {
 
         super(parentMetadata, columnName, alias);
         // value column particulars
@@ -42,13 +42,6 @@ public class PrevRowAnalyticFunction extends AbstractPrevRowAnalyticFunction imp
         }
     }
 
-
-    @Override
-    public void reset() {
-        super.reset();
-        map.clear();
-    }
-
     @Override
     public void close() throws IOException {
         if (closed) {
@@ -56,6 +49,12 @@ public class PrevRowAnalyticFunction extends AbstractPrevRowAnalyticFunction imp
         }
         super.close();
         Misc.free(map);
+    }
+
+    @Override
+    public void reset() {
+        super.reset();
+        map.clear();
     }
 
     @Override

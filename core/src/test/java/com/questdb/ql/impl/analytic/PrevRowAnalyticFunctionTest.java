@@ -26,7 +26,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.impl.NoOpCancellationHandler;
-import com.questdb.ql.impl.analytic.prev.PrevRowAnalyticFunction;
+import com.questdb.ql.impl.analytic.prev.PrevValueAnalyticFunction;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
@@ -456,7 +456,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
         sink.clear();
 
         final AnalyticRecordSource as = new AnalyticRecordSource(recordSource, new ObjList<AnalyticFunction>() {{
-            add(new PrevRowAnalyticFunction(1024 * 1024, recordSource.getMetadata(), new ObjHashSet<String>() {{
+            add(new PrevValueAnalyticFunction(1024 * 1024, recordSource.getMetadata(), new ObjHashSet<String>() {{
                 add("str");
             }}, "i", null));
         }});
