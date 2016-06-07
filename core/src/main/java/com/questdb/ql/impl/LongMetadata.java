@@ -21,9 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.join;
+package com.questdb.ql.impl;
 
-import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.store.ColumnType;
 
 public final class LongMetadata extends RecordColumnMetadataImpl {

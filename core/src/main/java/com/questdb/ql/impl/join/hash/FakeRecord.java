@@ -25,7 +25,7 @@ package com.questdb.ql.impl.join.hash;
 
 import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.impl.CollectionRecordMetadata;
-import com.questdb.ql.impl.join.LongMetadata;
+import com.questdb.ql.impl.LongMetadata;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 
