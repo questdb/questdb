@@ -226,6 +226,10 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     public void setStorageFacade(StorageFacade storageFacade) {
     }
 
+    @Override
+    public void setParent(RecordCursor cursor) {
+    }
+
     private static int toByteLen(int charLen) {
         return charLen * 2 + 4;
     }

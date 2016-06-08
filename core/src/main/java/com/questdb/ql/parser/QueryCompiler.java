@@ -389,7 +389,7 @@ public class QueryCompiler {
             if (col.getAlias() == null) {
                 col.of(createAlias(i), col.getAst());
             }
-            AnalyticFunction f = AnalyticFunctionFactories.newInstance(configuration, metadata, columns.getQuick(i));
+            AnalyticFunction f = AnalyticFunctionFactories.newInstance(configuration, metadata, columns.getQuick(i), rs.supportsRowIdAccess());
             if (!hasTwoPassFunctions && (f instanceof TwoPassAnalyticFunction)) {
                 hasTwoPassFunctions = true;
             }

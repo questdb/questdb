@@ -27,6 +27,7 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
+import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.NullRecord;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
@@ -173,6 +174,10 @@ public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalytic
             next = record;
         }
         this.offset += 8;
+    }
+
+    @Override
+    public void setParent(RecordCursor cursor) {
     }
 
     @Override

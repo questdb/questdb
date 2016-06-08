@@ -25,6 +25,7 @@ package com.questdb.ql.impl.analytic;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.Record;
+import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
@@ -75,6 +76,8 @@ public interface AnalyticFunction {
     void reset();
 
     void scroll(Record record);
+
+    void setParent(RecordCursor cursor);
 
     void setStorageFacade(StorageFacade storageFacade);
 }

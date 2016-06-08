@@ -27,6 +27,7 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
@@ -167,6 +168,10 @@ public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunct
     @Override
     public void reset() {
         nextNull = true;
+    }
+
+    @Override
+    public void setParent(RecordCursor cursor) {
     }
 
     @Override

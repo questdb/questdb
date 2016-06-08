@@ -38,7 +38,11 @@ import com.questdb.store.ColumnType;
 
 public class PrevValueAnalyticFunctionFactory implements AnalyticFunctionFactory {
     @Override
-    public AnalyticFunction newInstance(ServerConfiguration configuration, RecordMetadata metadata, AnalyticColumn column) throws ParserException {
+    public AnalyticFunction newInstance(
+            ServerConfiguration configuration,
+            RecordMetadata metadata,
+            AnalyticColumn column,
+            boolean supportsRowId) throws ParserException {
         ExprNode ast = column.getAst();
         if (ast.paramCount > 1) {
             throw QueryError.$(ast.position, "Too many arguments");
@@ -76,6 +80,9 @@ public class PrevValueAnalyticFunctionFactory implements AnalyticFunctionFactory
             }
 
             if (valueIsString) {
+                if (supportsRowId) {
+                    return new PrevRowIdValueAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
+                }
                 return new PrevStrAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
             }
 
