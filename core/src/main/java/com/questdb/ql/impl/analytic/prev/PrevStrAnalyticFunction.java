@@ -40,6 +40,7 @@ import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.impl.map.MultiMap;
 import com.questdb.std.*;
 import com.questdb.store.ColumnType;
+import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -182,6 +183,11 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     @Override
     public String getSym() {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return null;
     }
 
     @Override

@@ -34,9 +34,12 @@ import com.questdb.misc.Files;
 import com.questdb.misc.Misc;
 import com.questdb.model.configuration.ModelConfiguration;
 import com.questdb.net.http.ServerConfiguration;
+import com.questdb.ql.Record;
+import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.std.AssociativeCache;
+import com.questdb.store.SymbolTable;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
 import org.junit.ClassRule;
@@ -65,6 +68,22 @@ public abstract class AbstractOptimiserTest {
         TestUtils.assertEquals(expected, s);
     }
 
+    protected void assertSymbol(String query, int columnIndex) throws JournalException, ParserException {
+        RecordCursor cursor = compiler.compile(factory, query);
+        SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
+        while (cursor.hasNext()) {
+            Record r = cursor.next();
+            TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));
+        }
+
+    }
+
+    protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
+        assertThat(expected, query, false);
+        assertThat(expected, query, false);
+        Misc.free(cache.poll(query));
+    }
+
     protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
         sink.clear();
         RecordSource rs = cache.peek(query);
@@ -75,11 +94,5 @@ public abstract class AbstractOptimiserTest {
         }
         printer.printCursor(rs.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), header);
         TestUtils.assertEquals(expected, sink);
-    }
-
-    protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
-        assertThat(expected, query, false);
-        assertThat(expected, query, false);
-        Misc.free(cache.poll(query));
     }
 }

@@ -28,6 +28,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
+import com.questdb.store.SymbolTable;
 
 import java.io.OutputStream;
 
@@ -68,6 +69,8 @@ public interface AnalyticFunction {
     int getStrLen();
 
     String getSym();
+
+    SymbolTable getSymbolTable();
 
     void reset();
 

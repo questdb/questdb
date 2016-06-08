@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
@@ -40,6 +41,7 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
     private final ObjList<AnalyticFunction> functions;
     private final RecordMetadata metadata;
     private final AnalyticRecord record;
+    private final AnalyticRecordStorageFacade storageFacade;
 
     public CachingAnalyticRecordSource(int pageSize, RecordSource parentSource, ObjList<AnalyticFunction> functions) {
         this.parentSource = parentSource;
@@ -51,17 +53,19 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
             funcMetadata.add(functions.getQuick(i).getMetadata());
         }
         this.metadata = new SplitRecordMetadata(parentSource.getMetadata(), funcMetadata);
-        this.record = new AnalyticRecord(this.metadata, parentSource.getMetadata().getColumnCount(), functions);
+        int split = parentSource.getMetadata().getColumnCount();
+        this.record = new AnalyticRecord(this.metadata, split, functions);
+        this.storageFacade = new AnalyticRecordStorageFacade(metadata, split, functions);
     }
 
     @Override
     public Record getByRowId(long rowId) {
-        return records.getByRowId(rowId);
+        return null;
     }
 
     @Override
     public StorageFacade getStorageFacade() {
-        return records.getStorageFacade();
+        return storageFacade;
     }
 
     @Override
@@ -74,6 +78,7 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
         RecordCursor cursor = this.parentSource.prepareCursor(factory, cancellationHandler);
         final StorageFacade storageFacade = cursor.getStorageFacade();
         records.setStorageFacade(storageFacade);
+        this.storageFacade.prepare(factory, storageFacade);
         int n = functions.size();
         for (int i = 0; i < n; i++) {
             functions.getQuick(i).setStorageFacade(storageFacade);
@@ -114,7 +119,7 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public boolean supportsRowIdAccess() {
-        return true;
+        return false;
     }
 
     @Override

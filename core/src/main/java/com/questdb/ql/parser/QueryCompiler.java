@@ -385,6 +385,10 @@ public class QueryCompiler {
 
         boolean hasTwoPassFunctions = false;
         for (int i = 0; i < n; i++) {
+            AnalyticColumn col = columns.getQuick(i);
+            if (col.getAlias() == null) {
+                col.of(createAlias(i), col.getAst());
+            }
             AnalyticFunction f = AnalyticFunctionFactories.newInstance(configuration, metadata, columns.getQuick(i));
             if (!hasTwoPassFunctions && (f instanceof TwoPassAnalyticFunction)) {
                 hasTwoPassFunctions = true;

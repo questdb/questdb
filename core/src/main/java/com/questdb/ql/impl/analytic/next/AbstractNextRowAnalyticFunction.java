@@ -35,7 +35,9 @@ import com.questdb.ql.impl.RecordListRecord;
 import com.questdb.ql.impl.analytic.TwoPassAnalyticFunction;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
+import com.questdb.store.ColumnType;
 import com.questdb.store.MemoryPages;
+import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
 import java.io.OutputStream;
@@ -113,7 +115,7 @@ public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalytic
 
     @Override
     public int getInt() {
-        return next.getInt(columnIndex);
+        return next == NullRecord.INSTANCE && metadata.getType() == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : next.getInt(columnIndex);
     }
 
     @Override
@@ -149,6 +151,11 @@ public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalytic
     @Override
     public String getSym() {
         return next.getSym(columnIndex);
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return storageFacade.getSymbolTable(columnIndex);
     }
 
     @Override

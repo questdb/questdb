@@ -1,3 +1,26 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2016 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.ql.impl.analytic.prev;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
@@ -10,6 +33,7 @@ import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
+import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -32,7 +56,6 @@ public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunct
 
         // buffer where "current" value is kept
         this.bufPtr = Unsafe.getUnsafe().allocateMemory(8);
-
         // metadata
         this.valueMetadata = new RecordColumnMetadataImpl(alias == null ? columnName : alias, valueType);
     }
@@ -98,7 +121,7 @@ public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunct
 
     @Override
     public int getInt() {
-        return nextNull ? Numbers.INT_NaN : Unsafe.getUnsafe().getInt(bufPtr);
+        return nextNull ? (valueType == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : Numbers.INT_NaN) : Unsafe.getUnsafe().getInt(bufPtr);
     }
 
     @Override
@@ -134,6 +157,11 @@ public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunct
     @Override
     public String getSym() {
         return nextNull ? null : storageFacade.getSymbolTable(valueIndex).value(getInt());
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return storageFacade.getSymbolTable(valueIndex);
     }
 
     @Override

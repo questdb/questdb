@@ -36,8 +36,24 @@ public final class Chars {
             return 0;
         }
 
+        if (l == null) {
+            return -1;
+        }
+
+        if (r == null) {
+            return 1;
+        }
+
         int ll = l.length();
         int rl = r.length();
+
+        if (ll < rl) {
+            return -1;
+        }
+
+        if (ll > rl) {
+            return 1;
+        }
 
         for (int i = 0, n = ll < rl ? ll : rl; i < n; i++) {
             int k = l.charAt(i) - r.charAt(i);
@@ -45,8 +61,7 @@ public final class Chars {
                 return k;
             }
         }
-
-        return ll < rl ? -1 : ll == rl ? 0 : 1;
+        return 0;
     }
 
     public static boolean contains(CharSequence _this, CharSequence that) {

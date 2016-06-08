@@ -45,6 +45,7 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
     private final int headerSize;
     private final int recordPrefix;
     private long readAddress = -1;
+    private StorageFacade storageFacade;
 
     public RecordList(RecordMetadata recordMetadata, int pageSize) {
         this.metadata = recordMetadata;
@@ -88,11 +89,11 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
 
     @Override
     public StorageFacade getStorageFacade() {
-        return null;
+        return storageFacade;
     }
 
     public void setStorageFacade(StorageFacade storageFacade) {
-        record.setStorageFacade(storageFacade);
+        record.setStorageFacade(this.storageFacade = storageFacade);
     }
 
     @Override

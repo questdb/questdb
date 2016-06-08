@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
@@ -137,6 +138,10 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
             "-640305320\tKK\t2016-05-01T11:59:00.000Z\tNaN\n" +
             "1751526583\tBZ\t2016-05-01T12:00:00.000Z\tNaN\n";
 
+    @Test
+    public void testAnalyticSymbolBehaviour() throws Exception {
+        assertSymbol("select l, str, sym, timestamp , next(sym) over (partition by str) from abc", 4);
+    }
 
     @Test
     public void testBoolean() throws Exception {
@@ -399,6 +404,11 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    public void testNonPartAnalyticSymbolBehaviour() throws Exception {
+        assertSymbol("select l, str, sym, timestamp , next(sym) over () from abc", 4);
+    }
+
+    @Test
     public void testShort() throws Exception {
         final String expected = "-19496\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t-391\n" +
                 "-24357\tXX\tBZ\t2016-05-01T10:22:00.000Z\t-4874\n" +
@@ -561,5 +571,4 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
             Assert.assertEquals(58, QueryError.getPosition());
         }
     }
-
 }

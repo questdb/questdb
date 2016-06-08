@@ -190,6 +190,33 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    public void testColumnNameGeneration() throws Exception {
+        assertThat("str\tsym\ttimestamp\tcol0\n" +
+                        "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
+                        "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
+                        "KK\tXX\t2016-05-01T10:23:00.000Z\tBZ\n" +
+                        "AX\tXX\t2016-05-01T10:24:00.000Z\tXX\n" +
+                        "AX\tXX\t2016-05-01T10:25:00.000Z\tXX\n" +
+                        "AX\tBZ\t2016-05-01T10:26:00.000Z\tXX\n" +
+                        "BZ\tXX\t2016-05-01T10:27:00.000Z\tBZ\n" +
+                        "BZ\tKK\t2016-05-01T10:28:00.000Z\tXX\n" +
+                        "AX\tKK\t2016-05-01T10:29:00.000Z\tKK\n" +
+                        "BZ\tAX\t2016-05-01T10:30:00.000Z\tKK\n" +
+                        "XX\tKK\t2016-05-01T10:31:00.000Z\tAX\n" +
+                        "KK\tAX\t2016-05-01T10:32:00.000Z\tKK\n" +
+                        "AX\tAX\t2016-05-01T10:33:00.000Z\tAX\n" +
+                        "BZ\tBZ\t2016-05-01T10:34:00.000Z\tAX\n" +
+                        "XX\tAX\t2016-05-01T10:35:00.000Z\tBZ\n" +
+                        "AX\tAX\t2016-05-01T10:36:00.000Z\tAX\n" +
+                        "XX\tKK\t2016-05-01T10:37:00.000Z\tAX\n" +
+                        "AX\tAX\t2016-05-01T10:38:00.000Z\tKK\n" +
+                        "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\n" +
+                        "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\n",
+                "select str, sym, timestamp , prev(sym) over () from abc", true);
+
+    }
+
+    @Test
     public void testCompilation() throws Exception {
         assertThat(expected, "select i, str, timestamp, prev(i) over (partition by str) from xyz");
     }
@@ -400,6 +427,16 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    public void testNonPartSymbolBehaviour() throws Exception {
+        assertSymbol("select str, sym, timestamp , prev(sym) over () from abc", 3);
+    }
+
+    @Test
+    public void testOrderBySymbolBehaviour() throws Exception {
+        assertSymbol("select str, sym, timestamp , prev(sym) x over (partition by str) from abc order by x", 3);
+    }
+
+    @Test
     public void testShort() throws Exception {
         final String expected = "-19496\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t0\n" +
                 "-24357\tXX\tBZ\t2016-05-01T10:22:00.000Z\t0\n" +
@@ -544,6 +581,11 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    public void testSymbolBehaviour() throws Exception {
+        assertSymbol("select str, sym, timestamp , prev(sym) over (partition by str) from abc", 3);
+    }
+
+    @Test
     public void testSymbolSubQuery() throws Exception {
         final String expectd = "str\tsym\tp\n" +
                 "BZ\tBZ\tnull\n" +
@@ -589,5 +631,4 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
             Assert.assertEquals(58, QueryError.getPosition());
         }
     }
-
 }
