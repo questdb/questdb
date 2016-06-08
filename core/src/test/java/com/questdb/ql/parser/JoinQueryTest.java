@@ -200,6 +200,14 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAsOfJoinSymbolBehaviour() throws Exception {
+        assertSymbol("select customerId, country from customers c" +
+                " asof join employees e on c.customerId = e.employeeId" +
+                " join orders o on c.customerId = o.customerId", 1);
+
+    }
+
+    @Test
     public void testCount() throws Exception {
         assertThat("162\t1\n" +
                         "209\t1\n" +
@@ -783,6 +791,21 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 "orders" +
                         " cross join (select customerId, customerName from customers where customerName ~ 'X')" +
                         " where orderId = customerName");
+
+    }
+
+    @Test
+    public void testJoinSymbolBehaviour() throws Exception {
+        assertSymbol("select customers.customerId, country from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'", 1);
+    }
+
+    @Test
+    public void testJoinSymbolBehaviourOnSecondaryJournal() throws Exception {
+        assertSymbol("select customerName, productName, orderId, category from (" +
+                "select customerName, orderId, productId " +
+                "from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'" +
+                ") x" +
+                " join products p on p.productId = x.productId", 3);
 
     }
 
