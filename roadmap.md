@@ -18,7 +18,7 @@ __lang__
 - [ ] bottom x rows
 - [x] query parameters
 - [x] support for comments (both block /* */ and line --)
-- [ ] __analytical clauses (in-progress)__
+- [ ] __analytic functions (in-progress)__
 - [x] subquery optimiser
 - [x] order by optimiser
 
