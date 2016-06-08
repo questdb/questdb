@@ -223,11 +223,11 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     }
 
     @Override
-    public void setStorageFacade(StorageFacade storageFacade) {
+    public void setParent(RecordCursor cursor) {
     }
 
     @Override
-    public void setParent(RecordCursor cursor) {
+    public void setStorageFacade(StorageFacade storageFacade) {
     }
 
     private static int toByteLen(int charLen) {
@@ -243,6 +243,8 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
             bufPtrLen = Numbers.ceilPow2(l);
             bufPtr = Unsafe.getUnsafe().allocateMemory(bufPtrLen);
             cs.of(bufPtr + 4, bufPtr + bufPtrLen);
+        } else {
+            cs.of(bufPtr + 4, bufPtr + l);
         }
         Unsafe.getUnsafe().copyMemory(ptr, bufPtr, l);
     }
