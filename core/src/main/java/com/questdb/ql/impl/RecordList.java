@@ -77,12 +77,6 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
     }
 
     @Override
-    public Record getByRowId(long rowId) {
-        record.of(rowId);
-        return record;
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
@@ -97,6 +91,22 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
     }
 
     @Override
+    public RecordListRecord newRecord() {
+        return new RecordListRecord(metadata, mem);
+    }
+
+    @Override
+    public Record recordAt(long rowId) {
+        record.of(rowId);
+        return record;
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        ((RecordListRecord) record).of(atRowId);
+    }
+
+    @Override
     public boolean hasNext() {
         return readAddress > -1;
     }
@@ -106,10 +116,6 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
         record.of(readAddress);
         readAddress = Unsafe.getUnsafe().getLong(readAddress - 8);
         return record;
-    }
-
-    public RecordListRecord newRecord() {
-        return new RecordListRecord(metadata, mem);
     }
 
     public void of(long offset) {
@@ -225,5 +231,4 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
         Unsafe.getUnsafe().putLong(headerAddress, addr);
         Chars.put(addr, value);
     }
-
 }

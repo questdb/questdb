@@ -23,11 +23,10 @@
 
 package com.questdb.ql.model;
 
-import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 
-public final class AnalyticColumn implements Mutable {
+public final class AnalyticColumn extends QueryColumn {
     public final static ObjectFactory<AnalyticColumn> FACTORY = new ObjectFactory<AnalyticColumn>() {
         @Override
         public AnalyticColumn newInstance() {
@@ -36,26 +35,20 @@ public final class AnalyticColumn implements Mutable {
     };
     private final ObjList<ExprNode> partitionBy = new ObjList<>(2);
     private final ObjList<ExprNode> orderBy = new ObjList<>(2);
-    private String alias;
-    private ExprNode ast;
 
     private AnalyticColumn() {
     }
 
     @Override
     public void clear() {
-        alias = null;
-        ast = null;
+        super.clear();
         partitionBy.clear();
         orderBy.clear();
     }
 
-    public String getAlias() {
-        return alias;
-    }
-
-    public ExprNode getAst() {
-        return ast;
+    @Override
+    public AnalyticColumn of(String alias, ExprNode ast) {
+        return (AnalyticColumn) super.of(alias, ast);
     }
 
     public ObjList<ExprNode> getOrderBy() {
@@ -64,11 +57,5 @@ public final class AnalyticColumn implements Mutable {
 
     public ObjList<ExprNode> getPartitionBy() {
         return partitionBy;
-    }
-
-    public AnalyticColumn of(String alias, ExprNode ast) {
-        this.alias = alias;
-        this.ast = ast;
-        return this;
     }
 }

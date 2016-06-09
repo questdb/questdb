@@ -103,16 +103,6 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     }
 
     @Override
-    public Record getByRowId(long rowId) {
-        return null;
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return recordCursor.getStorageFacade();
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         return map.getMetadata();
     }
@@ -133,6 +123,25 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     @Override
     public boolean supportsRowIdAccess() {
         return false;
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return recordCursor.getStorageFacade();
+    }
+
+    @Override
+    public Record newRecord() {
+        return null;
+    }
+
+    @Override
+    public Record recordAt(long rowId) {
+        return null;
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
     }
 
     @Override

@@ -90,7 +90,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
             return null;
         }
         values.putByte(1, (byte) 1);
-        return slaveCursor.getByRowId(values.getLong(0));
+        return slaveCursor.recordAt(values.getLong(0));
     }
 
     public RecordMetadata getMetadata() {

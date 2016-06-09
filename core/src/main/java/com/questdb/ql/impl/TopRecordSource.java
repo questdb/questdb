@@ -47,16 +47,6 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public Record getByRowId(long rowId) {
-        return recordCursor.getByRowId(rowId);
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return recordCursor.getStorageFacade();
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         return recordSource.getMetadata();
     }
@@ -79,6 +69,26 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
     @Override
     public boolean supportsRowIdAccess() {
         return recordSource.supportsRowIdAccess();
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return recordCursor.getStorageFacade();
+    }
+
+    @Override
+    public Record newRecord() {
+        return recordCursor.newRecord();
+    }
+
+    @Override
+    public Record recordAt(long rowId) {
+        return recordCursor.recordAt(rowId);
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        recordCursor.recordAt(record, atRowId);
     }
 
     @Override

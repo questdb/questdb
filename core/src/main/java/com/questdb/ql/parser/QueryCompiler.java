@@ -114,6 +114,7 @@ public class QueryCompiler {
     private final ObjectPool<QueryColumn> aggregateColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 8);
     private final ObjList<QueryColumn> aggregators = new ObjList<>();
     private final ObjList<QueryColumn> outerVirtualColumns = new ObjList<>();
+    private final ObjList<AnalyticColumn> analyticColumns = new ObjList<>();
     private final ObjHashSet<String> groupKeyColumns = new ObjHashSet<>();
     private final ComparatorCompiler cc = new ComparatorCompiler();
     private final LiteralMatcher literalMatcher = new LiteralMatcher(traversalAlgo);
@@ -370,36 +371,6 @@ public class QueryCompiler {
                 constNameToNode.put(name, node.rhs);
                 constNameToToken.put(name, node.token);
             }
-        }
-    }
-
-    private RecordSource analyticColumns(RecordSource rs, QueryModel model) throws ParserException {
-        return model.getAnalyticColumns().size() == 0 ? rs : analyticColumns0(rs, model);
-    }
-
-    private RecordSource analyticColumns0(RecordSource rs, QueryModel model) throws ParserException {
-        final ObjList<AnalyticColumn> columns = model.getAnalyticColumns();
-        final int n = columns.size();
-        final ObjList<AnalyticFunction> functions = new ObjList<>(n);
-        final RecordMetadata metadata = rs.getMetadata();
-
-        boolean hasTwoPassFunctions = false;
-        for (int i = 0; i < n; i++) {
-            AnalyticColumn col = columns.getQuick(i);
-            if (col.getAlias() == null) {
-                col.of(createAlias(i), col.getAst());
-            }
-            AnalyticFunction f = AnalyticFunctionFactories.newInstance(configuration, metadata, columns.getQuick(i), rs.supportsRowIdAccess());
-            if (!hasTwoPassFunctions && (f instanceof TwoPassAnalyticFunction)) {
-                hasTwoPassFunctions = true;
-            }
-            functions.add(f);
-
-        }
-        if (hasTwoPassFunctions) {
-            return new CachingAnalyticRecordSource(configuration.getDbAnalyticWindowPage(), rs, functions);
-        } else {
-            return new AnalyticRecordSource(rs, functions);
         }
     }
 
@@ -824,7 +795,7 @@ public class QueryCompiler {
             rs = compileSubQuery(model, factory);
         }
 
-        return limit(order(analyticColumns(selectColumns(rs, model), model), model), model);
+        return limit(order(selectColumns(rs, model), model), model);
     }
 
     private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
@@ -1788,6 +1759,7 @@ public class QueryCompiler {
         this.selectedColumnAliases.clear();
         this.groupKeyColumns.clear();
         this.aggregateColumnSequence = 0;
+        this.analyticColumns.clear();
 
         ObjList<VirtualColumn> virtualColumns = null;
 
@@ -1795,8 +1767,9 @@ public class QueryCompiler {
         for (int i = 0, k = columns.size(); i < k; i++) {
             final QueryColumn qc = columns.getQuick(i);
             final ExprNode node = qc.getAst();
+            final boolean analytic = qc instanceof AnalyticColumn;
 
-            if (node.type == ExprNode.NodeType.LITERAL) {
+            if (!analytic && node.type == ExprNode.NodeType.LITERAL) {
                 // check literal column validity
                 if (meta.getColumnIndexQuiet(node.token) == -1) {
                     throw QueryError.invalidColumn(node.position, node.token);
@@ -1823,7 +1796,7 @@ public class QueryCompiler {
             addAlias(node.position, qc.getAlias());
 
             // outright aggregate
-            if (node.type == ExprNode.NodeType.FUNCTION && FunctionFactories.isAggregate(node.token)) {
+            if (!analytic && node.type == ExprNode.NodeType.FUNCTION && FunctionFactories.isAggregate(node.token)) {
                 aggregators.add(qc);
                 continue;
             }
@@ -1844,9 +1817,13 @@ public class QueryCompiler {
                 virtualColumns = new ObjList<>();
             }
 
-            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), recordSource.getMetadata());
-            vc.setName(qc.getAlias());
-            virtualColumns.add(vc);
+            if (analytic) {
+                analyticColumns.add((AnalyticColumn) qc);
+            } else {
+                VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), recordSource.getMetadata());
+                vc.setName(qc.getAlias());
+                virtualColumns.add(vc);
+            }
             groupKeyColumns.add(qc.getAlias());
         }
 
@@ -1903,6 +1880,31 @@ public class QueryCompiler {
                 outer.add(vc);
             }
             rs = new VirtualColumnRecordSource(rs, outer);
+        }
+
+        if (analyticColumns.size() > 0) {
+            final int n = analyticColumns.size();
+            final ObjList<AnalyticFunction> functions = new ObjList<>(n);
+            final RecordMetadata metadata = rs.getMetadata();
+            boolean hasTwoPassFunctions = false;
+
+            for (int i = 0; i < n; i++) {
+                AnalyticColumn col = analyticColumns.getQuick(i);
+                if (col.getAlias() == null) {
+                    col.of(createAlias(i), col.getAst());
+                }
+                AnalyticFunction f = AnalyticFunctionFactories.newInstance(configuration, metadata, analyticColumns.getQuick(i), rs.supportsRowIdAccess());
+                if (!hasTwoPassFunctions && (f instanceof TwoPassAnalyticFunction)) {
+                    hasTwoPassFunctions = true;
+                }
+                functions.add(f);
+            }
+
+            if (hasTwoPassFunctions) {
+                rs = new CachingAnalyticRecordSource(configuration.getDbAnalyticWindowPage(), rs, functions);
+            } else {
+                rs = new AnalyticRecordSource(rs, functions);
+            }
         }
 
         if (selectedColumns.size() > 0) {

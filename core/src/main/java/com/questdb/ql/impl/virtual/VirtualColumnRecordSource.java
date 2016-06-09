@@ -49,17 +49,6 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public Record getByRowId(long rowId) {
-        current.setBase(recordCursor.getByRowId(rowId));
-        return current;
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return recordCursor.getStorageFacade();
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
@@ -79,6 +68,29 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     @Override
     public boolean supportsRowIdAccess() {
         return recordSource.supportsRowIdAccess();
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return recordCursor.getStorageFacade();
+    }
+
+    @Override
+    public Record newRecord() {
+        VirtualRecord copy = current.copy();
+        copy.setBase(recordCursor.newRecord());
+        return copy;
+    }
+
+    @Override
+    public Record recordAt(long rowId) {
+        current.setBase(recordCursor.recordAt(rowId));
+        return current;
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        recordCursor.recordAt(((VirtualRecord) record).getBase(), atRowId);
     }
 
     @Override

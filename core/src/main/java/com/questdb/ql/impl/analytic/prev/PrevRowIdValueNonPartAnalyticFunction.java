@@ -184,6 +184,6 @@ public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
     }
 
     private Record getParentRecord() {
-        return parent.getByRowId(prevRowId);
+        return parent.recordAt(prevRowId);
     }
 }

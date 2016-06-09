@@ -143,13 +143,21 @@ class VirtualRecord extends AbstractRecord {
         return col < split ? base.getSym(col) : virtualColumns.get(col - split).getSym(base);
     }
 
+    public Record getBase() {
+        return base;
+    }
+
+    public void setBase(Record base) {
+        this.base = base;
+    }
+
     public void prepare(StorageFacade facade) {
         for (int i = 0, n = virtualColumns.size(); i < n; i++) {
             virtualColumns.getQuick(i).prepare(facade);
         }
     }
 
-    public void setBase(Record base) {
-        this.base = base;
+    VirtualRecord copy() {
+        return new VirtualRecord(metadata, split, virtualColumns);
     }
 }

@@ -37,7 +37,7 @@ public class RowidRecordHolder implements RecordHolder {
 
     @Override
     public Record peek() {
-        return rowid == -1 ? null : cursor.getByRowId(this.rowid);
+        return rowid == -1 ? null : cursor.recordAt(this.rowid);
     }
 
     @Override

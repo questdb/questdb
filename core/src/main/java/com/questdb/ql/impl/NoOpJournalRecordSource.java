@@ -41,16 +41,6 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public Record getByRowId(long rowId) {
-        return cursor.getByRowId(rowId);
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return cursor.getStorageFacade();
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         return delegate.getMetadata();
     }
@@ -69,6 +59,26 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
     @Override
     public boolean supportsRowIdAccess() {
         return delegate.supportsRowIdAccess();
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return cursor.getStorageFacade();
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
+    }
+
+    @Override
+    public Record recordAt(long rowId) {
+        return cursor.recordAt(rowId);
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        cursor.recordAt(record, atRowId);
     }
 
     @Override

@@ -59,10 +59,9 @@ public class QueryParserTest extends AbstractTest {
     public void testAliasedAnalyticColumn() throws Exception {
         Statement statement = parser.parse("select a,b, f(c) my over (partition by b order by ts) from xyz");
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
-        Assert.assertEquals(1, statement.getQueryModel().getAnalyticColumns().size());
-        Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
+        Assert.assertEquals(3, statement.getQueryModel().getColumns().size());
 
-        AnalyticColumn col = statement.getQueryModel().getAnalyticColumns().get(0);
+        AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
         Assert.assertEquals("my", col.getAlias());
         Assert.assertEquals(ExprNode.NodeType.FUNCTION, col.getAst().type);
         Assert.assertEquals(1, col.getPartitionBy().size());
@@ -422,10 +421,9 @@ public class QueryParserTest extends AbstractTest {
     public void testOneAnalyticColumn() throws Exception {
         Statement statement = parser.parse("select a,b, f(c) over (partition by b order by ts) from xyz");
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
-        Assert.assertEquals(1, statement.getQueryModel().getAnalyticColumns().size());
-        Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
+        Assert.assertEquals(3, statement.getQueryModel().getColumns().size());
 
-        AnalyticColumn col = statement.getQueryModel().getAnalyticColumns().get(0);
+        AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
 
         Assert.assertEquals(ExprNode.NodeType.FUNCTION, col.getAst().type);
         Assert.assertEquals(1, col.getPartitionBy().size());
@@ -656,10 +654,9 @@ public class QueryParserTest extends AbstractTest {
     public void testTwoAnalyticColumns() throws Exception {
         Statement statement = parser.parse("select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz");
         Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
-        Assert.assertEquals(2, statement.getQueryModel().getAnalyticColumns().size());
-        Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
+        Assert.assertEquals(4, statement.getQueryModel().getColumns().size());
 
-        AnalyticColumn col = statement.getQueryModel().getAnalyticColumns().get(0);
+        AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
         Assert.assertEquals("my", col.getAlias());
         Assert.assertEquals(ExprNode.NodeType.FUNCTION, col.getAst().type);
         Assert.assertEquals(1, col.getPartitionBy().size());
@@ -667,7 +664,7 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals(1, col.getOrderBy().size());
         Assert.assertEquals("ts", col.getOrderBy().get(0).token);
 
-        col = statement.getQueryModel().getAnalyticColumns().get(1);
+        col = (AnalyticColumn) statement.getQueryModel().getColumns().get(3);
         Assert.assertEquals("d", col.getAst().token);
         Assert.assertNull(col.getAlias());
         Assert.assertEquals(0, col.getPartitionBy().size());

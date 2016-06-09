@@ -59,16 +59,6 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public Record getByRowId(long rowId) {
-        return null;
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return storageFacade;
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
@@ -120,6 +110,25 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
     @Override
     public boolean supportsRowIdAccess() {
         return false;
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
+    }
+
+    @Override
+    public Record newRecord() {
+        return null;
+    }
+
+    @Override
+    public Record recordAt(long rowId) {
+        return null;
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
     }
 
     @Override

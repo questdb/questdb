@@ -26,7 +26,7 @@ package com.questdb.ql.model;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
-public final class QueryColumn implements Mutable {
+public class QueryColumn implements Mutable {
     public final static ObjectFactory<QueryColumn> FACTORY = new ObjectFactory<QueryColumn>() {
         @Override
         public QueryColumn newInstance() {
@@ -36,7 +36,7 @@ public final class QueryColumn implements Mutable {
     private String alias;
     private ExprNode ast;
 
-    private QueryColumn() {
+    protected QueryColumn() {
     }
 
     @Override

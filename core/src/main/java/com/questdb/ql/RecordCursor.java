@@ -27,9 +27,13 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.std.ImmutableIterator;
 
 public interface RecordCursor extends ImmutableIterator<Record> {
-    Record getByRowId(long rowId);
-
     RecordMetadata getMetadata();
 
     StorageFacade getStorageFacade();
+
+    Record newRecord();
+
+    Record recordAt(long rowId);
+
+    void recordAt(Record record, long atRowId);
 }

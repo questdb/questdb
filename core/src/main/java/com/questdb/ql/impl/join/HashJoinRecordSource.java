@@ -93,16 +93,6 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
-    public Record getByRowId(long rowId) {
-        return null;
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return storageFacade;
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
@@ -130,10 +120,29 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
+    }
+
+    @Override
+    public Record newRecord() {
+        return null;
+    }
+
+    @Override
+    public Record recordAt(long rowId) {
+        return null;
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+    }
+
+    @Override
     public boolean hasNext() {
         if (hashTableCursor != null && hashTableCursor.hasNext()) {
             Record rec = hashTableCursor.next();
-            currentRecord.setB(byRowId ? slaveCursor.getByRowId(rec.getLong(0)) : rec);
+            currentRecord.setB(byRowId ? slaveCursor.recordAt(rec.getLong(0)) : rec);
             return true;
         }
         return hasNext0();
@@ -221,7 +230,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
 
             if (hashTableCursor.hasNext()) {
                 if (byRowId) {
-                    currentRecord.setB(slaveCursor.getByRowId(hashTableCursor.next().getLong(0)));
+                    currentRecord.setB(slaveCursor.recordAt(hashTableCursor.next().getLong(0)));
                 } else {
                     currentRecord.setB(hashTableCursor.next());
                 }

@@ -57,16 +57,6 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public Record getByRowId(long rowId) {
-        return record.of(recordCursor.getByRowId(rowId));
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return storageFacade;
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
@@ -86,6 +76,26 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     @Override
     public boolean supportsRowIdAccess() {
         return recordSource.supportsRowIdAccess();
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
+    }
+
+    @Override
+    public Record newRecord() {
+        return record.copy().of(recordCursor.newRecord());
+    }
+
+    @Override
+    public Record recordAt(long rowId) {
+        return record.of(recordCursor.recordAt(rowId));
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        recordCursor.recordAt(((SelectedColumnsRecord) record).getBase(), atRowId);
     }
 
     @Override

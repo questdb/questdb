@@ -50,17 +50,6 @@ public class JournalSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public JournalRecord getByRowId(long rowId) {
-        rec.rowid = rowId;
-        return rec;
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return partitionCursor.getStorageFacade();
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
@@ -85,6 +74,27 @@ public class JournalSource extends AbstractCombinedRecordSource {
     @Override
     public boolean supportsRowIdAccess() {
         return true;
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return partitionCursor.getStorageFacade();
+    }
+
+    @Override
+    public Record newRecord() {
+        return new JournalRecord(this.metadata);
+    }
+
+    @Override
+    public JournalRecord recordAt(long rowId) {
+        rec.rowid = rowId;
+        return rec;
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        ((JournalRecord) record).rowid = atRowId;
     }
 
     @Override

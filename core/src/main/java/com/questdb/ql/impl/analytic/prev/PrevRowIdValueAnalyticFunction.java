@@ -199,7 +199,7 @@ public class PrevRowIdValueAnalyticFunction extends AbstractPrevValueAnalyticFun
     }
 
     private Record getParentRecord() {
-        return parent.getByRowId(Unsafe.getUnsafe().getLong(bufPtr));
+        return parent.recordAt(Unsafe.getUnsafe().getLong(bufPtr));
     }
 
     static {

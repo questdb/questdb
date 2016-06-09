@@ -475,7 +475,7 @@ public final class QueryParser {
                     throw err(") expected");
                 }
 
-                model.addAnalyticColumn(col);
+                model.addColumn(col);
 
                 tok = tok();
             } else {

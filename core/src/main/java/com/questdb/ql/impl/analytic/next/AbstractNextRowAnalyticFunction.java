@@ -31,8 +31,6 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.NullRecord;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
-import com.questdb.ql.impl.RecordList;
-import com.questdb.ql.impl.RecordListRecord;
 import com.questdb.ql.impl.analytic.TwoPassAnalyticFunction;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
@@ -49,9 +47,10 @@ public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalytic
     private final RecordColumnMetadata metadata;
     private final int columnIndex;
     private long offset;
-    private RecordListRecord record;
+    private Record record;
     private Record next;
-    private StorageFacade storageFacade;
+    private RecordCursor baseCursor;
+    private SymbolTable symbolTable;
 
     public AbstractNextRowAnalyticFunction(int pageSize, RecordMetadata parentMetadata, String columnName, String alias) {
         this.pages = new MemoryPages(pageSize);
@@ -151,12 +150,12 @@ public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalytic
 
     @Override
     public String getSym() {
-        return next.getSym(columnIndex);
+        return (next instanceof NullRecord) ? null : symbolTable.value(getInt());
     }
 
     @Override
     public SymbolTable getSymbolTable() {
-        return storageFacade.getSymbolTable(columnIndex);
+        return symbolTable;
     }
 
     @Override
@@ -170,7 +169,7 @@ public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalytic
         if (rowid == -1) {
             next = NullRecord.INSTANCE;
         } else {
-            record.of(rowid);
+            baseCursor.recordAt(record, rowid);
             next = record;
         }
         this.offset += 8;
@@ -182,13 +181,13 @@ public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalytic
 
     @Override
     public void setStorageFacade(StorageFacade storageFacade) {
-        this.storageFacade = storageFacade;
+        this.symbolTable = storageFacade.getSymbolTable(columnIndex);
     }
 
     @Override
-    public void prepare(RecordList base) {
+    public void prepare(RecordCursor base) {
+        this.baseCursor = base;
         this.record = base.newRecord();
-        this.record.setStorageFacade(storageFacade);
         this.offset = 0;
     }
 }
