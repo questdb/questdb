@@ -82,12 +82,17 @@ public class PrevValueAnalyticFunctionFactory implements AnalyticFunctionFactory
             if (valueIsString) {
                 if (supportsRowId) {
                     return new PrevRowIdValueAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
+                } else {
+                    return new PrevStrAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
                 }
-                return new PrevStrAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
             }
-
             return new PrevValueAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
         } else {
+            if (valueIsString) {
+                if (supportsRowId) {
+                    return new PrevRowIdValueNonPartAnalyticFunction(metadata, ast.rhs.token, column.getAlias());
+                }
+            }
             return new PrevValueNonPartAnalyticFunction(metadata, ast.rhs.token, column.getAlias());
         }
     }

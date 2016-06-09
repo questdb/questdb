@@ -531,6 +531,31 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    public void testStrNonPart() throws Exception {
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
+                "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\tXX\n" +
+                "AX\tXX\t2016-05-01T10:24:00.000Z\tKK\n" +
+                "AX\tXX\t2016-05-01T10:25:00.000Z\tAX\n" +
+                "AX\tBZ\t2016-05-01T10:26:00.000Z\tAX\n" +
+                "BZ\tXX\t2016-05-01T10:27:00.000Z\tAX\n" +
+                "BZ\tKK\t2016-05-01T10:28:00.000Z\tBZ\n" +
+                "AX\tKK\t2016-05-01T10:29:00.000Z\tBZ\n" +
+                "BZ\tAX\t2016-05-01T10:30:00.000Z\tAX\n" +
+                "XX\tKK\t2016-05-01T10:31:00.000Z\tBZ\n" +
+                "KK\tAX\t2016-05-01T10:32:00.000Z\tXX\n" +
+                "AX\tAX\t2016-05-01T10:33:00.000Z\tKK\n" +
+                "BZ\tBZ\t2016-05-01T10:34:00.000Z\tAX\n" +
+                "XX\tAX\t2016-05-01T10:35:00.000Z\tBZ\n" +
+                "AX\tAX\t2016-05-01T10:36:00.000Z\tXX\n" +
+                "XX\tKK\t2016-05-01T10:37:00.000Z\tAX\n" +
+                "AX\tAX\t2016-05-01T10:38:00.000Z\tXX\n" +
+                "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\n" +
+                "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\n";
+        assertThat(expected, "select str, sym, timestamp , prev(str) over () from abc");
+    }
+
+    @Test
     public void testSymNonPart() throws Exception {
         final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
                 "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
