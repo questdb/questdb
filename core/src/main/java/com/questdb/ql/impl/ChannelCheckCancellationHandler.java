@@ -30,8 +30,8 @@ import com.questdb.ql.CancellationHandler;
 
 public class ChannelCheckCancellationHandler implements CancellationHandler {
     private final long fd;
+    private final long mask;
     private long loop = 0;
-    private long mask;
 
     public ChannelCheckCancellationHandler(long fd, int cyclesBeforeCheck) {
         this.fd = fd;

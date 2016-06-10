@@ -79,7 +79,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
         return header;
     }
 
-    public MetadataExtractorListener of(Schema schema) {
+    public void of(Schema schema) {
         clear();
         if (schema != null) {
             ObjList<ImportedColumnMetadata> list = schema.getMetadata();
@@ -88,7 +88,6 @@ public class MetadataExtractorListener implements Listener, Mutable {
                 schemaColumns.put(m.name, m);
             }
         }
-        return this;
     }
 
     @Override

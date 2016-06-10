@@ -41,11 +41,11 @@ import java.io.OutputStream;
 public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
     private final RecordColumnMetadataImpl valueMetadata;
     private final int valueIndex;
+    private final ColumnType valueType;
     private RecordCursor parent;
     private long prevRowId = -1;
     private long currentRowId = -1;
     private StorageFacade storageFacade;
-    private ColumnType valueType;
     private Record record;
 
     public PrevRowIdValueNonPartAnalyticFunction(RecordMetadata parentMetadata, String columnName, String alias) {
