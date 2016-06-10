@@ -25,6 +25,7 @@ package com.questdb.ql.impl;
 
 import com.questdb.Partition;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Rows;
 import com.questdb.ql.AbstractRecord;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
@@ -34,6 +35,7 @@ import java.io.OutputStream;
 public class JournalRecord extends AbstractRecord {
     public Partition partition;
     public long rowid;
+    public int partitionIndex = -1;
 
     public JournalRecord(RecordMetadata metadata) {
         super(metadata);
@@ -101,7 +103,7 @@ public class JournalRecord extends AbstractRecord {
 
     @Override
     public long getRowId() {
-        return rowid;
+        return Rows.toRowID(partitionIndex, rowid);
     }
 
     @Override

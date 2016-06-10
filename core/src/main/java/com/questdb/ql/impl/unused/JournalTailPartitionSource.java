@@ -24,6 +24,7 @@
 package com.questdb.ql.impl.unused;
 
 import com.questdb.Journal;
+import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.JournalReaderFactory;
@@ -71,6 +72,15 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
         }
         reset();
         return this;
+    }
+
+    @Override
+    public Partition getPartition(int index) {
+        try {
+            return journal.getPartition(index, open);
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
+        }
     }
 
     @Override

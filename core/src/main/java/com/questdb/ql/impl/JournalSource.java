@@ -27,6 +27,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Rows;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
@@ -88,13 +89,15 @@ public class JournalSource extends AbstractCombinedRecordSource {
 
     @Override
     public JournalRecord recordAt(long rowId) {
-        rec.rowid = rowId;
+        rec.rowid = Rows.toLocalRowID(rowId);
+        setPartition(rec, rowId);
         return rec;
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((JournalRecord) record).rowid = atRowId;
+        ((JournalRecord) record).rowid = Rows.toLocalRowID(atRowId);
+        setPartition((JournalRecord) record, atRowId);
     }
 
     @Override
@@ -129,10 +132,19 @@ public class JournalSource extends AbstractCombinedRecordSource {
 
             if (cursor.hasNext()) {
                 rec.partition = slice.partition;
+                rec.partitionIndex = slice.partition.getPartitionIndex();
                 return true;
             }
         }
 
         return false;
+    }
+
+    private void setPartition(JournalRecord record, long rowId) {
+        int partIndex = Rows.toPartitionIndex(rowId);
+        if (partIndex != record.partitionIndex) {
+            record.partitionIndex = partIndex;
+            record.partition = partitionCursor.getPartition(partIndex);
+        }
     }
 }

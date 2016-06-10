@@ -46,6 +46,7 @@ public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
     private long currentRowId = -1;
     private StorageFacade storageFacade;
     private ColumnType valueType;
+    private Record record;
 
     public PrevRowIdValueNonPartAnalyticFunction(RecordMetadata parentMetadata, String columnName, String alias) {
         this.valueIndex = parentMetadata.getColumnIndex(columnName);
@@ -176,6 +177,7 @@ public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
     @Override
     public void setParent(RecordCursor cursor) {
         parent = cursor;
+        this.record = cursor.newRecord();
     }
 
     @Override
@@ -184,6 +186,7 @@ public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
     }
 
     private Record getParentRecord() {
-        return parent.recordAt(prevRowId);
+        parent.recordAt(record, prevRowId);
+        return record;
     }
 }

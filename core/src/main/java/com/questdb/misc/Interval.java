@@ -60,7 +60,7 @@ public class Interval implements Sinkable {
                 break;
             case DAY:
                 this.lo = Dates.floorDD(millis);
-                this.hi = Dates.ceilMM(millis);
+                this.hi = Dates.ceilDD(millis);
                 break;
             default:
                 this.lo = 0;
