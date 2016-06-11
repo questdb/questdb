@@ -68,17 +68,21 @@ public abstract class AbstractOptimiserTest {
             int dateIndex = cursor.getMetadata().getColumnIndex(longColumn);
             HashMap<Long, Long> map = new HashMap<>();
 
+            long count = 0;
             while (cursor.hasNext()) {
                 Record record = cursor.next();
                 map.put(record.getRowId(), record.getLong(dateIndex));
+                count++;
             }
 
+            Assert.assertTrue(count > 0);
             Record record = cursor.newRecord();
             for (Map.Entry<Long, Long> e : map.entrySet()) {
                 Assert.assertEquals((long) e.getValue(), cursor.recordAt(e.getKey()).getLong(dateIndex));
                 cursor.recordAt(record, e.getKey());
                 Assert.assertEquals((long) e.getValue(), record.getLong(dateIndex));
             }
+
         } finally {
             Misc.free(src);
         }

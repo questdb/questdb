@@ -427,6 +427,32 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    public void testMultipleNoPart() throws Exception {
+        final String expected = "str\tsym\ttimestamp\tcol0\tcol1\n" +
+                "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\tnull\n" +
+                "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\tBZ\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\tBZ\tXX\n" +
+                "AX\tXX\t2016-05-01T10:24:00.000Z\tXX\tKK\n" +
+                "AX\tXX\t2016-05-01T10:25:00.000Z\tXX\tAX\n" +
+                "AX\tBZ\t2016-05-01T10:26:00.000Z\tXX\tAX\n" +
+                "BZ\tXX\t2016-05-01T10:27:00.000Z\tBZ\tAX\n" +
+                "BZ\tKK\t2016-05-01T10:28:00.000Z\tXX\tBZ\n" +
+                "AX\tKK\t2016-05-01T10:29:00.000Z\tKK\tBZ\n" +
+                "BZ\tAX\t2016-05-01T10:30:00.000Z\tKK\tAX\n" +
+                "XX\tKK\t2016-05-01T10:31:00.000Z\tAX\tBZ\n" +
+                "KK\tAX\t2016-05-01T10:32:00.000Z\tKK\tXX\n" +
+                "AX\tAX\t2016-05-01T10:33:00.000Z\tAX\tKK\n" +
+                "BZ\tBZ\t2016-05-01T10:34:00.000Z\tAX\tAX\n" +
+                "XX\tAX\t2016-05-01T10:35:00.000Z\tBZ\tBZ\n" +
+                "AX\tAX\t2016-05-01T10:36:00.000Z\tAX\tXX\n" +
+                "XX\tKK\t2016-05-01T10:37:00.000Z\tAX\tAX\n" +
+                "AX\tAX\t2016-05-01T10:38:00.000Z\tKK\tXX\n" +
+                "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\tAX\n" +
+                "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\tBZ\n";
+        assertThat(expected, "select str, sym, timestamp , prev(sym) over(), prev(str) over () from abc", true);
+    }
+
+    @Test
     public void testNonPartSymbolBehaviour() throws Exception {
         assertSymbol("select str, sym, timestamp , prev(sym) over () from abc", 3);
     }
@@ -656,4 +682,5 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
             Assert.assertEquals(58, QueryError.getPosition());
         }
     }
+
 }

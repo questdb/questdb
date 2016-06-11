@@ -82,8 +82,18 @@ public class JournalSourceTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testRowIdBehaviour() throws Exception {
-        assertRowId("parent", "date");
+    public void testFilterRowId() throws Exception {
+        assertRowId("parent where sym = 'KK'", "date");
+    }
+
+    @Test
+    public void testIntervalRowId() throws Exception {
+        assertRowId("parent where timestamp = '2016-05-01T23;1h'", "date");
+    }
+
+    @Test
+    public void testOrderRowId() throws Exception {
+        assertRowId("parent order by date", "timestamp");
     }
 
     @Test
@@ -162,5 +172,25 @@ public class JournalSourceTest extends AbstractOptimiserTest {
                 "9\t19.849394798279\t0.7422\t63\t-18\tWLP\tfalse\tPP\t15\t218141935-12-1635401T17:36:19.271Z\t2016-05-04T10:20:00.000Z\n";
 
         assertThat(expected, "parent");
+    }
+
+    @Test
+    public void testSelectedColumnsRowId() throws Exception {
+        assertRowId("select date, sym from parent", "date");
+    }
+
+    @Test
+    public void testTopRowId() throws Exception {
+        assertRowId("parent limit 0,10", "timestamp");
+    }
+
+    @Test
+    public void testVanillaRowId() throws Exception {
+        assertRowId("parent", "date");
+    }
+
+    @Test
+    public void testVirtualColumnRowId() throws Exception {
+        assertRowId("select date, d + f from parent", "date");
     }
 }
