@@ -24,13 +24,11 @@
 package com.questdb.ql.impl.analytic.prev;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
-import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
+import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
@@ -39,25 +37,19 @@ import com.questdb.store.SymbolTable;
 import java.io.OutputStream;
 
 public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
-    private final RecordColumnMetadataImpl valueMetadata;
-    private final int valueIndex;
-    private final ColumnType valueType;
+    private final VirtualColumn valueColumn;
     private RecordCursor parent;
     private long prevRowId = -1;
     private long currentRowId = -1;
-    private StorageFacade storageFacade;
     private Record record;
 
-    public PrevRowIdValueNonPartAnalyticFunction(RecordMetadata parentMetadata, String columnName, String alias) {
-        this.valueIndex = parentMetadata.getColumnIndex(columnName);
-        RecordColumnMetadata m = parentMetadata.getColumn(this.valueIndex);
-        // metadata
-        this.valueMetadata = new RecordColumnMetadataImpl(alias == null ? columnName : alias, this.valueType = m.getType());
+    public PrevRowIdValueNonPartAnalyticFunction(VirtualColumn valueColumn) {
+        this.valueColumn = valueColumn;
     }
 
     @Override
     public byte get() {
-        return prevRowId == -1 ? 0 : getParentRecord().get(valueIndex);
+        return prevRowId == -1 ? 0 : valueColumn.get(getParentRecord());
     }
 
     @Override
@@ -65,73 +57,73 @@ public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
         if (prevRowId == -1) {
             return;
         }
-        getParentRecord().getBin(valueIndex, s);
+        valueColumn.getBin(getParentRecord(), s);
     }
 
     @Override
     public DirectInputStream getBin() {
-        return prevRowId == -1 ? null : getParentRecord().getBin(valueIndex);
+        return prevRowId == -1 ? null : valueColumn.getBin(getParentRecord());
     }
 
     @Override
     public long getBinLen() {
-        return prevRowId == -1 ? 0 : getParentRecord().getBinLen(valueIndex);
+        return prevRowId == -1 ? 0 : valueColumn.getBinLen(getParentRecord());
     }
 
     @Override
     public boolean getBool() {
-        return prevRowId != -1 && getParentRecord().getBool(valueIndex);
+        return prevRowId != -1 && valueColumn.getBool(getParentRecord());
     }
 
     @Override
     public long getDate() {
-        return prevRowId == -1 ? Numbers.LONG_NaN : getParentRecord().getDate(valueIndex);
+        return prevRowId == -1 ? Numbers.LONG_NaN : valueColumn.getDate(getParentRecord());
     }
 
     @Override
     public double getDouble() {
-        return prevRowId == -1 ? Double.NaN : getParentRecord().getDouble(valueIndex);
+        return prevRowId == -1 ? Double.NaN : valueColumn.getDouble(getParentRecord());
     }
 
     @Override
     public float getFloat() {
-        return prevRowId == -1 ? Float.NaN : getParentRecord().getFloat(valueIndex);
+        return prevRowId == -1 ? Float.NaN : valueColumn.getFloat(getParentRecord());
     }
 
     @Override
     public CharSequence getFlyweightStr() {
-        return prevRowId == -1 ? null : getParentRecord().getFlyweightStr(valueIndex);
+        return prevRowId == -1 ? null : valueColumn.getFlyweightStr(getParentRecord());
     }
 
     @Override
     public CharSequence getFlyweightStrB() {
-        return prevRowId == -1 ? null : getParentRecord().getFlyweightStrB(valueIndex);
+        return prevRowId == -1 ? null : valueColumn.getFlyweightStrB(getParentRecord());
     }
 
     @Override
     public int getInt() {
         if (prevRowId == -1) {
-            if (valueType == ColumnType.SYMBOL) {
+            if (valueColumn.getType() == ColumnType.SYMBOL) {
                 return SymbolTable.VALUE_IS_NULL;
             }
             return Numbers.INT_NaN;
         }
-        return getParentRecord().getInt(valueIndex);
+        return valueColumn.getInt(getParentRecord());
     }
 
     @Override
     public long getLong() {
-        return prevRowId == -1 ? Numbers.LONG_NaN : getParentRecord().getLong(valueIndex);
+        return prevRowId == -1 ? Numbers.LONG_NaN : valueColumn.getLong(getParentRecord());
     }
 
     @Override
     public RecordColumnMetadata getMetadata() {
-        return valueMetadata;
+        return valueColumn;
     }
 
     @Override
     public short getShort() {
-        return prevRowId == -1 ? 0 : getParentRecord().getShort(valueIndex);
+        return prevRowId == -1 ? 0 : valueColumn.getShort(getParentRecord());
     }
 
     @Override
@@ -139,28 +131,35 @@ public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
         if (prevRowId == -1) {
             sink.put((CharSequence) null);
         } else {
-            getParentRecord().getStr(valueIndex, sink);
+            valueColumn.getStr(getParentRecord(), sink);
         }
     }
 
     @Override
     public CharSequence getStr() {
-        return prevRowId == -1 ? null : getParentRecord().getStr(valueIndex);
+        return prevRowId == -1 ? null : valueColumn.getStr(getParentRecord());
     }
 
     @Override
     public int getStrLen() {
-        return prevRowId == -1 ? 0 : getParentRecord().getStrLen(valueIndex);
+        return prevRowId == -1 ? 0 : valueColumn.getStrLen(getParentRecord());
     }
 
     @Override
     public String getSym() {
-        return prevRowId == -1 ? null : getParentRecord().getSym(valueIndex);
+        return prevRowId == -1 ? null : valueColumn.getSym(getParentRecord());
     }
 
     @Override
     public SymbolTable getSymbolTable() {
-        return storageFacade.getSymbolTable(this.valueIndex);
+        return valueColumn.getSymbolTable();
+    }
+
+    @Override
+    public void prepare(RecordCursor cursor) {
+        parent = cursor;
+        this.record = cursor.newRecord();
+        valueColumn.prepare(cursor.getStorageFacade());
     }
 
     @Override
@@ -172,17 +171,6 @@ public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
     public void scroll(Record record) {
         this.prevRowId = this.currentRowId;
         this.currentRowId = record.getRowId();
-    }
-
-    @Override
-    public void setParent(RecordCursor cursor) {
-        parent = cursor;
-        this.record = cursor.newRecord();
-    }
-
-    @Override
-    public void setStorageFacade(StorageFacade storageFacade) {
-        this.storageFacade = storageFacade;
     }
 
     private Record getParentRecord() {

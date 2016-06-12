@@ -1818,6 +1818,9 @@ public class QueryCompiler {
             }
 
             if (analytic) {
+                if (qc.getAst().type != ExprNode.NodeType.FUNCTION) {
+                    throw QueryError.$(qc.getAst().position, "Analytic function expected");
+                }
                 analyticColumns.add((AnalyticColumn) qc);
             } else {
                 VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), recordSource.getMetadata());
@@ -1890,10 +1893,38 @@ public class QueryCompiler {
 
             for (int i = 0; i < n; i++) {
                 AnalyticColumn col = analyticColumns.getQuick(i);
-                if (col.getAlias() == null) {
-                    col.of(createAlias(i), col.getAst());
+                ObjList<VirtualColumn> partitionBy = null;
+                int psz = col.getPartitionBy().size();
+                if (psz > 0) {
+                    partitionBy = new ObjList<>(psz);
+                    for (int j = 0; j < psz; j++) {
+                        partitionBy.add(virtualColumnBuilder.createVirtualColumn(model, col.getPartitionBy().getQuick(j), metadata));
+                    }
                 }
-                AnalyticFunction f = AnalyticFunctionFactories.newInstance(configuration, metadata, analyticColumns.getQuick(i), rs.supportsRowIdAccess());
+
+                if (col.getAst().paramCount > 1) {
+                    throw QueryError.$(col.getAst().position, "Too many arguments");
+                }
+
+                if (col.getAst().paramCount < 1) {
+                    throw QueryError.$(col.getAst().position, "Expression expected");
+                }
+
+                VirtualColumn valueColumn = virtualColumnBuilder.createVirtualColumn(model, col.getAst().rhs, metadata);
+                valueColumn.setName(col.getAlias());
+
+                AnalyticFunction f = AnalyticFunctionFactories.newInstance(
+                        configuration,
+                        col.getAst().token,
+                        valueColumn,
+                        partitionBy,
+                        rs.supportsRowIdAccess()
+                );
+
+                if (f == null) {
+                    throw QueryError.$(col.getAst().position, "Unknown function");
+                }
+
                 if (!hasTwoPassFunctions && (f instanceof TwoPassAnalyticFunction)) {
                     hasTwoPassFunctions = true;
                 }

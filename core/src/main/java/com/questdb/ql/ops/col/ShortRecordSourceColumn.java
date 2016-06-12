@@ -32,7 +32,7 @@ public class ShortRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
 
     public ShortRecordSourceColumn(int index) {
-        super(ColumnType.DOUBLE);
+        super(ColumnType.SHORT);
         this.index = index;
     }
 

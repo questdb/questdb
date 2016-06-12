@@ -23,77 +23,33 @@
 
 package com.questdb.ql.impl.analytic.prev;
 
-import com.questdb.ex.ParserException;
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.impl.analytic.AnalyticFunctionFactory;
-import com.questdb.ql.impl.analytic.AnalyticUtils;
-import com.questdb.ql.model.AnalyticColumn;
-import com.questdb.ql.model.ExprNode;
-import com.questdb.ql.parser.QueryError;
-import com.questdb.std.ObjHashSet;
+import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 
 public class PrevValueAnalyticFunctionFactory implements AnalyticFunctionFactory {
     @Override
-    public AnalyticFunction newInstance(
-            ServerConfiguration configuration,
-            RecordMetadata metadata,
-            AnalyticColumn column,
-            boolean supportsRowId) throws ParserException {
-        ExprNode ast = column.getAst();
-        if (ast.paramCount > 1) {
-            throw QueryError.$(ast.position, "Too many arguments");
-        }
-
-        if (ast.paramCount < 1) {
-            throw QueryError.$(ast.position, "Column name expected");
-        }
-
-        int valueIndex;
-        if ((valueIndex = metadata.getColumnIndexQuiet(ast.rhs.token)) == -1) {
-            throw QueryError.invalidColumn(ast.rhs.position, ast.rhs.token);
-        }
-
-        boolean valueIsString = metadata.getColumnQuick(valueIndex).getType() == ColumnType.STRING;
-
-        ObjList<ExprNode> pby = column.getPartitionBy();
-        int n = pby.size();
-
-        if (n > 0) {
-            ObjHashSet<String> partitionBy = AnalyticUtils.HASH_SET.get();
-            partitionBy.clear();
-
-            for (int i = 0; i < n; i++) {
-                ExprNode node = pby.getQuick(i);
-                if (node.type != ExprNode.NodeType.LITERAL) {
-                    throw QueryError.$(node.position, "Column name expected");
-                }
-
-                if (metadata.getColumnIndexQuiet(node.token) == -1) {
-                    throw QueryError.invalidColumn(node.position, node.token);
-                }
-
-                partitionBy.add(node.token);
-            }
-
+    public AnalyticFunction newInstance(ServerConfiguration configuration, VirtualColumn valueColumn, ObjList<VirtualColumn> partitionBy, boolean supportsRowId) {
+        boolean valueIsString = valueColumn.getType() == ColumnType.STRING;
+        if (partitionBy != null) {
             if (valueIsString) {
                 if (supportsRowId) {
-                    return new PrevRowIdValueAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
+                    return new PrevRowIdValueAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
                 } else {
-                    return new PrevStrAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
+                    return new PrevStrAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
                 }
             }
-            return new PrevValueAnalyticFunction(configuration.getDbAnalyticFuncPage(), metadata, partitionBy, ast.rhs.token, column.getAlias());
+            return new PrevValueAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
         } else {
             if (valueIsString) {
                 if (supportsRowId) {
-                    return new PrevRowIdValueNonPartAnalyticFunction(metadata, ast.rhs.token, column.getAlias());
+                    return new PrevRowIdValueNonPartAnalyticFunction(valueColumn);
                 }
             }
-            return new PrevValueNonPartAnalyticFunction(metadata, ast.rhs.token, column.getAlias());
+            return new PrevValueNonPartAnalyticFunction(valueColumn);
         }
     }
 }

@@ -71,7 +71,7 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
         this.storageFacade.prepare(factory, storageFacade);
         int n = functions.size();
         for (int i = 0; i < n; i++) {
-            functions.getQuick(i).setStorageFacade(storageFacade);
+            functions.getQuick(i).prepare(cursor);
         }
 
         long rowid = -1;
@@ -89,7 +89,7 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
         for (int i = 0; i < n; i++) {
             AnalyticFunction f = functions.getQuick(i);
             if (f instanceof TwoPassAnalyticFunction) {
-                ((TwoPassAnalyticFunction) f).prepare(records);
+                ((TwoPassAnalyticFunction) f).compute(records);
             }
         }
 

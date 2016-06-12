@@ -24,14 +24,12 @@
 package com.questdb.ql.impl.analytic.next;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
-import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.NullRecord;
-import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.analytic.TwoPassAnalyticFunction;
+import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
@@ -44,18 +42,15 @@ import java.io.OutputStream;
 public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalyticFunction, Closeable {
 
     protected final MemoryPages pages;
-    private final RecordColumnMetadata metadata;
-    private final int columnIndex;
+    private final VirtualColumn valueColumn;
     private long offset;
     private Record record;
     private Record next;
     private RecordCursor baseCursor;
-    private SymbolTable symbolTable;
 
-    public AbstractNextRowAnalyticFunction(int pageSize, RecordMetadata parentMetadata, String columnName, String alias) {
+    public AbstractNextRowAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
         this.pages = new MemoryPages(pageSize);
-        this.columnIndex = parentMetadata.getColumnIndex(columnName);
-        this.metadata = new RecordColumnMetadataImpl(alias == null ? columnName : alias, parentMetadata.getColumnQuick(this.columnIndex).getType());
+        this.valueColumn = valueColumn;
     }
 
     @Override
@@ -64,98 +59,110 @@ public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalytic
     }
 
     @Override
+    public void compute(RecordCursor base) {
+        this.baseCursor = base;
+        this.record = base.newRecord();
+        this.offset = 0;
+    }
+
+    @Override
     public byte get() {
-        return next.get(columnIndex);
+        return valueColumn.get(next);
     }
 
     @Override
     public void getBin(OutputStream s) {
-        next.getBin(columnIndex, s);
+        valueColumn.getBin(next, s);
     }
 
     @Override
     public DirectInputStream getBin() {
-        return next.getBin(columnIndex);
+        return valueColumn.getBin(next);
     }
 
     @Override
     public long getBinLen() {
-        return next.getBinLen(columnIndex);
+        return valueColumn.getBinLen(next);
     }
 
     @Override
     public boolean getBool() {
-        return next.getBool(columnIndex);
+        return valueColumn.getBool(next);
     }
 
     @Override
     public long getDate() {
-        return next.getDate(columnIndex);
+        return valueColumn.getDate(next);
     }
 
     @Override
     public double getDouble() {
-        return next.getDouble(columnIndex);
+        return valueColumn.getDouble(next);
     }
 
     @Override
     public float getFloat() {
-        return next.getFloat(columnIndex);
+        return valueColumn.getFloat(next);
     }
 
     @Override
     public CharSequence getFlyweightStr() {
-        return next.getFlyweightStr(columnIndex);
+        return valueColumn.getFlyweightStr(next);
     }
 
     @Override
     public CharSequence getFlyweightStrB() {
-        return next.getFlyweightStrB(columnIndex);
+        return valueColumn.getFlyweightStrB(next);
     }
 
     @Override
     public int getInt() {
-        return next == NullRecord.INSTANCE && metadata.getType() == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : next.getInt(columnIndex);
+        return next == NullRecord.INSTANCE && valueColumn.getType() == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : valueColumn.getInt(next);
     }
 
     @Override
     public long getLong() {
-        return next.getLong(columnIndex);
+        return valueColumn.getLong(next);
     }
 
     @Override
     public RecordColumnMetadata getMetadata() {
-        return metadata;
+        return valueColumn;
     }
 
     @Override
     public short getShort() {
-        return next.getShort(columnIndex);
+        return valueColumn.getShort(next);
     }
 
     @Override
     public void getStr(CharSink sink) {
-        next.getStr(columnIndex, sink);
+        valueColumn.getStr(next, sink);
     }
 
     @Override
     public CharSequence getStr() {
-        return next.getStr(columnIndex);
+        return valueColumn.getStr(next);
     }
 
     @Override
     public int getStrLen() {
-        return next.getStrLen(columnIndex);
+        return valueColumn.getStrLen(next);
     }
 
     @Override
     public String getSym() {
-        return (next instanceof NullRecord) ? null : symbolTable.value(getInt());
+        return (next instanceof NullRecord) ? null : valueColumn.getSymbolTable().value(getInt());
     }
 
     @Override
     public SymbolTable getSymbolTable() {
-        return symbolTable;
+        return valueColumn.getSymbolTable();
+    }
+
+    @Override
+    public void prepare(RecordCursor cursor) {
+        valueColumn.prepare(cursor.getStorageFacade());
     }
 
     @Override
@@ -173,21 +180,5 @@ public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalytic
             next = record;
         }
         this.offset += 8;
-    }
-
-    @Override
-    public void setParent(RecordCursor cursor) {
-    }
-
-    @Override
-    public void setStorageFacade(StorageFacade storageFacade) {
-        this.symbolTable = storageFacade.getSymbolTable(columnIndex);
-    }
-
-    @Override
-    public void prepare(RecordCursor base) {
-        this.baseCursor = base;
-        this.record = base.newRecord();
-        this.offset = 0;
     }
 }

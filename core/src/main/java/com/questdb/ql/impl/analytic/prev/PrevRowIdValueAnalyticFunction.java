@@ -23,17 +23,18 @@
 
 package com.questdb.ql.impl.analytic.prev;
 
-import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
-import com.questdb.ql.impl.LongMetadata;
+import com.questdb.ql.impl.map.DirectHashMap;
+import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.map.MapValues;
-import com.questdb.ql.impl.map.MultiMap;
-import com.questdb.std.*;
+import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.std.CharSink;
+import com.questdb.std.DirectInputStream;
+import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
@@ -42,25 +43,14 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 public class PrevRowIdValueAnalyticFunction extends AbstractPrevValueAnalyticFunction implements Closeable {
-    private static final ObjList<RecordColumnMetadata> valueColumn = new ObjList<>();
-    private final MultiMap map;
-    private final IntList indices;
-    private final ObjList<ColumnType> types;
+    private final DirectHashMap map;
+    private final ObjList<VirtualColumn> partitionBy;
     private RecordCursor parent;
 
-    public PrevRowIdValueAnalyticFunction(int pageSize, RecordMetadata parentMetadata, @Transient ObjHashSet<String> partitionBy, String columnName, String alias) {
-
-        super(parentMetadata, columnName, alias);
-        this.map = new MultiMap(pageSize, parentMetadata, partitionBy, valueColumn, null);
-
-        // key column particulars
-        this.indices = new IntList(partitionBy.size());
-        this.types = new ObjList<>(partitionBy.size());
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            int index = parentMetadata.getColumnIndexQuiet(partitionBy.get(i));
-            indices.add(index);
-            types.add(parentMetadata.getColumn(index).getType());
-        }
+    public PrevRowIdValueAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
+        super(valueColumn);
+        this.partitionBy = partitionBy;
+        this.map = new DirectHashMap(pageSize, partitionBy.size(), MapUtils.ROWID_MAP_VALUES);
     }
 
     @Override
@@ -74,7 +64,7 @@ public class PrevRowIdValueAnalyticFunction extends AbstractPrevValueAnalyticFun
 
     @Override
     public byte get() {
-        return nextNull ? 0 : getParentRecord().get(valueIndex);
+        return nextNull ? 0 : valueColumn.get(getParentRecord());
     }
 
     @Override
@@ -82,68 +72,68 @@ public class PrevRowIdValueAnalyticFunction extends AbstractPrevValueAnalyticFun
         if (nextNull) {
             return;
         }
-        getParentRecord().getBin(valueIndex, s);
+        valueColumn.getBin(getParentRecord(), s);
     }
 
     @Override
     public DirectInputStream getBin() {
-        return nextNull ? null : getParentRecord().getBin(valueIndex);
+        return nextNull ? null : valueColumn.getBin(getParentRecord());
     }
 
     @Override
     public long getBinLen() {
-        return nextNull ? 0 : getParentRecord().getBinLen(valueIndex);
+        return nextNull ? 0 : valueColumn.getBinLen(getParentRecord());
     }
 
     @Override
     public boolean getBool() {
-        return !nextNull && getParentRecord().getBool(valueIndex);
+        return !nextNull && valueColumn.getBool(getParentRecord());
     }
 
     @Override
     public long getDate() {
-        return nextNull ? Numbers.LONG_NaN : getParentRecord().getDate(valueIndex);
+        return nextNull ? Numbers.LONG_NaN : valueColumn.getDate(getParentRecord());
     }
 
     @Override
     public double getDouble() {
-        return nextNull ? Double.NaN : getParentRecord().getDouble(valueIndex);
+        return nextNull ? Double.NaN : valueColumn.getDouble(getParentRecord());
     }
 
     @Override
     public float getFloat() {
-        return nextNull ? Float.NaN : getParentRecord().getFloat(valueIndex);
+        return nextNull ? Float.NaN : valueColumn.getFloat(getParentRecord());
     }
 
     @Override
     public CharSequence getFlyweightStr() {
-        return nextNull ? null : getParentRecord().getFlyweightStr(valueIndex);
+        return nextNull ? null : valueColumn.getFlyweightStr(getParentRecord());
     }
 
     @Override
     public CharSequence getFlyweightStrB() {
-        return nextNull ? null : getParentRecord().getFlyweightStrB(valueIndex);
+        return nextNull ? null : valueColumn.getFlyweightStrB(getParentRecord());
     }
 
     @Override
     public int getInt() {
         if (nextNull) {
-            if (valueType == ColumnType.SYMBOL) {
+            if (valueColumn.getType() == ColumnType.SYMBOL) {
                 return SymbolTable.VALUE_IS_NULL;
             }
             return Numbers.INT_NaN;
         }
-        return getParentRecord().getInt(valueIndex);
+        return valueColumn.getInt(getParentRecord());
     }
 
     @Override
     public long getLong() {
-        return nextNull ? Numbers.LONG_NaN : getParentRecord().getLong(valueIndex);
+        return nextNull ? Numbers.LONG_NaN : valueColumn.getLong(getParentRecord());
     }
 
     @Override
     public short getShort() {
-        return nextNull ? 0 : getParentRecord().getShort(valueIndex);
+        return nextNull ? 0 : valueColumn.getShort(getParentRecord());
     }
 
     @Override
@@ -151,23 +141,28 @@ public class PrevRowIdValueAnalyticFunction extends AbstractPrevValueAnalyticFun
         if (nextNull) {
             sink.put((CharSequence) null);
         } else {
-            getParentRecord().getStr(valueIndex, sink);
+            valueColumn.getStr(getParentRecord(), sink);
         }
     }
 
     @Override
     public CharSequence getStr() {
-        return nextNull ? null : getParentRecord().getStr(valueIndex);
+        return nextNull ? null : valueColumn.getStr(getParentRecord());
     }
 
     @Override
     public int getStrLen() {
-        return nextNull ? 0 : getParentRecord().getStrLen(valueIndex);
+        return nextNull ? 0 : valueColumn.getStrLen(getParentRecord());
     }
 
     @Override
     public String getSym() {
-        return nextNull ? null : getParentRecord().getSym(valueIndex);
+        return nextNull ? null : valueColumn.getSym(getParentRecord());
+    }
+
+    @Override
+    public void prepare(RecordCursor cursor) {
+        parent = cursor;
     }
 
     @Override
@@ -177,15 +172,10 @@ public class PrevRowIdValueAnalyticFunction extends AbstractPrevValueAnalyticFun
     }
 
     @Override
-    public void setParent(RecordCursor cursor) {
-        parent = cursor;
-    }
-
-    @Override
     public void scroll(Record record) {
-        MultiMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = types.size(); i < n; i++) {
-            kw.put(record, indices.getQuick(i), types.getQuick(i));
+        DirectHashMap.KeyWriter kw = map.keyWriter();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
         }
 
         MapValues values = map.getOrCreateValues(kw);
@@ -201,9 +191,4 @@ public class PrevRowIdValueAnalyticFunction extends AbstractPrevValueAnalyticFun
     private Record getParentRecord() {
         return parent.recordAt(Unsafe.getUnsafe().getLong(bufPtr));
     }
-
-    static {
-        valueColumn.add(LongMetadata.INSTANCE);
-    }
-
 }

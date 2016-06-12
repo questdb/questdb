@@ -23,11 +23,10 @@
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.ex.ParserException;
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.net.http.ServerConfiguration;
-import com.questdb.ql.model.AnalyticColumn;
+import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.std.ObjList;
 
 public interface AnalyticFunctionFactory {
-    AnalyticFunction newInstance(ServerConfiguration configuration, RecordMetadata metadata, AnalyticColumn column, boolean supportsRowId) throws ParserException;
+    AnalyticFunction newInstance(ServerConfiguration configuration, VirtualColumn valueColumn, ObjList<VirtualColumn> partitionBy, boolean supportsRowId);
 }

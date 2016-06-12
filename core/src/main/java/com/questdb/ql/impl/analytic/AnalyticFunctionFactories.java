@@ -24,29 +24,29 @@
 package com.questdb.ql.impl.analytic;
 
 import com.questdb.ex.ParserException;
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.impl.analytic.next.NextRowAnalyticFunctionFactory;
 import com.questdb.ql.impl.analytic.prev.PrevValueAnalyticFunctionFactory;
-import com.questdb.ql.model.AnalyticColumn;
-import com.questdb.ql.model.ExprNode;
-import com.questdb.ql.parser.QueryError;
+import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.ObjList;
 
 public class AnalyticFunctionFactories {
     private static final CharSequenceObjHashMap<AnalyticFunctionFactory> factories = new CharSequenceObjHashMap<>();
 
-    public static AnalyticFunction newInstance(ServerConfiguration configuration, RecordMetadata metadata, AnalyticColumn column, boolean supportsRowId) throws ParserException {
-        ExprNode ast = column.getAst();
+    public static AnalyticFunction newInstance(
+            ServerConfiguration configuration,
+            String name,
+            VirtualColumn valueColumn,
+            ObjList<VirtualColumn> partitionBy,
+            boolean supportsRowId) throws ParserException {
 
-        if (ast.type == ExprNode.NodeType.FUNCTION) {
-            AnalyticFunctionFactory factory = factories.get(ast.token);
-            if (factory != null) {
-                return factory.newInstance(configuration, metadata, column, supportsRowId);
-            }
+        AnalyticFunctionFactory factory = factories.get(name);
+        if (factory != null) {
+            return factory.newInstance(configuration, valueColumn, partitionBy, supportsRowId);
         }
 
-        throw QueryError.$(ast.position, "Unknown function");
+        return null;
     }
 
     static {

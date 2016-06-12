@@ -1,45 +1,51 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2016 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.ql.impl.analytic.prev;
 
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
+import com.questdb.ql.impl.map.DirectHashMap;
+import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.map.MapValues;
-import com.questdb.ql.impl.map.MultiMap;
-import com.questdb.std.IntList;
-import com.questdb.std.ObjHashSet;
+import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
-import com.questdb.std.Transient;
-import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;
 
 public class PrevValueAnalyticFunction extends AbstractPrevValueAnalyticFunction implements Closeable {
-    private final MultiMap map;
-    private final IntList indices;
-    private final ObjList<ColumnType> types;
+    private final DirectHashMap map;
+    private final ObjList<VirtualColumn> partitionBy;
 
-    public PrevValueAnalyticFunction(int pageSize, RecordMetadata parentMetadata, @Transient ObjHashSet<String> partitionBy, String columnName, String alias) {
-
-        super(parentMetadata, columnName, alias);
-        // value column particulars
-        RecordColumnMetadata m = parentMetadata.getColumnQuick(this.valueIndex);
-        ObjList<RecordColumnMetadata> valueColumns = new ObjList<>(1);
-        valueColumns.add(m);
-
-        this.map = new MultiMap(pageSize, parentMetadata, partitionBy, valueColumns, null);
-
-        // key column particulars
-        this.indices = new IntList(partitionBy.size());
-        this.types = new ObjList<>(partitionBy.size());
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            int index = parentMetadata.getColumnIndexQuiet(partitionBy.get(i));
-            indices.add(index);
-            types.add(parentMetadata.getColumn(index).getType());
-        }
+    public PrevValueAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
+        super(valueColumn);
+        this.partitionBy = partitionBy;
+        ObjList<VirtualColumn> l = new ObjList<>();
+        l.add(valueColumn);
+        this.map = new DirectHashMap(pageSize, partitionBy.size(), l);
     }
 
     @Override
@@ -59,9 +65,9 @@ public class PrevValueAnalyticFunction extends AbstractPrevValueAnalyticFunction
 
     @Override
     public void scroll(Record record) {
-        MultiMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = types.size(); i < n; i++) {
-            kw.put(record, indices.getQuick(i), types.getQuick(i));
+        DirectHashMap.KeyWriter kw = map.keyWriter();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
         }
 
         MapValues values = map.getOrCreateValues(kw);
@@ -70,70 +76,70 @@ public class PrevValueAnalyticFunction extends AbstractPrevValueAnalyticFunction
             store(record, values);
         } else {
             nextNull = false;
-            switch (valueType) {
+            switch (valueColumn.getType()) {
                 case BOOLEAN:
                     Unsafe.getUnsafe().putByte(bufPtr, values.getByte(0));
-                    values.putByte(0, (byte) (record.getBool(valueIndex) ? 1 : 0));
+                    values.putByte(0, (byte) (valueColumn.getBool(record) ? 1 : 0));
                     break;
                 case BYTE:
                     Unsafe.getUnsafe().putByte(bufPtr, values.getByte(0));
-                    values.putByte(0, record.get(valueIndex));
+                    values.putByte(0, valueColumn.get(record));
                     break;
                 case DOUBLE:
                     Unsafe.getUnsafe().putDouble(bufPtr, values.getDouble(0));
-                    values.putDouble(0, record.getDouble(valueIndex));
+                    values.putDouble(0, valueColumn.getDouble(record));
                     break;
                 case FLOAT:
                     Unsafe.getUnsafe().putFloat(bufPtr, values.getFloat(0));
-                    values.putFloat(0, record.getFloat(valueIndex));
+                    values.putFloat(0, valueColumn.getFloat(record));
                     break;
                 case SYMBOL:
                 case INT:
                     Unsafe.getUnsafe().putInt(bufPtr, values.getInt(0));
-                    values.putInt(0, record.getInt(valueIndex));
+                    values.putInt(0, valueColumn.getInt(record));
                     break;
                 case LONG:
                 case DATE:
                     Unsafe.getUnsafe().putLong(bufPtr, values.getLong(0));
-                    values.putLong(0, record.getLong(valueIndex));
+                    values.putLong(0, valueColumn.getLong(record));
                     break;
                 case SHORT:
                     Unsafe.getUnsafe().putShort(bufPtr, values.getShort(0));
-                    values.putShort(0, record.getShort(valueIndex));
+                    values.putShort(0, valueColumn.getShort(record));
                     break;
                 default:
-                    throw new JournalRuntimeException("Unsupported type: " + valueType);
+                    throw new JournalRuntimeException("Unsupported type: " + valueColumn.getType());
             }
         }
     }
 
     private void store(Record record, MapValues values) {
-        switch (valueType) {
+        switch (valueColumn.getType()) {
             case BOOLEAN:
-                values.putByte(0, (byte) (record.getBool(valueIndex) ? 1 : 0));
+                values.putByte(0, (byte) (valueColumn.getBool(record) ? 1 : 0));
                 break;
             case BYTE:
-                values.putByte(0, record.get(valueIndex));
+                values.putByte(0, valueColumn.get(record));
                 break;
             case DOUBLE:
-                values.putDouble(0, record.getDouble(valueIndex));
+                values.putDouble(0, valueColumn.getDouble(record));
                 break;
             case FLOAT:
-                values.putFloat(0, record.getFloat(valueIndex));
+                values.putFloat(0, valueColumn.getFloat(record));
                 break;
             case SYMBOL:
             case INT:
-                values.putInt(0, record.getInt(valueIndex));
+                values.putInt(0, valueColumn.getInt(record));
                 break;
             case LONG:
             case DATE:
-                values.putLong(0, record.getLong(valueIndex));
+                values.putLong(0, valueColumn.getLong(record));
                 break;
             case SHORT:
-                values.putShort(0, record.getShort(valueIndex));
+                values.putShort(0, valueColumn.getShort(record));
                 break;
             default:
-                throw new JournalRuntimeException("Unsupported type: " + valueType);
+                throw new JournalRuntimeException("Unsupported type: " + valueColumn.getType());
         }
 
     }

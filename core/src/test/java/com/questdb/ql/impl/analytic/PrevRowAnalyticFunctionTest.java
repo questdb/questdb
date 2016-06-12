@@ -24,14 +24,7 @@
 package com.questdb.ql.impl.analytic;
 
 import com.questdb.ex.ParserException;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
-import com.questdb.ql.impl.analytic.prev.PrevValueAnalyticFunction;
 import com.questdb.ql.parser.QueryError;
-import com.questdb.std.ObjHashSet;
-import com.questdb.std.ObjList;
-import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -511,24 +504,6 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-29572\n" +
                 "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t11755\n";
         assertThat(expected, "select sho, str, sym, timestamp , prev(sho) blah over (partition by str) from abc", true);
-    }
-
-    @Test
-    public void testSimple() throws Exception {
-        final RecordSource recordSource = compiler.compileSource(factory, "xyz");
-        sink.clear();
-
-        final AnalyticRecordSource as = new AnalyticRecordSource(recordSource, new ObjList<AnalyticFunction>() {{
-            add(new PrevValueAnalyticFunction(1024 * 1024, recordSource.getMetadata(), new ObjHashSet<String>() {{
-                add("str");
-            }}, "i", null));
-        }});
-
-        sink.clear();
-        RecordCursor cursor = as.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
-        printer.printCursor(cursor);
-
-        TestUtils.assertEquals(expected, sink);
     }
 
     @Test

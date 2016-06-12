@@ -24,7 +24,6 @@
 package com.questdb.ql.impl.join.asof;
 
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
@@ -32,7 +31,7 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.LongMetadata;
+import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.impl.map.MultiMap;
 import com.questdb.std.*;
@@ -40,7 +39,6 @@ import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public class LastVarRecordMap implements LastRecordMap {
-    private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();
     private final MultiMap map;
     private final LongList pages = new LongList();
     private final int pageSize;
@@ -126,7 +124,7 @@ public class LastVarRecordMap implements LastRecordMap {
         }
 
         this.varOffset = varOffset;
-        this.map = new MultiMap(offsetPageSize, slaveMetadata, keyCols, valueMetadata, null);
+        this.map = new MultiMap(offsetPageSize, slaveMetadata, keyCols, MapUtils.ROWID_MAP_VALUES, null);
         this.metadata = slaveMetadata;
         this.record = new MapRecord(this.metadata);
     }
@@ -344,9 +342,5 @@ public class LastVarRecordMap implements LastRecordMap {
             this.address = address + 4;
             return this;
         }
-    }
-
-    static {
-        valueMetadata.add(LongMetadata.INSTANCE);
     }
 }

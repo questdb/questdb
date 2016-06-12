@@ -29,5 +29,5 @@ import com.questdb.ql.RecordCursor;
 public interface TwoPassAnalyticFunction extends AnalyticFunction {
     void addRecord(Record record, long rowid);
 
-    void prepare(RecordCursor base);
+    void compute(RecordCursor base);
 }

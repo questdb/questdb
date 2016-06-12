@@ -24,13 +24,11 @@
 package com.questdb.ql.impl.analytic.prev;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.RecordCursor;
-import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
+import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
@@ -41,24 +39,15 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunction, Closeable {
-    protected final ColumnType valueType;
-    protected final int valueIndex;
     protected final long bufPtr;
-    private final RecordColumnMetadata valueMetadata;
+    protected final VirtualColumn valueColumn;
     protected boolean nextNull = true;
     protected boolean closed = false;
-    private StorageFacade storageFacade;
 
-    public AbstractPrevValueAnalyticFunction(RecordMetadata parentMetadata, String columnName, String alias) {
-        // value column particulars
-        this.valueIndex = parentMetadata.getColumnIndex(columnName);
-        RecordColumnMetadata m = parentMetadata.getColumn(columnName);
-        this.valueType = m.getType();
-
+    public AbstractPrevValueAnalyticFunction(VirtualColumn valueColumn) {
+        this.valueColumn = valueColumn;
         // buffer where "current" value is kept
         this.bufPtr = Unsafe.getUnsafe().allocateMemory(8);
-        // metadata
-        this.valueMetadata = new RecordColumnMetadataImpl(alias == null ? columnName : alias, valueType);
     }
 
     @Override
@@ -122,7 +111,7 @@ public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunct
 
     @Override
     public int getInt() {
-        return nextNull ? (valueType == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : Numbers.INT_NaN) : Unsafe.getUnsafe().getInt(bufPtr);
+        return nextNull ? (valueColumn.getType() == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : Numbers.INT_NaN) : Unsafe.getUnsafe().getInt(bufPtr);
     }
 
     @Override
@@ -132,7 +121,7 @@ public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunct
 
     @Override
     public RecordColumnMetadata getMetadata() {
-        return valueMetadata;
+        return valueColumn;
     }
 
     @Override
@@ -157,25 +146,21 @@ public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunct
 
     @Override
     public String getSym() {
-        return nextNull ? null : storageFacade.getSymbolTable(valueIndex).value(getInt());
+        return nextNull ? null : valueColumn.getSymbolTable().value(getInt());
     }
 
     @Override
     public SymbolTable getSymbolTable() {
-        return storageFacade.getSymbolTable(valueIndex);
+        return valueColumn.getSymbolTable();
+    }
+
+    @Override
+    public void prepare(RecordCursor cursor) {
+        valueColumn.prepare(cursor.getStorageFacade());
     }
 
     @Override
     public void reset() {
         nextNull = true;
-    }
-
-    @Override
-    public void setParent(RecordCursor cursor) {
-    }
-
-    @Override
-    public void setStorageFacade(StorageFacade storageFacade) {
-        this.storageFacade = storageFacade;
     }
 }

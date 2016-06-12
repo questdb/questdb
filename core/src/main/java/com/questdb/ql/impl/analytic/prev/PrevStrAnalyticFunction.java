@@ -24,22 +24,23 @@
 package com.questdb.ql.impl.analytic.prev;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
-import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.IntMetadata;
 import com.questdb.ql.impl.LongMetadata;
-import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
+import com.questdb.ql.impl.map.DirectHashMap;
+import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.map.MapValues;
-import com.questdb.ql.impl.map.MultiMap;
-import com.questdb.std.*;
-import com.questdb.store.ColumnType;
+import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.std.CharSink;
+import com.questdb.std.DirectCharSequence;
+import com.questdb.std.DirectInputStream;
+import com.questdb.std.ObjList;
 import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
@@ -48,33 +49,23 @@ import java.io.OutputStream;
 
 public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     private static final ObjList<RecordColumnMetadata> valueColumns = new ObjList<>();
-    private final MultiMap map;
-    private final IntList indices;
-    private final ObjList<ColumnType> types;
-    private final int valueIndex;
-    private final RecordColumnMetadata valueMetadata;
+    private final DirectHashMap map;
     private final DirectCharSequence cs = new DirectCharSequence();
-    private final int addressIndex;
+    private final ObjList<VirtualColumn> partitionBy;
+    private final VirtualColumn valueColumn;
     private long bufPtr = 0;
     private int bufPtrLen = 0;
     private boolean nextNull = true;
     private boolean closed = false;
 
-    public PrevStrAnalyticFunction(int pageSize, RecordMetadata parentMetadata, @Transient ObjHashSet<String> partitionBy, String columnName, String alias) {
-        this.valueIndex = parentMetadata.getColumnIndex(columnName);
-        // value column particulars
-        this.map = new MultiMap(pageSize, parentMetadata, partitionBy, valueColumns, null);
-        this.addressIndex = this.map.getMetadata().getColumnIndex(LongMetadata.INSTANCE.getName());
+    public PrevStrAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
 
-        // key column particulars
-        this.indices = new IntList(partitionBy.size());
-        this.types = new ObjList<>(partitionBy.size());
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            int index = parentMetadata.getColumnIndexQuiet(partitionBy.get(i));
-            indices.add(index);
-            types.add(parentMetadata.getColumn(index).getType());
-        }
-        this.valueMetadata = new RecordColumnMetadataImpl(alias == null ? columnName : alias, ColumnType.STRING);
+        this.partitionBy = partitionBy;
+        this.valueColumn = valueColumn;
+        // value column particulars
+        ObjList<VirtualColumn> l = new ObjList<>();
+        l.add(valueColumn);
+        this.map = new DirectHashMap(pageSize, partitionBy.size(), l);
     }
 
     @Override
@@ -84,10 +75,11 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
         }
 
         // free pointers in map values
-        RecordCursor cursor = map.getCursor();
-        while (cursor.hasNext()) {
-            Unsafe.getUnsafe().freeMemory(cursor.next().getLong(addressIndex));
-        }
+        // todo: free
+//        RecordCursor cursor = map.getCursor();
+//        while (cursor.hasNext()) {
+//            Unsafe.getUnsafe().freeMemory(cursor.next().getLong(addressIndex));
+//        }
         Misc.free(map);
         if (bufPtr != 0) {
             Unsafe.getUnsafe().freeMemory(bufPtr);
@@ -157,7 +149,7 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
 
     @Override
     public RecordColumnMetadata getMetadata() {
-        return valueMetadata;
+        return valueColumn;
     }
 
     @Override
@@ -191,19 +183,23 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     }
 
     @Override
+    public void prepare(RecordCursor cursor) {
+    }
+
+    @Override
     public void reset() {
         map.clear();
     }
 
     @Override
     public void scroll(Record record) {
-        MultiMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = types.size(); i < n; i++) {
-            kw.put(record, indices.getQuick(i), types.getQuick(i));
+        DirectHashMap.KeyWriter kw = map.keyWriter();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
         }
 
         MapValues values = map.getOrCreateValues(kw);
-        final CharSequence str = record.getFlyweightStr(valueIndex);
+        final CharSequence str = valueColumn.getFlyweightStr(record);
 
         if (values.isNew()) {
             nextNull = true;
@@ -220,14 +216,6 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
                 Chars.put(ptr, str);
             }
         }
-    }
-
-    @Override
-    public void setParent(RecordCursor cursor) {
-    }
-
-    @Override
-    public void setStorageFacade(StorageFacade storageFacade) {
     }
 
     private static int toByteLen(int charLen) {

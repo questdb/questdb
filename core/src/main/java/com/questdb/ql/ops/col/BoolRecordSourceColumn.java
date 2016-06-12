@@ -32,7 +32,7 @@ public class BoolRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
 
     public BoolRecordSourceColumn(int index) {
-        super(ColumnType.DOUBLE);
+        super(ColumnType.BOOLEAN);
         this.index = index;
     }
 

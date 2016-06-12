@@ -24,14 +24,7 @@
 package com.questdb.ql.impl.analytic;
 
 import com.questdb.ex.ParserException;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.RecordSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
-import com.questdb.ql.impl.analytic.next.NextRowAnalyticFunction;
 import com.questdb.ql.parser.QueryError;
-import com.questdb.std.ObjHashSet;
-import com.questdb.std.ObjList;
-import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -457,24 +450,6 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-24455\n" +
                 "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0\n";
         assertThat(expected, "select sho, str, sym, timestamp , next(sho) blah over (partition by str) from abc", true);
-    }
-
-    @Test
-    public void testSimple() throws Exception {
-        final RecordSource recordSource = compiler.compileSource(factory, "xyz");
-        sink.clear();
-
-        final CachingAnalyticRecordSource as = new CachingAnalyticRecordSource(1024 * 1024, recordSource, new ObjList<AnalyticFunction>() {{
-            add(new NextRowAnalyticFunction(1024 * 1024, recordSource.getMetadata(), new ObjHashSet<String>() {{
-                add("str");
-            }}, "i", null));
-        }});
-
-        sink.clear();
-        RecordCursor cursor = as.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
-        printer.printCursor(cursor);
-
-        TestUtils.assertEquals(expected, sink);
     }
 
     @Test

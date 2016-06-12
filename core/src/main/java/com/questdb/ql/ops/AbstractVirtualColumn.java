@@ -141,7 +141,7 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
 
     @Override
     public SymbolTable getSymbolTable() {
-        throw new UnsupportedOperationException();
+        return null;
     }
 
     @Override

@@ -23,43 +23,29 @@
 
 package com.questdb.ql.impl.analytic.next;
 
-import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.LongMetadata;
+import com.questdb.ql.impl.map.DirectHashMap;
+import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.map.MapValues;
-import com.questdb.ql.impl.map.MultiMap;
-import com.questdb.std.IntList;
-import com.questdb.std.ObjHashSet;
+import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
-import com.questdb.std.Transient;
-import com.questdb.store.ColumnType;
 
 public class NextRowAnalyticFunction extends AbstractNextRowAnalyticFunction {
-    private static final ObjList<RecordColumnMetadata> valueColumn = new ObjList<>();
-    private final MultiMap map;
-    private final IntList indices;
-    private final ObjList<ColumnType> types;
+    private final DirectHashMap map;
+    private final ObjList<VirtualColumn> partitionBy;
 
-    public NextRowAnalyticFunction(int pageSize, RecordMetadata parentMetadata, @Transient ObjHashSet<String> partitionBy, String columnName, String alias) {
-        super(pageSize, parentMetadata, columnName, alias);
-        this.map = new MultiMap(pageSize, parentMetadata, partitionBy, valueColumn, null);
-        this.indices = new IntList(partitionBy.size());
-        this.types = new ObjList<>(partitionBy.size());
-
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            int index = parentMetadata.getColumnIndexQuiet(partitionBy.get(i));
-            indices.add(index);
-            types.add(parentMetadata.getColumn(index).getType());
-        }
+    public NextRowAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
+        super(pageSize, valueColumn);
+        this.partitionBy = partitionBy;
+        this.map = new DirectHashMap(pageSize, partitionBy.size(), MapUtils.ROWID_MAP_VALUES);
     }
 
     @Override
     public void addRecord(Record record, long rowid) {
-        MultiMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = indices.size(); i < n; i++) {
-            kw.put(record, indices.getQuick(i), types.getQuick(i));
+        DirectHashMap.KeyWriter kw = map.keyWriter();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
         }
         MapValues values = map.getOrCreateValues(kw);
         // allocateOffset memory where we would eventually write "next" value
@@ -81,9 +67,5 @@ public class NextRowAnalyticFunction extends AbstractNextRowAnalyticFunction {
     public void reset() {
         super.reset();
         map.clear();
-    }
-
-    static {
-        valueColumn.add(LongMetadata.INSTANCE);
     }
 }

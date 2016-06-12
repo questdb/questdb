@@ -23,16 +23,16 @@
 
 package com.questdb.ql.impl.analytic.next;
 
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
+import com.questdb.ql.ops.VirtualColumn;
 
 public class NextRowNonPartAnalyticFunction extends AbstractNextRowAnalyticFunction {
 
     private long prevAddress = -1;
 
-    public NextRowNonPartAnalyticFunction(int pageSize, RecordMetadata parentMetadata, String columnName, String alias) {
-        super(pageSize, parentMetadata, columnName, alias);
+    public NextRowNonPartAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
+        super(pageSize, valueColumn);
     }
 
     @Override
