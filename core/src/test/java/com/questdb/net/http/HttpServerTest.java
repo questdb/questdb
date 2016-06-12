@@ -403,6 +403,7 @@ public class HttpServerTest extends AbstractJournalTest {
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(factory));
         }});
+
         server.start();
 
         try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {

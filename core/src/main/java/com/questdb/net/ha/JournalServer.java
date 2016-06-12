@@ -155,11 +155,11 @@ public class JournalServer {
         }
 
         if (addressSender != null) {
-            LOG.info().$("Stopping mcast sender on %d").$(uid).$();
+            LOG.info().$("Stopping mcast sender on ").$(uid).$();
             addressSender.halt();
         }
 
-        LOG.info().$("Closing channels on %d").$(uid).$();
+        LOG.info().$("Closing channels on ").$(uid).$();
         closeChannels();
 
         try {
@@ -167,7 +167,7 @@ public class JournalServer {
                 LOG.info().$("Waiting for ").$(service.getActiveCount()).$(" agent services to stop on ").$(uid).$();
                 service.awaitTermination(timeout, unit);
             }
-            LOG.info().$("Server %d is shutdown").$(uid).$();
+            LOG.info().$("Server ").$(uid).$(" is shutdown").$();
         } catch (InterruptedException e) {
             LOG.info().$("Server ").$(uid).$(" is shutdown, but some connections are still lingering.").$();
         }
