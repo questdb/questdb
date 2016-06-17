@@ -76,11 +76,11 @@ public class PrevValueAnalyticFunction extends AbstractPrevValueAnalyticFunction
             nextNull = false;
             switch (valueColumn.getType()) {
                 case BOOLEAN:
-                    Unsafe.getUnsafe().putByte(bufPtr, values.getByte(0));
+                    Unsafe.getUnsafe().putByte(bufPtr, values.get(0));
                     values.putByte(0, (byte) (valueColumn.getBool(record) ? 1 : 0));
                     break;
                 case BYTE:
-                    Unsafe.getUnsafe().putByte(bufPtr, values.getByte(0));
+                    Unsafe.getUnsafe().putByte(bufPtr, values.get(0));
                     values.putByte(0, valueColumn.get(record));
                     break;
                 case DOUBLE:

@@ -36,7 +36,7 @@ public final class MapValues {
         this.valueOffsets = valueOffsets;
     }
 
-    public byte getByte(int index) {
+    public byte get(int index) {
         return Unsafe.getUnsafe().getByte(address0(index));
     }
 

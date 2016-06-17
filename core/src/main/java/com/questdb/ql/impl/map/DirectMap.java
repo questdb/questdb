@@ -132,7 +132,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         keyWriter.commit();
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
-        int index = Hash.hashMem(keyWriter.startAddr + keyBlockOffset, keyWriter.len - keyBlockOffset) & mask;
+        int index = Hash.hashMem(keyWriter.startAddr + keyDataOffset, keyWriter.len - keyDataOffset) & mask;
         long offset = offsets.get(index);
 
         if (offset == -1) {
@@ -155,7 +155,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         keyWriter.commit();
         // rollback key right away
         kPos = keyWriter.startAddr;
-        int index = Hash.hashMem(keyWriter.startAddr + keyBlockOffset, keyWriter.len - keyBlockOffset) & mask;
+        int index = Hash.hashMem(keyWriter.startAddr + keyDataOffset, keyWriter.len - keyDataOffset) & mask;
         long offset = offsets.get(index);
 
         if (offset == -1) {
@@ -192,8 +192,8 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         long lim = b + keyWriter.len;
 
         // skip to the data
-        a += keyBlockOffset;
-        b += keyBlockOffset;
+        a += keyDataOffset;
+        b += keyDataOffset;
 
         while (b < lim - 8) {
             if (Unsafe.getUnsafe().getLong(a) != Unsafe.getUnsafe().getLong(b)) {
@@ -251,7 +251,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
             if (offset == -1) {
                 continue;
             }
-            int index = Hash.hashMem(kStart + offset + keyBlockOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyBlockOffset) & mask;
+            int index = Hash.hashMem(kStart + offset + keyDataOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyDataOffset) & mask;
             while (pointers.get(index) != -1) {
                 index = (index + 1) & mask;
             }

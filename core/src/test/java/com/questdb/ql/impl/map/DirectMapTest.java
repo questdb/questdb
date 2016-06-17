@@ -32,14 +32,28 @@ import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
 
 public class DirectMapTest {
+
+    private static ObjList<ColumnType> types = new ObjList<>();
+
+    @BeforeClass
+    public static void setUp() throws Exception {
+        types.add(ColumnType.INT);
+        types.add(ColumnType.LONG);
+        types.add(ColumnType.SHORT);
+        types.add(ColumnType.BYTE);
+        types.add(ColumnType.DOUBLE);
+        types.add(ColumnType.FLOAT);
+    }
+
     @Test
-    public void testReadWrite() throws Exception {
+    public void testAllKeysAndCursor() throws Exception {
 
         // Objective of this test is to create DirectMap with all
         // possible types in both key and value. Simultaneously create
@@ -47,18 +61,9 @@ public class DirectMapTest {
         // and value is object, which holds same primitive values we
         // put into direct map.
 
-        ObjList<ColumnType> types = new ObjList<>();
-        types.add(ColumnType.INT);
-        types.add(ColumnType.LONG);
-        types.add(ColumnType.SHORT);
-        types.add(ColumnType.BYTE);
-        types.add(ColumnType.DOUBLE);
-        types.add(ColumnType.FLOAT);
 
         Rnd rnd = new Rnd();
         long address = Unsafe.getUnsafe().allocateMemory(2 * 1024 * 1024);
-
-
         long tmp = Unsafe.getUnsafe().allocateMemory(140);
 
         DirectMap map = new DirectMap(1024, 64, types);
@@ -186,11 +191,54 @@ public class DirectMapTest {
         map.clear();
         Assert.assertEquals(0, map.size());
         int count = 0;
-        for (DirectMapEntry e : map) {
+        for (DirectMapEntry ignored : map) {
             count++;
         }
         Assert.assertEquals(0, count);
 
+        map.close();
+
+        Unsafe.getUnsafe().freeMemory(address);
+        Unsafe.getUnsafe().freeMemory(tmp);
+    }
+
+    @Test
+    public void testValuesReadWrite() throws Exception {
+        DirectMap map = new DirectMap(1024, 64, types);
+        HashMap<String, MapValue> hashMap = new HashMap<>();
+        Rnd rnd = new Rnd();
+        int n = 1000;
+
+        for (int i = 0; i < n; i++) {
+            DirectMap.KeyWriter w = map.keyWriter();
+            String s = rnd.nextString(rnd.nextPositiveInt() % 32);
+            w.putStr(s);
+            MapValue v = new MapValue();
+            MapValues values = map.getOrCreateValues(w);
+            values.putInt(0, v.i = rnd.nextPositiveInt());
+            values.putLong(1, v.l = rnd.nextPositiveLong());
+            values.putShort(2, v.s = (short) rnd.nextInt());
+            values.putByte(3, v.bt = (byte) rnd.nextInt());
+            values.putDouble(4, v.d = rnd.nextDouble());
+            values.putFloat(5, v.f = rnd.nextFloat());
+            hashMap.put(s, v);
+        }
+
+        for (Map.Entry<String, MapValue> me : hashMap.entrySet()) {
+            DirectMap.KeyWriter kw = map.keyWriter();
+            kw.putStr(me.getKey());
+            MapValues values = map.getValues(kw);
+            Assert.assertNotNull(values);
+
+            MapValue v = me.getValue();
+            Assert.assertEquals(v.i, values.getInt(0));
+            Assert.assertEquals(v.l, values.getLong(1));
+            Assert.assertEquals(v.s, values.getShort(2));
+            Assert.assertEquals(v.bt, values.get(3));
+            Assert.assertEquals(v.d, values.getDouble(4), 0.000000001);
+            Assert.assertEquals(v.f, values.getFloat(5), 0.0000000001f);
+
+        }
         map.close();
     }
 
