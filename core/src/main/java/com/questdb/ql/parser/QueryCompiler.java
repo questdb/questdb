@@ -1256,7 +1256,6 @@ public class QueryCompiler {
     private void optimiseJoins(QueryModel parent, JournalReaderFactory factory) throws JournalException, ParserException {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
 
-        // todo: remove check, this method must not be called on single journal SQLs
         int n = joinModels.size();
         if (n > 1) {
 

@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.map;
@@ -29,7 +30,6 @@ import com.questdb.misc.Hash;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
 import com.questdb.std.*;
 import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
@@ -39,7 +39,7 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final float loadFactor;
     private final KeyWriter keyWriter = new KeyWriter();
-    private final MapRecordSource recordSource;
+    private final MapRecordCursor cursor;
     private final MapValues values;
     private final MapMetadata metadata;
     private int keyBlockOffset;
@@ -114,11 +114,10 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         }
 
         this.values = new MapValues(valueOffsets);
-        this.metadata = new MapMetadata(keySourceMetadata, keyNames, valueColumns);
         this.keyBlockOffset = offset;
         this.keyDataOffset = this.keyBlockOffset + 4 * keyNames.size();
-        MapRecord record = new MapRecord(metadata, valueOffsets, keyDataOffset, keyBlockOffset);
-        this.recordSource = new MapRecordSource(record, this.values, interceptors);
+        this.metadata = new MapMetadata(keySourceMetadata, keyNames, valueColumns);
+        this.cursor = new MapRecordCursor(metadata, valueOffsets, keyDataOffset, keyBlockOffset, this.values, interceptors);
     }
 
     public void clear() {
@@ -134,8 +133,8 @@ public class MultiMap extends DirectMemoryStructure implements Mutable {
         super.close();
     }
 
-    public RecordCursor getCursor() {
-        return recordSource.init(kStart, size);
+    public MapRecordCursor getCursor() {
+        return cursor.init(kStart, size);
     }
 
     public RecordMetadata getMetadata() {

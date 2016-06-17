@@ -21,15 +21,36 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.ql.impl.map;
 
-import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Unsafe;
+import com.questdb.std.AbstractImmutableIterator;
 
-public abstract class AbstractRecord implements Record {
+public final class DirectMapIterator extends AbstractImmutableIterator<DirectMapEntry> {
+    private final DirectMapEntry entry;
+    private int count;
+    private long address;
 
-    protected final RecordMetadata metadata;
+    DirectMapIterator(DirectMapEntry entry) {
+        this.entry = entry;
+    }
 
-    protected AbstractRecord(RecordMetadata metadata) {
-        this.metadata = metadata;
+    @Override
+    public boolean hasNext() {
+        return count > 0;
+    }
+
+    @Override
+    public DirectMapEntry next() {
+        long address = this.address;
+        this.address = address + Unsafe.getUnsafe().getInt(address);
+        count--;
+        return entry.init(address);
+    }
+
+    DirectMapIterator init(long address, int count) {
+        this.address = address;
+        this.count = count;
+        return this;
     }
 }

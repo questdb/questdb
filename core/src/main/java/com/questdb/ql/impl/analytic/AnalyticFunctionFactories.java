@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.ex.ParserException;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.impl.analytic.next.NextRowAnalyticFunctionFactory;
 import com.questdb.ql.impl.analytic.prev.PrevValueAnalyticFunctionFactory;
@@ -39,7 +38,7 @@ public class AnalyticFunctionFactories {
             String name,
             VirtualColumn valueColumn,
             ObjList<VirtualColumn> partitionBy,
-            boolean supportsRowId) throws ParserException {
+            boolean supportsRowId) {
 
         AnalyticFunctionFactory factory = factories.get(name);
         if (factory != null) {

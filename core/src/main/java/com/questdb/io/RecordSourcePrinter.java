@@ -29,6 +29,7 @@ import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.std.CharSink;
+import com.questdb.std.ImmutableIterator;
 
 import java.io.IOException;
 
@@ -47,11 +48,14 @@ public class RecordSourcePrinter {
     }
 
     public void printCursor(RecordCursor src) throws IOException {
-        printCursor(src, false);
+        printCursor(src, false, src.getMetadata());
     }
 
     public void printCursor(RecordCursor src, boolean header) throws IOException {
-        RecordMetadata metadata = src.getMetadata();
+        printCursor(src, header, src.getMetadata());
+    }
+
+    public void printCursor(ImmutableIterator<Record> src, boolean header, RecordMetadata metadata) throws IOException {
         if (header) {
             printHeader(metadata);
         }

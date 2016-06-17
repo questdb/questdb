@@ -29,7 +29,6 @@ import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Dates;
 import com.questdb.model.Quote;
 import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.map.MapValues;
@@ -143,8 +142,7 @@ public class MultiMapTest extends AbstractTest {
         }
 
         RecordSourcePrinter out = new RecordSourcePrinter(sink);
-        RecordCursor c = map.getCursor();
-        out.printCursor(c);
+        out.printCursor(map.getCursor(), false, map.getMetadata());
         map.free();
 
         Assert.assertEquals(expected, sink.toString());

@@ -40,11 +40,11 @@ import java.io.OutputStream;
 public class CountRecordSource extends AbstractCombinedRecordSource {
     private final CountRecord record;
     private final PartitionSource partitionSource;
+    private final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
     private PartitionCursor partitionCursor;
     private boolean done = false;
 
     public CountRecordSource(String columnName, PartitionSource partitionSource) {
-        CollectionRecordMetadata metadata = new CollectionRecordMetadata();
         metadata.add(new RecordColumnMetadataImpl(columnName, ColumnType.LONG));
         this.record = new CountRecord(metadata);
         this.partitionSource = partitionSource;
@@ -52,7 +52,7 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordMetadata getMetadata() {
-        return record.getMetadata();
+        return metadata;
     }
 
     @Override

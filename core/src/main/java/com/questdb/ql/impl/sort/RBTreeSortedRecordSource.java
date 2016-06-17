@@ -30,6 +30,7 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.join.hash.FakeRecord;
+import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.AbstractRecordSource;
 import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.CharSink;
@@ -64,7 +65,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         this.comparator = comparator;
         this.mem = new MemoryPages(keyPageSize);
         this.byRowId = recordSource.supportsRowIdAccess();
-        this.recordList = new RecordList(byRowId ? fakeRecord.getMetadata() : recordSource.getMetadata(), valuePageSize);
+        this.recordList = new RecordList(byRowId ? MapUtils.ROWID_RECORD_METADATA : recordSource.getMetadata(), valuePageSize);
     }
 
     @Override

@@ -24,21 +24,21 @@
 package com.questdb.ql.impl.map;
 
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Hash;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.Record;
 import com.questdb.std.*;
 import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
 
-public class DirectHashMap extends DirectMemoryStructure implements Mutable {
+public class DirectMap extends DirectMemoryStructure implements Mutable, Iterable<DirectMapEntry> {
 
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final float loadFactor;
     private final KeyWriter keyWriter = new KeyWriter();
     private final MapValues values;
+    private final DirectMapIterator iterator;
+    private final DirectMapEntry entry;
     private int keyBlockOffset;
     private int keyDataOffset;
     private DirectLongList offsets;
@@ -50,18 +50,15 @@ public class DirectHashMap extends DirectMemoryStructure implements Mutable {
     private int size = 0;
     private int mask;
 
-    public DirectHashMap(
-            int pageSize,
-            int keyCount,
-            @Transient ObjList<? extends RecordColumnMetadata> valueColumns) {
-        this(64, pageSize, 0.5f, keyCount, valueColumns);
+    public DirectMap(int pageSize, int keyCount, @Transient ObjList<ColumnType> valueTypes) {
+        this(64, pageSize, 0.5f, keyCount, valueTypes);
     }
 
-    private DirectHashMap(int capacity,
-                          int pageSize,
-                          float loadFactor,
-                          int keyCount,
-                          @Transient ObjList<? extends RecordColumnMetadata> valueColumns) {
+    private DirectMap(int capacity,
+                      int pageSize,
+                      float loadFactor,
+                      int keyCount,
+                      @Transient ObjList<ColumnType> valueColumns) {
         if (pageSize <= 0) {
             throw new IllegalArgumentException("pageSize must be > 0");
         }
@@ -83,7 +80,7 @@ public class DirectHashMap extends DirectMemoryStructure implements Mutable {
         int offset = 4;
         for (int i = 0; i < valueOffsets.length; i++) {
             valueOffsets[i] = offset;
-            switch (valueColumns.get(i).getType()) {
+            switch (valueColumns.getQuick(i)) {
                 case BYTE:
                 case BOOLEAN:
                     offset++;
@@ -102,13 +99,16 @@ public class DirectHashMap extends DirectMemoryStructure implements Mutable {
                     offset += 8;
                     break;
                 default:
-                    throw new JournalRuntimeException("value type is not supported: " + valueColumns.get(i).getType());
+                    throw new JournalRuntimeException("value type is not supported: " + valueColumns.get(i));
             }
+
         }
 
         this.values = new MapValues(valueOffsets);
         this.keyBlockOffset = offset;
         this.keyDataOffset = this.keyBlockOffset + 4 * keyCount;
+        this.entry = new DirectMapEntry(valueOffsets, keyDataOffset, keyBlockOffset);
+        this.iterator = new DirectMapIterator(entry);
     }
 
     public void clear() {
@@ -122,6 +122,10 @@ public class DirectHashMap extends DirectMemoryStructure implements Mutable {
     public void close() {
         offsets.close();
         super.close();
+    }
+
+    public DirectMapEntry entryAt(long rowid) {
+        return entry.init(rowid);
     }
 
     public MapValues getOrCreateValues(KeyWriter keyWriter) {
@@ -161,6 +165,11 @@ public class DirectHashMap extends DirectMemoryStructure implements Mutable {
         } else {
             return probeReadOnly(keyWriter, index);
         }
+    }
+
+    @Override
+    public DirectMapIterator iterator() {
+        return iterator.init(kStart, size);
     }
 
     public KeyWriter keyWriter() {
@@ -280,10 +289,9 @@ public class DirectHashMap extends DirectMemoryStructure implements Mutable {
         private int len;
         private long nextColOffset;
 
-        public KeyWriter commit() {
+        public void commit() {
             Unsafe.getUnsafe().putInt(startAddr, len = (int) (appendAddr - startAddr));
             kPos = appendAddr;
-            return this;
         }
 
         public KeyWriter init() {
@@ -300,113 +308,66 @@ public class DirectHashMap extends DirectMemoryStructure implements Mutable {
             writeOffset();
         }
 
-        public void put(Record r, int columnIndex, ColumnType columnType) {
-            switch (columnType) {
-                case BOOLEAN:
-                    putBoolean(r.getBool(columnIndex));
-                    break;
-                case BYTE:
-                    putByte(r.get(columnIndex));
-                    break;
-                case DOUBLE:
-                    putDouble(r.getDouble(columnIndex));
-                    break;
-                case INT:
-                    putInt(r.getInt(columnIndex));
-                    break;
-                case LONG:
-                    putLong(r.getLong(columnIndex));
-                    break;
-                case SHORT:
-                    putShort(r.getShort(columnIndex));
-                    break;
-                case FLOAT:
-                    putFloat(r.getFloat(columnIndex));
-                    break;
-                case STRING:
-                    putStr(r.getFlyweightStr(columnIndex));
-                    break;
-                case SYMBOL:
-                    putInt(r.getInt(columnIndex));
-                    break;
-                case BINARY:
-                    putBin(r.getBin(columnIndex));
-                    break;
-                case DATE:
-                    putLong(r.getDate(columnIndex));
-                    break;
-                default:
-                    throw new JournalRuntimeException("Unsupported type: " + columnType);
-            }
-        }
-
-        public KeyWriter putBin(DirectInputStream stream) {
+        public void putBin(DirectInputStream stream) {
             long length = stream.size();
             checkSize((int) length);
             length = stream.copyTo(appendAddr, 0, length);
             appendAddr += length;
-            return this;
         }
 
-        public KeyWriter putBoolean(boolean value) {
+        public void putBoolean(boolean value) {
             checkSize(1);
             Unsafe.getUnsafe().putByte(appendAddr, (byte) (value ? 1 : 0));
             appendAddr += 1;
             writeOffset();
-            return this;
         }
 
-        public KeyWriter putByte(byte value) {
+        public void putByte(byte value) {
             checkSize(1);
             Unsafe.getUnsafe().putByte(appendAddr, value);
             appendAddr += 1;
             writeOffset();
-            return this;
         }
 
-        public KeyWriter putDouble(double value) {
+        public void putDouble(double value) {
             checkSize(8);
             Unsafe.getUnsafe().putDouble(appendAddr, value);
             appendAddr += 8;
             writeOffset();
-            return this;
         }
 
-        public KeyWriter putFloat(float value) {
+        public void putFloat(float value) {
             checkSize(4);
             Unsafe.getUnsafe().putFloat(appendAddr, value);
             appendAddr += 4;
             writeOffset();
-            return this;
         }
 
-        public KeyWriter putInt(int value) {
+        public void putInt(int value) {
             checkSize(4);
             Unsafe.getUnsafe().putInt(appendAddr, value);
             appendAddr += 4;
             writeOffset();
-            return this;
         }
 
-        public KeyWriter putLong(long value) {
+        public void putLong(long value) {
             checkSize(8);
             Unsafe.getUnsafe().putLong(appendAddr, value);
             appendAddr += 8;
             writeOffset();
-            return this;
         }
 
-        public KeyWriter putShort(short value) {
+        public void putShort(short value) {
             checkSize(2);
             Unsafe.getUnsafe().putShort(appendAddr, value);
             appendAddr += 2;
             writeOffset();
-            return this;
         }
 
-        public KeyWriter putStr(CharSequence value) {
+        public void putStr(CharSequence value) {
             if (value == null) {
-                return putNull();
+                putNull();
+                return;
             }
 
             int len = value.length();
@@ -418,7 +379,6 @@ public class DirectHashMap extends DirectMemoryStructure implements Mutable {
             }
             appendAddr += len << 1;
             writeOffset();
-            return this;
         }
 
         private void checkSize(int size) {

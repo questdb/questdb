@@ -31,6 +31,7 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.*;
+import com.questdb.ql.impl.map.MapRecordCursor;
 import com.questdb.ql.impl.map.MapRecordValueInterceptor;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.impl.map.MultiMap;
@@ -57,7 +58,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     private final int[] keyIndices;
     private final ObjList<AggregatorFunction> aggregators;
     private RecordCursor recordCursor;
-    private RecordCursor mapCursor;
+    private MapRecordCursor mapCursor;
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public AggregatedRecordSource(

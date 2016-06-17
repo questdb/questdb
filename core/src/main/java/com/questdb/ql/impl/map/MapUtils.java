@@ -26,17 +26,33 @@ package com.questdb.ql.impl.map;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.Record;
+import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.LongMetadata;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
+import com.questdb.store.ColumnType;
 
 public class MapUtils {
     public static final ObjList<RecordColumnMetadata> ROWID_MAP_VALUES = new ObjList<>(1);
+    public static final CollectionRecordMetadata ROWID_RECORD_METADATA = new CollectionRecordMetadata().add(LongMetadata.INSTANCE);
+    private static final ThreadLocal<ObjList<ColumnType>> tlTypeList = new ThreadLocal<ObjList<ColumnType>>() {
+        @Override
+        protected ObjList<ColumnType> initialValue() {
+            return new ObjList<>(1);
+        }
+    };
 
     private MapUtils() {
     }
 
-    public static void writeVirtualColumn(DirectHashMap.KeyWriter w, Record r, VirtualColumn vc) {
+    public static ObjList<ColumnType> toTypeList(ColumnType type) {
+        ObjList<ColumnType> l = tlTypeList.get();
+        l.clear();
+        l.add(type);
+        return l;
+    }
+
+    public static void writeVirtualColumn(DirectMap.KeyWriter w, Record r, VirtualColumn vc) {
         switch (vc.getType()) {
             case BOOLEAN:
                 w.putBoolean(vc.getBool(r));

@@ -29,6 +29,7 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.*;
+import com.questdb.ql.impl.map.MapRecordCursor;
 import com.questdb.ql.impl.map.MapRecordValueInterceptor;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.impl.map.MultiMap;
@@ -53,8 +54,9 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     private final ObjList<AggregatorFunction> aggregators;
     private final TimestampSampler sampler;
     private RecordCursor recordCursor;
-    private RecordCursor mapRecordSource;
+    private MapRecordCursor mapCursor;
     private Record nextRecord = null;
+    private StorageFacade storageFacade;
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ResampledRecordSource(
@@ -113,6 +115,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
         this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
+        this.storageFacade = recordCursor.getStorageFacade();
         return this;
     }
 
@@ -130,7 +133,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public StorageFacade getStorageFacade() {
-        return recordCursor.getStorageFacade();
+        return storageFacade;
     }
 
     @Override
@@ -149,12 +152,12 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public boolean hasNext() {
-        return mapRecordSource != null && mapRecordSource.hasNext() || buildMap();
+        return mapCursor != null && mapCursor.hasNext() || buildMap();
     }
 
     @Override
     public Record next() {
-        return mapRecordSource.next();
+        return mapCursor.next();
     }
 
     @Override
@@ -219,6 +222,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
 
         } while (true);
 
-        return (mapRecordSource = map.getCursor()).hasNext();
+        mapCursor = map.getCursor();
+        return mapCursor.hasNext();
     }
 }

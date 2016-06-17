@@ -25,25 +25,26 @@ package com.questdb.ql.impl.analytic.next;
 
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.DirectHashMap;
+import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
+import com.questdb.store.ColumnType;
 
 public class NextRowAnalyticFunction extends AbstractNextRowAnalyticFunction {
-    private final DirectHashMap map;
+    private final DirectMap map;
     private final ObjList<VirtualColumn> partitionBy;
 
     public NextRowAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
         super(pageSize, valueColumn);
         this.partitionBy = partitionBy;
-        this.map = new DirectHashMap(pageSize, partitionBy.size(), MapUtils.ROWID_MAP_VALUES);
+        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(ColumnType.LONG));
     }
 
     @Override
     public void addRecord(Record record, long rowid) {
-        DirectHashMap.KeyWriter kw = map.keyWriter();
+        DirectMap.KeyWriter kw = map.keyWriter();
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
         }

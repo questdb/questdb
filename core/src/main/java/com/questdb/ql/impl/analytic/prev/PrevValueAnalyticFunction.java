@@ -27,7 +27,7 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.DirectHashMap;
+import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.ops.VirtualColumn;
@@ -37,15 +37,13 @@ import java.io.Closeable;
 import java.io.IOException;
 
 public class PrevValueAnalyticFunction extends AbstractPrevValueAnalyticFunction implements Closeable {
-    private final DirectHashMap map;
+    private final DirectMap map;
     private final ObjList<VirtualColumn> partitionBy;
 
     public PrevValueAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
         super(valueColumn);
         this.partitionBy = partitionBy;
-        ObjList<VirtualColumn> l = new ObjList<>();
-        l.add(valueColumn);
-        this.map = new DirectHashMap(pageSize, partitionBy.size(), l);
+        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(valueColumn.getType()));
     }
 
     @Override
@@ -65,7 +63,7 @@ public class PrevValueAnalyticFunction extends AbstractPrevValueAnalyticFunction
 
     @Override
     public void scroll(Record record) {
-        DirectHashMap.KeyWriter kw = map.keyWriter();
+        DirectMap.KeyWriter kw = map.keyWriter();
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
         }

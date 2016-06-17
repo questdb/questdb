@@ -33,6 +33,7 @@ import com.questdb.ql.impl.NullRecord;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.join.hash.MultiRecordMap;
+import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.map.MultiMap;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
@@ -211,7 +212,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             this.slaveColumns.add(sm.getColumnQuick(index));
             keyCols.add(sm.getColumnName(index));
         }
-        return byRowId ? new MultiRecordMap(sm, keyCols, fakeRecord.getMetadata(), keyPageSize, rowIdPageSize) :
+        return byRowId ? new MultiRecordMap(sm, keyCols, MapUtils.ROWID_RECORD_METADATA, keyPageSize, rowIdPageSize) :
                 new MultiRecordMap(sm, keyCols, slaveSource.getMetadata(), keyPageSize, dataPageSize);
     }
 

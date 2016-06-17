@@ -33,7 +33,8 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.IntMetadata;
 import com.questdb.ql.impl.LongMetadata;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.ql.impl.map.DirectHashMap;
+import com.questdb.ql.impl.map.DirectMap;
+import com.questdb.ql.impl.map.DirectMapEntry;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.ops.VirtualColumn;
@@ -49,7 +50,7 @@ import java.io.OutputStream;
 
 public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     private static final ObjList<RecordColumnMetadata> valueColumns = new ObjList<>();
-    private final DirectHashMap map;
+    private final DirectMap map;
     private final DirectCharSequence cs = new DirectCharSequence();
     private final ObjList<VirtualColumn> partitionBy;
     private final VirtualColumn valueColumn;
@@ -59,13 +60,9 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     private boolean closed = false;
 
     public PrevStrAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
-
         this.partitionBy = partitionBy;
         this.valueColumn = valueColumn;
-        // value column particulars
-        ObjList<VirtualColumn> l = new ObjList<>();
-        l.add(valueColumn);
-        this.map = new DirectHashMap(pageSize, partitionBy.size(), l);
+        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(valueColumn.getType()));
     }
 
     @Override
@@ -75,11 +72,10 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
         }
 
         // free pointers in map values
-        // todo: free
-//        RecordCursor cursor = map.getCursor();
-//        while (cursor.hasNext()) {
-//            Unsafe.getUnsafe().freeMemory(cursor.next().getLong(addressIndex));
-//        }
+        for (DirectMapEntry e : map) {
+            Unsafe.getUnsafe().freeMemory(e.getLong(0));
+        }
+
         Misc.free(map);
         if (bufPtr != 0) {
             Unsafe.getUnsafe().freeMemory(bufPtr);
@@ -193,7 +189,7 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
 
     @Override
     public void scroll(Record record) {
-        DirectHashMap.KeyWriter kw = map.keyWriter();
+        DirectMap.KeyWriter kw = map.keyWriter();
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
         }

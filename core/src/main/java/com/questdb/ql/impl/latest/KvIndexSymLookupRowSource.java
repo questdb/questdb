@@ -117,7 +117,7 @@ public class KvIndexSymLookupRowSource extends AbstractRowSource {
 
     @Override
     public void prepare(StorageFacade facade, CancellationHandler cancellationHandler) {
-        symbolKey = facade.getSymbolTable(symbol).getQuick(value);
+        symbolKey = facade.getSymbolTable(columnIndex).getQuick(value);
     }
 
     @Override

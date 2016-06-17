@@ -108,7 +108,7 @@ public class KvIndexSymAllHeadRowSource extends AbstractRowSource {
         if (filter != null) {
             filter.prepare(facade);
         }
-        valueCount = facade.getSymbolTable(column).size();
+        valueCount = facade.getSymbolTable(columnIndex).size();
     }
 
     @Override

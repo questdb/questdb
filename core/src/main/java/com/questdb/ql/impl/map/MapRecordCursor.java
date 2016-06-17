@@ -26,12 +26,10 @@ package com.questdb.ql.impl.map;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.StorageFacade;
 import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.ObjList;
 
-final class MapRecordSource extends AbstractImmutableIterator<Record> implements RecordCursor {
+public final class MapRecordCursor extends AbstractImmutableIterator<Record> {
     private final MapRecord record;
     private final MapValues values;
     private final ObjList<MapRecordValueInterceptor> interceptors;
@@ -39,35 +37,18 @@ final class MapRecordSource extends AbstractImmutableIterator<Record> implements
     private int count;
     private long address;
 
-    MapRecordSource(MapRecord record, MapValues values, ObjList<MapRecordValueInterceptor> interceptors) {
-        this.record = record;
+    MapRecordCursor(
+            RecordMetadata metadata,
+            int valueOffsets[],
+            int keyDataOffset,
+            int keyBlockOffset,
+            MapValues values,
+            ObjList<MapRecordValueInterceptor> interceptors
+    ) {
+        this.record = new MapRecord(metadata, valueOffsets, keyDataOffset, keyBlockOffset);
         this.values = values;
         this.interceptors = interceptors;
         this.interceptorsLen = interceptors != null ? interceptors.size() : 0;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return record.getMetadata();
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return null;
-    }
-
-    @Override
-    public Record newRecord() {
-        return null;
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        return null;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
     }
 
     @Override
@@ -86,7 +67,7 @@ final class MapRecordSource extends AbstractImmutableIterator<Record> implements
         return record.init(address);
     }
 
-    MapRecordSource init(long address, int count) {
+    MapRecordCursor init(long address, int count) {
         this.address = address;
         this.count = count;
         return this;
