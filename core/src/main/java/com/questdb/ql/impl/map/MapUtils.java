@@ -24,7 +24,6 @@
 package com.questdb.ql.impl.map;
 
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.LongMetadata;
@@ -33,7 +32,7 @@ import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 
 public class MapUtils {
-    public static final ObjList<RecordColumnMetadata> ROWID_MAP_VALUES = new ObjList<>(1);
+    public static final ObjList<ColumnType> ROWID_MAP_VALUES = new ObjList<>(1);
     public static final CollectionRecordMetadata ROWID_RECORD_METADATA = new CollectionRecordMetadata().add(LongMetadata.INSTANCE);
     private static final ThreadLocal<ObjList<ColumnType>> tlTypeList = new ThreadLocal<ObjList<ColumnType>>() {
         @Override
@@ -45,6 +44,46 @@ public class MapUtils {
     private MapUtils() {
     }
 
+    public static void putRecord(DirectMap.KeyWriter w, Record r, int columnIndex, ColumnType columnType) {
+        switch (columnType) {
+            case BOOLEAN:
+                w.putBoolean(r.getBool(columnIndex));
+                break;
+            case BYTE:
+                w.putByte(r.get(columnIndex));
+                break;
+            case DOUBLE:
+                w.putDouble(r.getDouble(columnIndex));
+                break;
+            case INT:
+                w.putInt(r.getInt(columnIndex));
+                break;
+            case LONG:
+                w.putLong(r.getLong(columnIndex));
+                break;
+            case SHORT:
+                w.putShort(r.getShort(columnIndex));
+                break;
+            case FLOAT:
+                w.putFloat(r.getFloat(columnIndex));
+                break;
+            case STRING:
+                w.putStr(r.getFlyweightStr(columnIndex));
+                break;
+            case SYMBOL:
+                w.putInt(r.getInt(columnIndex));
+                break;
+            case BINARY:
+                w.putBin(r.getBin(columnIndex));
+                break;
+            case DATE:
+                w.putLong(r.getDate(columnIndex));
+                break;
+            default:
+                throw new JournalRuntimeException("Unsupported type: " + columnType);
+        }
+    }
+
     public static ObjList<ColumnType> toTypeList(ColumnType type) {
         ObjList<ColumnType> l = tlTypeList.get();
         l.clear();
@@ -52,6 +91,7 @@ public class MapUtils {
         return l;
     }
 
+    //todo: unify
     public static void writeVirtualColumn(DirectMap.KeyWriter w, Record r, VirtualColumn vc) {
         switch (vc.getType()) {
             case BOOLEAN:
@@ -93,6 +133,6 @@ public class MapUtils {
     }
 
     static {
-        ROWID_MAP_VALUES.add(LongMetadata.INSTANCE);
+        ROWID_MAP_VALUES.add(ColumnType.LONG);
     }
 }

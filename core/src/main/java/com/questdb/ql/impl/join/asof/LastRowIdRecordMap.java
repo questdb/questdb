@@ -23,25 +23,21 @@
 
 package com.questdb.ql.impl.join.asof;
 
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.ByteMetadata;
-import com.questdb.ql.impl.LongMetadata;
+import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.MapValues;
-import com.questdb.ql.impl.map.MultiMap;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
-import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public class LastRowIdRecordMap implements LastRecordMap {
-    private static final ObjList<RecordColumnMetadata> valueMetadata = new ObjList<>();
-    private final MultiMap map;
+    private static final ObjList<ColumnType> valueMetadata = new ObjList<>();
+    private final DirectMap map;
     private final IntHashSet slaveKeyIndexes;
     private final IntHashSet masterKeyIndexes;
     private final ObjList<ColumnType> slaveKeyTypes;
@@ -61,9 +57,6 @@ public class LastRowIdRecordMap implements LastRecordMap {
         this.masterKeyIndexes = new IntHashSet(ksz);
         this.slaveKeyIndexes = new IntHashSet(ksz);
 
-        // collect key field indexes for slave
-        ObjHashSet<String> keyCols = new ObjHashSet<>(ksz);
-
         for (int i = 0; i < ksz; i++) {
             int idx;
             idx = masterMetadata.getColumnIndex(masterKeyColumns.get(i));
@@ -73,9 +66,8 @@ public class LastRowIdRecordMap implements LastRecordMap {
             idx = slaveMetadata.getColumnIndex(slaveKeyColumns.get(i));
             slaveKeyIndexes.add(idx);
             slaveKeyTypes.add(slaveMetadata.getColumnQuick(idx).getType());
-            keyCols.add(slaveMetadata.getColumnName(idx));
         }
-        this.map = new MultiMap(pageSize, slaveMetadata, keyCols, valueMetadata, null);
+        this.map = new DirectMap(pageSize, ksz, valueMetadata);
         this.metadata = slaveMetadata;
     }
 
@@ -130,7 +122,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
     }
 
     static {
-        valueMetadata.add(LongMetadata.INSTANCE);
-        valueMetadata.add(ByteMetadata.INSTANCE);
+        valueMetadata.add(ColumnType.LONG);
+        valueMetadata.add(ColumnType.BYTE);
     }
 }

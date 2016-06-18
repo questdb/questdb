@@ -31,10 +31,7 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.*;
-import com.questdb.ql.impl.map.MapRecordCursor;
-import com.questdb.ql.impl.map.MapRecordValueInterceptor;
-import com.questdb.ql.impl.map.MapValues;
-import com.questdb.ql.impl.map.MultiMap;
+import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.*;
 import com.questdb.std.ThreadLocal;
@@ -57,6 +54,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     private final RecordSource recordSource;
     private final int[] keyIndices;
     private final ObjList<AggregatorFunction> aggregators;
+    private final RecordMetadata metadata;
     private RecordCursor recordCursor;
     private MapRecordCursor mapCursor;
 
@@ -93,6 +91,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
                 interceptors.add((MapRecordValueInterceptor) func);
             }
         }
+        this.metadata = new MapMetadata(rm, keyColumns, columns);
         this.map = new MultiMap(pageSize, rm, keyColumns, columns, interceptors);
         this.recordSource = recordSource;
     }
@@ -105,7 +104,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
     @Override
     public RecordMetadata getMetadata() {
-        return map.getMetadata();
+        return metadata;
     }
 
     @Override

@@ -25,7 +25,7 @@ package com.questdb.ql.impl.join.asof;
 
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.MultiMap;
+import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
@@ -34,8 +34,9 @@ final class RecordUtils {
     private RecordUtils() {
     }
 
-    static MultiMap.KeyWriter createKey(MultiMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
-        MultiMap.KeyWriter kw = map.keyWriter();
+    //todo: unify
+    static DirectMap.KeyWriter createKey(DirectMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
+        DirectMap.KeyWriter kw = map.keyWriter();
         for (int i = 0, n = indices.size(); i < n; i++) {
             int idx = indices.get(i);
             switch (types.getQuick(i)) {

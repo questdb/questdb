@@ -30,7 +30,6 @@ import java.io.OutputStream;
 
 public interface Record {
 
-
     byte get(int col);
 
     void getBin(int col, OutputStream s);

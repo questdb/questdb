@@ -21,16 +21,24 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl;
+package com.questdb.ql.impl.map;
 
-import com.questdb.Journal;
 import com.questdb.factory.JournalReaderFactory;
+import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
+import com.questdb.std.ObjList;
 import com.questdb.store.SymbolTable;
 
-public class MasterStorageFacade implements StorageFacade {
-    private Journal journal;
+public class DirectMapStorageFacade implements StorageFacade {
+    private final int split;
+    private final int keyCount;
+    private ObjList<SymbolTable> symbolTables;
     private JournalReaderFactory factory;
+
+    public DirectMapStorageFacade(int split, int keyCount) {
+        this.split = split;
+        this.keyCount = keyCount;
+    }
 
     @Override
     public JournalReaderFactory getFactory() {
@@ -39,21 +47,26 @@ public class MasterStorageFacade implements StorageFacade {
 
     @Override
     public SymbolTable getSymbolTable(int index) {
-        // do not call journal.getSymbolTable() because it uses different indexing system
-        //todo: cache symbol tables and allow quick path access to them
-        return journal.getMetadata().getColumn(index).getSymbolTable();
+        return symbolTables.getQuick(index);
     }
 
     @Override
     public SymbolTable getSymbolTable(String name) {
-        return journal.getSymbolTable(name);
+        return null;
     }
 
-    public void setFactory(JournalReaderFactory factory) {
-        this.factory = factory;
-    }
+    public void prepare(RecordCursor cursor) {
+        StorageFacade parent = cursor.getStorageFacade();
+        this.factory = parent.getFactory();
 
-    public void setJournal(Journal journal) {
-        this.journal = journal;
+        for (int i = 0; i < keyCount; i++) {
+            SymbolTable tab = parent.getSymbolTable(i);
+            if (tab != null) {
+                if (symbolTables == null) {
+                    symbolTables = new ObjList<>();
+                }
+                symbolTables.extendAndSet(split + i, tab);
+            }
+        }
     }
 }

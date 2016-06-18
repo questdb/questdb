@@ -23,41 +23,31 @@
 
 package com.questdb.ql.impl.join.hash;
 
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.RecordList;
+import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.MapValues;
-import com.questdb.ql.impl.map.MultiMap;
 import com.questdb.std.Mutable;
-import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
-import com.questdb.std.Transient;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;
 
 public class MultiRecordMap implements Closeable, Mutable {
-    private static final ObjList<RecordColumnMetadata> valueCols = new ObjList<>(2);
-    private final MultiMap map;
+    private static final ObjList<ColumnType> valueCols = new ObjList<>(2);
+    private final DirectMap map;
     private final RecordList records;
 
-    public MultiRecordMap(
-            @Transient RecordMetadata keyMetadata,
-            @Transient ObjHashSet<String> keyNames,
-            RecordMetadata valueMetadata,
-            int keyPageSize,
-            int valuePageSize
-    ) {
-        map = new MultiMap(keyPageSize, keyMetadata, keyNames, valueCols, null);
+    public MultiRecordMap(int keyCount, RecordMetadata valueMetadata, int keyPageSize, int valuePageSize) {
+        map = new DirectMap(keyPageSize, keyCount, valueCols);
         records = new RecordList(valueMetadata, valuePageSize);
     }
 
-    public void add(MultiMap.KeyWriter key, Record record) {
+    public void add(DirectMap.KeyWriter key, Record record) {
         MapValues values = map.getOrCreateValues(key);
         if (values.isNew()) {
             long offset = records.append(record, -1);
@@ -68,7 +58,7 @@ public class MultiRecordMap implements Closeable, Mutable {
         }
     }
 
-    public MultiMap.KeyWriter claimKey() {
+    public DirectMap.KeyWriter claimKey() {
         return map.keyWriter();
     }
 
@@ -83,7 +73,7 @@ public class MultiRecordMap implements Closeable, Mutable {
         records.close();
     }
 
-    public RecordCursor get(MultiMap.KeyWriter key) {
+    public RecordCursor get(DirectMap.KeyWriter key) {
         MapValues values = map.getValues(key);
         records.of(values == null ? -1 : values.getLong(0));
         return records;
@@ -94,7 +84,7 @@ public class MultiRecordMap implements Closeable, Mutable {
     }
 
     static {
-        valueCols.add(new RecordColumnMetadataImpl("top", ColumnType.LONG));
-        valueCols.add(new RecordColumnMetadataImpl("current", ColumnType.LONG));
+        valueCols.add(ColumnType.LONG);
+        valueCols.add(ColumnType.LONG);
     }
 }

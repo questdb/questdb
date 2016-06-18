@@ -31,15 +31,15 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
+import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.map.MapValues;
-import com.questdb.ql.impl.map.MultiMap;
 import com.questdb.std.*;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public class LastVarRecordMap implements LastRecordMap {
-    private final MultiMap map;
+    private final DirectMap map;
     private final LongList pages = new LongList();
     private final int pageSize;
     private final int maxRecordSize;
@@ -83,8 +83,6 @@ public class LastVarRecordMap implements LastRecordMap {
         this.slaveKeyIndexes = new IntHashSet(ksz);
 
         // collect key field indexes for slave
-        ObjHashSet<String> keyCols = new ObjHashSet<>(ksz);
-
         for (int i = 0; i < ksz; i++) {
             int idx;
             idx = masterMetadata.getColumnIndex(masterKeyColumns.get(i));
@@ -94,13 +92,11 @@ public class LastVarRecordMap implements LastRecordMap {
             idx = slaveMetadata.getColumnIndex(slaveKeyColumns.get(i));
             slaveKeyIndexes.add(idx);
             slaveKeyTypes.add(slaveMetadata.getColumnQuick(idx).getType());
-            keyCols.add(slaveMetadata.getColumnName(idx));
         }
 
-        int sz = ksz - keyCols.size();
-        this.fixedOffsets = new IntList(sz);
-        this.slaveValueIndexes = new IntList(sz);
-        this.slaveValueTypes = new ObjList<>(sz);
+        this.fixedOffsets = new IntList();
+        this.slaveValueIndexes = new IntList();
+        this.slaveValueTypes = new ObjList<>();
 
         int varOffset = 0;
         // collect indexes of non-key fields in slave record
@@ -124,7 +120,7 @@ public class LastVarRecordMap implements LastRecordMap {
         }
 
         this.varOffset = varOffset;
-        this.map = new MultiMap(offsetPageSize, slaveMetadata, keyCols, MapUtils.ROWID_MAP_VALUES, null);
+        this.map = new DirectMap(offsetPageSize, ksz, MapUtils.ROWID_MAP_VALUES);
         this.metadata = slaveMetadata;
         this.record = new MapRecord(this.metadata);
     }

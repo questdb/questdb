@@ -32,13 +32,13 @@ import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
 import com.questdb.std.Transient;
 
-final class MapMetadata extends AbstractRecordMetadata {
+public final class MapMetadata extends AbstractRecordMetadata {
 
     private final CharSequenceIntHashMap nameCache;
     private final int columnCount;
     private final RecordColumnMetadata[] columns;
 
-    MapMetadata(
+    public MapMetadata(
             @Transient RecordMetadata keySourceMetadata,
             @Transient ObjHashSet<String> keyNames,
             @Transient ObjList<RecordColumnMetadata> valueColumns) {

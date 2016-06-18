@@ -33,12 +33,11 @@ import com.questdb.ql.impl.NullRecord;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.join.hash.MultiRecordMap;
+import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.MapUtils;
-import com.questdb.ql.impl.map.MultiMap;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.IntList;
-import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -183,10 +182,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private void buildHashTable(CancellationHandler cancellationHandler) {
         for (Record r : slaveCursor) {
             cancellationHandler.check();
-            MultiMap.KeyWriter key = recordMap.claimKey();
-            for (int i = 0, k = slaveColumns.size(); i < k; i++) {
-                key.put(r, slaveColIndex.getQuick(i), slaveColumns.getQuick(i).getType());
-            }
+            final DirectMap.KeyWriter key = populateKey(r, slaveColIndex, slaveColumns);
             if (byRowId) {
                 recordMap.add(key, fakeRecord.of(r.getRowId()));
             } else {
@@ -206,29 +202,19 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         }
 
         RecordMetadata sm = slaveSource.getMetadata();
-        ObjHashSet<String> keyCols = new ObjHashSet<>();
         for (int i = 0, k = slaveColIndex.size(); i < k; i++) {
             int index = slaveColIndex.getQuick(i);
             this.slaveColumns.add(sm.getColumnQuick(index));
-            keyCols.add(sm.getColumnName(index));
         }
-        return byRowId ? new MultiRecordMap(sm, keyCols, MapUtils.ROWID_RECORD_METADATA, keyPageSize, rowIdPageSize) :
-                new MultiRecordMap(sm, keyCols, slaveSource.getMetadata(), keyPageSize, dataPageSize);
+        return byRowId ? new MultiRecordMap(slaveColumns.size(), MapUtils.ROWID_RECORD_METADATA, keyPageSize, rowIdPageSize) :
+                new MultiRecordMap(slaveColumns.size(), slaveSource.getMetadata(), keyPageSize, dataPageSize);
     }
 
     private boolean hasNext0() {
         while (masterCursor.hasNext()) {
             Record r = masterCursor.next();
             currentRecord.setA(r);
-
-            MultiMap.KeyWriter key = recordMap.claimKey();
-
-            for (int i = 0, k = masterColumns.size(); i < k; i++) {
-                key.put(r, masterColIndex.getQuick(i), masterColumns.getQuick(i).getType());
-            }
-
-            hashTableCursor = recordMap.get(key);
-
+            hashTableCursor = recordMap.get(populateKey(r, masterColIndex, masterColumns));
             if (hashTableCursor.hasNext()) {
                 if (byRowId) {
                     currentRecord.setB(slaveCursor.recordAt(hashTableCursor.next().getLong(0)));
@@ -243,5 +229,13 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             }
         }
         return false;
+    }
+
+    private DirectMap.KeyWriter populateKey(Record r, IntList indices, ObjList<RecordColumnMetadata> columns) {
+        DirectMap.KeyWriter key = recordMap.claimKey();
+        for (int i = 0, k = masterColumns.size(); i < k; i++) {
+            MapUtils.putRecord(key, r, indices.getQuick(i), columns.getQuick(i).getType());
+        }
+        return key;
     }
 }

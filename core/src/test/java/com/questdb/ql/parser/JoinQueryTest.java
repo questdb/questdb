@@ -462,6 +462,11 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testInnerJoinSymbol() throws Exception {
+        assertSymbol("select country from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'", 0);
+    }
+
+    @Test
     public void testIntrinsicFalse() throws Exception {
         assertThat("customerName\tproductName\torderId\n",
                 "select customerName, productName, orderId " +
