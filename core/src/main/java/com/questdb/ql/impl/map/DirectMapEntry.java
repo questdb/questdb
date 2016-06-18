@@ -34,16 +34,18 @@ public final class DirectMapEntry {
     private final int valueOffsets[];
     private final DirectCharSequence csA = new DirectCharSequence();
     private final DirectCharSequence csB = new DirectCharSequence();
+    private final MapValues values;
     private long address0;
     private long address1;
     private long address2;
     private char[] strBuf = null;
 
-    DirectMapEntry(int valueOffsets[], int keyDataOffset, int keyBlockOffset) {
+    DirectMapEntry(int valueOffsets[], int keyDataOffset, int keyBlockOffset, MapValues values) {
         this.split = valueOffsets.length;
         this.valueOffsets = valueOffsets;
         this.keyBlockOffset = keyBlockOffset;
         this.keyDataOffset = keyDataOffset;
+        this.values = values;
     }
 
     public byte get(int index) {
@@ -119,6 +121,10 @@ public final class DirectMapEntry {
 
     public int getStrLen(int index) {
         return Unsafe.getUnsafe().getInt(address0(index));
+    }
+
+    public MapValues values() {
+        return values.of(address0, false);
     }
 
     private long address0(int index) {

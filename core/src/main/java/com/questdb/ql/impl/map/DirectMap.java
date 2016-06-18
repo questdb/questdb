@@ -107,7 +107,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         this.values = new MapValues(valueOffsets);
         this.keyBlockOffset = offset;
         this.keyDataOffset = this.keyBlockOffset + 4 * keyCount;
-        this.entry = new DirectMapEntry(valueOffsets, keyDataOffset, keyBlockOffset);
+        this.entry = new DirectMapEntry(valueOffsets, keyDataOffset, keyBlockOffset, values);
         this.iterator = new DirectMapIterator(entry);
     }
 

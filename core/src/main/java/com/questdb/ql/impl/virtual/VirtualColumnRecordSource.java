@@ -40,7 +40,6 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     private final VirtualRecord current;
     private RecordCursor recordCursor;
 
-
     public VirtualColumnRecordSource(RecordSource recordSource, ObjList<VirtualColumn> virtualColumns) {
         this.recordSource = recordSource;
         RecordMetadata dm = recordSource.getMetadata();

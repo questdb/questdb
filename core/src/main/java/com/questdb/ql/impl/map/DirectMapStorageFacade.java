@@ -26,28 +26,27 @@ package com.questdb.ql.impl.map;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
-import com.questdb.std.ObjList;
+import com.questdb.std.IntList;
 import com.questdb.store.SymbolTable;
 
 public class DirectMapStorageFacade implements StorageFacade {
     private final int split;
-    private final int keyCount;
-    private ObjList<SymbolTable> symbolTables;
-    private JournalReaderFactory factory;
+    private final IntList keyIndices;
+    private StorageFacade delegate;
 
-    public DirectMapStorageFacade(int split, int keyCount) {
+    public DirectMapStorageFacade(int split, IntList keyIndices) {
         this.split = split;
-        this.keyCount = keyCount;
+        this.keyIndices = keyIndices;
     }
 
     @Override
     public JournalReaderFactory getFactory() {
-        return factory;
+        return delegate.getFactory();
     }
 
     @Override
     public SymbolTable getSymbolTable(int index) {
-        return symbolTables.getQuick(index);
+        return delegate.getSymbolTable(keyIndices.getQuick(index - split));
     }
 
     @Override
@@ -56,17 +55,6 @@ public class DirectMapStorageFacade implements StorageFacade {
     }
 
     public void prepare(RecordCursor cursor) {
-        StorageFacade parent = cursor.getStorageFacade();
-        this.factory = parent.getFactory();
-
-        for (int i = 0; i < keyCount; i++) {
-            SymbolTable tab = parent.getSymbolTable(i);
-            if (tab != null) {
-                if (symbolTables == null) {
-                    symbolTables = new ObjList<>();
-                }
-                symbolTables.extendAndSet(split + i, tab);
-            }
-        }
+        this.delegate = cursor.getStorageFacade();
     }
 }

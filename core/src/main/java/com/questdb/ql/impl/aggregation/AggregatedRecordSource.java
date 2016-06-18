@@ -29,16 +29,17 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.*;
 import com.questdb.std.ThreadLocal;
+import com.questdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Iterator;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class AggregatedRecordSource extends AbstractCombinedRecordSource implements Closeable {
@@ -50,13 +51,23 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
         }
     });
 
-    private final MultiMap map;
+    private static final ThreadLocal<ObjList<ColumnType>> tlColumnTypes = new ThreadLocal<>(new ObjectFactory<ObjList<ColumnType>>() {
+        @Override
+        public ObjList<ColumnType> newInstance() {
+            return new ObjList<>();
+        }
+    });
+
+    private final DirectMap map;
     private final RecordSource recordSource;
-    private final int[] keyIndices;
+    private final IntList keyIndices;
     private final ObjList<AggregatorFunction> aggregators;
     private final RecordMetadata metadata;
+    private final DirectMapStorageFacade storageFacade;
+    private final DirectMapRecord record;
     private RecordCursor recordCursor;
-    private MapRecordCursor mapCursor;
+    private ObjList<MapRecordValueInterceptor> interceptors;
+    private Iterator<DirectMapEntry> mapCursor;
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public AggregatedRecordSource(
@@ -66,16 +77,15 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
             int pageSize
     ) {
         int keyColumnsSize = keyColumns.size();
-        this.keyIndices = new int[keyColumnsSize];
+        this.keyIndices = new IntList(keyColumnsSize);
+        this.aggregators = aggregators;
+        this.interceptors = null;
 
         RecordMetadata rm = recordSource.getMetadata();
         for (int i = 0; i < keyColumnsSize; i++) {
-            keyIndices[i] = rm.getColumnIndex(keyColumns.get(i));
+            keyIndices.add(rm.getColumnIndex(keyColumns.get(i)));
         }
 
-        this.aggregators = aggregators;
-
-        ObjList<MapRecordValueInterceptor> interceptors = new ObjList<>();
         ObjList<RecordColumnMetadata> columns = tlColumns.get();
         columns.clear();
 
@@ -88,12 +98,25 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
             index += columns.size() - n;
 
             if (func instanceof MapRecordValueInterceptor) {
+                if (interceptors == null) {
+                    interceptors = new ObjList<>();
+                }
                 interceptors.add((MapRecordValueInterceptor) func);
             }
         }
         this.metadata = new MapMetadata(rm, keyColumns, columns);
-        this.map = new MultiMap(pageSize, rm, keyColumns, columns, interceptors);
+        this.storageFacade = new DirectMapStorageFacade(columns.size(), keyIndices);
+
+        ObjList<ColumnType> types = tlColumnTypes.get();
+        types.clear();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            types.add(columns.getQuick(i).getType());
+        }
+
+        this.map = new DirectMap(pageSize, keyColumnsSize, types);
         this.recordSource = recordSource;
+        this.record = new DirectMapRecord(this.metadata);
+        this.record.setStorageFacade(storageFacade);
     }
 
     @Override
@@ -110,6 +133,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
         this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
+        this.storageFacade.prepare(this.recordCursor);
         buildMap(cancellationHandler);
         return this;
     }
@@ -151,7 +175,13 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
     @Override
     public Record next() {
-        return mapCursor.next();
+        DirectMapEntry entry = mapCursor.next();
+        if (interceptors != null) {
+            for (int i = 0, n = interceptors.size(); i < n; i++) {
+                interceptors.getQuick(i).beforeRecord(entry.values());
+            }
+        }
+        return record.of(entry);
     }
 
     @Override
@@ -171,22 +201,18 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
             Record rec = recordCursor.next();
 
             // we are inside of time window, compute aggregates
-            MultiMap.KeyWriter keyWriter = map.keyWriter();
-            for (int i = 0; i < keyIndices.length; i++) {
+            DirectMap.KeyWriter keyWriter = map.keyWriter();
+            for (int i = 0; i < keyIndices.size(); i++) {
                 int index;
-                keyWriter.put(
-                        rec,
-                        index = Unsafe.arrayGet(keyIndices, i),
-                        recordSource.getMetadata().getColumnQuick(index).getType()
-                );
+                MapUtils.putRecord(keyWriter, rec, index = keyIndices.getQuick(i),
+                        recordSource.getMetadata().getColumnQuick(index).getType());
             }
 
             MapValues values = map.getOrCreateValues(keyWriter);
-
             for (int i = 0, sz = aggregators.size(); i < sz; i++) {
                 aggregators.getQuick(i).calculate(rec, values);
             }
         }
-        mapCursor = map.getCursor();
+        mapCursor = map.iterator();
     }
 }
