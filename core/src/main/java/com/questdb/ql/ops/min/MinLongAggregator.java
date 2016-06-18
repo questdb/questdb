@@ -24,7 +24,7 @@
 package com.questdb.ql.ops.min;
 
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.MapValues;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
 import com.questdb.ql.ops.Function;
 import com.questdb.std.ObjectFactory;
@@ -43,7 +43,7 @@ public final class MinLongAggregator extends AbstractUnaryAggregator {
     }
 
     @Override
-    public void calculate(Record rec, MapValues values) {
+    public void calculate(Record rec, DirectMapValues values) {
         long v = value.getLong(rec);
         if (values.isNew() || v < values.getLong(valueIndex)) {
             values.putLong(valueIndex, v);

@@ -31,8 +31,8 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.map.DirectMap;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
-import com.questdb.ql.impl.map.MapValues;
 import com.questdb.std.*;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
@@ -119,7 +119,7 @@ public class LastFixRecordMap implements LastRecordMap {
 
     public Record get(Record master) {
         long offset;
-        MapValues values = getByMaster(master);
+        DirectMapValues values = getByMaster(master);
         if (values == null || (((offset = values.getLong(0)) & SET_BIT) == SET_BIT)) {
             return null;
         }
@@ -137,7 +137,7 @@ public class LastFixRecordMap implements LastRecordMap {
     }
 
     public void put(Record record) {
-        final MapValues values = getBySlave(record);
+        final DirectMapValues values = getBySlave(record);
         // new record, append right away
         if (values.isNew()) {
             appendRec(record, values);
@@ -158,7 +158,7 @@ public class LastFixRecordMap implements LastRecordMap {
         this.storageFacade = cursor.getStorageFacade();
     }
 
-    private void appendRec(Record record, MapValues values) {
+    private void appendRec(Record record, DirectMapValues values) {
         int pgInx = pageIndex(appendOffset);
         int pgOfs = pageOffset(appendOffset);
 
@@ -177,11 +177,11 @@ public class LastFixRecordMap implements LastRecordMap {
         writeRec0(pages.getQuick(pgInx) + pgOfs, record);
     }
 
-    private MapValues getByMaster(Record record) {
+    private DirectMapValues getByMaster(Record record) {
         return map.getValues(RecordUtils.createKey(map, record, masterKeyIndexes, masterKeyTypes));
     }
 
-    private MapValues getBySlave(Record record) {
+    private DirectMapValues getBySlave(Record record) {
         return map.getOrCreateValues(RecordUtils.createKey(map, record, slaveKeyIndexes, slaveKeyTypes));
     }
 
@@ -193,7 +193,7 @@ public class LastFixRecordMap implements LastRecordMap {
         return (int) (offset & mask);
     }
 
-    private void writeRec(Record record, long offset, MapValues values) {
+    private void writeRec(Record record, long offset, DirectMapValues values) {
         values.putLong(0, offset);
         writeRec0(pages.getQuick(pageIndex(offset)) + pageOffset(offset), record);
     }

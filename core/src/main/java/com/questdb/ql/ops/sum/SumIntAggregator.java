@@ -24,7 +24,7 @@
 package com.questdb.ql.ops.sum;
 
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.MapValues;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
 import com.questdb.ql.ops.Function;
 import com.questdb.std.ObjectFactory;
@@ -43,7 +43,7 @@ public final class SumIntAggregator extends AbstractUnaryAggregator {
     }
 
     @Override
-    public void calculate(Record rec, MapValues values) {
+    public void calculate(Record rec, DirectMapValues values) {
         if (values.isNew()) {
             values.putInt(valueIndex, value.getInt(rec));
         } else {

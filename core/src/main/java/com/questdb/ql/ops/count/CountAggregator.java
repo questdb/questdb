@@ -27,7 +27,7 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.map.MapValues;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
@@ -51,7 +51,7 @@ public final class CountAggregator extends AbstractVirtualColumn implements Aggr
     }
 
     @Override
-    public void calculate(Record rec, MapValues values) {
+    public void calculate(Record rec, DirectMapValues values) {
         if (values.isNew()) {
             values.putLong(index, 1);
         } else {

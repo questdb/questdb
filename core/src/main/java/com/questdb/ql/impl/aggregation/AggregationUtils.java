@@ -21,30 +21,29 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.last;
+package com.questdb.ql.impl.aggregation;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.ops.AbstractUnaryAggregator;
-import com.questdb.ql.ops.Function;
+import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
+import com.questdb.std.ThreadLocal;
 import com.questdb.store.ColumnType;
 
-public final class LastDateAggregator extends AbstractUnaryAggregator {
-
-    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+final class AggregationUtils {
+    static final ThreadLocal<ObjList<RecordColumnMetadata>> TL_COLUMNS = new ThreadLocal<>(new ObjectFactory<ObjList<RecordColumnMetadata>>() {
         @Override
-        public Function newInstance() {
-            return new LastDateAggregator();
+        public ObjList<RecordColumnMetadata> newInstance() {
+            return new ObjList<>();
         }
-    };
+    });
 
-    private LastDateAggregator() {
-        super(ColumnType.DATE);
-    }
+    static final ThreadLocal<ObjList<ColumnType>> TL_COLUMN_TYPES = new ThreadLocal<>(new ObjectFactory<ObjList<ColumnType>>() {
+        @Override
+        public ObjList<ColumnType> newInstance() {
+            return new ObjList<>();
+        }
+    });
 
-    @Override
-    public void calculate(Record rec, DirectMapValues values) {
-        values.putLong(valueIndex, value.getDate(rec));
+    private AggregationUtils() {
     }
 }

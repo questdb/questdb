@@ -29,7 +29,7 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.MapValues;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
@@ -48,7 +48,7 @@ public class MultiRecordMap implements Closeable, Mutable {
     }
 
     public void add(DirectMap.KeyWriter key, Record record) {
-        MapValues values = map.getOrCreateValues(key);
+        DirectMapValues values = map.getOrCreateValues(key);
         if (values.isNew()) {
             long offset = records.append(record, -1);
             values.putLong(0, offset);
@@ -74,7 +74,7 @@ public class MultiRecordMap implements Closeable, Mutable {
     }
 
     public RecordCursor get(DirectMap.KeyWriter key) {
-        MapValues values = map.getValues(key);
+        DirectMapValues values = map.getValues(key);
         records.of(values == null ? -1 : values.getLong(0));
         return records;
     }

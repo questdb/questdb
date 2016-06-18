@@ -36,7 +36,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final float loadFactor;
     private final KeyWriter keyWriter = new KeyWriter();
-    private final MapValues values;
+    private final DirectMapValues values;
     private final DirectMapIterator iterator;
     private final DirectMapEntry entry;
     private int keyBlockOffset;
@@ -104,7 +104,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
 
         }
 
-        this.values = new MapValues(valueOffsets);
+        this.values = new DirectMapValues(valueOffsets);
         this.keyBlockOffset = offset;
         this.keyDataOffset = this.keyBlockOffset + 4 * keyCount;
         this.entry = new DirectMapEntry(valueOffsets, keyDataOffset, keyBlockOffset, values);
@@ -128,7 +128,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         return entry.init(rowid);
     }
 
-    public MapValues getOrCreateValues(KeyWriter keyWriter) {
+    public DirectMapValues getOrCreateValues(KeyWriter keyWriter) {
         keyWriter.commit();
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
@@ -151,7 +151,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         }
     }
 
-    public MapValues getValues(KeyWriter keyWriter) {
+    public DirectMapValues getValues(KeyWriter keyWriter) {
         keyWriter.commit();
         // rollback key right away
         kPos = keyWriter.startAddr;
@@ -211,7 +211,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         return true;
     }
 
-    private MapValues probe0(KeyWriter keyWriter, int index) {
+    private DirectMapValues probe0(KeyWriter keyWriter, int index) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
@@ -229,7 +229,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         return values.of(keyWriter.startAddr, true);
     }
 
-    private MapValues probeReadOnly(KeyWriter keyWriter, int index) {
+    private DirectMapValues probeReadOnly(KeyWriter keyWriter, int index) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {

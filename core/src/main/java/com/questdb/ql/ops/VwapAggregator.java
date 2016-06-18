@@ -28,8 +28,8 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapRecordValueInterceptor;
-import com.questdb.ql.impl.map.MapValues;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
@@ -54,12 +54,12 @@ public final class VwapAggregator extends AbstractBinaryOperator implements Aggr
     }
 
     @Override
-    public void beforeRecord(MapValues values) {
+    public void beforeRecord(DirectMapValues values) {
         values.putDouble(vwap, values.getDouble(sumAmtIdx) / values.getDouble(sumQtyIdx));
     }
 
     @Override
-    public void calculate(Record rec, MapValues values) {
+    public void calculate(Record rec, DirectMapValues values) {
         double price = lhs.getDouble(rec);
         double quantity = rhs.getDouble(rec);
         if (values.isNew()) {

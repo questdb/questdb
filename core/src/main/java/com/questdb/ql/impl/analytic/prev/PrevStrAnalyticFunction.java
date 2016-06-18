@@ -35,8 +35,8 @@ import com.questdb.ql.impl.LongMetadata;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapEntry;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
-import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
@@ -194,7 +194,7 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
             MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
         }
 
-        MapValues values = map.getOrCreateValues(kw);
+        DirectMapValues values = map.getOrCreateValues(kw);
         final CharSequence str = valueColumn.getFlyweightStr(record);
 
         if (values.isNew()) {
@@ -233,7 +233,7 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
         Unsafe.getUnsafe().copyMemory(ptr, bufPtr, l);
     }
 
-    private void store(CharSequence str, MapValues values) {
+    private void store(CharSequence str, DirectMapValues values) {
         int l = Numbers.ceilPow2(toByteLen(str.length()));
         long ptr = Unsafe.getUnsafe().allocateMemory(l);
         values.putLong(0, ptr);

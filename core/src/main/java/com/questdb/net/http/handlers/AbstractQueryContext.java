@@ -109,7 +109,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
                 hits.incrementAndGet();
             }
             cursor = recordSource.prepareCursor(factory, cancellationHandler);
-            metadata = cursor.getMetadata();
+            metadata = recordSource.getMetadata();
             header(r, 200);
         } catch (ParserException e) {
             info().$("Parser error executing query ").$(query).$(": at (").$(QueryError.getPosition()).$(") ").$(QueryError.getMessage()).$();

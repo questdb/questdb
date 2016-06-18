@@ -27,12 +27,12 @@ import com.questdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"EI_EXPOSE_REP2"})
-public final class MapValues {
+public final class DirectMapValues {
     private final int valueOffsets[];
     private long address;
     private boolean _new;
 
-    public MapValues(int[] valueOffsets) {
+    public DirectMapValues(int[] valueOffsets) {
         this.valueOffsets = valueOffsets;
     }
 
@@ -92,7 +92,7 @@ public final class MapValues {
         return address + valueOffsets[index];
     }
 
-    MapValues of(long address, boolean _new) {
+    DirectMapValues of(long address, boolean _new) {
         this.address = address;
         this._new = _new;
         return this;

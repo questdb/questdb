@@ -33,7 +33,6 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.*;
-import com.questdb.std.ThreadLocal;
 import com.questdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
@@ -44,20 +43,6 @@ import java.util.Iterator;
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class AggregatedRecordSource extends AbstractCombinedRecordSource implements Closeable {
 
-    private static final ThreadLocal<ObjList<RecordColumnMetadata>> tlColumns = new ThreadLocal<>(new ObjectFactory<ObjList<RecordColumnMetadata>>() {
-        @Override
-        public ObjList<RecordColumnMetadata> newInstance() {
-            return new ObjList<>();
-        }
-    });
-
-    private static final ThreadLocal<ObjList<ColumnType>> tlColumnTypes = new ThreadLocal<>(new ObjectFactory<ObjList<ColumnType>>() {
-        @Override
-        public ObjList<ColumnType> newInstance() {
-            return new ObjList<>();
-        }
-    });
-
     private final DirectMap map;
     private final RecordSource recordSource;
     private final IntList keyIndices;
@@ -65,8 +50,8 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     private final RecordMetadata metadata;
     private final DirectMapStorageFacade storageFacade;
     private final DirectMapRecord record;
+    private final ObjList<MapRecordValueInterceptor> interceptors;
     private RecordCursor recordCursor;
-    private ObjList<MapRecordValueInterceptor> interceptors;
     private Iterator<DirectMapEntry> mapCursor;
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
@@ -79,14 +64,14 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
         int keyColumnsSize = keyColumns.size();
         this.keyIndices = new IntList(keyColumnsSize);
         this.aggregators = aggregators;
-        this.interceptors = null;
 
         RecordMetadata rm = recordSource.getMetadata();
         for (int i = 0; i < keyColumnsSize; i++) {
             keyIndices.add(rm.getColumnIndex(keyColumns.get(i)));
         }
 
-        ObjList<RecordColumnMetadata> columns = tlColumns.get();
+        ObjList<MapRecordValueInterceptor> interceptors = null;
+        ObjList<RecordColumnMetadata> columns = AggregationUtils.TL_COLUMNS.get();
         columns.clear();
 
         // take value columns from aggregator function
@@ -104,10 +89,11 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
                 interceptors.add((MapRecordValueInterceptor) func);
             }
         }
-        this.metadata = new MapMetadata(rm, keyColumns, columns);
+        this.interceptors = interceptors;
+        this.metadata = new DirectMapMetadata(rm, keyColumns, columns);
         this.storageFacade = new DirectMapStorageFacade(columns.size(), keyIndices);
 
-        ObjList<ColumnType> types = tlColumnTypes.get();
+        ObjList<ColumnType> types = AggregationUtils.TL_COLUMN_TYPES.get();
         types.clear();
         for (int i = 0, n = columns.size(); i < n; i++) {
             types.add(columns.getQuick(i).getType());
@@ -115,8 +101,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
         this.map = new DirectMap(pageSize, keyColumnsSize, types);
         this.recordSource = recordSource;
-        this.record = new DirectMapRecord(this.metadata);
-        this.record.setStorageFacade(storageFacade);
+        this.record = new DirectMapRecord(this.metadata, storageFacade);
     }
 
     @Override
@@ -208,7 +193,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
                         recordSource.getMetadata().getColumnQuick(index).getType());
             }
 
-            MapValues values = map.getOrCreateValues(keyWriter);
+            DirectMapValues values = map.getOrCreateValues(keyWriter);
             for (int i = 0, sz = aggregators.size(); i < sz; i++) {
                 aggregators.getQuick(i).calculate(rec, values);
             }

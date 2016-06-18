@@ -28,8 +28,8 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapRecordValueInterceptor;
-import com.questdb.ql.impl.map.MapValues;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
@@ -54,12 +54,12 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
     }
 
     @Override
-    public void beforeRecord(MapValues values) {
+    public void beforeRecord(DirectMapValues values) {
         values.putDouble(avgIdx, values.getDouble(sumIdx) / values.getLong(countIdx));
     }
 
     @Override
-    public void calculate(Record rec, MapValues values) {
+    public void calculate(Record rec, DirectMapValues values) {
         if (values.isNew()) {
             values.putLong(countIdx, 1);
             values.putDouble(sumIdx, value.getDouble(rec));

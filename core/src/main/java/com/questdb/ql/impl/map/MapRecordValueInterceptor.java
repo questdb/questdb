@@ -24,5 +24,5 @@
 package com.questdb.ql.impl.map;
 
 public interface MapRecordValueInterceptor {
-    void beforeRecord(MapValues values);
+    void beforeRecord(DirectMapValues values);
 }

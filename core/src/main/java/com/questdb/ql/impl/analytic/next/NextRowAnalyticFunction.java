@@ -26,8 +26,8 @@ package com.questdb.ql.impl.analytic.next;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMap;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
-import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
@@ -48,7 +48,7 @@ public class NextRowAnalyticFunction extends AbstractNextRowAnalyticFunction {
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
         }
-        MapValues values = map.getOrCreateValues(kw);
+        DirectMapValues values = map.getOrCreateValues(kw);
         // allocateOffset memory where we would eventually write "next" value
         final long address = pages.allocate(8);
         if (!values.isNew()) {

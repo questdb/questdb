@@ -32,11 +32,12 @@ import com.questdb.std.DirectInputStream;
 import java.io.OutputStream;
 
 public class DirectMapRecord extends AbstractRecord {
+    private final StorageFacade storageFacade;
     private DirectMapEntry entry;
-    private StorageFacade storageFacade;
 
-    public DirectMapRecord(RecordMetadata metadata) {
+    public DirectMapRecord(RecordMetadata metadata, StorageFacade storageFacade) {
         super(metadata);
+        this.storageFacade = storageFacade;
     }
 
     @Override
@@ -132,9 +133,5 @@ public class DirectMapRecord extends AbstractRecord {
     public DirectMapRecord of(DirectMapEntry entry) {
         this.entry = entry;
         return this;
-    }
-
-    public void setStorageFacade(StorageFacade storageFacade) {
-        this.storageFacade = storageFacade;
     }
 }

@@ -28,7 +28,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.MapValues;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.ObjList;
@@ -77,7 +77,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
     }
 
     public Record get(Record master) {
-        MapValues values = getByMaster(master);
+        DirectMapValues values = getByMaster(master);
         if (values == null || values.get(1) == 1) {
             return null;
         }
@@ -95,7 +95,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
     }
 
     public void put(Record record) {
-        MapValues values = getBySlave(record);
+        DirectMapValues values = getBySlave(record);
         values.putLong(0, record.getRowId());
         values.putByte(1, (byte) 0);
     }
@@ -113,11 +113,11 @@ public class LastRowIdRecordMap implements LastRecordMap {
         return getStorageFacade().getSymbolTable(name);
     }
 
-    private MapValues getByMaster(Record record) {
+    private DirectMapValues getByMaster(Record record) {
         return map.getValues(RecordUtils.createKey(map, record, masterKeyIndexes, masterKeyTypes));
     }
 
-    private MapValues getBySlave(Record record) {
+    private DirectMapValues getBySlave(Record record) {
         return map.getOrCreateValues(RecordUtils.createKey(map, record, slaveKeyIndexes, slaveKeyTypes));
     }
 

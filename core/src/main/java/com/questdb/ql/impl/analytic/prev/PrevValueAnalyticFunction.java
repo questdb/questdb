@@ -28,8 +28,8 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMap;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
-import com.questdb.ql.impl.map.MapValues;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
 
@@ -68,7 +68,7 @@ public class PrevValueAnalyticFunction extends AbstractPrevValueAnalyticFunction
             MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
         }
 
-        MapValues values = map.getOrCreateValues(kw);
+        DirectMapValues values = map.getOrCreateValues(kw);
         if (values.isNew()) {
             nextNull = true;
             store(record, values);
@@ -111,7 +111,7 @@ public class PrevValueAnalyticFunction extends AbstractPrevValueAnalyticFunction
         }
     }
 
-    private void store(Record record, MapValues values) {
+    private void store(Record record, DirectMapValues values) {
         switch (valueColumn.getType()) {
             case BOOLEAN:
                 values.putByte(0, (byte) (valueColumn.getBool(record) ? 1 : 0));

@@ -24,7 +24,7 @@
 package com.questdb.ql.ops.count;
 
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.MapValues;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
 import com.questdb.ql.ops.Function;
 import com.questdb.std.ObjectFactory;
@@ -45,7 +45,7 @@ public final class CountStrAggregator extends AbstractUnaryAggregator {
     }
 
     @Override
-    public void calculate(Record rec, MapValues values) {
+    public void calculate(Record rec, DirectMapValues values) {
         int len = value.getStrLen(rec);
         if (values.isNew()) {
             values.putLong(valueIndex, len == VariableColumn.NULL_LEN ? 0 : 1);

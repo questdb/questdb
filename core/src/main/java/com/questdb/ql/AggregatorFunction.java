@@ -24,12 +24,12 @@
 package com.questdb.ql;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.ql.impl.map.MapValues;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.std.ObjList;
 
 public interface AggregatorFunction {
 
-    void calculate(Record rec, MapValues values);
+    void calculate(Record rec, DirectMapValues values);
 
     void prepare(ObjList<RecordColumnMetadata> columns, int offset);
 }
