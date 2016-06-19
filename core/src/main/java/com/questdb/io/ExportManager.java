@@ -24,8 +24,9 @@
 package com.questdb.io;
 
 import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalReaderFactory;
 import com.questdb.io.sink.FileSink;
-import com.questdb.ql.RecordCursor;
+import com.questdb.ql.RecordSource;
 
 import java.io.File;
 import java.io.IOException;
@@ -35,13 +36,13 @@ public final class ExportManager {
     private ExportManager() {
     }
 
-    public static void export(RecordCursor from, File to, TextFileFormat format) throws JournalException, IOException {
+    public static void export(RecordSource from, JournalReaderFactory factory, File to, TextFileFormat format) throws JournalException, IOException {
         if (to.isDirectory()) {
             throw new JournalException(to + "cannot be a directory");
         }
         try (FileSink sink = new FileSink(to)) {
             RecordSourcePrinter printer = new RecordSourcePrinter(sink, format.getDelimiter());
-            printer.printCursor(from);
+            printer.printCursor(from, factory);
         }
     }
 

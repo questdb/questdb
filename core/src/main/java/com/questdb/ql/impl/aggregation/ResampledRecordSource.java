@@ -103,7 +103,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
         this.interceptors = interceptors;
         this.storageFacade = new DirectMapStorageFacade(columns.size(), keyIndices);
         this.metadata = new DirectMapMetadata(rm, keyCols, columns);
-        this.record = new DirectMapRecord(this.metadata, this.storageFacade);
+        this.record = new DirectMapRecord(this.storageFacade);
 
         ObjList<ColumnType> types = AggregationUtils.TL_COLUMN_TYPES.get();
         types.clear();

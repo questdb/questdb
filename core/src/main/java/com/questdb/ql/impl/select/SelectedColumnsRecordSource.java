@@ -45,7 +45,7 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
         RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new SelectedColumnsMetadata(dm, names, aliases);
         this.record = new SelectedColumnsRecord(dm, names);
-        this.storageFacade = new SelectedColumnsStorageFacade(dm, metadata, names);
+        this.storageFacade = new SelectedColumnsStorageFacade(dm, names);
     }
 
     public SelectedColumnsRecordSource(RecordSource recordSource, @Transient ObjList<CharSequence> names) {
@@ -53,7 +53,7 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
         RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new SelectedColumnsMetadata(dm, names);
         this.record = new SelectedColumnsRecord(dm, names);
-        this.storageFacade = new SelectedColumnsStorageFacade(dm, metadata, names);
+        this.storageFacade = new SelectedColumnsStorageFacade(dm, names);
     }
 
     @Override

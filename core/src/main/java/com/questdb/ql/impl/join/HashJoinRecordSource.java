@@ -76,13 +76,13 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         this.master = master;
         this.slave = slave;
         this.metadata = new SplitRecordMetadata(master.getMetadata(), slave.getMetadata());
-        this.currentRecord = new SplitRecord(metadata, master.getMetadata().getColumnCount());
+        this.currentRecord = new SplitRecord(master.getMetadata().getColumnCount());
         this.byRowId = slave.supportsRowIdAccess();
         this.masterColIndex = masterColIndices;
         this.slaveColIndex = slaveColIndices;
         this.recordMap = createRecordMap(master, slave, keyPageSize, dataPageSize, rowIdPageSize);
         this.outer = outer;
-        this.storageFacade = new SplitRecordStorageFacade(metadata, master.getMetadata().getColumnCount());
+        this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
     }
 
     @Override

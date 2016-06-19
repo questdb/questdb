@@ -39,13 +39,14 @@ import com.questdb.store.SymbolTable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
-    protected final String column;
     protected final RecordSource recordSource;
+    protected final String column;
     private final VirtualColumn filter;
     private final int recordSourceColumn;
     private final IntHashSet keys = new IntHashSet();
     private final LongList rows = new LongList();
-    private JournalRecord rec;
+    private final JournalRecord rec = new JournalRecord();
+    private int columnIndex;
     private int cursor;
 
     KvIndexSymLambdaHeadRowSource(String column, RecordSource recordSource, int recordSourceColumn, VirtualColumn filter) {
@@ -57,7 +58,7 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
 
     @Override
     public void configure(JournalMetadata metadata) {
-        this.rec = new JournalRecord(metadata);
+        this.columnIndex = metadata.getColumnIndex(column);
     }
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
@@ -65,7 +66,7 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
             Partition partition = rec.partition = slice.partition.open();
-            KVIndex index = partition.getIndexForColumn(column);
+            KVIndex index = partition.getIndexForColumn(columnIndex);
             long lo = slice.lo - 1;
             long hi = slice.calcHi ? partition.size() : slice.hi + 1;
             rows.clear();
@@ -111,7 +112,7 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
             filter.prepare(fa);
         }
 
-        SymbolTable tab = fa.getSymbolTable(column);
+        SymbolTable tab = fa.getSymbolTable(columnIndex);
         keys.clear();
         try {
             for (Record r : recordSource.prepareCursor(fa.getFactory(), cancellationHandler)) {

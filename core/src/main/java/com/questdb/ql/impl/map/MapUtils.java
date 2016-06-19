@@ -91,7 +91,6 @@ public class MapUtils {
         return l;
     }
 
-    //todo: unify
     public static void writeVirtualColumn(DirectMap.KeyWriter w, Record r, VirtualColumn vc) {
         switch (vc.getType()) {
             case BOOLEAN:

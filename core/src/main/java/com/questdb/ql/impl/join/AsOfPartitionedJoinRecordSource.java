@@ -97,8 +97,8 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
         }
 //        map.getMetadata().setAlias(slave.getMetadata().getAlias());
         this.metadata = new SplitRecordMetadata(master.getMetadata(), map.getMetadata());
-        this.record = new SplitRecord(this.metadata, master.getMetadata().getColumnCount());
-        this.storageFacade = new SplitRecordStorageFacade(this.metadata, master.getMetadata().getColumnCount());
+        this.record = new SplitRecord(master.getMetadata().getColumnCount());
+        this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
     }
 
     @Override

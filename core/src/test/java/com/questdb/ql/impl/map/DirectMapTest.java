@@ -40,7 +40,7 @@ import java.util.Map;
 
 public class DirectMapTest {
 
-    private static ObjList<ColumnType> types = new ObjList<>();
+    private static final ObjList<ColumnType> types = new ObjList<>();
 
     @BeforeClass
     public static void setUp() throws Exception {

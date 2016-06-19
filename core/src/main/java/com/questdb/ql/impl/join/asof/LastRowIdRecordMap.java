@@ -33,7 +33,6 @@ import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
 
 public class LastRowIdRecordMap implements LastRecordMap {
     private static final ObjList<ColumnType> valueMetadata = new ObjList<>();
@@ -107,10 +106,6 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
     public void setSlaveCursor(RecordCursor cursor) {
         this.slaveCursor = cursor;
-    }
-
-    public SymbolTable getSymbolTable(String name) {
-        return getStorageFacade().getSymbolTable(name);
     }
 
     private DirectMapValues getByMaster(Record record) {

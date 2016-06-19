@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.virtual;
 
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
@@ -39,8 +38,7 @@ class VirtualRecord extends AbstractRecord {
     private final ObjList<VirtualColumn> virtualColumns;
     private Record base;
 
-    VirtualRecord(RecordMetadata metadata, int split, ObjList<VirtualColumn> virtualColumns) {
-        super(metadata);
+    VirtualRecord(int split, ObjList<VirtualColumn> virtualColumns) {
         this.split = split;
         this.virtualColumns = virtualColumns;
     }
@@ -158,6 +156,6 @@ class VirtualRecord extends AbstractRecord {
     }
 
     VirtualRecord copy() {
-        return new VirtualRecord(metadata, split, virtualColumns);
+        return new VirtualRecord(split, virtualColumns);
     }
 }

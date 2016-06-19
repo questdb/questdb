@@ -68,7 +68,7 @@ public class DelimitedTextParserTest extends AbstractTest {
         File actual = new File(factory.getConfiguration().getJournalBase(), "exp.csv");
         File expected = new File(this.getClass().getResource("/csv/test-export-expected.csv").getFile());
 
-        ExportManager.export(compiler.compile(factory, "'" + location + "'"), actual, TextFileFormat.CSV);
+        ExportManager.export(compiler.compileSource(factory, "'" + location + "'"), factory, actual, TextFileFormat.CSV);
         TestUtils.assertEquals(expected, actual);
     }
 
@@ -98,7 +98,7 @@ public class DelimitedTextParserTest extends AbstractTest {
     private void assertThat(String expected, String query) throws ParserException, JournalException, IOException {
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(compiler.compile(factory, query));
+        p.printCursor(compiler.compileSource(factory, query), factory);
         Assert.assertEquals(expected, sink.toString());
 
     }

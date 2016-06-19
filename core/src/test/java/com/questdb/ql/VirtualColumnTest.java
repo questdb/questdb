@@ -29,7 +29,6 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Rnd;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.ql.impl.virtual.VirtualColumnRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
@@ -73,7 +72,7 @@ public class VirtualColumnTest extends AbstractTest {
             add(plus);
         }});
 
-        p.printCursor(src.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+        p.printCursor(src, factory);
 
         final String expected = "VTJWCPSWHY\t-104.021850585938\t-91.521850585938\n" +
                 "PEHNRXGZSX\t0.000020634160\t12.500020634160\n" +
@@ -217,7 +216,7 @@ public class VirtualColumnTest extends AbstractTest {
                     add("plus");
                 }});
 
-        p.printCursor(src.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+        p.printCursor(src, factory);
 
         final String expected = "VTJWCPSWHY\t-91.521850585938\n" +
                 "PEHNRXGZSX\t12.500020634160\n" +

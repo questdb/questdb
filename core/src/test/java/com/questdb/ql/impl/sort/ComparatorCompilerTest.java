@@ -30,7 +30,6 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.std.IntList;
@@ -97,7 +96,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         RBTreeSortedRecordSource map = new RBTreeSortedRecordSource(rs, rc, 1024 * 1024, 4 * 1024 * 1024);
 
         sink.clear();
-        printer.printCursor(map.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+        printer.printCursor(map, factory);
         TestUtils.assertEquals(
                 "false\t13\t20.120000000000\t10.1500\t4\t9988908080988890\t1970-01-02T00:42:59.879Z\t902\tcomplexity made simple\tappsicle\n" +
                         "true\t13\t20.120000000000\t10.1500\t4\t9988908080988890\t1970-01-02T00:42:59.879Z\t902\tcomplexity made simple\tquestdb\n",

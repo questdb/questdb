@@ -50,7 +50,8 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
     private final CharSequenceHashSet values;
     private final IntList keys = new IntList();
     private final LongList rows = new LongList();
-    private JournalRecord rec;
+    private final JournalRecord rec = new JournalRecord();
+    private int columnIndex;
     private int keyIndex;
 
     public KvIndexSymListHeadRowSource(String column, CharSequenceHashSet values, VirtualColumn filter) {
@@ -61,7 +62,7 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
 
     @Override
     public void configure(JournalMetadata metadata) {
-        this.rec = new JournalRecord(metadata);
+        this.columnIndex = metadata.getColumnIndex(column);
     }
 
     @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
@@ -69,7 +70,7 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
             Partition partition = rec.partition = slice.partition.open();
-            KVIndex index = partition.getIndexForColumn(column);
+            KVIndex index = partition.getIndexForColumn(columnIndex);
             long lo = slice.lo - 1;
             long hi = slice.calcHi ? partition.size() : slice.hi + 1;
             rows.clear();
@@ -118,7 +119,7 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
             filter.prepare(fa);
         }
 
-        SymbolTable tab = fa.getSymbolTable(column);
+        SymbolTable tab = fa.getSymbolTable(columnIndex);
         keys.clear();
 
         for (int i = 0, n = values.size(); i < n; i++) {

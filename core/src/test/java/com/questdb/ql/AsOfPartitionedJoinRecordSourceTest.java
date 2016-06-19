@@ -281,11 +281,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 128
                 , 128
         )) {
-            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+            printer.printCursor(source, factory);
             TestUtils.assertEquals(expected, sink);
             source.reset();
             sink.clear();
-            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+            printer.printCursor(source, factory);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -309,11 +309,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , new NoRowidSource().of(compiler.compileSource(factory, "select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
                 , 0
         )) {
-            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+            printer.printCursor(source, factory);
             TestUtils.assertEquals(expected, sink);
             source.reset();
             sink.clear();
-            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+            printer.printCursor(source, factory);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -373,11 +373,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 512
                 , 512
         )) {
-            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), true);
+            printer.printCursor(source, factory, true);
             TestUtils.assertEquals(expected, sink);
             sink.clear();
             source.reset();
-            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), true);
+            printer.printCursor(source, factory, true);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -402,11 +402,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:08:00.000Z\tSWHYRX\t-810.375000000000\tPULKHMJLLKQZJIONCLBYNYYWYBEPKPNZXNYWIGPCMLCBMUPYMRIGQWSZMUMXMSYXCEEDCL\t2015-03-10T00:07:50.000Z\tPEHNRX\t-969.125000000000\t0.207036912441\tSUZHUEVVELXBCOGQQGZZNTEZNOOZGQPKNLKUWCXHYPNZEBESMTXULVCTMKCZJGHRIMUNWUUQHXCRSLYJFTDNSEPESIUROKI\tVTJWCP\t0.3852\t27447\t3768436831039810156\ttrue\n" +
                 "2015-03-10T00:09:00.000Z\tSWHYRX\t-384.000000000000\tZGUJBKNTPYXUBYXGDDULXVVSCNJINCQSDOQILSLXZEMDBLNXHYUUTVSXURFLRJLIUC\t2015-03-10T00:08:50.000Z\tVTJWCP\t-1024.000000000000\t0.000000084048\tJOZWRXKMTFXRYPHFPUYWNLBVVHNSJLVKRTLXHBHDHIMFYOJREFU\tSWHYRX\t0.4008\t-25237\t-2694211234414702926\ttrue\n" +
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\tVTJWCP\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
-        printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+        printer.printCursor(source, factory);
         TestUtils.assertEquals(expected, sink);
         source.reset();
         sink.clear();
-        printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+        printer.printCursor(source, factory);
         TestUtils.assertEquals(expected, sink);
     }
 
@@ -464,11 +464,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 512
                 , 512
         )) {
-            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), true);
+            printer.printCursor(source, factory, true);
             TestUtils.assertEquals(expected, sink);
             source.reset();
             sink.clear();
-            printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), true);
+            printer.printCursor(source, factory, true);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -493,7 +493,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:08:00.000Z\tSWHYRX\t-810.375000000000\tPULKHMJLLKQZJIONCLBYNYYWYBEPKPNZXNYWIGPCMLCBMUPYMRIGQWSZMUMXMSYXCEEDCL\t2015-03-10T00:07:50.000Z\tPEHNRX\t-969.125000000000\t0.207036912441\tSUZHUEVVELXBCOGQQGZZNTEZNOOZGQPKNLKUWCXHYPNZEBESMTXULVCTMKCZJGHRIMUNWUUQHXCRSLYJFTDNSEPESIUROKI\tVTJWCP\t0.3852\t27447\t3768436831039810156\ttrue\n" +
                 "2015-03-10T00:09:00.000Z\tSWHYRX\t-384.000000000000\tZGUJBKNTPYXUBYXGDDULXVVSCNJINCQSDOQILSLXZEMDBLNXHYUUTVSXURFLRJLIUC\t2015-03-10T00:08:50.000Z\tVTJWCP\t-1024.000000000000\t0.000000084048\tJOZWRXKMTFXRYPHFPUYWNLBVVHNSJLVKRTLXHBHDHIMFYOJREFU\tSWHYRX\t0.4008\t-25237\t-2694211234414702926\ttrue\n" +
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\tVTJWCP\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
-        printer.printCursor(source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+        printer.printCursor(source, factory);
         TestUtils.assertEquals(expected, sink);
     }
 

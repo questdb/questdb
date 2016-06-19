@@ -33,7 +33,6 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.RecordSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.NoRowidSource;
 import com.questdb.ql.impl.join.HashJoinRecordSource;
 import com.questdb.std.IntHashSet;
@@ -648,7 +647,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 1024 * 1024
         );
         sink.clear();
-        printer.printCursor(r.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+        printer.printCursor(r, factory);
         TestUtils.assertEquals(expected, sink);
         assertThat(expected, "customers c join orders o on c.customerId = o.customerId where customerName ~ 'PJFSREKEUNMKWOF'");
     }

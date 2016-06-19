@@ -387,12 +387,11 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
             }
         }
 
-        private KeyWriter putNull() {
+        private void putNull() {
             checkSize(4);
             Unsafe.getUnsafe().putInt(appendAddr, VariableColumn.NULL_LEN);
             appendAddr += 4;
             writeOffset();
-            return this;
         }
 
         private void writeOffset() {

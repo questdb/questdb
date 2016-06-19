@@ -24,19 +24,16 @@
 package com.questdb.ql.impl.join;
 
 import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.StorageFacade;
 import com.questdb.store.SymbolTable;
 
 public class SplitRecordStorageFacade implements StorageFacade {
-    private final RecordMetadata metadata;
     private final int split;
     private JournalReaderFactory factory;
     private StorageFacade a;
     private StorageFacade b;
 
-    public SplitRecordStorageFacade(RecordMetadata metadata, int split) {
-        this.metadata = metadata;
+    public SplitRecordStorageFacade(int split) {
         this.split = split;
     }
 
@@ -48,11 +45,6 @@ public class SplitRecordStorageFacade implements StorageFacade {
     @Override
     public SymbolTable getSymbolTable(int index) {
         return index < split ? a.getSymbolTable(index) : b.getSymbolTable(index - split);
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(String name) {
-        return getSymbolTable(metadata.getColumnIndex(name));
     }
 
     public void prepare(JournalReaderFactory factory, StorageFacade a, StorageFacade b) {

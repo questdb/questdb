@@ -50,7 +50,7 @@ public class LastFixRecordMap implements LastRecordMap {
     private final IntList fixedOffsets;
     private final int recordLen;
     private final RecordMetadata metadata;
-    private final MapRecord record;
+    private final MapRecord record = new MapRecord();
     private final int bits;
     private final int mask;
     private StorageFacade storageFacade;
@@ -105,7 +105,6 @@ public class LastFixRecordMap implements LastRecordMap {
         this.recordLen = varOffset;
         this.map = new DirectMap(offsetPageSize, ksz, MapUtils.ROWID_MAP_VALUES);
         this.metadata = slaveMetadata;
-        this.record = new MapRecord(this.metadata);
     }
 
     @Override
@@ -206,10 +205,6 @@ public class LastFixRecordMap implements LastRecordMap {
 
     private class MapRecord extends AbstractMemRecord {
         private long address;
-
-        MapRecord(RecordMetadata metadata) {
-            super(metadata);
-        }
 
         @Override
         protected long address(int col) {

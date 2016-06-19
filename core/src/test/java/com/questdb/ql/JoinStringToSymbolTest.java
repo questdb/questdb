@@ -35,7 +35,6 @@ import com.questdb.model.Band;
 import com.questdb.ql.impl.AllRowSource;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.join.CrossJoinRecordSource;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
@@ -105,7 +104,7 @@ public class JoinStringToSymbolTest {
                         new JournalSource(
                                 new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()
                         )
-                ).prepareCursor(factory, NoOpCancellationHandler.INSTANCE)
+                ), factory
         );
 
         final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\n" +

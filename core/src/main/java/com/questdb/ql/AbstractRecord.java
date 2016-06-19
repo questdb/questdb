@@ -23,13 +23,5 @@
 
 package com.questdb.ql;
 
-import com.questdb.factory.configuration.RecordMetadata;
-
 public abstract class AbstractRecord implements Record {
-
-    protected final RecordMetadata metadata;
-
-    protected AbstractRecord(RecordMetadata metadata) {
-        this.metadata = metadata;
-    }
 }

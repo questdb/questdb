@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.map;
 
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSink;
@@ -35,8 +34,7 @@ public class DirectMapRecord extends AbstractRecord {
     private final StorageFacade storageFacade;
     private DirectMapEntry entry;
 
-    public DirectMapRecord(RecordMetadata metadata, StorageFacade storageFacade) {
-        super(metadata);
+    public DirectMapRecord(StorageFacade storageFacade) {
         this.storageFacade = storageFacade;
     }
 

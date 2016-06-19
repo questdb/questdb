@@ -32,7 +32,6 @@ import com.questdb.misc.Rows;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.AllRowSource;
 import com.questdb.ql.impl.JournalSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.unused.JournalTailPartitionSource;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
@@ -100,7 +99,7 @@ public class TailPartitionSourceTest extends AbstractTest {
                 new JournalSource(
                         new JournalTailPartitionSource(w.getMetadata(), false, Rows.toRowID(1, 30))
                         , new AllRowSource()
-                ).prepareCursor(factory, NoOpCancellationHandler.INSTANCE)
+                ), factory
         );
 
         Assert.assertEquals(expected, sink.toString());

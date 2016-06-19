@@ -49,7 +49,6 @@ public class RecordListRecord extends AbstractRecord {
     private StorageFacade storageFacade;
 
     public RecordListRecord(RecordMetadata metadata, MemoryPages mem) {
-        super(metadata);
         this.mem = mem;
         offsets = new int[metadata.getColumnCount()];
 

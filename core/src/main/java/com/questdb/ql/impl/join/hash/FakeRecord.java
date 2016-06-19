@@ -24,21 +24,13 @@
 package com.questdb.ql.impl.join.hash;
 
 import com.questdb.ql.AbstractRecord;
-import com.questdb.ql.impl.CollectionRecordMetadata;
-import com.questdb.ql.impl.LongMetadata;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 
 public class FakeRecord extends AbstractRecord {
-
-    private static final CollectionRecordMetadata metadata = new CollectionRecordMetadata().add(LongMetadata.INSTANCE);
     private long rowId;
-
-    public FakeRecord() {
-        super(metadata);
-    }
 
     @Override
     public byte get(int col) {

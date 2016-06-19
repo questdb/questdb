@@ -35,7 +35,6 @@ import com.questdb.model.Band;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.questdb.ql.impl.interval.SingleIntervalSource;
 import com.questdb.ql.impl.latest.KvIndexSymAllHeadRowSource;
@@ -148,7 +147,7 @@ public class SingleJournalSearchTest {
     }
 
     private void assertEquals(CharSequence expected, RecordSource src) throws JournalException, IOException {
-        new RecordSourcePrinter(sink).printCursor(src.prepareCursor(factory, NoOpCancellationHandler.INSTANCE));
+        new RecordSourcePrinter(sink).printCursor(src, factory);
         Assert.assertEquals(expected, sink.toString());
         sink.flush();
     }

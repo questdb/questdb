@@ -43,11 +43,5 @@ public interface TextParser extends Closeable, Mutable {
 
     void putSchema(CharSequence schema);
 
-    /**
-     * Prepares parser to re-parse input keeping metadata intact.
-     */
-    void restart();
-
     void setHeader(boolean header);
-
 }

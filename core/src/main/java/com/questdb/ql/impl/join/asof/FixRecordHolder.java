@@ -41,8 +41,6 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     private boolean held = false;
 
     public FixRecordHolder(RecordMetadata metadata) {
-        super(metadata);
-
         int cc = metadata.getColumnCount();
         this.types = new ObjList<>(cc);
         this.offsets = new IntList(cc);

@@ -33,11 +33,9 @@ import com.questdb.store.SymbolTable;
 public class SelectedColumnsStorageFacade implements StorageFacade {
 
     private final int reindex[];
-    private final RecordMetadata metadata;
     private StorageFacade delegate;
 
-    public SelectedColumnsStorageFacade(RecordMetadata parentMetadata, RecordMetadata metadata, @Transient ObjList<CharSequence> names) {
-        this.metadata = metadata;
+    public SelectedColumnsStorageFacade(RecordMetadata parentMetadata, @Transient ObjList<CharSequence> names) {
         int k = names.size();
         this.reindex = new int[k];
 
@@ -56,10 +54,6 @@ public class SelectedColumnsStorageFacade implements StorageFacade {
         return delegate.getSymbolTable(reindex[index]);
     }
 
-    @Override
-    public SymbolTable getSymbolTable(String name) {
-        return getSymbolTable(metadata.getColumnIndex(name));
-    }
 
     public void of(StorageFacade delegate) {
         this.delegate = delegate;

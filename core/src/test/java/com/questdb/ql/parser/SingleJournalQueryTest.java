@@ -39,7 +39,6 @@ import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.RecordSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.std.ObjHashSet;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
@@ -2073,21 +2072,21 @@ public class SingleJournalQueryTest extends AbstractTest {
         sink.clear();
         RecordSource src = compiler.compileSource(factory, "select id, z from tab limit :xyz");
         src.getParam(":xyz").set(10L);
-        printer.printCursor(src.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), false);
+        printer.printCursor(src, factory, false);
         TestUtils.assertEquals(expected, sink);
 
         // and one more time
         sink.clear();
         src = compiler.compileSource(factory, "select id, z from tab limit :xyz");
         src.getParam(":xyz").set(10L);
-        printer.printCursor(src.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), false);
+        printer.printCursor(src, factory, false);
         TestUtils.assertEquals(expected, sink);
 
         // and now change parameter
         sink.clear();
         src = compiler.compileSource(factory, "select id, z from tab limit :xyz");
         src.getParam(":xyz").set(5L);
-        printer.printCursor(src.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), false);
+        printer.printCursor(src, factory, false);
 
         final String expected2 = "YDVRVNGSTEQODRZ\t-99\n" +
                 "RIIYMHOWKCDNZNL\t-397\n" +
@@ -2116,14 +2115,14 @@ public class SingleJournalQueryTest extends AbstractTest {
         RecordSource src = compiler.compileSource(factory, "select id, z from tab where z > :min limit :lim");
         src.getParam(":min").set(450);
         src.getParam(":lim").set(10L);
-        printer.printCursor(src.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), false);
+        printer.printCursor(src, factory, false);
 
 
         sink.clear();
         src = compiler.compileSource(factory, "select id, z from tab where :min < z limit :lim");
         src.getParam(":min").set(450);
         src.getParam(":lim").set(10L);
-        printer.printCursor(src.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), false);
+        printer.printCursor(src, factory, false);
 
         TestUtils.assertEquals(expected, sink);
     }
@@ -2140,7 +2139,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         createTabWithNaNs2();
         sink.clear();
         RecordSource src = compiler.compileSource(factory, "select id, z from tab where z > :min limit :lim");
-        printer.printCursor(src.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), false);
+        printer.printCursor(src, factory, false);
     }
 
     @Test
@@ -3315,7 +3314,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     private void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
         sink.clear();
-        printer.printCursor(compiler.compile(factory, query), header);
+        printer.printCursor(compiler.compileSource(factory, query), factory, header);
         TestUtils.assertEquals(expected, sink);
     }
 

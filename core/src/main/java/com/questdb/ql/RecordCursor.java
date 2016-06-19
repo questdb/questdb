@@ -23,12 +23,9 @@
 
 package com.questdb.ql;
 
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.std.ImmutableIterator;
 
 public interface RecordCursor extends ImmutableIterator<Record> {
-    RecordMetadata getMetadata();
-
     StorageFacade getStorageFacade();
 
     Record newRecord();

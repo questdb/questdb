@@ -44,7 +44,7 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
         this.recordSource = recordSource;
         RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
-        this.current = new VirtualRecord(this.metadata, dm.getColumnCount(), virtualColumns);
+        this.current = new VirtualRecord(dm.getColumnCount(), virtualColumns);
     }
 
     @Override

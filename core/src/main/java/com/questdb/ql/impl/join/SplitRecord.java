@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.join;
 
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Numbers;
 import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
@@ -37,8 +36,7 @@ class SplitRecord extends AbstractRecord {
     private Record a;
     private Record b;
 
-    SplitRecord(RecordMetadata metadata, int split) {
-        super(metadata);
+    SplitRecord(int split) {
         this.split = split;
     }
 

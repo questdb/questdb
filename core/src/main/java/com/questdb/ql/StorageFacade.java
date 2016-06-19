@@ -31,6 +31,4 @@ public interface StorageFacade {
     JournalReaderFactory getFactory();
 
     SymbolTable getSymbolTable(int index);
-
-    SymbolTable getSymbolTable(String name);
 }

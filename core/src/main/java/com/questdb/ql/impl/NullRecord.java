@@ -35,7 +35,6 @@ public class NullRecord extends AbstractRecord {
     public static final NullRecord INSTANCE = new NullRecord();
 
     private NullRecord() {
-        super(null);
     }
 
     @Override

@@ -46,6 +46,7 @@ import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.HttpTestUtils;
 import com.questdb.test.tools.TestUtils;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.apache.http.Header;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -279,6 +280,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
+    @SuppressFBWarnings("DM_DEFAULT_ENCODING")
     @Test
     public void testIdleTimeout() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
@@ -329,7 +331,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 StringSink sink = new StringSink();
                 RecordSourcePrinter printer = new RecordSourcePrinter(sink);
                 QueryCompiler qc = new QueryCompiler(configuration);
-                printer.printCursor(qc.compile(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'"));
+                printer.printCursor(qc.compileSource(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'"), f);
                 TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
             } finally {
                 server.halt();
@@ -339,7 +341,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportIntoBusyJournal() throws Exception {
-        try (JournalWriter w = factory.writer(new JournalStructure("test-import.csv").$int("x").$())) {
+        try (JournalWriter ignored = factory.writer(new JournalStructure("test-import.csv").$int("x").$())) {
             HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
                 put("/imp", new ImportHandler(factory));
             }});
@@ -415,7 +417,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 QueryCompiler qc = new QueryCompiler(configuration);
                 RecordSource src1 = qc.compileSource(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'");
                 try {
-                    printer.printCursor(src1.prepareCursor(factory));
+                    printer.printCursor(src1, factory);
                     TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
                 } finally {
                     Misc.free(src1);
@@ -529,6 +531,7 @@ public class HttpServerTest extends AbstractJournalTest {
         assertRanges(configuration, server);
     }
 
+    @SuppressFBWarnings("OBL_UNSATISFIED_OBLIGATION")
     @Test
     public void testSslConcurrentDownload() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));

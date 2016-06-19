@@ -101,7 +101,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
         this.map = new DirectMap(pageSize, keyColumnsSize, types);
         this.recordSource = recordSource;
-        this.record = new DirectMapRecord(this.metadata, storageFacade);
+        this.record = new DirectMapRecord(storageFacade);
     }
 
     @Override

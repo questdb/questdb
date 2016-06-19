@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
 import com.questdb.std.CharSink;
@@ -37,8 +36,7 @@ public class AnalyticRecord extends AbstractRecord {
     private final int split;
     private Record base;
 
-    public AnalyticRecord(RecordMetadata metadata, int split, ObjList<AnalyticFunction> functions) {
-        super(metadata);
+    public AnalyticRecord(int split, ObjList<AnalyticFunction> functions) {
         this.functions = functions;
         this.split = split;
     }

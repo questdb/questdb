@@ -48,6 +48,6 @@ public class ExportCsvMain {
         // the same as name of exported journal.
         // Delimiter is selected via TextFormatEnum
 
-        ExportManager.export(compiler.compile(factory, from), new File(toDir, from), format);
+        ExportManager.export(compiler.compileSource(factory, from), factory, new File(toDir, from), format);
     }
 }

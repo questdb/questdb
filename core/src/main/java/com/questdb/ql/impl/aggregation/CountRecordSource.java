@@ -46,7 +46,7 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
 
     public CountRecordSource(String columnName, PartitionSource partitionSource) {
         metadata.add(new RecordColumnMetadataImpl(columnName, ColumnType.LONG));
-        this.record = new CountRecord(metadata);
+        this.record = new CountRecord();
         this.partitionSource = partitionSource;
     }
 
@@ -132,10 +132,6 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
     private static class CountRecord extends AbstractRecord {
 
         private long count;
-
-        public CountRecord(RecordMetadata metadata) {
-            super(metadata);
-        }
 
         @Override
         public byte get(int col) {

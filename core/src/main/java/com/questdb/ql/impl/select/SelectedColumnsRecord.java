@@ -38,13 +38,11 @@ public class SelectedColumnsRecord extends AbstractRecord {
     private final int reindex[];
     private Record base;
 
-    protected SelectedColumnsRecord(RecordMetadata metadata, int[] reindex) {
-        super(metadata);
+    protected SelectedColumnsRecord(int[] reindex) {
         this.reindex = reindex;
     }
 
     public SelectedColumnsRecord(RecordMetadata metadata, @Transient ObjList<CharSequence> names) {
-        super(metadata);
         int k = names.size();
         this.reindex = new int[k];
 
@@ -54,7 +52,7 @@ public class SelectedColumnsRecord extends AbstractRecord {
     }
 
     public SelectedColumnsRecord copy() {
-        return new SelectedColumnsRecord(metadata, reindex);
+        return new SelectedColumnsRecord(reindex);
     }
 
     @Override

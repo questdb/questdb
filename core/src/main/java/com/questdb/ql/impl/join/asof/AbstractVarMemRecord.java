@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.join.asof;
 
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
@@ -33,10 +32,6 @@ abstract class AbstractVarMemRecord extends AbstractMemRecord {
     private final DirectCharSequence cs = new DirectCharSequence();
     private final DirectCharSequence csB = new DirectCharSequence();
     private char[] strBuf;
-
-    AbstractVarMemRecord(RecordMetadata metadata) {
-        super(metadata);
-    }
 
     @Override
     public CharSequence getFlyweightStr(int col) {

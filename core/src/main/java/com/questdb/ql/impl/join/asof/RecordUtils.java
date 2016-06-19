@@ -34,7 +34,6 @@ final class RecordUtils {
     private RecordUtils() {
     }
 
-    //todo: unify
     static DirectMap.KeyWriter createKey(DirectMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
         DirectMap.KeyWriter kw = map.keyWriter();
         for (int i = 0, n = indices.size(); i < n; i++) {

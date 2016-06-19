@@ -25,11 +25,12 @@ package com.questdb.ql.impl;
 
 import com.questdb.Journal;
 import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.StorageFacade;
 import com.questdb.store.SymbolTable;
 
 public class MasterStorageFacade implements StorageFacade {
-    private Journal journal;
+    private RecordMetadata metadata;
     private JournalReaderFactory factory;
 
     @Override
@@ -40,13 +41,7 @@ public class MasterStorageFacade implements StorageFacade {
     @Override
     public SymbolTable getSymbolTable(int index) {
         // do not call journal.getSymbolTable() because it uses different indexing system
-        //todo: cache symbol tables and allow quick path access to them
-        return journal.getMetadata().getColumn(index).getSymbolTable();
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(String name) {
-        return journal.getSymbolTable(name);
+        return metadata.getColumnQuick(index).getSymbolTable();
     }
 
     public void setFactory(JournalReaderFactory factory) {
@@ -54,6 +49,6 @@ public class MasterStorageFacade implements StorageFacade {
     }
 
     public void setJournal(Journal journal) {
-        this.journal = journal;
+        this.metadata = journal.getMetadata();
     }
 }

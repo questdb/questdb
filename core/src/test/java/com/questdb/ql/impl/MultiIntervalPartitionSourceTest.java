@@ -60,7 +60,7 @@ public class MultiIntervalPartitionSourceTest extends AbstractTest {
                                 )
                         ),
                         new AllRowSource()
-                ).prepareCursor(factory, NoOpCancellationHandler.INSTANCE)
+                ), factory
         );
 
         final String expected = "2014-03-10T07:00:00.000Z\tGKN.L\t290.000000000000\t320.000000000000\t1070060020\t627764827\tFast trading\tLXE\n" +

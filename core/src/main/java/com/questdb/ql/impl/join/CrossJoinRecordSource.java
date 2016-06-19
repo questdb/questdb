@@ -44,7 +44,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
-        this.record = new SplitRecord(metadata, masterSource.getMetadata().getColumnCount());
+        this.record = new SplitRecord(masterSource.getMetadata().getColumnCount());
     }
 
     @Override

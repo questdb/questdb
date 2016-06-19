@@ -49,7 +49,7 @@ abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
     private final LongList rows = new LongList();
     private final CharSequenceHashSet keys = new CharSequenceHashSet();
     private final IntList hashes = new IntList();
-    private JournalRecord rec;
+    private final JournalRecord rec = new JournalRecord();
     private int cursor;
     private int buckets;
     private int columnIndex;
@@ -63,7 +63,6 @@ abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
 
     @Override
     public void configure(JournalMetadata metadata) {
-        this.rec = new JournalRecord(metadata);
         this.columnIndex = metadata.getColumnIndex(column);
         this.buckets = metadata.getColumnQuick(columnIndex).distinctCountHint;
     }

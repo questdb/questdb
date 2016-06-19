@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.join.asof;
 
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.AbstractRecord;
 import com.questdb.std.CharSink;
@@ -33,16 +32,10 @@ import com.questdb.store.SymbolTable;
 import java.io.OutputStream;
 
 abstract class AbstractMemRecord extends AbstractRecord {
-
-    AbstractMemRecord(RecordMetadata metadata) {
-        super(metadata);
-    }
-
     @Override
     public byte get(int col) {
         return Unsafe.getUnsafe().getByte(address(col));
     }
-
 
     @Override
     public void getBin(int col, OutputStream s) {

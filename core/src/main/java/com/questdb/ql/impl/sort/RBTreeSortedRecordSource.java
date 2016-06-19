@@ -110,10 +110,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         return true;
     }
 
-    public void setStorageFacade(StorageFacade facade) {
-        this.recordList.setStorageFacade(facade);
-    }
-
     @Override
     public void toSink(CharSink sink) {
         sink.put('{');
@@ -390,11 +386,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private class TreeCursor extends AbstractImmutableIterator<Record> implements RecordCursor {
 
         private long current;
-
-        @Override
-        public RecordMetadata getMetadata() {
-            return RBTreeSortedRecordSource.this.getMetadata();
-        }
 
         @Override
         public StorageFacade getStorageFacade() {

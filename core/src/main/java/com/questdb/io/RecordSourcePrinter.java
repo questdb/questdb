@@ -23,11 +23,13 @@
 
 package com.questdb.io;
 
+import com.questdb.ex.JournalException;
+import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
+import com.questdb.ql.RecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.ImmutableIterator;
 
@@ -47,12 +49,12 @@ public class RecordSourcePrinter {
         this.delimiter = delimiter;
     }
 
-    public void printCursor(RecordCursor src) throws IOException {
-        printCursor(src, false, src.getMetadata());
+    public void printCursor(RecordSource src, JournalReaderFactory factory) throws IOException, JournalException {
+        printCursor(src.prepareCursor(factory), false, src.getMetadata());
     }
 
-    public void printCursor(RecordCursor src, boolean header) throws IOException {
-        printCursor(src, header, src.getMetadata());
+    public void printCursor(RecordSource src, JournalReaderFactory factory, boolean header) throws IOException, JournalException {
+        printCursor(src.prepareCursor(factory), header, src.getMetadata());
     }
 
     public void printCursor(ImmutableIterator<Record> src, boolean header, RecordMetadata metadata) throws IOException {

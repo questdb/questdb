@@ -77,11 +77,6 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
     }

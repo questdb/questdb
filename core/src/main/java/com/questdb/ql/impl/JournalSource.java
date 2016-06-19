@@ -44,7 +44,7 @@ public class JournalSource extends AbstractCombinedRecordSource {
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public JournalSource(PartitionSource partitionSource, RowSource rowSource) {
         this.metadata = partitionSource.getMetadata();
-        this.rec = new JournalRecord(this.metadata);
+        this.rec = new JournalRecord();
         this.partitionSource = partitionSource;
         rowSource.configure(partitionSource.getMetadata());
         this.rowSource = rowSource;
@@ -84,7 +84,7 @@ public class JournalSource extends AbstractCombinedRecordSource {
 
     @Override
     public Record newRecord() {
-        return new JournalRecord(this.metadata);
+        return new JournalRecord();
     }
 
     @Override

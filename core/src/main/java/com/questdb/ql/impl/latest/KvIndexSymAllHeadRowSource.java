@@ -45,7 +45,7 @@ public class KvIndexSymAllHeadRowSource extends AbstractRowSource {
     private final String column;
     private final VirtualColumn filter;
     private final LongList rows = new LongList();
-    private JournalRecord rec;
+    private final JournalRecord rec = new JournalRecord();
     private int cursor;
     private int valueCount;
     private int columnIndex;
@@ -57,7 +57,6 @@ public class KvIndexSymAllHeadRowSource extends AbstractRowSource {
 
     @Override
     public void configure(JournalMetadata metadata) {
-        this.rec = new JournalRecord(metadata);
         this.columnIndex = metadata.getColumnIndex(column);
     }
 

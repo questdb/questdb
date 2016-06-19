@@ -32,8 +32,8 @@ public class FilteredRowSource extends AbstractRowSource {
 
     private final RowSource delegate;
     private final VirtualColumn filter;
+    private final JournalRecord rec = new JournalRecord();
     private RowCursor underlying;
-    private JournalRecord rec;
 
     public FilteredRowSource(RowSource delegate, VirtualColumn filter) {
         this.delegate = delegate;
@@ -43,7 +43,6 @@ public class FilteredRowSource extends AbstractRowSource {
     @Override
     public void configure(JournalMetadata metadata) {
         this.delegate.configure(metadata);
-        this.rec = new JournalRecord(metadata);
     }
 
     @Override

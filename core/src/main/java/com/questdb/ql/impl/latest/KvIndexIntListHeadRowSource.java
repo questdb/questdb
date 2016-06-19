@@ -48,7 +48,7 @@ public class KvIndexIntListHeadRowSource extends AbstractRowSource {
     private final VirtualColumn filter;
     private final IntHashSet values;
     private final LongList rows = new LongList();
-    private JournalRecord rec;
+    private final JournalRecord rec = new JournalRecord();
     private int keyIndex;
     private int buckets;
     private int columnIndex;
@@ -61,7 +61,6 @@ public class KvIndexIntListHeadRowSource extends AbstractRowSource {
 
     @Override
     public void configure(JournalMetadata metadata) {
-        this.rec = new JournalRecord(metadata);
         this.columnIndex = metadata.getColumnIndex(column);
         this.buckets = metadata.getColumnQuick(columnIndex).distinctCountHint;
     }

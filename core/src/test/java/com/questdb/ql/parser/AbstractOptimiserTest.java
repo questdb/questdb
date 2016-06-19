@@ -37,7 +37,6 @@ import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.std.AssociativeCache;
 import com.questdb.store.SymbolTable;
 import com.questdb.test.tools.JournalTestFactory;
@@ -65,7 +64,7 @@ public abstract class AbstractOptimiserTest {
         try {
             RecordCursor cursor = src.prepareCursor(factory);
 
-            int dateIndex = cursor.getMetadata().getColumnIndex(longColumn);
+            int dateIndex = src.getMetadata().getColumnIndex(longColumn);
             HashMap<Long, Long> map = new HashMap<>();
 
             long count = 0;
@@ -123,7 +122,7 @@ public abstract class AbstractOptimiserTest {
         } else {
             rs.reset();
         }
-        printer.printCursor(rs.prepareCursor(factory, NoOpCancellationHandler.INSTANCE), header);
+        printer.printCursor(rs, factory, header);
         TestUtils.assertEquals(expected, sink);
     }
 }

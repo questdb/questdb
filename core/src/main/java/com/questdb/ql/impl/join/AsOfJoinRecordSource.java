@@ -64,7 +64,7 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
         this.slave = slave;
         this.slaveTimestampIndex = slaveTimestampIndex;
         this.metadata = new SplitRecordMetadata(master.getMetadata(), slave.getMetadata());
-        this.record = new SplitRecord(this.metadata, master.getMetadata().getColumnCount());
+        this.record = new SplitRecord(master.getMetadata().getColumnCount());
 
         if (slave.supportsRowIdAccess()) {
             this.recordHolder = new RowidRecordHolder();
@@ -92,7 +92,7 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
                 this.delayedHolder = new FixRecordHolder(slave.getMetadata());
             }
         }
-        this.storageFacade = new SplitRecordStorageFacade(this.metadata, master.getMetadata().getColumnCount());
+        this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
     }
 
     @Override

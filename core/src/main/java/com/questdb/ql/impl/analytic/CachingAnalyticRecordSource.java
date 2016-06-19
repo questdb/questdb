@@ -54,8 +54,8 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
         }
         this.metadata = new SplitRecordMetadata(parentSource.getMetadata(), funcMetadata);
         int split = parentSource.getMetadata().getColumnCount();
-        this.record = new AnalyticRecord(this.metadata, split, functions);
-        this.storageFacade = new AnalyticRecordStorageFacade(metadata, split, functions);
+        this.record = new AnalyticRecord(split, functions);
+        this.storageFacade = new AnalyticRecordStorageFacade(split, functions);
     }
 
     @Override
