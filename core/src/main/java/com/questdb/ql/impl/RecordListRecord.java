@@ -26,7 +26,7 @@ package com.questdb.ql.impl;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.AbstractRecord;
+import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
@@ -38,7 +38,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class RecordListRecord extends AbstractRecord {
+public class RecordListRecord implements Record {
     private final DirectCharSequence csA = new DirectCharSequence();
     private final DirectCharSequence csB = new DirectCharSequence();
     private final MemoryPages mem;

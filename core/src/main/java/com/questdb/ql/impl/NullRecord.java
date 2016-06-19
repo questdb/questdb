@@ -24,13 +24,13 @@
 package com.questdb.ql.impl;
 
 import com.questdb.misc.Numbers;
-import com.questdb.ql.AbstractRecord;
+import com.questdb.ql.Record;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 
-public class NullRecord extends AbstractRecord {
+public class NullRecord implements Record {
 
     public static final NullRecord INSTANCE = new NullRecord();
 

@@ -23,13 +23,13 @@
 
 package com.questdb.ql.impl.join.hash;
 
-import com.questdb.ql.AbstractRecord;
+import com.questdb.ql.Record;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 
-public class FakeRecord extends AbstractRecord {
+public class FakeRecord implements Record {
     private long rowId;
 
     @Override

@@ -129,7 +129,7 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
         record.count = count;
     }
 
-    private static class CountRecord extends AbstractRecord {
+    private static class CountRecord implements Record {
 
         private long count;
 

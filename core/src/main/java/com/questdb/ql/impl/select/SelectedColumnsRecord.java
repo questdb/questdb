@@ -25,7 +25,6 @@ package com.questdb.ql.impl.select;
 
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
@@ -34,7 +33,7 @@ import com.questdb.std.Transient;
 
 import java.io.OutputStream;
 
-public class SelectedColumnsRecord extends AbstractRecord {
+public class SelectedColumnsRecord implements Record {
     private final int reindex[];
     private Record base;
 

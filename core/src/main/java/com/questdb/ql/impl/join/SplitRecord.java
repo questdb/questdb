@@ -24,14 +24,13 @@
 package com.questdb.ql.impl.join;
 
 import com.questdb.misc.Numbers;
-import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 
 import java.io.OutputStream;
 
-class SplitRecord extends AbstractRecord {
+class SplitRecord implements Record {
     private final int split;
     private Record a;
     private Record b;
