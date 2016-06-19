@@ -53,7 +53,6 @@ public class ResamplingTest extends AbstractOptimiserTest {
                         $()
         )) {
 
-
             Rnd rnd = new Rnd();
 
             String employees[] = new String[employeeCount];
@@ -80,7 +79,6 @@ public class ResamplingTest extends AbstractOptimiserTest {
             orders.commit();
         }
 
-
         try (JournalWriter orders2 = factory.writer(
                 new JournalStructure("orders2").
                         $int("orderId").
@@ -95,7 +93,6 @@ public class ResamplingTest extends AbstractOptimiserTest {
                         recordCountHint(recordCount).
                         $()
         )) {
-
 
             Rnd rnd = new Rnd();
 
@@ -115,6 +112,49 @@ public class ResamplingTest extends AbstractOptimiserTest {
                 w.putInt(1, rnd.nextPositiveInt() % 500);
                 w.putInt(2, rnd.nextPositiveInt() % 200);
                 w.putStr(3, employees[rnd.nextPositiveInt() % employeeCount]);
+                w.putDate(4, timestamp += tsIncrement);
+                w.putInt(5, rnd.nextPositiveInt());
+                w.putDouble(6, rnd.nextDouble());
+                w.putFloat(7, rnd.nextFloat());
+                w.putDate(8, timestamp2 + tsIncrement);
+                w.append();
+            }
+            orders2.commit();
+        }
+
+        try (JournalWriter orders2 = factory.writer(
+                new JournalStructure("orders4").
+                        $int("orderId").
+                        $int("customerId").
+                        $int("productId").
+                        $sym("employeeId").
+                        $date("orderDate").
+                        $int("quantity").
+                        $double("price").
+                        $float("rate").
+                        $ts("basketDate").
+                        recordCountHint(recordCount).
+                        $()
+        )) {
+
+            Rnd rnd = new Rnd();
+
+            String employees[] = new String[employeeCount];
+            for (int i = 0; i < employees.length; i++) {
+                employees[i] = rnd.nextString(9);
+            }
+
+            long timestamp = Dates.parseDateTime("2014-05-04T10:30:00.000Z");
+            long timestamp2 = Dates.parseDateTime("2014-05-03T00:15:00.000Z");
+            int tsIncrement = 10000;
+
+            int orderId = 0;
+            for (int i = 0; i < recordCount; i++) {
+                JournalEntryWriter w = orders2.entryWriter();
+                w.putInt(0, ++orderId);
+                w.putInt(1, rnd.nextPositiveInt() % 500);
+                w.putInt(2, rnd.nextPositiveInt() % 200);
+                w.putSym(3, employees[rnd.nextPositiveInt() % employeeCount]);
                 w.putDate(4, timestamp += tsIncrement);
                 w.putInt(5, rnd.nextPositiveInt());
                 w.putDouble(6, rnd.nextDouble());
@@ -181,6 +221,11 @@ public class ResamplingTest extends AbstractOptimiserTest {
                         "2014-05-05T00:00:00.000Z\tUEDRQQULO\t16.987375521363\t16.987375521363\n" +
                         "2014-05-05T00:00:00.000Z\tTGPGWFFYU\t17.260132823173\t17.260132823173\n",
                 "select orderDate, employeeId, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders sample by 1d");
+    }
+
+    @Test
+    public void testResamplingBySymbol() throws Exception {
+        assertSymbol("select employeeId, vwap(price, quantity) sum from orders4 sample by 1d", 0);
     }
 
     @Test

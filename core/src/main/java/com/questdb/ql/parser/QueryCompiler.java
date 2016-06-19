@@ -1810,18 +1810,24 @@ public class QueryCompiler {
                 }
             }
 
-            // this is either a constant or non-aggregate expression
-            // either case is a virtual column
-            if (virtualColumns == null) {
-                virtualColumns = new ObjList<>();
-            }
 
             if (analytic) {
                 if (qc.getAst().type != ExprNode.NodeType.FUNCTION) {
                     throw QueryError.$(qc.getAst().position, "Analytic function expected");
                 }
+
+                if (aggregators.size() > 0) {
+                    throw QueryError.$(qc.getAst().position, "Analytic function is not allowed in context of aggregation. Use sub-query.");
+                }
+
                 analyticColumns.add((AnalyticColumn) qc);
             } else {
+                // this is either a constant or non-aggregate expression
+                // either case is a virtual column
+                if (virtualColumns == null) {
+                    virtualColumns = new ObjList<>();
+                }
+
                 VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), recordSource.getMetadata());
                 vc.setName(qc.getAlias());
                 virtualColumns.add(vc);

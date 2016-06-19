@@ -131,6 +131,15 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
             "-640305320\tKK\t2016-05-01T11:59:00.000Z\t-636975106\n" +
             "1751526583\tBZ\t2016-05-01T12:00:00.000Z\t1100812407\n";
 
+    @Test
+    public void testAggregationContext() throws Exception {
+        try {
+            compiler.compile(factory, "select sym, sum(d) x, prev(x) over() from abc");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(22, QueryError.getPosition());
+        }
+    }
 
     @Test
     public void testBoolean() throws Exception {
@@ -636,6 +645,32 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "BZ\tAX\tBZ\n";
 
         assertThat(expectd, "select str, sym, p from (select str, sym, timestamp , prev(sym) p over (partition by str) from abc)", true);
+    }
+
+    @Test
+    public void testVirtualColumn() throws Exception {
+        final String expected = "str\tboo\tcol0\tf\td\tcol1\n" +
+                "BZ\ttrue\t1.673692762852\t0.6235\t1.050231933594\tfalse\n" +
+                "XX\tfalse\t567.512389898300\t0.7780\t566.734375000000\tfalse\n" +
+                "KK\tfalse\t0.550908231392\t0.5509\t0.000013792171\tfalse\n" +
+                "AX\tfalse\t0.020375759351\t0.0204\t0.000000567185\tfalse\n" +
+                "AX\ttrue\t-511.515212714672\t0.4848\t-512.000000000000\tfalse\n" +
+                "AX\ttrue\t0.972335502505\t0.2969\t0.675451681018\ttrue\n" +
+                "BZ\tfalse\t0.904826603830\t0.5725\t0.332301996648\ttrue\n" +
+                "BZ\ttrue\t0.596724832495\t0.5967\t0.000001752813\tfalse\n" +
+                "AX\tfalse\t0.161007094177\t0.1609\t0.000076281818\ttrue\n" +
+                "BZ\tfalse\t0.350913291764\t0.3509\t0.000000005555\ttrue\n" +
+                "XX\tfalse\t0.727417677178\t0.7274\t0.000002473130\tfalse\n" +
+                "KK\tfalse\t633.483788669109\t0.5619\t632.921875000000\tfalse\n" +
+                "AX\tfalse\t0.543259224330\t0.5433\t0.000000020896\tfalse\n" +
+                "BZ\tfalse\t0.551534552826\t0.5442\t0.007371325744\tfalse\n" +
+                "XX\ttrue\t0.674562766890\t0.6746\t0.000000014643\tfalse\n" +
+                "AX\ttrue\t512.821699082851\t0.8217\t512.000000000000\tfalse\n" +
+                "XX\ttrue\t864.359103977680\t0.3591\t864.000000000000\ttrue\n" +
+                "AX\ttrue\t0.682714500508\t0.6827\t0.000000157437\ttrue\n" +
+                "BZ\tfalse\t-841.883159995079\t0.1168\t-842.000000000000\tfalse\n" +
+                "BZ\tfalse\t0.496688359286\t0.4967\t0.000032060649\tfalse\n";
+        assertThat(expected, "select str, boo, f+d, f, d , prev(boo) over (partition by str) from abc", true);
     }
 
     @Test

@@ -131,26 +131,32 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
     @Override
     public boolean supportsRowIdAccess() {
-        return false;
+        return true;
     }
 
     @Override
     public StorageFacade getStorageFacade() {
-        return recordCursor.getStorageFacade();
+        return storageFacade;
     }
 
     @Override
     public Record newRecord() {
-        return null;
+        return new DirectMapRecord(storageFacade);
     }
 
     @Override
     public Record recordAt(long rowId) {
-        return null;
+        recordAt(record, rowId);
+        return record;
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
+        DirectMapEntry entry = map.entryAt(atRowId);
+        if (interceptors != null) {
+            notifyInterceptors(entry);
+        }
+        ((DirectMapRecord) record).of(entry);
     }
 
     @Override
@@ -162,9 +168,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     public Record next() {
         DirectMapEntry entry = mapCursor.next();
         if (interceptors != null) {
-            for (int i = 0, n = interceptors.size(); i < n; i++) {
-                interceptors.getQuick(i).beforeRecord(entry.values());
-            }
+            notifyInterceptors(entry);
         }
         return record.of(entry);
     }
@@ -199,5 +203,11 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
             }
         }
         mapCursor = map.iterator();
+    }
+
+    private void notifyInterceptors(DirectMapEntry entry) {
+        for (int i = 0, n = interceptors.size(); i < n; i++) {
+            interceptors.getQuick(i).beforeRecord(entry.values());
+        }
     }
 }

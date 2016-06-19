@@ -101,7 +101,8 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
         }
 
         this.interceptors = interceptors;
-        this.storageFacade = new DirectMapStorageFacade(columns.size(), keyIndices);
+        // columns + 1 is because we intrinsically add "sample" as the first column to key writer
+        this.storageFacade = new DirectMapStorageFacade(columns.size() + 1, keyIndices);
         this.metadata = new DirectMapMetadata(rm, keyCols, columns);
         this.record = new DirectMapRecord(this.storageFacade);
 

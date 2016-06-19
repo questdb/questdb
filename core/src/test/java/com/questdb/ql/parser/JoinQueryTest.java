@@ -52,6 +52,11 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAggregationSymbolBehaviour() throws Exception {
+        assertSymbol("select country, max(customerId) from customers", 0);
+    }
+
+    @Test
     public void testAllOrdersForACustomers() throws Exception {
         assertThat("32209860\t1\t1000\tMZPFIR\t2015-07-10T00:00:17.050Z\tOJXJCNBLYTOIYI\n" +
                         "1020826110\t1\t1884\tGRG\t2015-07-10T00:00:21.152Z\tQXOLEEXZ\n" +
