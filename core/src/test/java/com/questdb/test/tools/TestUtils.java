@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.test.tools;
@@ -29,8 +28,10 @@ import com.questdb.JournalWriter;
 import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
+import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalMetadata;
+import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.iter.JournalIterator;
 import com.questdb.misc.*;
 import com.questdb.model.Quote;
@@ -38,6 +39,9 @@ import com.questdb.model.TestEntity;
 import com.questdb.printer.JournalPrinter;
 import com.questdb.printer.appender.AssertingAppender;
 import com.questdb.printer.converter.DateConverter;
+import com.questdb.ql.Record;
+import com.questdb.ql.RecordCursor;
+import com.questdb.ql.RecordSource;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.query.ResultSet;
 import com.questdb.std.IntList;
@@ -270,6 +274,36 @@ public final class TestUtils {
             }
             max = timestamp;
         }
+    }
+
+    public static void assertStrings(RecordSource src, JournalReaderFactory factory) throws JournalException {
+        RecordCursor cursor = src.prepareCursor(factory);
+        RecordMetadata metadata = src.getMetadata();
+        final int len = metadata.getColumnCount();
+
+        Assert.assertTrue(cursor.hasNext());
+
+        do {
+            Record r = cursor.next();
+
+            for (int i = 0; i < len; i++) {
+                switch (metadata.getColumnQuick(i).getType()) {
+                    case STRING:
+                        CharSequence s = r.getStr(i);
+                        assertEquals(s, r.getFlyweightStr(i));
+                        assertEquals(s, r.getFlyweightStrB(i));
+                        if (s != null) {
+                            Assert.assertEquals(s.length(), r.getStrLen(i));
+                        } else {
+                            Assert.assertEquals(-1, r.getStrLen(i));
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+        } while (cursor.hasNext());
+
     }
 
     public static void compareSymbolTables(Journal a, Journal b) {

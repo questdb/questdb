@@ -49,15 +49,15 @@ public class RecordSourcePrinter {
         this.delimiter = delimiter;
     }
 
-    public void printCursor(RecordSource src, JournalReaderFactory factory) throws IOException, JournalException {
-        printCursor(src.prepareCursor(factory), false, src.getMetadata());
+    public void print(RecordSource src, JournalReaderFactory factory) throws IOException, JournalException {
+        print(src.prepareCursor(factory), false, src.getMetadata());
     }
 
-    public void printCursor(RecordSource src, JournalReaderFactory factory, boolean header) throws IOException, JournalException {
-        printCursor(src.prepareCursor(factory), header, src.getMetadata());
+    public void print(RecordSource src, JournalReaderFactory factory, boolean header) throws IOException, JournalException {
+        print(src.prepareCursor(factory), header, src.getMetadata());
     }
 
-    public void printCursor(ImmutableIterator<Record> src, boolean header, RecordMetadata metadata) throws IOException {
+    public void print(ImmutableIterator<Record> src, boolean header, RecordMetadata metadata) throws IOException {
         if (header) {
             printHeader(metadata);
         }

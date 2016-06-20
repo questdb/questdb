@@ -43,7 +43,7 @@ public class TopRecordSourceTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(99997), new LongConstant(100000)), factory);
+        p.print(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(99997), new LongConstant(100000)), factory);
 
         final String expected = "2013-11-04T10:00:00.000Z\tBT-A.L\t168.000000000000\t0.001307277009\t319936098\t1456039311\tFast trading\tLXE\n" +
                 "2013-11-04T10:00:00.000Z\tAGK.L\t0.000031983279\t878.000000000000\t819380635\t1732419403\tFast trading\tLXE\n" +
@@ -58,7 +58,7 @@ public class TopRecordSourceTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(102), new LongConstant(112)), factory);
+        p.print(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(102), new LongConstant(112)), factory);
 
         final String expected = "2013-09-04T10:00:00.000Z\tTLW.L\t0.003675992833\t0.000000006044\t233699709\t984001343\tFast trading\tLXE\n" +
                 "2013-09-04T10:00:00.000Z\tGKN.L\t0.000001392326\t0.000000010696\t1921077830\t83098719\tFast trading\tLXE\n" +
@@ -80,7 +80,7 @@ public class TopRecordSourceTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(99997), new LongConstant(10)), factory);
+        p.print(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(99997), new LongConstant(10)), factory);
 
         Assert.assertEquals("", sink.toString());
     }
@@ -92,7 +92,7 @@ public class TopRecordSourceTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(0), new LongConstant(10)), factory);
+        p.print(new TopRecordSource(compiler.compileSource(factory, "quote"), new LongConstant(0), new LongConstant(10)), factory);
 
         final String expected = "2013-09-04T10:00:00.000Z\tBT-A.L\t0.000001189157\t1.050231933594\t1326447242\t948263339\tFast trading\tLXE\n" +
                 "2013-09-04T10:00:00.000Z\tADM.L\t104.021850585938\t0.006688738358\t1575378703\t1436881714\tFast trading\tLXE\n" +

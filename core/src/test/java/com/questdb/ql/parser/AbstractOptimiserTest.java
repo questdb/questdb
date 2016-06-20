@@ -87,6 +87,12 @@ public abstract class AbstractOptimiserTest {
         }
     }
 
+    protected void assertEmpty(String query) throws ParserException, JournalException, IOException {
+        try (RecordSource src = compiler.compileSource(factory, query)) {
+            Assert.assertFalse(src.prepareCursor(factory).hasNext());
+        }
+    }
+
     protected void assertPlan(String expected, String query) throws ParserException, JournalException {
         TestUtils.assertEquals(expected, compiler.plan(factory, query));
     }
@@ -111,12 +117,6 @@ public abstract class AbstractOptimiserTest {
 
     }
 
-    protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
-        assertThat(expected, query, false);
-        assertThat(expected, query, false);
-        Misc.free(cache.poll(query));
-    }
-
     protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
         sink.clear();
         RecordSource rs = cache.peek(query);
@@ -125,7 +125,15 @@ public abstract class AbstractOptimiserTest {
         } else {
             rs.reset();
         }
-        printer.printCursor(rs, factory, header);
+        printer.print(rs, factory, header);
         TestUtils.assertEquals(expected, sink);
+        rs.reset();
+        TestUtils.assertStrings(rs, factory);
+    }
+
+    protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
+        assertThat(expected, query, false);
+        assertThat(expected, query, false);
+        Misc.free(cache.poll(query));
     }
 }

@@ -95,7 +95,7 @@ public class TailPartitionSourceTest extends AbstractTest {
 
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
 
-        p.printCursor(
+        p.print(
                 new JournalSource(
                         new JournalTailPartitionSource(w.getMetadata(), false, Rows.toRowID(1, 30))
                         , new AllRowSource()

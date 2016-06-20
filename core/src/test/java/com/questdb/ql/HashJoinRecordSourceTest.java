@@ -107,7 +107,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.printCursor(joinResult, factory);
+        p.print(joinResult, factory);
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -192,7 +192,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.printCursor(joinResult, factory);
+        p.print(joinResult, factory);
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -238,7 +238,7 @@ public class HashJoinRecordSourceTest {
                     add("url");
                 }}
         );
-        p.printCursor(joinResult, factory);
+        p.print(joinResult, factory);
         Assert.assertEquals("pop\thttp://band1.com\n" +
                 "rock\thttp://band1.com\n" +
                 "\thttp://band2.com\n" +

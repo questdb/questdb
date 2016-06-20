@@ -147,7 +147,7 @@ public class SingleJournalSearchTest {
     }
 
     private void assertEquals(CharSequence expected, RecordSource src) throws JournalException, IOException {
-        new RecordSourcePrinter(sink).printCursor(src, factory);
+        new RecordSourcePrinter(sink).print(src, factory);
         Assert.assertEquals(expected, sink.toString());
         sink.flush();
     }

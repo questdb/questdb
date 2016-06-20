@@ -30,6 +30,7 @@ import com.questdb.std.CharSink;
 import com.questdb.std.ObjectFactory;
 import com.questdb.std.SplitCharSequence;
 import com.questdb.store.ColumnType;
+import com.questdb.store.VariableColumn;
 
 public class StrConcatOperator extends AbstractBinaryOperator {
     public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
@@ -72,6 +73,16 @@ public class StrConcatOperator extends AbstractBinaryOperator {
 
     @Override
     public int getStrLen(Record rec) {
-        return lhs.getStrLen(rec) + rhs.getStrLen(rec);
+        int ll = lhs.getStrLen(rec);
+        int rl = rhs.getStrLen(rec);
+
+        if (ll == VariableColumn.NULL_LEN) {
+            return rl;
+        }
+
+        if (rl == VariableColumn.NULL_LEN) {
+            return ll;
+        }
+        return ll + rl;
     }
 }

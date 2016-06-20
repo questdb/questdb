@@ -95,7 +95,7 @@ public class JoinStringToSymbolTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(
+        p.print(
                 new CrossJoinRecordSource(
                         new JournalSource(
                                 new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()

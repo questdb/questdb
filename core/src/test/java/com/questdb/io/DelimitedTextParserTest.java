@@ -24,11 +24,8 @@
 package com.questdb.io;
 
 import com.questdb.Journal;
-import com.questdb.ex.JournalException;
-import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.io.sink.StringSink;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
@@ -95,13 +92,6 @@ public class DelimitedTextParserTest extends AbstractTest {
         Assert.assertEquals(ColumnType.STRING, m.getColumn(6).type);
     }
 
-    private void assertThat(String expected, String query) throws ParserException, JournalException, IOException {
-        StringSink sink = new StringSink();
-        RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.printCursor(compiler.compileSource(factory, query), factory);
-        Assert.assertEquals(expected, sink.toString());
-
-    }
 
     private void imp(String resource) throws IOException {
         String file = this.getClass().getResource(resource).getFile();

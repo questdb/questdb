@@ -142,7 +142,7 @@ public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
 
     @Override
     public int getStrLen() {
-        return prevRowId == -1 ? 0 : valueColumn.getStrLen(getParentRecord());
+        return prevRowId == -1 ? -1 : valueColumn.getStrLen(getParentRecord());
     }
 
     @Override

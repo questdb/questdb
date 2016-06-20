@@ -42,7 +42,7 @@ public final class ExportManager {
         }
         try (FileSink sink = new FileSink(to)) {
             RecordSourcePrinter printer = new RecordSourcePrinter(sink, format.getDelimiter());
-            printer.printCursor(from, factory);
+            printer.print(from, factory);
         }
     }
 

@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.parser;
@@ -30,14 +29,12 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.ObjHashSet;
 import com.questdb.test.tools.AbstractTest;
@@ -48,10 +45,6 @@ import org.junit.Test;
 import java.io.IOException;
 
 public class SingleJournalQueryTest extends AbstractTest {
-
-    private final StringSink sink = new StringSink();
-    private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-    private final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
 
     @Test
     public void testAddDoubleAndIntConst() throws Exception {
@@ -931,7 +924,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         JournalWriter<Quote> w = factory.writer(Quote.class, "q");
         TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
         w.commit();
-        assertThat("", "select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00' and timestamp = '2015-02-12T12:00:00'");
+        assertEmpty("select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00' and timestamp = '2015-02-12T12:00:00'");
     }
 
     @Test
@@ -2072,21 +2065,21 @@ public class SingleJournalQueryTest extends AbstractTest {
         sink.clear();
         RecordSource src = compiler.compileSource(factory, "select id, z from tab limit :xyz");
         src.getParam(":xyz").set(10L);
-        printer.printCursor(src, factory, false);
+        printer.print(src, factory, false);
         TestUtils.assertEquals(expected, sink);
 
         // and one more time
         sink.clear();
         src = compiler.compileSource(factory, "select id, z from tab limit :xyz");
         src.getParam(":xyz").set(10L);
-        printer.printCursor(src, factory, false);
+        printer.print(src, factory, false);
         TestUtils.assertEquals(expected, sink);
 
         // and now change parameter
         sink.clear();
         src = compiler.compileSource(factory, "select id, z from tab limit :xyz");
         src.getParam(":xyz").set(5L);
-        printer.printCursor(src, factory, false);
+        printer.print(src, factory, false);
 
         final String expected2 = "YDVRVNGSTEQODRZ\t-99\n" +
                 "RIIYMHOWKCDNZNL\t-397\n" +
@@ -2115,14 +2108,14 @@ public class SingleJournalQueryTest extends AbstractTest {
         RecordSource src = compiler.compileSource(factory, "select id, z from tab where z > :min limit :lim");
         src.getParam(":min").set(450);
         src.getParam(":lim").set(10L);
-        printer.printCursor(src, factory, false);
+        printer.print(src, factory, false);
 
 
         sink.clear();
         src = compiler.compileSource(factory, "select id, z from tab where :min < z limit :lim");
         src.getParam(":min").set(450);
         src.getParam(":lim").set(10L);
-        printer.printCursor(src, factory, false);
+        printer.print(src, factory, false);
 
         TestUtils.assertEquals(expected, sink);
     }
@@ -2139,7 +2132,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         createTabWithNaNs2();
         sink.clear();
         RecordSource src = compiler.compileSource(factory, "select id, z from tab where z > :min limit :lim");
-        printer.printCursor(src, factory, false);
+        printer.print(src, factory, false);
     }
 
     @Test
@@ -3031,7 +3024,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testSubQuery7() throws Exception {
         createTabWithNaNs2();
-        assertThat("", "select id, z from (tab where not(id in 'GMPLUCFTLNKYTSZ') and timestamp = '2015-03-12T10:00:00;5m;30m;10') where 10 < 3");
+        assertEmpty("select id, z from (tab where not(id in 'GMPLUCFTLNKYTSZ') and timestamp = '2015-03-12T10:00:00;5m;30m;10') where 10 < 3");
     }
 
     @Test
@@ -3047,7 +3040,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testSubQueryFalseModel() throws Exception {
         createTabWithNaNs2();
-        assertThat("", "select id, z from (tab where not(id in 'GMPLUCFTLNKYTSZ') and timestamp = '2015-03-12T10:00:00;5m;30m;10') where timestamp = '2015-03-12T10:00:00' and timestamp = '2015-03-12T14:00:00'");
+        assertEmpty("select id, z from (tab where not(id in 'GMPLUCFTLNKYTSZ') and timestamp = '2015-03-12T10:00:00;5m;30m;10') where timestamp = '2015-03-12T10:00:00' and timestamp = '2015-03-12T14:00:00'");
     }
 
     @Test
@@ -3310,17 +3303,6 @@ public class SingleJournalQueryTest extends AbstractTest {
                 "null\t361.391540527344\t-1024.000000000000\n";
 
         assertThat(expected, "select id, x, y from tab where id = null and x > 120 and y < -400");
-    }
-
-    private void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
-        sink.clear();
-        printer.printCursor(compiler.compileSource(factory, query), factory, header);
-        TestUtils.assertEquals(expected, sink);
-    }
-
-    private void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
-        assertThat(expected, query, false);
-        assertThat(expected, query, false);
     }
 
     private void createIndexedTab() throws JournalException, NumericException {

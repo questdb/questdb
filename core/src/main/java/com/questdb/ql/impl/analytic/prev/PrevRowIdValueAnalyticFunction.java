@@ -152,7 +152,7 @@ public class PrevRowIdValueAnalyticFunction extends AbstractPrevValueAnalyticFun
 
     @Override
     public int getStrLen() {
-        return nextNull ? 0 : valueColumn.getStrLen(getParentRecord());
+        return nextNull ? -1 : valueColumn.getStrLen(getParentRecord());
     }
 
     @Override

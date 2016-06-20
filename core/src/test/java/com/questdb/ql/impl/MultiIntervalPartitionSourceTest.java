@@ -49,7 +49,7 @@ public class MultiIntervalPartitionSourceTest extends AbstractTest {
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
 
-        p.printCursor(
+        p.print(
                 new JournalSource(
                         new MultiIntervalPartitionSource(
                                 new JournalPartitionSource(w.getMetadata(), true),
