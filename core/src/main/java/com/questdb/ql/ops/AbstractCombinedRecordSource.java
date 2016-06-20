@@ -36,6 +36,25 @@ public abstract class AbstractCombinedRecordSource extends AbstractRecordSource 
     }
 
     @Override
+    public Record newRecord() {
+        return null;
+    }
+
+    @Override
+    public Record recordAt(long rowId) {
+        return null;
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+    }
+
+    @Override
     public void remove() {
+    }
+
+    @Override
+    public boolean supportsRowIdAccess() {
+        return false;
     }
 }

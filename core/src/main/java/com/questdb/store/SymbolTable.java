@@ -192,7 +192,7 @@ public class SymbolTable implements Closeable {
     }
 
     public String value(int key) {
-        if (key == VALUE_IS_NULL) {
+        if (key < 0) {
             return null;
         }
 

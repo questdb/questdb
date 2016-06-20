@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.impl.join;
@@ -37,6 +36,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource slaveSource;
     private final SplitRecordMetadata metadata;
     private final SplitRecord record;
+    private final SplitRecordStorageFacade storageFacade;
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
     private boolean nextSlave = false;
@@ -45,7 +45,9 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
-        this.record = new SplitRecord(masterSource.getMetadata().getColumnCount());
+        int split = masterSource.getMetadata().getColumnCount();
+        this.record = new SplitRecord(split);
+        this.storageFacade = new SplitRecordStorageFacade(split);
     }
 
     @Override
@@ -63,6 +65,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
         masterCursor = masterSource.prepareCursor(factory, cancellationHandler);
         slaveCursor = slaveSource.prepareCursor(factory, cancellationHandler);
+        this.storageFacade.prepare(factory, masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
         return this;
     }
 
@@ -74,27 +77,8 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean supportsRowIdAccess() {
-        return false;
-    }
-
-    @Override
     public StorageFacade getStorageFacade() {
-        return null;
-    }
-
-    @Override
-    public Record newRecord() {
-        return null;
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        return null;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
+        return storageFacade;
     }
 
     @Override

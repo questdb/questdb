@@ -49,6 +49,7 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
     private final RecordHolder recordHolder;
     private final RecordHolder delayedHolder;
     private final SplitRecordStorageFacade storageFacade;
+    private final int split;
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
 
@@ -63,7 +64,8 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
         this.slave = slave;
         this.slaveTimestampIndex = slaveTimestampIndex;
         this.metadata = new SplitRecordMetadata(master.getMetadata(), slave.getMetadata());
-        this.record = new SplitRecord(master.getMetadata().getColumnCount());
+        this.split = master.getMetadata().getColumnCount();
+        this.record = new SplitRecord(split);
 
         if (slave.supportsRowIdAccess()) {
             this.recordHolder = new RowidRecordHolder();
@@ -126,27 +128,8 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
-    public boolean supportsRowIdAccess() {
-        return false;
-    }
-
-    @Override
     public StorageFacade getStorageFacade() {
-        return null;
-    }
-
-    @Override
-    public Record newRecord() {
-        return null;
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        return null;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
+        return storageFacade;
     }
 
     @Override
@@ -184,6 +167,25 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
         }
         record.setB(recordHolder.peek());
         return record;
+    }
+
+    @Override
+    public Record newRecord() {
+        return new SplitRecord(split);
+    }
+
+    @Override
+    public Record recordAt(long rowId) {
+        return null;
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+    }
+
+    @Override
+    public boolean supportsRowIdAccess() {
+        return false;
     }
 
     @Override

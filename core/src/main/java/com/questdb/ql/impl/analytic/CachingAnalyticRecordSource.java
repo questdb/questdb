@@ -117,27 +117,8 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean supportsRowIdAccess() {
-        return false;
-    }
-
-    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
-    }
-
-    @Override
-    public Record newRecord() {
-        return null;
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        return null;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
     }
 
     @Override
@@ -160,6 +141,10 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public void toSink(CharSink sink) {
-
+        sink.put('{');
+        sink.putQuoted("op").put(':').putQuoted("CachingAnalyticRecordSource").put(',');
+        sink.putQuoted("functions").put(':').put(functions.size()).put(',');
+        sink.putQuoted("src").put(':').put(parentSource);
+        sink.put('}');
     }
 }

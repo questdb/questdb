@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
@@ -399,6 +398,28 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     @Test
     public void testNonPartAnalyticSymbolBehaviour() throws Exception {
         assertSymbol("select l, str, sym, timestamp , next(sym) over () from abc", 4);
+    }
+
+    @Test
+    public void testPlan() throws Exception {
+        assertPlan2("{\n" +
+                        "  \"op\": \"SelectedColumnsRecordSource\",\n" +
+                        "  \"src\": {\n" +
+                        "    \"op\": \"CachingAnalyticRecordSource\",\n" +
+                        "    \"functions\": 1,\n" +
+                        "    \"src\": {\n" +
+                        "      \"op\": \"JournalSource\",\n" +
+                        "      \"psrc\": {\n" +
+                        "        \"op\": \"JournalPartitionSource\",\n" +
+                        "        \"journal\": \"abc\"\n" +
+                        "      },\n" +
+                        "      \"rsrc\": {\n" +
+                        "        \"op\": \"AllRowSource\"\n" +
+                        "      }\n" +
+                        "    }\n" +
+                        "  }\n" +
+                        "}",
+                "select str, sym, timestamp , next(sym) over (partition by str) from abc");
     }
 
     @Test

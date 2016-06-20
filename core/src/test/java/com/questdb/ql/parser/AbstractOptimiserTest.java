@@ -114,7 +114,6 @@ public abstract class AbstractOptimiserTest {
             Record r = cursor.next();
             TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));
         }
-
     }
 
     protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
