@@ -36,7 +36,6 @@ import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.CharSink;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSource implements Closeable {
     private final LastRecordMap map;
@@ -102,7 +101,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         assert !closed;
         Misc.free(map);
         Misc.free(holder);

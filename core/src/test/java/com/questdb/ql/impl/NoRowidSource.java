@@ -26,6 +26,7 @@ package com.questdb.ql.impl;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
@@ -37,6 +38,11 @@ public class NoRowidSource implements RecordSource {
     private RecordSource delegate;
 
     @Override
+    public void close() {
+        Misc.free(delegate);
+    }
+
+    @Override
     public RecordMetadata getMetadata() {
         return delegate.getMetadata();
     }
@@ -46,15 +52,15 @@ public class NoRowidSource implements RecordSource {
         return null;
     }
 
+    @Override
+    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
+        return delegate.prepareCursor(factory);
+    }
+
     @SuppressWarnings("unchecked")
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
         return delegate.prepareCursor(factory, cancellationHandler);
-    }
-
-    @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        return delegate.prepareCursor(factory);
     }
 
     @Override

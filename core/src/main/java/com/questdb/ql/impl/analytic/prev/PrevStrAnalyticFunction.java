@@ -30,8 +30,6 @@ import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
-import com.questdb.ql.impl.IntMetadata;
-import com.questdb.ql.impl.LongMetadata;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapEntry;
@@ -49,7 +47,6 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
-    private static final ObjList<RecordColumnMetadata> valueColumns = new ObjList<>();
     private final DirectMap map;
     private final DirectCharSequence cs = new DirectCharSequence();
     private final ObjList<VirtualColumn> partitionBy;
@@ -239,10 +236,5 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
         values.putLong(0, ptr);
         values.putInt(1, l);
         Chars.put(ptr, str);
-    }
-
-    static {
-        valueColumns.add(LongMetadata.INSTANCE);
-        valueColumns.add(IntMetadata.INSTANCE);
     }
 }

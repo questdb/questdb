@@ -37,7 +37,6 @@ import com.questdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.Iterator;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
@@ -105,7 +104,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Misc.free(this.map);
         Misc.free(recordSource);
     }

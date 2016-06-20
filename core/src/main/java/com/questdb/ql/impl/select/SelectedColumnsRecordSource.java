@@ -34,8 +34,6 @@ import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
 import com.questdb.std.Transient;
 
-import java.io.IOException;
-
 public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource recordSource;
     private final RecordMetadata metadata;
@@ -60,7 +58,7 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Misc.free(recordSource);
     }
 

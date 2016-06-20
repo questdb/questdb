@@ -38,7 +38,6 @@ import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implements Closeable {
     private final RecordSource master;
@@ -96,7 +95,7 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Misc.free(recordHolder);
         Misc.free(delayedHolder);
         Misc.free(master);

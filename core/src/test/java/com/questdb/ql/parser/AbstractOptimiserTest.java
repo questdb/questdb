@@ -93,9 +93,12 @@ public abstract class AbstractOptimiserTest {
 
     protected void assertPlan2(CharSequence expected, CharSequence query) throws JournalException, ParserException {
         sink.clear();
-        compiler.compileSource(factory, query).toSink(sink);
-        String s = gson.toJson(jp.parse(sink.toString()));
-        TestUtils.assertEquals(expected, s);
+        try (RecordSource recordSource = compiler.compileSource(factory, query)) {
+            recordSource.toSink(sink);
+            String s = gson.toJson(jp.parse(sink.toString()));
+            TestUtils.assertEquals(expected, s);
+        }
+
     }
 
     protected void assertSymbol(String query, int columnIndex) throws JournalException, ParserException {

@@ -42,7 +42,6 @@ import com.questdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class HashJoinRecordSource extends AbstractCombinedRecordSource implements Closeable {
     private final RecordSource master;
@@ -86,7 +85,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Misc.free(recordMap);
         Misc.free(master);
         Misc.free(slave);

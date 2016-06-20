@@ -295,6 +295,7 @@ final class QueryFilterAnalyser {
                 timestampNodes.add(node);
                 return true;
             } catch (NumericException e) {
+                // todo: not hit by test
                 throw QueryError.$(node.rhs.position, "Not a date");
             }
         }
@@ -309,6 +310,7 @@ final class QueryFilterAnalyser {
                 timestampNodes.add(node);
                 return true;
             } catch (NumericException e) {
+                // todo: not hit by test
                 throw QueryError.$(node.lhs.position, "Not a date");
             }
         }
@@ -498,6 +500,7 @@ final class QueryFilterAnalyser {
                     model.clearInterval();
                     return false;
                 } catch (NumericException e) {
+                    // todo: not hit by test
                     throw QueryError.$(position, "Not a date");
                 }
             case 0:
