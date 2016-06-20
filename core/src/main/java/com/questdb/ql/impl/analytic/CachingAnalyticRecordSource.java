@@ -26,6 +26,7 @@ package com.questdb.ql.impl.analytic;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordList;
@@ -56,6 +57,14 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
         int split = parentSource.getMetadata().getColumnCount();
         this.record = new AnalyticRecord(split, functions);
         this.storageFacade = new AnalyticRecordStorageFacade(split, functions);
+    }
+
+    @Override
+    public void close() {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Misc.free(functions.getQuick(i));
+        }
+        Misc.free(parentSource);
     }
 
     @Override

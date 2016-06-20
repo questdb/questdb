@@ -465,6 +465,27 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    public void testPlan() throws Exception {
+        assertPlan2("{\n" +
+                "  \"op\": \"SelectedColumnsRecordSource\",\n" +
+                "  \"src\": {\n" +
+                "    \"op\": \"AnalyticRecordSource\",\n" +
+                "    \"functions\": 1,\n" +
+                "    \"src\": {\n" +
+                "      \"op\": \"JournalSource\",\n" +
+                "      \"psrc\": {\n" +
+                "        \"op\": \"JournalPartitionSource\",\n" +
+                "        \"journal\": \"abc\"\n" +
+                "      },\n" +
+                "      \"rsrc\": {\n" +
+                "        \"op\": \"AllRowSource\"\n" +
+                "      }\n" +
+                "    }\n" +
+                "  }\n" +
+                "}", "select sym, prev(d) over() from abc");
+    }
+
+    @Test
     public void testShort() throws Exception {
         final String expected = "-19496\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t0\n" +
                 "-24357\tXX\tBZ\t2016-05-01T10:22:00.000Z\t0\n" +

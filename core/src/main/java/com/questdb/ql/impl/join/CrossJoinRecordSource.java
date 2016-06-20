@@ -26,6 +26,7 @@ package com.questdb.ql.impl.join;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
@@ -45,6 +46,12 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
         this.slaveSource = slaveSource;
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
         this.record = new SplitRecord(masterSource.getMetadata().getColumnCount());
+    }
+
+    @Override
+    public void close() {
+        Misc.free(masterSource);
+        Misc.free(slaveSource);
     }
 
     @Override

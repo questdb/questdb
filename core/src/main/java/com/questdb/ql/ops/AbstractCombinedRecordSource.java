@@ -27,9 +27,10 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 
+import java.io.Closeable;
 import java.util.Iterator;
 
-public abstract class AbstractCombinedRecordSource extends AbstractRecordSource implements RecordSource, RecordCursor {
+public abstract class AbstractCombinedRecordSource extends AbstractRecordSource implements RecordSource, RecordCursor, Closeable {
     @Override
     public Iterator<Record> iterator() {
         return this;

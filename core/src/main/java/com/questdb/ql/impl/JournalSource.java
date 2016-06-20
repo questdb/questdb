@@ -51,6 +51,10 @@ public class JournalSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public void close() {
+    }
+
+    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }

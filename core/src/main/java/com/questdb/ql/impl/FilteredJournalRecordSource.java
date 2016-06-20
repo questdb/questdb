@@ -26,6 +26,7 @@ package com.questdb.ql.impl;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
@@ -50,6 +51,11 @@ public class FilteredJournalRecordSource extends AbstractCombinedRecordSource {
         // this is quite fragile approach but we better not create tree of objects
         // unnecessarily
         this.filterNode = filterNode;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(delegate);
     }
 
     @Override

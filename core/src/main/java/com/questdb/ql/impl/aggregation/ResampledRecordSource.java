@@ -28,6 +28,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
@@ -50,7 +51,6 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     private RecordCursor recordCursor;
     private DirectMapIterator mapCursor;
     private Record nextRecord = null;
-
 
     @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ResampledRecordSource(
@@ -114,6 +114,12 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
 
         this.map = new DirectMap(pageSize, keyCols.size(), types);
         this.recordSource = recordSource;
+    }
+
+    @Override
+    public void close() {
+        map.close();
+        Misc.free(recordSource);
     }
 
     @Override

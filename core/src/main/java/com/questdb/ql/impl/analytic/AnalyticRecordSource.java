@@ -26,6 +26,7 @@ package com.questdb.ql.impl.analytic;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.SplitRecordMetadata;
@@ -34,7 +35,9 @@ import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class AnalyticRecordSource extends AbstractCombinedRecordSource {
+import java.io.Closeable;
+
+public class AnalyticRecordSource extends AbstractCombinedRecordSource implements Closeable {
     private final RecordSource parentSource;
     private final ObjList<AnalyticFunction> functions;
     private final RecordMetadata metadata;
@@ -54,6 +57,13 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
         int split = parentSource.getMetadata().getColumnCount();
         this.record = new AnalyticRecord(split, functions);
         this.storageFacade = new AnalyticRecordStorageFacade(split, functions);
+    }
+
+    @Override
+    public void close() {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Misc.free(functions.getQuick(i));
+        }
     }
 
     @Override
@@ -125,6 +135,10 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public void toSink(CharSink sink) {
-
+        sink.put('{');
+        sink.putQuoted("op").put(':').putQuoted("AnalyticRecordSource").put(',');
+        sink.putQuoted("functions").put(':').put(functions.size()).put(',');
+        sink.putQuoted("src").put(':').put(parentSource);
+        sink.put('}');
     }
 }

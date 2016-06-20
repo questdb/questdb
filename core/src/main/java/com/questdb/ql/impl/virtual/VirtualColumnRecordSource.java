@@ -26,6 +26,7 @@ package com.questdb.ql.impl.virtual;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
@@ -45,6 +46,11 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
         RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
         this.current = new VirtualRecord(dm.getColumnCount(), virtualColumns);
+    }
+
+    @Override
+    public void close() {
+        Misc.free(recordSource);
     }
 
     @Override

@@ -26,12 +26,15 @@ package com.questdb.ql.impl.select;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
 import com.questdb.std.Transient;
+
+import java.io.IOException;
 
 public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource recordSource;
@@ -54,6 +57,11 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
         this.metadata = new SelectedColumnsMetadata(dm, names);
         this.record = new SelectedColumnsRecord(dm, names);
         this.storageFacade = new SelectedColumnsStorageFacade(dm, names);
+    }
+
+    @Override
+    public void close() throws IOException {
+        Misc.free(recordSource);
     }
 
     @Override

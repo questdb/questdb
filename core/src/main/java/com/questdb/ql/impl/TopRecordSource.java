@@ -26,6 +26,7 @@ package com.questdb.ql.impl;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
@@ -44,6 +45,11 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
         this.recordSource = recordSource;
         this.lo = lo;
         this.hi = hi;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(recordSource);
     }
 
     @Override

@@ -27,6 +27,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Interval;
+import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
@@ -48,6 +49,11 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
         this.intervalSource = intervalSource;
         final RecordMetadata metadata = delegate.getMetadata();
         this.timestampIndex = metadata.getTimestampIndex();
+    }
+
+    @Override
+    public void close() {
+        Misc.free(delegate);
     }
 
     @Override

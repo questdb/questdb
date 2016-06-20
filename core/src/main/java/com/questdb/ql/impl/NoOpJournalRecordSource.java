@@ -26,6 +26,7 @@ package com.questdb.ql.impl;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
@@ -38,6 +39,11 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
 
     public NoOpJournalRecordSource(RecordSource delegate) {
         this.delegate = delegate;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(delegate);
     }
 
     @Override

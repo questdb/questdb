@@ -51,6 +51,10 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public void close() {
+    }
+
+    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
