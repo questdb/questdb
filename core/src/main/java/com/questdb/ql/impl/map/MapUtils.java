@@ -91,6 +91,14 @@ public class MapUtils {
         return l;
     }
 
+    public static ObjList<ColumnType> toTypeList(ColumnType type1, ColumnType type2) {
+        ObjList<ColumnType> l = tlTypeList.get();
+        l.clear();
+        l.add(type1);
+        l.add(type2);
+        return l;
+    }
+
     public static void writeVirtualColumn(DirectMap.KeyWriter w, Record r, VirtualColumn vc) {
         switch (vc.getType()) {
             case BOOLEAN:

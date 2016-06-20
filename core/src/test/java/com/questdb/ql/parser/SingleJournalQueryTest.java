@@ -362,7 +362,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testConstantCondition1() throws Exception {
         createTab();
         sink.put(compiler.compileSource(factory, "select id, x, y from tab where x > 0 and 1 > 1"));
-        TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"NoOpJournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}",
+        TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"NoOpJournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}",
                 sink);
     }
 
@@ -370,7 +370,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testConstantCondition2() throws Exception {
         createTab();
         sink.put(compiler.compileSource(factory, "select id, x, y from tab where x > 0 or 1 = 1"));
-        TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}",
+        TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}",
                 sink);
     }
 
@@ -378,7 +378,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testConstantCondition3() throws Exception {
         createTab();
         sink.put(compiler.compileSource(factory, "select id, x, y from tab where 1 > 1 or 2 > 2"));
-        TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"JournalSource\",\"psrc\":{\"op\":\"NoOpJournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}",
+        TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"NoOpJournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}",
                 sink);
     }
 

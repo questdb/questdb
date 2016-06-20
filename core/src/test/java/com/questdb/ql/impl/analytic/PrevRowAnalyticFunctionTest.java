@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
@@ -455,6 +454,31 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    public void testNoRowIdPlan() throws Exception {
+        final String expected = "{\n" +
+                "  \"op\": \"SelectedColumnsRecordSource\",\n" +
+                "  \"src\": {\n" +
+                "    \"op\": \"AnalyticRecordSource\",\n" +
+                "    \"functions\": 1,\n" +
+                "    \"src\": {\n" +
+                "      \"op\": \"NoRowIdRecordSource\",\n" +
+                "      \"src\": {\n" +
+                "        \"op\": \"JournalRecordSource\",\n" +
+                "        \"psrc\": {\n" +
+                "          \"op\": \"JournalPartitionSource\",\n" +
+                "          \"journal\": \"abc\"\n" +
+                "        },\n" +
+                "        \"rsrc\": {\n" +
+                "          \"op\": \"AllRowSource\"\n" +
+                "        }\n" +
+                "      }\n" +
+                "    }\n" +
+                "  }\n" +
+                "}";
+        assertPlan2(expected, "select str, sym, timestamp , prev(sym) over () from '*!*abc'");
+    }
+
+    @Test
     public void testNonPartSymbolBehaviour() throws Exception {
         assertSymbol("select str, sym, timestamp , prev(sym) over () from abc", 3);
     }
@@ -472,7 +496,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "    \"op\": \"AnalyticRecordSource\",\n" +
                 "    \"functions\": 1,\n" +
                 "    \"src\": {\n" +
-                "      \"op\": \"JournalSource\",\n" +
+                "      \"op\": \"JournalRecordSource\",\n" +
                 "      \"psrc\": {\n" +
                 "        \"op\": \"JournalPartitionSource\",\n" +
                 "        \"journal\": \"abc\"\n" +
@@ -562,6 +586,35 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    public void testStrNoRowId() throws Exception {
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
+                "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\tnull\n" +
+                "AX\tXX\t2016-05-01T10:24:00.000Z\tKK\n" +
+                "AX\tXX\t2016-05-01T10:25:00.000Z\tAX\n" +
+                "AX\tBZ\t2016-05-01T10:26:00.000Z\tXX\n" +
+                "BZ\tXX\t2016-05-01T10:27:00.000Z\tAX\n" +
+                "BZ\tKK\t2016-05-01T10:28:00.000Z\tnull\n" +
+                "AX\tKK\t2016-05-01T10:29:00.000Z\tBZ\n" +
+                "BZ\tAX\t2016-05-01T10:30:00.000Z\tnull\n" +
+                "XX\tKK\t2016-05-01T10:31:00.000Z\tAX\n" +
+                "KK\tAX\t2016-05-01T10:32:00.000Z\tBZ\n" +
+                "AX\tAX\t2016-05-01T10:33:00.000Z\tKK\n" +
+                "BZ\tBZ\t2016-05-01T10:34:00.000Z\tAX\n" +
+                "XX\tAX\t2016-05-01T10:35:00.000Z\tAX\n" +
+                "AX\tAX\t2016-05-01T10:36:00.000Z\tXX\n" +
+                "XX\tKK\t2016-05-01T10:37:00.000Z\tXX\n" +
+                "AX\tAX\t2016-05-01T10:38:00.000Z\tAX\n" +
+                "BZ\tBZ\t2016-05-01T10:39:00.000Z\tBZ\n" +
+                "BZ\tAX\t2016-05-01T10:40:00.000Z\tAX\n";
+        try {
+            assertThat(expected, "select str, sym, timestamp , prev(str) over (partition by sym) from '*!*abc'");
+        } catch (ParserException e) {
+            System.out.println(QueryError.getMessage());
+        }
+    }
+
+    @Test
     public void testStrNonPart() throws Exception {
         final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
                 "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
@@ -639,6 +692,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     @Test
     public void testSymbolBehaviour() throws Exception {
         assertSymbol("select str, sym, timestamp , prev(sym) over (partition by str) from abc", 3);
+        assertSymbol("select str, sym, timestamp , prev(sym) over (partition by str) from abc", 1);
     }
 
     @Test

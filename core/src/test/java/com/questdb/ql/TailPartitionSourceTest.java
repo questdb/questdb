@@ -31,7 +31,7 @@ import com.questdb.misc.Interval;
 import com.questdb.misc.Rows;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.AllRowSource;
-import com.questdb.ql.impl.JournalSource;
+import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.unused.JournalTailPartitionSource;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
@@ -96,7 +96,7 @@ public class TailPartitionSourceTest extends AbstractTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
 
         p.print(
-                new JournalSource(
+                new JournalRecordSource(
                         new JournalTailPartitionSource(w.getMetadata(), false, Rows.toRowID(1, 30))
                         , new AllRowSource()
                 ), factory

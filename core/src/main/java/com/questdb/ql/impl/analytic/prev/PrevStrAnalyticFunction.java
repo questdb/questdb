@@ -40,7 +40,9 @@ import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
+import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
+import com.questdb.store.VariableColumn;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -59,7 +61,7 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     public PrevStrAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
         this.partitionBy = partitionBy;
         this.valueColumn = valueColumn;
-        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(valueColumn.getType()));
+        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(ColumnType.LONG, ColumnType.BYTE));
     }
 
     @Override
@@ -162,7 +164,7 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
 
     @Override
     public int getStrLen() {
-        return nextNull ? 0 : cs.length();
+        return nextNull ? VariableColumn.NULL_LEN : cs.length();
     }
 
     @Override

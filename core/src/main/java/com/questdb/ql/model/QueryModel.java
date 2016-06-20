@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.model;
@@ -46,7 +45,7 @@ public class QueryModel implements Mutable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;
-
+    public static final String NO_ROWID_MARKER = "*!*";
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
@@ -89,6 +88,14 @@ public class QueryModel implements Mutable {
 
     private QueryModel() {
         joinModels.add(this);
+    }
+
+    public static boolean hasMarker(String name) {
+        return name.indexOf(NO_ROWID_MARKER) == 0;
+    }
+
+    public static String stripMarker(String name) {
+        return hasMarker(name) ? name.substring(NO_ROWID_MARKER.length()) : name;
     }
 
     public boolean addAliasIndex(ExprNode node, int index) {
@@ -169,7 +176,7 @@ public class QueryModel implements Mutable {
 
         JournalConfiguration configuration = factory.getConfiguration();
 
-        String reader = Chars.stripQuotes(readerNode.token);
+        String reader = stripMarker(Chars.stripQuotes(readerNode.token));
         if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
             throw QueryError.$(readerNode.position, "Journal does not exist");
         }

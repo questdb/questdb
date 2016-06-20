@@ -50,7 +50,7 @@ public class MultiIntervalPartitionSourceTest extends AbstractTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
 
         p.print(
-                new JournalSource(
+                new JournalRecordSource(
                         new MultiIntervalPartitionSource(
                                 new JournalPartitionSource(w.getMetadata(), true),
                                 new MillisIntervalSource(

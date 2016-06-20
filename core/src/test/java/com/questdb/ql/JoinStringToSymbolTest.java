@@ -34,7 +34,7 @@ import com.questdb.model.Album;
 import com.questdb.model.Band;
 import com.questdb.ql.impl.AllRowSource;
 import com.questdb.ql.impl.JournalPartitionSource;
-import com.questdb.ql.impl.JournalSource;
+import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.join.CrossJoinRecordSource;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
@@ -97,11 +97,11 @@ public class JoinStringToSymbolTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         p.print(
                 new CrossJoinRecordSource(
-                        new JournalSource(
+                        new JournalRecordSource(
                                 new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()
                         ),
 
-                        new JournalSource(
+                        new JournalRecordSource(
                                 new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()
                         )
                 ), factory

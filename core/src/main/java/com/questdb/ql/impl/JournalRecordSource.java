@@ -33,7 +33,7 @@ import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class JournalSource extends AbstractCombinedRecordSource {
+public class JournalRecordSource extends AbstractCombinedRecordSource {
     private final PartitionSource partitionSource;
     private final RowSource rowSource;
     private final JournalRecord rec;
@@ -42,7 +42,7 @@ public class JournalSource extends AbstractCombinedRecordSource {
     private RowCursor cursor;
 
     @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
-    public JournalSource(PartitionSource partitionSource, RowSource rowSource) {
+    public JournalRecordSource(PartitionSource partitionSource, RowSource rowSource) {
         this.metadata = partitionSource.getMetadata();
         this.rec = new JournalRecord();
         this.partitionSource = partitionSource;
@@ -77,13 +77,19 @@ public class JournalSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean supportsRowIdAccess() {
-        return true;
+    public StorageFacade getStorageFacade() {
+        return partitionCursor.getStorageFacade();
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return partitionCursor.getStorageFacade();
+    public boolean hasNext() {
+        return (cursor != null && cursor.hasNext()) || nextSlice();
+    }
+
+    @Override
+    public JournalRecord next() {
+        rec.rowid = cursor.next();
+        return rec;
     }
 
     @Override
@@ -105,20 +111,14 @@ public class JournalSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean hasNext() {
-        return (cursor != null && cursor.hasNext()) || nextSlice();
-    }
-
-    @Override
-    public JournalRecord next() {
-        rec.rowid = cursor.next();
-        return rec;
+    public boolean supportsRowIdAccess() {
+        return true;
     }
 
     @Override
     public void toSink(CharSink sink) {
         sink.put('{');
-        sink.putQuoted("op").put(':').putQuoted("JournalSource").put(',');
+        sink.putQuoted("op").put(':').putQuoted("JournalRecordSource").put(',');
         sink.putQuoted("psrc").put(':').put(partitionSource).put(',');
         sink.putQuoted("rsrc").put(':').put(rowSource);
         sink.put('}');

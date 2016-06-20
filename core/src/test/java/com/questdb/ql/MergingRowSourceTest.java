@@ -29,7 +29,7 @@ import com.questdb.ex.NumericException;
 import com.questdb.misc.Dates;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.JournalPartitionSource;
-import com.questdb.ql.impl.JournalSource;
+import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.latest.HeapMergingRowSource;
 import com.questdb.ql.impl.latest.KvIndexSymLookupRowSource;
@@ -48,7 +48,7 @@ public class MergingRowSourceTest extends AbstractTest {
         RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);
         RowSource srcB = new KvIndexSymLookupRowSource("sym", "WTB.L", true);
 
-        RecordSource rs = new JournalSource(new JournalPartitionSource(w.getMetadata(), true), new HeapMergingRowSource(srcA, srcB));
+        RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new HeapMergingRowSource(srcA, srcB));
 
         long last = 0;
         RecordCursor c = rs.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
@@ -68,7 +68,7 @@ public class MergingRowSourceTest extends AbstractTest {
         RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);
         RowSource srcB = new KvIndexSymLookupRowSource("sym", "WTB.L", true);
 
-        RecordSource rs = new JournalSource(new JournalPartitionSource(w.getMetadata(), true), new MergingRowSource(srcA, srcB));
+        RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new MergingRowSource(srcA, srcB));
 
         long last = 0;
         RecordCursor c = rs.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);

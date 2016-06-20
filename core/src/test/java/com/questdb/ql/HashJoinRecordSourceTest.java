@@ -35,7 +35,7 @@ import com.questdb.model.Band;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.AllRowSource;
 import com.questdb.ql.impl.JournalPartitionSource;
-import com.questdb.ql.impl.JournalSource;
+import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.join.HashJoinRecordSource;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
@@ -90,11 +90,11 @@ public class HashJoinRecordSourceTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         RecordSource joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
-                        new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
+                        new JournalRecordSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
                         new IntList() {{
                             add(bw.getMetadata().getColumnIndex("name"));
                         }},
-                        new JournalSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
+                        new JournalRecordSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
                         new IntList() {{
                             add(aw.getMetadata().getColumnIndex("band"));
                         }},
@@ -125,11 +125,11 @@ public class HashJoinRecordSourceTest {
         TestUtils.generateQuoteData(w2, 100000);
 
         RecordSource j = new HashJoinRecordSource(
-                new JournalSource(new JournalPartitionSource(w1.getMetadata(), false), new AllRowSource()),
+                new JournalRecordSource(new JournalPartitionSource(w1.getMetadata(), false), new AllRowSource()),
                 new IntList() {{
                     w1.getMetadata().getColumnIndex("sym");
                 }},
-                new JournalSource(new JournalPartitionSource(w2.getMetadata(), false), new AllRowSource()),
+                new JournalRecordSource(new JournalPartitionSource(w2.getMetadata(), false), new AllRowSource()),
                 new IntList() {{
                     w2.getMetadata().getColumnIndex("sym");
                 }},
@@ -175,11 +175,11 @@ public class HashJoinRecordSourceTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         RecordSource joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
-                        new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
+                        new JournalRecordSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
                         new IntList() {{
                             add(bw.getMetadata().getColumnIndex("name"));
                         }},
-                        new JournalSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
+                        new JournalRecordSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
                         new IntList() {{
                             add(aw.getMetadata().getColumnIndex("band"));
                         }},
@@ -220,11 +220,11 @@ public class HashJoinRecordSourceTest {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         RecordSource joinResult = new SelectedColumnsRecordSource(
                 new HashJoinRecordSource(
-                        new JournalSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
+                        new JournalRecordSource(new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()),
                         new IntList() {{
                             add(bw.getMetadata().getColumnIndex("name"));
                         }},
-                        new JournalSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
+                        new JournalRecordSource(new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()),
                         new IntList() {{
                             add(aw.getMetadata().getColumnIndex("band"));
                         }},

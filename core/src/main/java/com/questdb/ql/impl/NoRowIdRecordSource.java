@@ -34,7 +34,7 @@ import com.questdb.ql.ops.Parameter;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.CharSink;
 
-public class NoRowidSource implements RecordSource {
+public class NoRowIdRecordSource implements RecordSource {
     private RecordSource delegate;
 
     @Override
@@ -49,7 +49,7 @@ public class NoRowidSource implements RecordSource {
 
     @Override
     public Parameter getParam(CharSequence name) {
-        return null;
+        return delegate.getParam(name);
     }
 
     @Override
@@ -70,6 +70,7 @@ public class NoRowidSource implements RecordSource {
 
     @Override
     public void setParameterMap(CharSequenceObjHashMap<Parameter> map) {
+        delegate.setParameterMap(map);
     }
 
     @Override
@@ -77,13 +78,16 @@ public class NoRowidSource implements RecordSource {
         return false;
     }
 
-    public NoRowidSource of(RecordSource delegate) {
+    public NoRowIdRecordSource of(RecordSource delegate) {
         this.delegate = delegate;
         return this;
     }
 
     @Override
     public void toSink(CharSink sink) {
-        delegate.toSink(sink);
+        sink.put('{');
+        sink.putQuoted("op").put(':').putQuoted("NoRowIdRecordSource").put(',');
+        sink.putQuoted("src").put(':').put(delegate);
+        sink.put('}');
     }
 }

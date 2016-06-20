@@ -34,7 +34,7 @@ import com.questdb.model.Album;
 import com.questdb.model.Band;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.JournalPartitionSource;
-import com.questdb.ql.impl.JournalSource;
+import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.questdb.ql.impl.interval.SingleIntervalSource;
 import com.questdb.ql.impl.latest.KvIndexSymAllHeadRowSource;
@@ -98,7 +98,7 @@ public class SingleJournalSearchTest {
 
         // from quote head by sym where timestamp in ("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z")
         assertEquals(expected,
-                new JournalSource(
+                new JournalRecordSource(
                         new MultiIntervalPartitionSource(
                                 new JournalPartitionSource(journal.getMetadata(), true),
                                 new SingleIntervalSource(new Interval("2013-03-12T00:00:00.000Z", "2013-03-15T00:00:00.000Z"))
@@ -128,7 +128,7 @@ public class SingleJournalSearchTest {
         filter.setRhs(new IntConstant(journal.getSymbolTable("ex").getQuick("SK")));
 
         assertEquals(expected,
-                new JournalSource(
+                new JournalRecordSource(
                         new MultiIntervalPartitionSource(
                                 new JournalPartitionSource(
                                         journal.getMetadata()

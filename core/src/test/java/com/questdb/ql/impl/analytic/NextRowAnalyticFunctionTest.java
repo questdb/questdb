@@ -408,7 +408,7 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                         "    \"op\": \"CachingAnalyticRecordSource\",\n" +
                         "    \"functions\": 1,\n" +
                         "    \"src\": {\n" +
-                        "      \"op\": \"JournalSource\",\n" +
+                        "      \"op\": \"JournalRecordSource\",\n" +
                         "      \"psrc\": {\n" +
                         "        \"op\": \"JournalPartitionSource\",\n" +
                         "        \"journal\": \"abc\"\n" +

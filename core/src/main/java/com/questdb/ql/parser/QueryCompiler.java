@@ -609,7 +609,7 @@ public class QueryCompiler {
         if (model.getAlias() != null) {
             journalMetadata.setAlias(model.getAlias().token);
         } else {
-            journalMetadata.setAlias(model.getJournalName().token);
+            journalMetadata.setAlias(QueryModel.stripMarker(model.getJournalName().token));
         }
 
         PartitionSource ps = new JournalPartitionSource(journalMetadata, true);
@@ -781,7 +781,12 @@ public class QueryCompiler {
                 return new CountRecordSource(qc.getAlias() == null ? "count" : qc.getAlias(), ps);
             }
         }
-        return new JournalSource(ps, rs == null ? new AllRowSource() : rs);
+
+        RecordSource recordSource = new JournalRecordSource(ps, rs == null ? new AllRowSource() : rs);
+        if (QueryModel.hasMarker(model.getJournalName().token)) {
+            return new NoRowIdRecordSource().of(recordSource);
+        }
+        return recordSource;
     }
 
     private RecordSource compileNoOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {

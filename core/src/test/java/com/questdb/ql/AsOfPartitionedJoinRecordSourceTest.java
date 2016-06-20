@@ -33,7 +33,7 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.impl.NoOpCancellationHandler;
-import com.questdb.ql.impl.NoRowidSource;
+import com.questdb.ql.impl.NoRowIdRecordSource;
 import com.questdb.ql.impl.join.AsOfJoinRecordSource;
 import com.questdb.ql.impl.join.AsOfPartitionedJoinRecordSource;
 import com.questdb.ql.parser.AbstractOptimiserTest;
@@ -273,7 +273,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         try (AsOfPartitionedJoinRecordSource source = new AsOfPartitionedJoinRecordSource(
                 compiler.compileSource(factory, "y")
                 , 0
-                , new NoRowidSource().of(compiler.compileSource(factory, "select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
+                , new NoRowIdRecordSource().of(compiler.compileSource(factory, "select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
                 , 0
                 , keys
                 , keys
@@ -306,7 +306,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         try (AsOfJoinRecordSource source = new AsOfJoinRecordSource(
                 compiler.compileSource(factory, "y")
                 , 0
-                , new NoRowidSource().of(compiler.compileSource(factory, "select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
+                , new NoRowIdRecordSource().of(compiler.compileSource(factory, "select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
                 , 0
         )) {
             printer.print(source, factory);
@@ -415,7 +415,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         try (AsOfPartitionedJoinRecordSource source = new AsOfPartitionedJoinRecordSource(
                 compiler.compileSource(factory, "y")
                 , 0
-                , new NoRowidSource().of(compiler.compileSource(factory, "x"))
+                , new NoRowIdRecordSource().of(compiler.compileSource(factory, "x"))
                 , 0
                 , keys
                 , keys
@@ -456,7 +456,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         try (AsOfPartitionedJoinRecordSource source = new AsOfPartitionedJoinRecordSource(
                 compiler.compileSource(factory, "y")
                 , 0
-                , new NoRowidSource().of(compiler.compileSource(factory, "x"))
+                , new NoRowIdRecordSource().of(compiler.compileSource(factory, "x"))
                 , 0
                 , keys
                 , keys
@@ -479,7 +479,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         AsOfJoinRecordSource source = new AsOfJoinRecordSource(
                 compiler.compileSource(factory, "y")
                 , 0
-                , new NoRowidSource().of(compiler.compileSource(factory, "x"))
+                , new NoRowIdRecordSource().of(compiler.compileSource(factory, "x"))
                 , 0
         );
 

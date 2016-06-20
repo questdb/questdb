@@ -32,7 +32,7 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.RecordSource;
-import com.questdb.ql.impl.NoRowidSource;
+import com.questdb.ql.impl.NoRowIdRecordSource;
 import com.questdb.ql.impl.join.HashJoinRecordSource;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.IntList;
@@ -86,7 +86,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         "  \"master\": {\n" +
                         "    \"op\": \"AsOfPartitionedJoinRecordSource\",\n" +
                         "    \"master\": {\n" +
-                        "      \"op\": \"JournalSource\",\n" +
+                        "      \"op\": \"JournalRecordSource\",\n" +
                         "      \"psrc\": {\n" +
                         "        \"op\": \"JournalPartitionSource\",\n" +
                         "        \"journal\": \"customers\"\n" +
@@ -96,7 +96,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         "      }\n" +
                         "    },\n" +
                         "    \"slave\": {\n" +
-                        "      \"op\": \"JournalSource\",\n" +
+                        "      \"op\": \"JournalRecordSource\",\n" +
                         "      \"psrc\": {\n" +
                         "        \"op\": \"JournalPartitionSource\",\n" +
                         "        \"journal\": \"employees\"\n" +
@@ -109,7 +109,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         "    \"slaveTsIndex\": 4\n" +
                         "  },\n" +
                         "  \"slave\": {\n" +
-                        "    \"op\": \"JournalSource\",\n" +
+                        "    \"op\": \"JournalRecordSource\",\n" +
                         "    \"psrc\": {\n" +
                         "      \"op\": \"JournalPartitionSource\",\n" +
                         "      \"journal\": \"orders\"\n" +
@@ -141,7 +141,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         "    \"src\": {\n" +
                         "      \"op\": \"AsOfPartitionedJoinRecordSource\",\n" +
                         "      \"master\": {\n" +
-                        "        \"op\": \"JournalSource\",\n" +
+                        "        \"op\": \"JournalRecordSource\",\n" +
                         "        \"psrc\": {\n" +
                         "          \"op\": \"JournalPartitionSource\",\n" +
                         "          \"journal\": \"customers\"\n" +
@@ -158,7 +158,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         "          \"src\": {\n" +
                         "            \"op\": \"VirtualColumnRecordSource\",\n" +
                         "            \"src\": {\n" +
-                        "              \"op\": \"JournalSource\",\n" +
+                        "              \"op\": \"JournalRecordSource\",\n" +
                         "              \"psrc\": {\n" +
                         "                \"op\": \"JournalPartitionSource\",\n" +
                         "                \"journal\": \"employees\"\n" +
@@ -179,7 +179,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         "    \"filter\": \"e.blah \\u003d \\u0027y\\u0027\"\n" +
                         "  },\n" +
                         "  \"slave\": {\n" +
-                        "    \"op\": \"JournalSource\",\n" +
+                        "    \"op\": \"JournalRecordSource\",\n" +
                         "    \"psrc\": {\n" +
                         "      \"op\": \"JournalPartitionSource\",\n" +
                         "      \"journal\": \"orders\"\n" +
@@ -337,7 +337,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
         assertPlan2("{\n" +
                         "  \"op\": \"CrossJoinRecordSource\",\n" +
                         "  \"master\": {\n" +
-                        "    \"op\": \"JournalSource\",\n" +
+                        "    \"op\": \"JournalRecordSource\",\n" +
                         "    \"psrc\": {\n" +
                         "      \"op\": \"JournalPartitionSource\",\n" +
                         "      \"journal\": \"customers\"\n" +
@@ -347,7 +347,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         "    }\n" +
                         "  },\n" +
                         "  \"slave\": {\n" +
-                        "    \"op\": \"JournalSource\",\n" +
+                        "    \"op\": \"JournalRecordSource\",\n" +
                         "    \"psrc\": {\n" +
                         "      \"op\": \"JournalPartitionSource\",\n" +
                         "      \"journal\": \"customers\"\n" +
@@ -633,7 +633,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t1935884354\t100\t1503\tD\t2015-07-10T00:01:43.507Z\tRZVZJQRNYSRKZSJ\n";
 
         final RecordSource m = compiler.compileSource(factory, "customers where customerName ~ 'PJFSREKEUNMKWOF'");
-        final RecordSource s = new NoRowidSource().of(compiler.compileSource(factory, "orders"));
+        final RecordSource s = new NoRowIdRecordSource().of(compiler.compileSource(factory, "orders"));
 
         RecordSource r = new HashJoinRecordSource(
                 m,

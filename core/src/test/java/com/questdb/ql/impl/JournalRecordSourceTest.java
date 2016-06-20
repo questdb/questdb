@@ -33,7 +33,7 @@ import com.questdb.ql.parser.AbstractOptimiserTest;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class JournalSourceTest extends AbstractOptimiserTest {
+public class JournalRecordSourceTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUp() throws Exception {
         try (JournalWriter w = factory.bulkWriter(new JournalStructure("parent")
