@@ -37,20 +37,22 @@ public abstract class AbstractCombinedRecordSource extends AbstractRecordSource 
 
     @Override
     public Record newRecord() {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Record recordAt(long rowId) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void remove() {
+        throw new UnsupportedOperationException();
     }
 
     @Override

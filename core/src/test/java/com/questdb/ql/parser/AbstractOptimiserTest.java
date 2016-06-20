@@ -110,6 +110,7 @@ public abstract class AbstractOptimiserTest {
     protected void assertSymbol(String query, int columnIndex) throws JournalException, ParserException {
         RecordCursor cursor = compiler.compile(factory, query);
         SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
+        Assert.assertNotNull(cursor.getStorageFacade().getFactory());
         while (cursor.hasNext()) {
             Record r = cursor.next();
             TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));

@@ -326,6 +326,71 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testNestedOrderByExplicitAsc() throws Exception {
+        final String expected = "-1613687261\tBE\n" +
+                "-2119387831\tBH\n" +
+                "-10505757\tCC\n" +
+                "-727724771\tCP\n" +
+                "-1538602195\tDZ\n" +
+                "-1272693194\tED\n" +
+                "-1436881714\tEH\n" +
+                "-1269042121\tEK\n" +
+                "-2132716300\tEO\n" +
+                "-1270731285\tEO\n" +
+                "-1125169127\tEY\n" +
+                "-246923735\tGL\n" +
+                "-1515787781\tGO\n" +
+                "-483853667\tHR\n" +
+                "-1418341054\tJG\n" +
+                "-283321892\tJO\n" +
+                "-147343840\tLD\n" +
+                "-1810676855\tLO\n" +
+                "-731466113\tLY\n" +
+                "-1311366306\tML\n" +
+                "-1165635863\tMV\n" +
+                "-235358133\tMY\n" +
+                "-1234141625\tND\n" +
+                "-370796356\tNZ\n" +
+                "-27395319\tOJ\n" +
+                "-876466531\tOL\n" +
+                "-422941535\tPD\n" +
+                "-292438036\tPG\n" +
+                "-1204245663\tPJ\n" +
+                "-720881601\tQC\n" +
+                "-1252906348\tQE\n" +
+                "-120660220\tQE\n" +
+                "-623471113\tQM\n" +
+                "-2002373666\tQQ\n" +
+                "-847531048\tRX\n" +
+                "-1870444467\tRY\n" +
+                "-2088317486\tSS\n" +
+                "-907794648\tSS\n" +
+                "-1768335227\tSW\n" +
+                "-1148479920\tTJ\n" +
+                "-530317703\tTJ\n" +
+                "-1533414895\tTM\n" +
+                "-1960168360\tUO\n" +
+                "-1465751763\tUS\n" +
+                "-1121895896\tVD\n" +
+                "-2043803188\tVI\n" +
+                "-1424048819\tVS\n" +
+                "-942999384\tVV\n" +
+                "-1844391305\tWF\n" +
+                "-2108151088\tXP\n" +
+                "-916132123\tYC\n" +
+                "-1172180184\tYL\n" +
+                "-1271909747\tYS\n" +
+                "-1153445279\tYU\n" +
+                "-636975106\tZE\n" +
+                "-661194722\tZO\n" +
+                "-1871994006\tZS\n" +
+                "-409854405\tZS\n" +
+                "-230430837\tZZ\n";
+
+        assertThat(expected, "(xyz where i < 100 order by i) order by str asc, i asc");
+    }
+
+    @Test
     public void testOrderByExpression() throws Exception {
         try {
             assertThat("", "(xyz where i < 100 order by i) order by str, i+i");
