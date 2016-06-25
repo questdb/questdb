@@ -44,7 +44,7 @@ public abstract class AbstractTest {
     protected final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
     protected final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
 
-    protected void assertEmpty(String query) throws ParserException, JournalException, IOException {
+    protected void assertEmpty(String query) throws ParserException, JournalException {
         try (RecordSource src = compiler.compileSource(factory, query)) {
             Assert.assertFalse(src.prepareCursor(factory).hasNext());
         }

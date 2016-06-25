@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.misc;
@@ -68,7 +67,8 @@ public final class Os {
         try {
             File tempLib = null;
             try {
-                tempLib = File.createTempFile(lib, ".so");
+                int dot = lib.indexOf('.');
+                tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));
                 // copy to tempLib
                 try (FileOutputStream out = new FileOutputStream(tempLib)) {
                     byte[] buf = new byte[4096];

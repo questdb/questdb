@@ -87,7 +87,7 @@ public abstract class AbstractOptimiserTest {
         }
     }
 
-    protected void assertEmpty(String query) throws ParserException, JournalException, IOException {
+    protected void assertEmpty(String query) throws ParserException, JournalException {
         try (RecordSource src = compiler.compileSource(factory, query)) {
             Assert.assertFalse(src.prepareCursor(factory).hasNext());
         }
