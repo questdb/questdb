@@ -464,10 +464,19 @@ public final class QueryParser {
                 if (Chars.equals(tok, "order")) {
                     expectTok(tok(), "by");
 
-                    ObjList<ExprNode> orderBy = col.getOrderBy();
                     do {
-                        orderBy.add(expectExpr());
+                        ExprNode e = expectExpr();
                         tok = tok();
+
+                        if (Chars.equalsIgnoreCase(tok, "desc")) {
+                            col.addOrderBy(e, QueryModel.ORDER_DIRECTION_DESCENDING);
+                            tok = tok();
+                        } else {
+                            col.addOrderBy(e, QueryModel.ORDER_DIRECTION_ASCENDING);
+                            if (Chars.equalsIgnoreCase(tok, "asc")) {
+                                tok = tok();
+                            }
+                        }
                     } while (Chars.equals(tok, ','));
                 }
 

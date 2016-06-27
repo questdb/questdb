@@ -23,6 +23,7 @@
 
 package com.questdb.ql.model;
 
+import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 
@@ -35,8 +36,14 @@ public final class AnalyticColumn extends QueryColumn {
     };
     private final ObjList<ExprNode> partitionBy = new ObjList<>(2);
     private final ObjList<ExprNode> orderBy = new ObjList<>(2);
+    private final IntList orderByDirection = new IntList(2);
 
     private AnalyticColumn() {
+    }
+
+    public void addOrderBy(ExprNode node, int direction) {
+        orderBy.add(node);
+        orderByDirection.add(direction);
     }
 
     @Override
@@ -53,6 +60,10 @@ public final class AnalyticColumn extends QueryColumn {
 
     public ObjList<ExprNode> getOrderBy() {
         return orderBy;
+    }
+
+    public IntList getOrderByDirection() {
+        return orderByDirection;
     }
 
     public ObjList<ExprNode> getPartitionBy() {

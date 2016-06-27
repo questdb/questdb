@@ -27,6 +27,8 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.factory.JournalFactory;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.Files;
 import com.questdb.model.Quote;
 import com.questdb.model.configuration.ModelConfiguration;
@@ -36,6 +38,7 @@ import com.questdb.net.ha.config.ServerNode;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -47,6 +50,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class ClusterControllerTest extends AbstractTest {
+
+    private final static Log LOG = LogFactory.getLog(ClusterController.class);
 
     @Rule
     public final JournalTestFactory factory2 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
@@ -158,7 +163,7 @@ public class ClusterControllerTest extends AbstractTest {
         );
 
         controller1.start();
-        active1.await(30, TimeUnit.SECONDS);
+        Assert.assertTrue(active1.await(30, TimeUnit.SECONDS));
         Assert.assertEquals(0, active1.getCount());
 
         controller2.start();
@@ -182,7 +187,7 @@ public class ClusterControllerTest extends AbstractTest {
         AtomicInteger standby = new AtomicInteger();
         AtomicInteger shutdown = new AtomicInteger();
 
-//        System.out.println("======= VOTING TEST ==========");
+        LOG.info().$("======= VOTING TEST ==========").$();
 
         ClusterController c1 = createController2(0, fact1, active, standby, shutdown);
         ClusterController c2 = createController2(1, fact2, active, standby, shutdown);
@@ -220,39 +225,40 @@ public class ClusterControllerTest extends AbstractTest {
         standby.set(0);
         active.set(0);
 
-//        System.out.println("--------------------------");
+        LOG.info().$("Stage 1, halt leader").$();
 
         if (c5.isLeader()) {
             c5.halt();
-//            System.out.println("halted 4");
+            LOG.info().$("halted 4").$();
         } else if (c4.isLeader()) {
             c4.halt();
-//            System.out.println("halted 3");
+            LOG.info().$("halted 3").$();
         } else if (c3.isLeader()) {
             c3.halt();
-//            System.out.println("halted 2");
+            LOG.info().$("halted 2").$();
         } else if (c2.isLeader()) {
             c2.halt();
-//            System.out.println("halted 1");
+            LOG.info().$("halted 1").$();
         } else if (c1.isLeader()) {
             c1.halt();
-//            System.out.println("halted 0");
+            LOG.info().$("halted 0").$();
         } else {
             Assert.fail("No leader");
         }
 
-//        System.out.println("=========================");
+        LOG.info().$("Stage 2, waiting for election process to complete").$();
         t = System.currentTimeMillis();
         while ((active.get() < 1 || standby.get() < 3) && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 180) {
             Thread.yield();
         }
-//        System.out.println("LOOKING FOR LEADER");
+
+        LOG.info().$("Checking leader").$();
 
         try {
             Assert.assertEquals(3, standby.get());
             Assert.assertEquals(1, active.get());
 
-//            System.out.println("+++++++++++++++++++++++++++++");
+            LOG.info().$("Test complete").$();
         } finally {
             c1.halt();
             c2.halt();
@@ -273,7 +279,7 @@ public class ClusterControllerTest extends AbstractTest {
         ClusterController controller1 = createControllerX(0, factory, active1Latch, standby1Latch, shutdown1);
         controller1.start();
 
-        active1Latch.await(5, TimeUnit.SECONDS);
+        Assert.assertTrue(active1Latch.await(5, TimeUnit.SECONDS));
         Assert.assertEquals("Node 1 is expected to be active", 0, active1Latch.getCount());
         standby1Latch.await(200, TimeUnit.MILLISECONDS);
         Assert.assertEquals("Node 1 standby callback is not expected to be called", 1, standby1Latch.getCount());
@@ -310,7 +316,7 @@ public class ClusterControllerTest extends AbstractTest {
         ClusterController controller1 = createControllerX(0, factory, active1Latch, standby1Latch, shutdown1);
         controller1.start();
 
-        active1Latch.await(5, TimeUnit.SECONDS);
+        Assert.assertTrue(active1Latch.await(5, TimeUnit.SECONDS));
         Assert.assertEquals("Node 1 is expected to be active", 0, active1Latch.getCount());
         standby1Latch.await(200, TimeUnit.MILLISECONDS);
         Assert.assertEquals("Node 1 standby callback is not expected to be called", 1, standby1Latch.getCount());
@@ -341,7 +347,7 @@ public class ClusterControllerTest extends AbstractTest {
         ClusterController controller = createControllerX(1, factory, active, standby, shutdown);
 
         controller.start();
-        active.await(5, TimeUnit.SECONDS);
+        Assert.assertTrue(active.await(5, TimeUnit.SECONDS));
         Assert.assertEquals("goActive() did not fire", 0, active.getCount());
         standby.await(200, TimeUnit.MILLISECONDS);
         Assert.assertEquals("goPassive() not expected to fire", 1, standby.getCount());
@@ -352,6 +358,7 @@ public class ClusterControllerTest extends AbstractTest {
         controller.halt();
     }
 
+    @SuppressFBWarnings("RV_RETURN_VALUE_IGNORED")
     @Test
     public void testTiebreakFailOver() throws Exception {
 

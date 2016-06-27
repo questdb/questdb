@@ -242,48 +242,6 @@ public class IntegrationTest extends AbstractTest {
         Assert.assertFalse(server.isRunning());
     }
 
-/*
-    @Test
-    public void testSingleJournalSync2() throws Exception {
-
-        int size = 100000;
-        JournalWriter<Price> remote = factory.writer(Price.class, "remote");
-        server.publish(remote);
-        server.start();
-
-
-
-        final AtomicInteger counter = new AtomicInteger();
-        client.subscribe(Price.class, "remote", "local", new TxListener() {
-            @Override
-            public void onCommit() {
-                counter.incrementAndGet();
-            }
-        });
-        client.start();
-
-        Price p = new Price();
-        long t = remote.getMaxTimestamp();
-        for (int i = 0; i < size; i++) {
-            p.setTimestamp(t += i);
-            p.setNanos(System.currentTimeMillis());
-            p.setSym(String.valueOf(i % 20));
-            p.setPrice(i * 1.04598 + i);
-            remote.append(p);
-        }
-        remote.commit();
-
-        TestUtils.assertCounter(counter, 1, 2, TimeUnit.SECONDS);
-
-        Journal<Price> r = factory.bulkReader(Price.class, "local");
-        for (Price v: r.bufferedIterator()) {
-            System.out.println(v.getSym());
-        }
-        client.halt();
-        server.halt();
-    }
-*/
-
     @Test
     public void testServerStartStop() throws Exception {
         server.start();

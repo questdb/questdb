@@ -23,7 +23,6 @@
 
 package com.questdb;
 
-import com.questdb.ex.JournalException;
 import com.questdb.io.sink.DelimitedCharSink;
 import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Rows;
@@ -42,16 +41,6 @@ import java.io.File;
 public class TxLogTest extends AbstractTest {
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
-
-    public static void main(String[] args) throws JournalException {
-        TxLog server = new TxLog(new File("D:\\data\\org.questdb.examples.model.Price"), JournalMode.READ, 2);
-        TxLog client = new TxLog(new File("D:\\data\\price-copy"), JournalMode.READ, 2);
-
-        System.out.println(client.getCurrentTxn());
-        System.out.println(client.getCurrentTxnPin());
-        System.out.println(server.getCurrentTxn());
-        System.out.println(server.getCurrentTxnPin());
-    }
 
     @Test
     public void testTx() throws Exception {

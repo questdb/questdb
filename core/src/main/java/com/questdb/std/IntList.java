@@ -259,17 +259,16 @@ public class IntList implements Mutable {
     }
 
     private boolean equals(IntList that) {
-        if (this.pos == that.pos) {
-            for (int i = 0, n = pos; i < n; i++) {
-                int lhs = this.getQuick(i);
-                if (lhs == noEntryValue) {
-                    return that.getQuick(i) == noEntryValue;
-                } else if (lhs == that.getQuick(i)) {
-                    return true;
-                }
+        if (this.pos != that.pos) {
+            return false;
+        }
+
+        for (int i = 0, n = pos; i < n; i++) {
+            if (this.getQuick(i) != that.getQuick(i)) {
+                return false;
             }
         }
-        return false;
+        return true;
     }
 
     private int scanSearch(int v) {

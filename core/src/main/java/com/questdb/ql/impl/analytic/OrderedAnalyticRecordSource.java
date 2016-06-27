@@ -31,41 +31,64 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.SplitRecordMetadata;
+import com.questdb.ql.impl.sort.RBTreeSortedRecordSource;
+import com.questdb.ql.impl.sort.RecordComparator;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
+import com.questdb.std.Transient;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
+public class OrderedAnalyticRecordSource extends AbstractCombinedRecordSource {
     private final RecordList records;
     private final RecordSource parentSource;
-    private final ObjList<AnalyticFunction> functions;
+    private final ObjList<ObjList<AnalyticFunction>> functions;
     private final RecordMetadata metadata;
     private final AnalyticRecord record;
     private final AnalyticRecordStorageFacade storageFacade;
+    private final ObjList<RBTreeSortedRecordSource> trees;
+    private final ObjList<AnalyticFunction> flatFunctionList;
 
-    public CachingAnalyticRecordSource(int pageSize, RecordSource parentSource, ObjList<AnalyticFunction> functions) {
+    public OrderedAnalyticRecordSource(
+            int pageSize,
+            int keyPageSize,
+            int valuePageSize,
+            RecordSource parentSource,
+            @Transient ObjList<RecordComparator> comparators,
+            ObjList<ObjList<AnalyticFunction>> functions) {
         this.parentSource = parentSource;
         this.records = new RecordList(parentSource.getMetadata(), pageSize);
+
+        this.trees = new ObjList<>(comparators.size());
+        for (int i = 0, n = comparators.size(); i < n; i++) {
+            this.trees.add(new RBTreeSortedRecordSource(parentSource, comparators.getQuick(i), keyPageSize, valuePageSize));
+        }
+
         this.functions = functions;
+        this.flatFunctionList = new ObjList<>();
 
         CollectionRecordMetadata funcMetadata = new CollectionRecordMetadata();
         for (int i = 0; i < functions.size(); i++) {
-            funcMetadata.add(functions.getQuick(i).getMetadata());
+            ObjList<AnalyticFunction> l = functions.getQuick(i);
+            for (int j = 0; j < l.size(); j++) {
+                AnalyticFunction f = l.getQuick(j);
+                funcMetadata.add(f.getMetadata());
+                flatFunctionList.add(f);
+            }
         }
+
         this.metadata = new SplitRecordMetadata(parentSource.getMetadata(), funcMetadata);
         int split = parentSource.getMetadata().getColumnCount();
-        this.record = new AnalyticRecord(split, functions);
-        this.storageFacade = new AnalyticRecordStorageFacade(split, functions);
+        this.record = new AnalyticRecord(split, flatFunctionList);
+        this.storageFacade = new AnalyticRecordStorageFacade(split, flatFunctionList);
     }
 
     @Override
     public void close() {
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            Misc.free(functions.getQuick(i));
+        for (int i = 0, n = flatFunctionList.size(); i < n; i++) {
+            Misc.free(flatFunctionList.getQuick(i));
         }
         Misc.free(parentSource);
-        Misc.free(records);
     }
 
     @Override
@@ -79,28 +102,28 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
         final StorageFacade storageFacade = cursor.getStorageFacade();
         records.setStorageFacade(storageFacade);
         this.storageFacade.prepare(factory, storageFacade);
-        int n = functions.size();
+
+        int n = trees.size();
         for (int i = 0; i < n; i++) {
-            functions.getQuick(i).prepare(cursor);
+            trees.getQuick(i).setSourceCursor(cursor);
+
         }
 
+        // order parent record source
         long rowid = -1;
         while (cursor.hasNext()) {
+            cancellationHandler.check();
             Record record = cursor.next();
-            rowid = records.append(record, rowid);
+            long rr = record.getRowId();
             for (int i = 0; i < n; i++) {
-                AnalyticFunction f = functions.getQuick(i);
-                if (f instanceof TwoPassAnalyticFunction) {
-                    ((TwoPassAnalyticFunction) f).addRecord(record, rowid);
-                }
+                trees.getQuick(i).put(rr);
             }
+            rowid = records.append(record, rowid);
         }
 
+        // apply analytic functions
         for (int i = 0; i < n; i++) {
-            AnalyticFunction f = functions.getQuick(i);
-            if (f instanceof TwoPassAnalyticFunction) {
-                ((TwoPassAnalyticFunction) f).compute(records);
-            }
+            applyAnalyticFunctions(trees.getQuick(i).setupCursor(), functions.getQuick(i));
         }
 
         records.toTop();
@@ -112,8 +135,8 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
         records.clear();
         parentSource.reset();
 
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).reset();
+        for (int i = 0, n = flatFunctionList.size(); i < n; i++) {
+            flatFunctionList.getQuick(i).reset();
         }
     }
 
@@ -126,8 +149,8 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
     public boolean hasNext() {
         if (records.hasNext()) {
             record.of(records.next());
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                functions.getQuick(i).scroll(record);
+            for (int i = 0, n = flatFunctionList.size(); i < n; i++) {
+                flatFunctionList.getQuick(i).scroll(record);
             }
             return true;
         }
@@ -147,5 +170,30 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
         sink.putQuoted("functions").put(':').put(functions.size()).put(',');
         sink.putQuoted("src").put(':').put(parentSource);
         sink.put('}');
+    }
+
+    private void applyAnalyticFunctions(RecordCursor treeCursor, ObjList<AnalyticFunction> functions) {
+        final int m = functions.size();
+
+        for (int i = 0; i < m; i++) {
+            functions.getQuick(i).prepare(treeCursor);
+        }
+
+        while (treeCursor.hasNext()) {
+            Record record = treeCursor.next();
+            for (int i = 0; i < m; i++) {
+                AnalyticFunction f = functions.getQuick(i);
+                if (f instanceof TwoPassAnalyticFunction) {
+                    ((TwoPassAnalyticFunction) f).addRecord(record, record.getRowId());
+                }
+            }
+        }
+
+        for (int i = 0; i < m; i++) {
+            AnalyticFunction f = functions.getQuick(i);
+            if (f instanceof TwoPassAnalyticFunction) {
+                ((TwoPassAnalyticFunction) f).compute(treeCursor);
+            }
+        }
     }
 }

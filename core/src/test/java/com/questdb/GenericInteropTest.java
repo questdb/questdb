@@ -216,7 +216,6 @@ public class GenericInteropTest extends AbstractTest {
         }})) {
             location = w.getLocation();
             w.entryWriter();
-            System.out.println("ok");
         } catch (JournalException ignore) {
             //ignore
         }
@@ -496,14 +495,5 @@ public class GenericInteropTest extends AbstractTest {
                     ", askSize=" + askSize +
                     '}';
         }
-    }
-
-    private static class WrongType {
-        private String sym;
-        private long created;
-        private int bid;
-        private double ask;
-        private int bidSize;
-        private int askSize;
     }
 }

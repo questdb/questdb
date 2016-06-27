@@ -38,7 +38,8 @@ public class AnalyticFunctionFactories {
             String name,
             VirtualColumn valueColumn,
             ObjList<VirtualColumn> partitionBy,
-            boolean supportsRowId) {
+            boolean supportsRowId,
+            boolean orderedAnalytic) {
 
         AnalyticFunctionFactory factory = factories.get(name);
         if (factory != null) {

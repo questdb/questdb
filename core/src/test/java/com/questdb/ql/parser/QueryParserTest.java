@@ -72,6 +72,27 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
+    public void testAnalyticOrderDirection() throws Exception {
+        Statement statement = parser.parse("select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz");
+        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(3, statement.getQueryModel().getColumns().size());
+
+        AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
+        Assert.assertEquals("my", col.getAlias());
+        Assert.assertEquals(ExprNode.NodeType.FUNCTION, col.getAst().type);
+        Assert.assertEquals(1, col.getPartitionBy().size());
+        Assert.assertEquals("b", col.getPartitionBy().get(0).token);
+
+        Assert.assertEquals(3, col.getOrderBy().size());
+        Assert.assertEquals("ts", col.getOrderBy().get(0).token);
+        Assert.assertEquals(QueryModel.ORDER_DIRECTION_DESCENDING, col.getOrderByDirection().get(0));
+        Assert.assertEquals("x", col.getOrderBy().get(1).token);
+        Assert.assertEquals(QueryModel.ORDER_DIRECTION_ASCENDING, col.getOrderByDirection().get(1));
+        Assert.assertEquals("y", col.getOrderBy().get(2).token);
+        Assert.assertEquals(QueryModel.ORDER_DIRECTION_ASCENDING, col.getOrderByDirection().get(2));
+    }
+
+    @Test
     public void testCrossJoin() throws Exception {
         try {
             parser.parse("select x from a a cross join b on b.x = a.x");

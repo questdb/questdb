@@ -59,6 +59,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private final boolean byRowId;
     private long root = -1;
     private RecordCursor sourceCursor;
+    private Record sourceRecord;
 
     public RBTreeSortedRecordSource(RecordSource recordSource, RecordComparator comparator, int keyPageSize, int valuePageSize) {
         this.recordSource = recordSource;
@@ -88,15 +89,13 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
-        sourceCursor = recordSource.prepareCursor(factory, cancellationHandler);
-        recordList.setStorageFacade(sourceCursor.getStorageFacade());
+        setSourceCursor(recordSource.prepareCursor(factory, cancellationHandler));
         if (byRowId) {
             buildMapByRowId(sourceCursor, cancellationHandler);
         } else {
             buildMap(sourceCursor, cancellationHandler);
         }
-        cursor.setup();
-        return cursor;
+        return setupCursor();
     }
 
     @Override
@@ -108,6 +107,97 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     @Override
     public boolean supportsRowIdAccess() {
         return true;
+    }
+
+    public void put(Record record) {
+        if (root == -1) {
+            putParent(record);
+            return;
+        }
+
+        comparator.setLeft(record);
+
+        long p = root;
+        long parent;
+        int cmp;
+        do {
+            parent = p;
+            long r = refOf(p);
+            cmp = comparator.compare(recordList.recordAt(r));
+            if (cmp < 0) {
+                p = leftOf(p);
+            } else if (cmp > 0) {
+                p = rightOf(p);
+            } else {
+                setRef(p, recordList.append(record, r));
+                return;
+            }
+        } while (p > -1);
+
+        p = allocateBlock();
+        setParent(p, parent);
+        long r = recordList.append(record, (long) -1);
+        setTop(p, r);
+        setRef(p, r);
+
+        if (cmp < 0) {
+            setLeft(parent, p);
+        } else {
+            setRight(parent, p);
+        }
+        fix(p);
+    }
+
+    public void put(long rowId) {
+        if (root == -1) {
+            putParent(fakeRecord.of(rowId));
+            return;
+        }
+
+        sourceCursor.recordAt(sourceRecord, rowId);
+        comparator.setLeft(sourceRecord);
+
+        long p = root;
+        long parent;
+        int cmp;
+        do {
+            parent = p;
+            long r = refOf(p);
+            sourceCursor.recordAt(sourceRecord, recordList.recordAt(r).getLong(0));
+            cmp = comparator.compare(sourceRecord);
+            if (cmp < 0) {
+                p = leftOf(p);
+            } else if (cmp > 0) {
+                p = rightOf(p);
+            } else {
+                setRef(p, recordList.append(fakeRecord.of(rowId), r));
+                return;
+            }
+        } while (p > -1);
+
+        p = allocateBlock();
+        setParent(p, parent);
+        long r = recordList.append(fakeRecord.of(rowId), (long) -1);
+        setTop(p, r);
+        setRef(p, r);
+
+        if (cmp < 0) {
+            setLeft(parent, p);
+        } else {
+            setRight(parent, p);
+        }
+        fix(p);
+    }
+
+    public void setSourceCursor(RecordCursor sourceCursor) {
+        this.sourceCursor = sourceCursor;
+        setStorageFacade(sourceCursor.getStorageFacade());
+        this.sourceRecord = sourceCursor.newRecord();
+    }
+
+    public RecordCursor setupCursor() {
+        cursor.setup();
+        return cursor;
     }
 
     @Override
@@ -255,84 +345,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         setColor(root, BLACK);
     }
 
-    private void put(Record record) {
-        if (root == -1) {
-            putParent(record);
-            return;
-        }
-
-        comparator.setLeft(record);
-
-        long p = root;
-        long parent;
-        int cmp;
-        do {
-            parent = p;
-            long r = refOf(p);
-            cmp = comparator.compare(recordList.recordAt(r));
-            if (cmp < 0) {
-                p = leftOf(p);
-            } else if (cmp > 0) {
-                p = rightOf(p);
-            } else {
-                setRef(p, recordList.append(record, r));
-                return;
-            }
-        } while (p > -1);
-
-        p = allocateBlock();
-        setParent(p, parent);
-        long r = recordList.append(record, (long) -1);
-        setTop(p, r);
-        setRef(p, r);
-
-        if (cmp < 0) {
-            setLeft(parent, p);
-        } else {
-            setRight(parent, p);
-        }
-        fix(p);
-    }
-
-    private void put(long rowId) {
-        if (root == -1) {
-            putParent(fakeRecord.of(rowId));
-            return;
-        }
-
-        comparator.setLeft(sourceCursor.recordAt(rowId));
-
-        long p = root;
-        long parent;
-        int cmp;
-        do {
-            parent = p;
-            long r = refOf(p);
-            cmp = comparator.compare(sourceCursor.recordAt(recordList.recordAt(r).getLong(0)));
-            if (cmp < 0) {
-                p = leftOf(p);
-            } else if (cmp > 0) {
-                p = rightOf(p);
-            } else {
-                setRef(p, recordList.append(fakeRecord.of(rowId), r));
-                return;
-            }
-        } while (p > -1);
-
-        p = allocateBlock();
-        setParent(p, parent);
-        long r = recordList.append(fakeRecord.of(rowId), (long) -1);
-        setTop(p, r);
-        setRef(p, r);
-
-        if (cmp < 0) {
-            setLeft(parent, p);
-        } else {
-            setRight(parent, p);
-        }
-        fix(p);
-    }
-
     private void putParent(Record record) {
         root = allocateBlock();
         long r = recordList.append(record, -1L);
@@ -383,6 +395,10 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         }
     }
 
+    private void setStorageFacade(StorageFacade storageFacade) {
+        recordList.setStorageFacade(storageFacade);
+    }
+
     private class TreeCursor extends AbstractImmutableIterator<Record> implements RecordCursor {
 
         private long current;
@@ -431,7 +447,11 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         @Override
         public Record next() {
             final Record underlying = recordList.next();
-            return byRowId ? sourceCursor.recordAt(underlying.getLong(0)) : underlying;
+            if (byRowId) {
+                sourceCursor.recordAt(sourceRecord, underlying.getLong(0));
+                return sourceRecord;
+            }
+            return underlying;
         }
 
         private void setup() {

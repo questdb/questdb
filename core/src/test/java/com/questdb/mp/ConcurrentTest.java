@@ -23,6 +23,8 @@
 
 package com.questdb.mp;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.ObjectFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -32,6 +34,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 
 public class ConcurrentTest {
+    private final static Log LOG = LogFactory.getLog(ConcurrentTest.class);
 
     /**
      * <pre>
@@ -48,7 +51,7 @@ public class ConcurrentTest {
      */
     @Test
     public void testOneToManyBusy() throws Exception {
-        System.out.println("testOneToManyBusy");
+        LOG.info().$("testOneToManyBusy").$();
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
@@ -98,7 +101,7 @@ public class ConcurrentTest {
 
     @Test
     public void testOneToManyWaiting() throws Exception {
-        System.out.println("testOneToManyWaiting");
+        LOG.info().$("testOneToManyWaiting").$();
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
@@ -144,7 +147,7 @@ public class ConcurrentTest {
 
     @Test
     public void testOneToOneBusy() throws Exception {
-        System.out.println("testOneToOneBusy");
+        LOG.info().$("testOneToOneBusy").$();
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
@@ -185,7 +188,7 @@ public class ConcurrentTest {
 
     @Test
     public void testOneToOneWaiting() throws Exception {
-        System.out.println("testOneToOneWaiting");
+        LOG.info().$("testOneToOneWaiting").$();
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
@@ -223,7 +226,7 @@ public class ConcurrentTest {
 
     @Test
     public void testOneToParallelMany() throws Exception {
-        System.out.println("testOneToParallelMany");
+        LOG.info().$("testOneToParallelMany").$();
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
@@ -273,7 +276,7 @@ public class ConcurrentTest {
 
     @Test
     public void testOneToParallelSubscriber() throws Exception {
-        System.out.println("testOneToParallelSubscriber");
+        LOG.info().$("testOneToParallelSubscriber").$();
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);

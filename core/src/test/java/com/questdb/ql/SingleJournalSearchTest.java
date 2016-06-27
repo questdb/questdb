@@ -73,7 +73,6 @@ public class SingleJournalSearchTest {
                 ;
             }}.build(Files.makeTempDir())
     );
-    //private static final JournalEntryPrinter out = new JournalEntryPrinter(System.out, true);
     private static JournalWriter<Quote> journal;
     private final StringSink sink = new StringSink();
 

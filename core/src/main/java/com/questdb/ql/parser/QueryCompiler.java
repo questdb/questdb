@@ -52,6 +52,7 @@ import com.questdb.ql.impl.latest.*;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.ql.impl.sort.ComparatorCompiler;
 import com.questdb.ql.impl.sort.RBTreeSortedRecordSource;
+import com.questdb.ql.impl.sort.RecordComparator;
 import com.questdb.ql.impl.virtual.VirtualColumnRecordSource;
 import com.questdb.ql.model.*;
 import com.questdb.ql.ops.FunctionFactories;
@@ -119,7 +120,7 @@ public class QueryCompiler {
     private final ComparatorCompiler cc = new ComparatorCompiler();
     private final LiteralMatcher literalMatcher = new LiteralMatcher(traversalAlgo);
     private final ServerConfiguration configuration;
-
+    private boolean orderedAnalytic = false;
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
 
@@ -531,6 +532,128 @@ public class QueryCompiler {
         return compileNoOptimise(model, factory);
     }
 
+    private RecordSource compileAggregates(RecordSource rs, QueryModel model) throws ParserException {
+        final int n = aggregators.size();
+        final ExprNode sampleBy = model.getSampleBy();
+        ObjList<AggregatorFunction> af = new ObjList<>(n);
+        // create virtual columns
+        for (int i = 0; i < n; i++) {
+            QueryColumn qc = aggregators.get(i);
+            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
+            if (vc instanceof AggregatorFunction) {
+                vc.setName(qc.getAlias());
+                af.add((AggregatorFunction) vc);
+            } else {
+                throw QueryError.$(qc.getAst().position, "Internal configuration error. Not an aggregate");
+            }
+        }
+
+        RecordSource out;
+        if (sampleBy == null) {
+            out = new AggregatedRecordSource(rs, groupKeyColumns, af, configuration.getDbAggregatePage());
+        } else {
+            TimestampSampler sampler = SamplerFactory.from(sampleBy.token);
+            if (sampler == null) {
+                throw QueryError.$(sampleBy.position, "Invalid sample");
+            }
+            out = new ResampledRecordSource(rs,
+                    getTimestampIndex(model, model.getTimestamp(), rs.getMetadata()),
+                    groupKeyColumns,
+                    af,
+                    sampler,
+                    configuration.getDbAggregatePage());
+        }
+        return out;
+    }
+
+    private RecordSource compileAnalytic(RecordSource rs, QueryModel model) throws ParserException {
+        final int n = analyticColumns.size();
+        // todo: make this lazy
+        final ObjList<AnalyticFunction> functions = new ObjList<>(n);
+        // todo: make this reusable
+        final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> groupFunctions = new ObjObjHashMap<>();
+        final RecordMetadata metadata = rs.getMetadata();
+        boolean hasTwoPassFunctions = orderedAnalytic;
+
+        for (int i = 0; i < n; i++) {
+            AnalyticColumn col = analyticColumns.getQuick(i);
+
+            ObjList<VirtualColumn> partitionBy = null;
+            int psz = col.getPartitionBy().size();
+            if (psz > 0) {
+                partitionBy = new ObjList<>(psz);
+                for (int j = 0; j < psz; j++) {
+                    partitionBy.add(virtualColumnBuilder.createVirtualColumn(model, col.getPartitionBy().getQuick(j), metadata));
+                }
+            }
+
+            if (col.getAst().paramCount > 1) {
+                throw QueryError.$(col.getAst().position, "Too many arguments");
+            }
+
+            if (col.getAst().paramCount < 1) {
+                throw QueryError.$(col.getAst().position, "Expression expected");
+            }
+
+            VirtualColumn valueColumn = virtualColumnBuilder.createVirtualColumn(model, col.getAst().rhs, metadata);
+            valueColumn.setName(col.getAlias());
+
+            AnalyticFunction f = AnalyticFunctionFactories.newInstance(
+                    configuration,
+                    col.getAst().token,
+                    valueColumn,
+                    partitionBy,
+                    rs.supportsRowIdAccess(),
+                    orderedAnalytic
+            );
+
+            if (f == null) {
+                throw QueryError.$(col.getAst().position, "Unknown function");
+            }
+
+            if (orderedAnalytic) {
+
+                IntList order = toOrderIndices(metadata, col.getOrderBy(), col.getOrderByDirection());
+                ObjList<AnalyticFunction> funcs = groupFunctions.get(order);
+                if (funcs == null) {
+                    groupFunctions.put(order, funcs = new ObjList<>());
+                }
+                funcs.add(f);
+            } else {
+                if (!hasTwoPassFunctions && (f instanceof TwoPassAnalyticFunction)) {
+                    hasTwoPassFunctions = true;
+                }
+                functions.add(f);
+            }
+        }
+
+        if (orderedAnalytic) {
+
+            //todo: transient list, reuse
+            ObjList<RecordComparator> comparators = new ObjList<>(groupFunctions.size());
+            ObjList<ObjList<AnalyticFunction>> funcs = new ObjList<>(groupFunctions.size());
+            for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : groupFunctions) {
+                comparators.add(cc.compile(metadata, e.key));
+                funcs.add(e.value);
+            }
+
+            return new OrderedAnalyticRecordSource(
+                    configuration.getDbAnalyticWindowPage(),
+                    configuration.getDbSortKeyPage(),
+                    configuration.getDbSortDataPage(),
+                    rs,
+                    comparators,
+                    funcs
+            );
+        } else {
+            if (hasTwoPassFunctions) {
+                return new CachingAnalyticRecordSource(configuration.getDbAnalyticWindowPage(), rs, functions);
+            } else {
+                return new AnalyticRecordSource(rs, functions);
+            }
+        }
+    }
+
     private RecordSource compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
@@ -801,6 +924,17 @@ public class QueryCompiler {
         }
 
         return limit(order(selectColumns(rs, model), model), model);
+    }
+
+    private RecordSource compileOuterVirtualColumns(RecordSource rs, QueryModel model) throws ParserException {
+        ObjList<VirtualColumn> outer = new ObjList<>(outerVirtualColumns.size());
+        for (int i = 0, n = outerVirtualColumns.size(); i < n; i++) {
+            QueryColumn qc = outerVirtualColumns.get(i);
+            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
+            vc.setName(qc.getAlias());
+            outer.add(vc);
+        }
+        return new VirtualColumnRecordSource(rs, outer);
     }
 
     private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
@@ -1416,30 +1550,13 @@ public class QueryCompiler {
 
     private RecordSource order(RecordSource rs, QueryModel model) throws ParserException {
         ObjList<ExprNode> orderBy = model.getOrderBy();
-        int n = orderBy.size();
-        if (n > 0) {
-            IntList orderByDirection = model.getOrderByDirection();
-            IntList indices = model.getOrderColumnIndices();
+        if (orderBy.size() > 0) {
             RecordMetadata m = rs.getMetadata();
-            for (int i = 0; i < n; i++) {
-                ExprNode tok = orderBy.getQuick(i);
-                int index = m.getColumnIndexQuiet(tok.token);
-                if (index == -1) {
-                    throw QueryError.invalidColumn(tok.position, tok.token);
-                }
-
-                // shift index by 1 to use sign as sort direction
-                index++;
-
-                // negative column index means descending order of sort
-                if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
-                    index = -index;
-                }
-
-                indices.add(index);
-            }
             return new RBTreeSortedRecordSource(rs,
-                    cc.compile(RBTreeSortedRecordSource.class, m, indices),
+                    cc.compile(
+                            m,
+                            toOrderIndices(m, orderBy, model.getOrderByDirection())
+                    ),
                     configuration.getDbSortKeyPage(),
                     configuration.getDbSortDataPage());
         } else {
@@ -1764,6 +1881,7 @@ public class QueryCompiler {
         this.groupKeyColumns.clear();
         this.aggregateColumnSequence = 0;
         this.analyticColumns.clear();
+        this.orderedAnalytic = false;
 
         ObjList<VirtualColumn> virtualColumns = null;
 
@@ -1825,7 +1943,9 @@ public class QueryCompiler {
                     throw QueryError.$(qc.getAst().position, "Analytic function is not allowed in context of aggregation. Use sub-query.");
                 }
 
-                analyticColumns.add((AnalyticColumn) qc);
+                AnalyticColumn ac = (AnalyticColumn) qc;
+                orderedAnalytic = ac.getOrderBy().size() > 0;
+                analyticColumns.add(ac);
             } else {
                 // this is either a constant or non-aggregate expression
                 // either case is a virtual column
@@ -1848,104 +1968,21 @@ public class QueryCompiler {
         }
 
         // if aggregators present, wrap record source into group-by source
-        ExprNode sampleBy = model.getSampleBy();
-        int asz = aggregators.size();
-        if (asz > 0) {
-            ObjList<AggregatorFunction> af = new ObjList<>(asz);
-            // create virtual columns
-            for (int i = 0; i < asz; i++) {
-                QueryColumn qc = aggregators.get(i);
-                VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
-                if (vc instanceof AggregatorFunction) {
-                    vc.setName(qc.getAlias());
-                    af.add((AggregatorFunction) vc);
-                } else {
-                    throw QueryError.$(qc.getAst().position, "Internal configuration error. Not an aggregate");
-                }
-            }
-
-            if (sampleBy == null) {
-                rs = new AggregatedRecordSource(rs, groupKeyColumns, af, configuration.getDbAggregatePage());
-            } else {
-                TimestampSampler sampler = SamplerFactory.from(sampleBy.token);
-                if (sampler == null) {
-                    throw QueryError.$(sampleBy.position, "Invalid sample");
-                }
-                rs = new ResampledRecordSource(rs,
-                        getTimestampIndex(model, model.getTimestamp(), rs.getMetadata()),
-                        groupKeyColumns,
-                        af,
-                        sampler,
-                        configuration.getDbAggregatePage());
-            }
+        if (aggregators.size() > 0) {
+            rs = compileAggregates(rs, model);
         } else {
+            ExprNode sampleBy = model.getSampleBy();
             if (sampleBy != null) {
                 throw QueryError.$(sampleBy.position, "There are no aggregation columns");
             }
         }
 
         if (outerVirtualColumns.size() > 0) {
-            ObjList<VirtualColumn> outer = new ObjList<>(outerVirtualColumns.size());
-            for (int i = 0, n = outerVirtualColumns.size(); i < n; i++) {
-                QueryColumn qc = outerVirtualColumns.get(i);
-                VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
-                vc.setName(qc.getAlias());
-                outer.add(vc);
-            }
-            rs = new VirtualColumnRecordSource(rs, outer);
+            rs = compileOuterVirtualColumns(rs, model);
         }
 
         if (analyticColumns.size() > 0) {
-            final int n = analyticColumns.size();
-            final ObjList<AnalyticFunction> functions = new ObjList<>(n);
-            final RecordMetadata metadata = rs.getMetadata();
-            boolean hasTwoPassFunctions = false;
-
-            for (int i = 0; i < n; i++) {
-                AnalyticColumn col = analyticColumns.getQuick(i);
-                ObjList<VirtualColumn> partitionBy = null;
-                int psz = col.getPartitionBy().size();
-                if (psz > 0) {
-                    partitionBy = new ObjList<>(psz);
-                    for (int j = 0; j < psz; j++) {
-                        partitionBy.add(virtualColumnBuilder.createVirtualColumn(model, col.getPartitionBy().getQuick(j), metadata));
-                    }
-                }
-
-                if (col.getAst().paramCount > 1) {
-                    throw QueryError.$(col.getAst().position, "Too many arguments");
-                }
-
-                if (col.getAst().paramCount < 1) {
-                    throw QueryError.$(col.getAst().position, "Expression expected");
-                }
-
-                VirtualColumn valueColumn = virtualColumnBuilder.createVirtualColumn(model, col.getAst().rhs, metadata);
-                valueColumn.setName(col.getAlias());
-
-                AnalyticFunction f = AnalyticFunctionFactories.newInstance(
-                        configuration,
-                        col.getAst().token,
-                        valueColumn,
-                        partitionBy,
-                        rs.supportsRowIdAccess()
-                );
-
-                if (f == null) {
-                    throw QueryError.$(col.getAst().position, "Unknown function");
-                }
-
-                if (!hasTwoPassFunctions && (f instanceof TwoPassAnalyticFunction)) {
-                    hasTwoPassFunctions = true;
-                }
-                functions.add(f);
-            }
-
-            if (hasTwoPassFunctions) {
-                rs = new CachingAnalyticRecordSource(configuration.getDbAnalyticWindowPage(), rs, functions);
-            } else {
-                rs = new AnalyticRecordSource(rs, functions);
-            }
+            rs = compileAnalytic(rs, model);
         }
 
         if (selectedColumns.size() > 0) {
@@ -2052,6 +2089,28 @@ public class QueryCompiler {
             }
         }
         return set;
+    }
+
+    private IntList toOrderIndices(RecordMetadata m, ObjList<ExprNode> orderBy, IntList orderByDirection) throws ParserException {
+        final IntList indices = intListPool.next();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            ExprNode tok = orderBy.getQuick(i);
+            int index = m.getColumnIndexQuiet(tok.token);
+            if (index == -1) {
+                throw QueryError.invalidColumn(tok.position, tok.token);
+            }
+
+            // shift index by 1 to use sign as sort direction
+            index++;
+
+            // negative column index means descending order of sort
+            if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                index = -index;
+            }
+
+            indices.add(index);
+        }
+        return indices;
     }
 
     private void unlinkDependencies(QueryModel model, int parent, int child) {

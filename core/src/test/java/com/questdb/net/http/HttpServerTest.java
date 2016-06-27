@@ -36,6 +36,8 @@ import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.FileSink;
 import com.questdb.io.sink.StringSink;
 import com.questdb.iter.clock.Clock;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
 import com.questdb.net.ha.AbstractJournalTest;
 import com.questdb.net.http.handlers.ImportHandler;
@@ -88,6 +90,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class HttpServerTest extends AbstractJournalTest {
+
+    private final static Log LOG = LogFactory.getLog(HttpServerTest.class);
 
     private final static String request = "GET /imp?x=1&z=2 HTTP/1.1\r\n" +
             "Host: localhost:80\r\n" +
@@ -809,7 +813,7 @@ public class HttpServerTest extends AbstractJournalTest {
                             r.put(Misc.EOL);
                         } catch (ResponseContentBufferTooSmallException ignore) {
                             // ignore, send as much as we can in one chunk
-                            System.out.println("small");
+                            LOG.error().$("Response content buffer is too small").$();
                         }
                         r.sendChunk();
                     }

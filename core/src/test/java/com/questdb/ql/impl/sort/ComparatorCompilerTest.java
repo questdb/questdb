@@ -92,7 +92,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
             indices.add(i + 1);
         }
         RecordSource rs = compiler.compileSource(factory, "xyz");
-        RecordComparator rc = cc.compile(ComparatorCompilerTest.class, rs.getMetadata(), indices);
+        RecordComparator rc = cc.compile(rs.getMetadata(), indices);
         RBTreeSortedRecordSource map = new RBTreeSortedRecordSource(rs, rc, 1024 * 1024, 4 * 1024 * 1024);
 
         sink.clear();
@@ -110,7 +110,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
             indices.add(i + 1);
         }
-        RecordComparator rc = cc.compile(ComparatorCompilerTest.class, m, indices);
+        RecordComparator rc = cc.compile(m, indices);
         Assert.assertNotNull(rc);
     }
 
@@ -124,7 +124,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
             indices.add(i + 1);
         }
-        RecordComparator rc = cc.compile(ComparatorCompilerTest.class, m, indices);
+        RecordComparator rc = cc.compile(m, indices);
         Assert.assertNotNull(rc);
     }
 
@@ -138,7 +138,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
             indices.add(i + 1);
         }
-        RecordComparator rc = cc.compile(ComparatorCompilerTest.class, m, indices);
+        RecordComparator rc = cc.compile(m, indices);
         Assert.assertNotNull(rc);
     }
 
@@ -152,8 +152,8 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
             indices.add(i + 1);
         }
-        RecordComparator rc1 = cc.compile(ComparatorCompilerTest.class, m, indices);
-        RecordComparator rc2 = cc.compile(ComparatorCompilerTest.class, m, indices);
+        RecordComparator rc1 = cc.compile(m, indices);
+        RecordComparator rc2 = cc.compile(m, indices);
 
         Assert.assertNotNull(rc1);
         Assert.assertNotNull(rc2);

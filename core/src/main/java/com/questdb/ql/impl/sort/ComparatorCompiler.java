@@ -45,7 +45,7 @@ public class ComparatorCompiler {
     private final IntList comparatorAccessorIndices = new IntList();
     private final IntList branches = new IntList();
 
-    public RecordComparator compile(Class host, RecordMetadata m, @Transient IntList keyColumnIndices) {
+    public RecordComparator compile(RecordMetadata m, @Transient IntList keyColumnIndices) {
 
         assert keyColumnIndices.size() < QueryParser.MAX_ORDER_BY_COLUMNS;
 
@@ -84,7 +84,7 @@ public class ComparatorCompiler {
         asm.putShort(0);
 
         try {
-            return (RecordComparator) asm.loadClass(host).newInstance();
+            return (RecordComparator) asm.loadClass(ComparatorCompiler.class).newInstance();
         } catch (Exception e) {
             throw new JournalRuntimeException("Cannot instantiate comparator: ", e);
         }
