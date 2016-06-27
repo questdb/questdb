@@ -104,7 +104,6 @@ public abstract class AbstractOptimiserTest {
             String s = gson.toJson(jp.parse(sink.toString()));
             TestUtils.assertEquals(expected, s);
         }
-
     }
 
     protected void assertSymbol(String query, int columnIndex) throws JournalException, ParserException {

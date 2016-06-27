@@ -355,6 +355,8 @@ public class HttpServerTest extends AbstractJournalTest {
             try {
                 Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", null, response));
                 TestUtils.assertEquals("{\"status\":\"Journal exists and column count does not mismatch\"}", response);
+            } catch (IOException e) {
+                Assert.assertTrue(e.getMessage().contains("Connection reset"));
             } finally {
                 server.halt();
             }
