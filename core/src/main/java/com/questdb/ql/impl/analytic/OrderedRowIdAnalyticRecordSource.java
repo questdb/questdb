@@ -30,6 +30,8 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.SplitRecordMetadata;
+import com.questdb.ql.impl.join.hash.FakeRecord;
+import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.sort.RBTreeSortedRecordSource;
 import com.questdb.ql.impl.sort.RecordComparator;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
@@ -38,7 +40,7 @@ import com.questdb.std.ObjList;
 import com.questdb.std.Transient;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class OrderedAnalyticRecordSource extends AbstractCombinedRecordSource {
+public class OrderedRowIdAnalyticRecordSource extends AbstractCombinedRecordSource {
     private final RecordList records;
     private final RecordSource parentSource;
     private final ObjList<ObjList<AnalyticFunction>> functions;
@@ -47,8 +49,11 @@ public class OrderedAnalyticRecordSource extends AbstractCombinedRecordSource {
     private final AnalyticRecordStorageFacade storageFacade;
     private final ObjList<RBTreeSortedRecordSource> trees;
     private final ObjList<AnalyticFunction> flatFunctionList;
+    private final FakeRecord fakeRecord = new FakeRecord();
+    private Record parentRecord;
+    private RecordCursor parentCursor;
 
-    public OrderedAnalyticRecordSource(
+    public OrderedRowIdAnalyticRecordSource(
             int pageSize,
             int keyPageSize,
             int valuePageSize,
@@ -56,7 +61,7 @@ public class OrderedAnalyticRecordSource extends AbstractCombinedRecordSource {
             @Transient ObjList<RecordComparator> comparators,
             ObjList<ObjList<AnalyticFunction>> functions) {
         this.parentSource = parentSource;
-        this.records = new RecordList(parentSource.getMetadata(), pageSize);
+        this.records = new RecordList(MapUtils.ROWID_RECORD_METADATA, pageSize);
 
         this.trees = new ObjList<>(comparators.size());
         for (int i = 0, n = comparators.size(); i < n; i++) {
@@ -97,26 +102,27 @@ public class OrderedAnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
-        RecordCursor cursor = this.parentSource.prepareCursor(factory, cancellationHandler);
-        final StorageFacade storageFacade = cursor.getStorageFacade();
+        this.parentCursor = this.parentSource.prepareCursor(factory, cancellationHandler);
+        final StorageFacade storageFacade = parentCursor.getStorageFacade();
         records.setStorageFacade(storageFacade);
         this.storageFacade.prepare(factory, storageFacade);
+        this.parentRecord = parentCursor.newRecord();
 
         int n = trees.size();
         for (int i = 0; i < n; i++) {
-            trees.getQuick(i).setSourceCursor(cursor);
-
+            trees.getQuick(i).setSourceCursor(parentCursor);
         }
 
         // order parent record source
         long rowid = -1;
-        while (cursor.hasNext()) {
+        while (parentCursor.hasNext()) {
             cancellationHandler.check();
-            Record record = cursor.next();
+            Record record = parentCursor.next();
+            long rr = record.getRowId();
             for (int i = 0; i < n; i++) {
-                trees.getQuick(i).put(record);
+                trees.getQuick(i).put(rr);
             }
-            rowid = records.append(record, rowid);
+            rowid = records.append(fakeRecord.of(rr), rowid);
         }
 
         // apply analytic functions
@@ -146,7 +152,8 @@ public class OrderedAnalyticRecordSource extends AbstractCombinedRecordSource {
     @Override
     public boolean hasNext() {
         if (records.hasNext()) {
-            record.of(records.next());
+            parentCursor.recordAt(parentRecord, records.next().getLong(0));
+            record.of(parentRecord);
             for (int i = 0, n = flatFunctionList.size(); i < n; i++) {
                 flatFunctionList.getQuick(i).scroll(record);
             }
@@ -164,7 +171,7 @@ public class OrderedAnalyticRecordSource extends AbstractCombinedRecordSource {
     @Override
     public void toSink(CharSink sink) {
         sink.put('{');
-        sink.putQuoted("op").put(':').putQuoted("OrderedAnalyticRecordSource").put(',');
+        sink.putQuoted("op").put(':').putQuoted("OrderedRowIdAnalyticRecordSource").put(',');
         sink.putQuoted("functions").put(':').put(functions.size()).put(',');
         sink.putQuoted("src").put(':').put(parentSource);
         sink.put('}');
