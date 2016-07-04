@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
@@ -25,6 +26,7 @@ package com.questdb.ql.impl.analytic;
 import com.questdb.ex.ParserException;
 import com.questdb.ql.parser.QueryError;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
@@ -321,6 +323,39 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    @Ignore
+    public void testDifferentOrderByRowId() throws Exception {
+        final String result = "sho\tstr\tsym\ttimestamp\tblah\tcol0\n" +
+                "-19496\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t-391\tXX\n" +
+                "-24357\tXX\tBZ\t2016-05-01T10:22:00.000Z\t-4874\tKK\n" +
+                "21781\tKK\tXX\t2016-05-01T10:23:00.000Z\t25102\tAX\n" +
+                "-19127\tAX\tXX\t2016-05-01T10:24:00.000Z\t-15458\tXX\n" +
+                "-15458\tAX\tXX\t2016-05-01T10:25:00.000Z\t-22934\tBZ\n" +
+                "-22934\tAX\tBZ\t2016-05-01T10:26:00.000Z\t-19136\tKK\n" +
+                "-391\tBZ\tXX\t2016-05-01T10:27:00.000Z\t-26951\tKK\n" +
+                "-26951\tBZ\tKK\t2016-05-01T10:28:00.000Z\t-15331\tAX\n" +
+                "-19136\tAX\tKK\t2016-05-01T10:29:00.000Z\t-20409\tAX\n" +
+                "-15331\tBZ\tAX\t2016-05-01T10:30:00.000Z\t-29572\tBZ\n" +
+                "-4874\tXX\tKK\t2016-05-01T10:31:00.000Z\t25974\tAX\n" +
+                "25102\tKK\tAX\t2016-05-01T10:32:00.000Z\t0\tnull\n" +
+                "-20409\tAX\tAX\t2016-05-01T10:33:00.000Z\t5869\tAX\n" +
+                "-29572\tBZ\tBZ\t2016-05-01T10:34:00.000Z\t11755\tBZ\n" +
+                "25974\tXX\tAX\t2016-05-01T10:35:00.000Z\t-22894\tKK\n" +
+                "5869\tAX\tAX\t2016-05-01T10:36:00.000Z\t-18600\tAX\n" +
+                "-22894\tXX\tKK\t2016-05-01T10:37:00.000Z\t0\tnull\n" +
+                "-18600\tAX\tAX\t2016-05-01T10:38:00.000Z\t0\tnull\n" +
+                "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-24455\tAX\n" +
+                "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0\tnull\n";
+
+        assertThat(result,
+                "select sho, str, sym, timestamp, " +
+//                        "next(sho) blah over (order by timestamp), " +
+//                        "next(sym) over (partition by str order by timestamp), " +
+                        "next(sho) over (order by i) " +
+                        "from '*!*abc'", true);
+    }
+
+    @Test
     public void testDouble() throws Exception {
         final String expected = "1.050231933594\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t0.332301996648\n" +
                 "566.734375000000\tXX\tBZ\t2016-05-01T10:22:00.000Z\t0.000002473130\n" +
@@ -445,6 +480,31 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-24455\n" +
                 "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0\n";
         assertThat(expected, "select sho, str, sym, timestamp , next(sho) over (partition by str) from abc");
+    }
+
+    @Test
+    public void testShort2() throws Exception {
+        final String expected = "-19496\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t-24357\n" +
+                "-24357\tXX\tBZ\t2016-05-01T10:22:00.000Z\t21781\n" +
+                "21781\tKK\tXX\t2016-05-01T10:23:00.000Z\t-19127\n" +
+                "-19127\tAX\tXX\t2016-05-01T10:24:00.000Z\t-15458\n" +
+                "-15458\tAX\tXX\t2016-05-01T10:25:00.000Z\t-22934\n" +
+                "-22934\tAX\tBZ\t2016-05-01T10:26:00.000Z\t-391\n" +
+                "-391\tBZ\tXX\t2016-05-01T10:27:00.000Z\t-26951\n" +
+                "-26951\tBZ\tKK\t2016-05-01T10:28:00.000Z\t-19136\n" +
+                "-19136\tAX\tKK\t2016-05-01T10:29:00.000Z\t-15331\n" +
+                "-15331\tBZ\tAX\t2016-05-01T10:30:00.000Z\t-4874\n" +
+                "-4874\tXX\tKK\t2016-05-01T10:31:00.000Z\t25102\n" +
+                "25102\tKK\tAX\t2016-05-01T10:32:00.000Z\t-20409\n" +
+                "-20409\tAX\tAX\t2016-05-01T10:33:00.000Z\t-29572\n" +
+                "-29572\tBZ\tBZ\t2016-05-01T10:34:00.000Z\t25974\n" +
+                "25974\tXX\tAX\t2016-05-01T10:35:00.000Z\t5869\n" +
+                "5869\tAX\tAX\t2016-05-01T10:36:00.000Z\t-22894\n" +
+                "-22894\tXX\tKK\t2016-05-01T10:37:00.000Z\t-18600\n" +
+                "-18600\tAX\tAX\t2016-05-01T10:38:00.000Z\t11755\n" +
+                "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-24455\n" +
+                "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0\n";
+        assertThat(expected, "select sho, str, sym, timestamp , next(sho) over () from abc");
     }
 
     @Test
