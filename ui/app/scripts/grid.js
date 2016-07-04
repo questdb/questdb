@@ -290,8 +290,17 @@
                 computePages(direction, t, b);
             }
 
+            if (t === 0) {
+                b = dc;
+            } else if (b > r - 2) {
+                t = b - dc;
+            }
+
             for (var i = t; i < b; i++) {
-                renderRow(rows[i & dcn], i);
+                var row = rows[i & dcn];
+                if (row) {
+                    renderRow(row, i);
+                }
             }
         }
 
@@ -433,11 +442,23 @@
                     top = scrollTop;
                     o = y - top;
                 } else if (scrollTop >= h - vp) {
+                    // final leap to bottom of grid
+                    // this happens when container div runs out of vertical height
+                    // and we artificially force leap to bottom
                     y = Math.max(0, yMax - vp);
                     top = scrollTop;
                     o = y - top;
+                    activeRowDown(r - activeRow);
                 } else {
-                    y += scrollTop - top;
+                    if (scrollTop === 0) {
+                        // this happens when grid is coming slowly back up after being scrolled down harshly
+                        // because 'y' is much greater than top, we have to jump to top artificially.
+                        y = 0;
+                        o = 0;
+                        activeRowUp(activeRow);
+                    } else {
+                        y += scrollTop - top;
+                    }
                     top = scrollTop;
                 }
                 renderViewport(y - oldY);
