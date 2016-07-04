@@ -304,6 +304,11 @@
                     sql = text.substring(startPos);
                 }
             }
+
+            if (sql.length === 0) {
+                return null;
+            }
+
             return {q: sql, r: startRow, c: startCol};
         }
 
@@ -327,14 +332,15 @@
         function submitQuery() {
             save();
             clearMarker();
-            var q = edit.getSelectedText();
-            if (q == null || q === '') {
-                $(document).trigger(qdb.MSG_QUERY_EXEC, computeQueryTextFromCursor());
+            var q;
+            if (edit.getSelectedText() === '') {
+                q = computeQueryTextFromCursor();
             } else {
-                var o = computeQueryTextFromSelection();
-                if (o !== null) {
-                    $(document).trigger(qdb.MSG_QUERY_EXEC, o);
-                }
+                q = computeQueryTextFromSelection();
+            }
+
+            if (q) {
+                $(document).trigger(qdb.MSG_QUERY_EXEC, q);
             }
         }
 
