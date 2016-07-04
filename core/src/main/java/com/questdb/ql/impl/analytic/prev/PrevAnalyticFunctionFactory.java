@@ -46,19 +46,21 @@ public class PrevAnalyticFunctionFactory implements AnalyticFunctionFactory {
         if (partitionBy != null) {
             if (valueIsString) {
                 if (supportsRowId) {
-                    return new PrevStrPartitionedAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
+                    return new PrevStrRowPartitionedAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
                 } else {
-                    return new PrevStrAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
+                    return new PrevStrPartitionedAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
                 }
             }
             return new PrevPartitionedAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
         } else {
-            if (valueIsString) {
-                if (supportsRowId) {
-                    return new PrevRowAnalyticFunction(valueColumn);
+            if (supportsRowId) {
+                return new PrevRowAnalyticFunction(valueColumn);
+            } else {
+                if (valueIsString) {
+                    return new PrevStrAnalyticFunction(valueColumn);
                 }
+                return new PrevAnalyticFunction(valueColumn);
             }
-            return new PrevAnalyticFunction(valueColumn);
         }
     }
 }

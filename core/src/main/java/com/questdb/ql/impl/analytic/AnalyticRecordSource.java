@@ -161,16 +161,16 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
         // based on record these values are addressing
         long rowid = -1;
         while (cursor.hasNext()) {
-
             cancellationHandler.check();
-
             Record record = cursor.next();
 //            rowid = recordList.append(fakeRecord.of(record.getRowId()), rowid);
             rowid = recordList.append(record, rowid);
-            for (int i = 0; i < orderGroupCount; i++) {
-                RedBlackTree tree = orderedSources.getQuick(i);
-                if (tree != null) {
-                    tree.put(rowid);
+            if (orderGroupCount > 0) {
+                for (int i = 0; i < orderGroupCount; i++) {
+                    RedBlackTree tree = orderedSources.getQuick(i);
+                    if (tree != null) {
+                        tree.put(rowid);
+                    }
                 }
             }
         }

@@ -24,23 +24,15 @@ package com.questdb.ql.impl.analytic.prev;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Chars;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.impl.analytic.AnalyticFunctionType;
-import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.DirectMapEntry;
-import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
 import com.questdb.std.DirectInputStream;
-import com.questdb.std.ObjList;
-import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 import com.questdb.store.VariableColumn;
 
@@ -49,19 +41,26 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
-    private final DirectMap map;
     private final DirectCharSequence cs = new DirectCharSequence();
-    private final ObjList<VirtualColumn> partitionBy;
     private final VirtualColumn valueColumn;
-    private long bufPtr = 0;
-    private int bufPtrLen = 0;
-    private boolean nextNull = true;
     private boolean closed = false;
+    private long bufA = 0;
+    private int bufALen = -1;
+    private int bufASz = 0;
+    private long bufB = 0;
+    private int bufBLen = -1;
+    private int bufBSz = 0;
+    private long buf;
+    private int bufLen;
 
-    public PrevStrAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
-        this.partitionBy = partitionBy;
+    public PrevStrAnalyticFunction(VirtualColumn valueColumn) {
         this.valueColumn = valueColumn;
-        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(ColumnType.LONG, ColumnType.BYTE));
+        this.bufASz = 32;
+        this.bufA = Unsafe.getUnsafe().allocateMemory(this.bufASz * 2);
+        this.bufBSz = 32;
+        this.bufB = Unsafe.getUnsafe().allocateMemory(this.bufBSz * 2);
+        this.buf = bufA;
+        this.bufLen = bufALen;
     }
 
     @Override
@@ -110,12 +109,12 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
 
     @Override
     public CharSequence getFlyweightStr() {
-        return nextNull ? null : cs;
+        return bufLen == -1 ? null : cs;
     }
 
     @Override
     public CharSequence getFlyweightStrB() {
-        return nextNull ? null : cs;
+        return bufLen == -1 ? null : cs;
     }
 
     @Override
@@ -140,17 +139,17 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
 
     @Override
     public void getStr(CharSink sink) {
-        sink.put(nextNull ? null : cs);
+        sink.put(bufLen == -1 ? null : cs);
     }
 
     @Override
     public CharSequence getStr() {
-        return nextNull ? null : cs;
+        return bufLen == -1 ? null : cs;
     }
 
     @Override
     public int getStrLen() {
-        return nextNull ? VariableColumn.NULL_LEN : cs.length();
+        return bufLen == -1 ? VariableColumn.NULL_LEN : bufLen;
     }
 
     @Override
@@ -174,34 +173,57 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
 
     @Override
     public void prepareFor(Record record) {
-        DirectMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
-        }
+        CharSequence cs = valueColumn.getFlyweightStr(record);
 
-        DirectMapValues values = map.getOrCreateValues(kw);
-        final CharSequence str = valueColumn.getFlyweightStr(record);
+        int sz = buf == bufA ? bufASz : bufBSz;
 
-        if (values.isNew()) {
-            nextNull = true;
-            store(str, values);
+        if (cs == null) {
+            bufLen = -1;
         } else {
-            nextNull = false;
-            long ptr = values.getLong(0);
-            int len = values.getInt(1);
-            copyToBuffer(ptr);
-            if (toByteLen(str.length()) > len) {
-                Unsafe.getUnsafe().freeMemory(ptr);
-                store(str, values);
+            int l = cs.length();
+            if (l > sz) {
+                long b = Unsafe.getUnsafe().allocateMemory(l * 2);
+                Chars.putCharsOnly(b, cs);
+                Unsafe.getUnsafe().freeMemory(buf);
+
+                if (buf == bufA) {
+                    bufASz = l;
+                    bufA = b;
+                    bufALen = l;
+
+                    buf = bufB;
+                    bufLen = bufBLen;
+                } else {
+                    bufBSz = l;
+                    bufB = b;
+                    bufBLen = l;
+
+                    buf = bufA;
+                    bufLen = bufALen;
+                }
             } else {
-                Chars.put(ptr, str);
+                Chars.putCharsOnly(buf, cs);
+                if (buf == bufA) {
+                    bufALen = l;
+
+                    buf = bufB;
+                    bufLen = bufBLen;
+                } else {
+                    bufBLen = l;
+
+                    buf = bufA;
+                    bufLen = bufALen;
+                }
             }
         }
+        this.cs.of(buf, buf + bufLen * 2);
     }
 
     @Override
     public void reset() {
-        map.clear();
+        bufALen = -1;
+        bufBLen = -1;
+        buf = bufA;
     }
 
     @Override
@@ -209,43 +231,8 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
         if (closed) {
             return;
         }
-
-        // free pointers in map values
-        for (DirectMapEntry e : map) {
-            Unsafe.getUnsafe().freeMemory(e.getLong(0));
-        }
-
-        Misc.free(map);
-        if (bufPtr != 0) {
-            Unsafe.getUnsafe().freeMemory(bufPtr);
-        }
+        Unsafe.getUnsafe().freeMemory(bufA);
+        Unsafe.getUnsafe().freeMemory(bufB);
         closed = true;
-    }
-
-    private static int toByteLen(int charLen) {
-        return charLen * 2 + 4;
-    }
-
-    private void copyToBuffer(long ptr) {
-        int l = toByteLen(Unsafe.getUnsafe().getInt(ptr));
-        if (l >= bufPtrLen) {
-            if (bufPtr != 0) {
-                Unsafe.getUnsafe().freeMemory(bufPtr);
-            }
-            bufPtrLen = Numbers.ceilPow2(l);
-            bufPtr = Unsafe.getUnsafe().allocateMemory(bufPtrLen);
-            cs.of(bufPtr + 4, bufPtr + bufPtrLen);
-        } else {
-            cs.of(bufPtr + 4, bufPtr + l);
-        }
-        Unsafe.getUnsafe().copyMemory(ptr, bufPtr, l);
-    }
-
-    private void store(CharSequence str, DirectMapValues values) {
-        int l = Numbers.ceilPow2(toByteLen(str.length()));
-        long ptr = Unsafe.getUnsafe().allocateMemory(l);
-        values.putLong(0, ptr);
-        values.putInt(1, l);
-        Chars.put(ptr, str);
     }
 }

@@ -209,6 +209,13 @@ public final class Chars {
         return (len << 1) + 4;
     }
 
+    public static void putCharsOnly(long address, CharSequence value) {
+        int len = value.length();
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putChar(address + (i << 1), value.charAt(i));
+        }
+    }
+
     public static boolean startsWith(CharSequence _this, CharSequence that) {
         int len = that.length();
         if (_this.length() < len) {

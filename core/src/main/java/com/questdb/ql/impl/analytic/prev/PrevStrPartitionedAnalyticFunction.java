@@ -22,145 +22,154 @@
 
 package com.questdb.ql.impl.analytic.prev;
 
+import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
+import com.questdb.ql.impl.analytic.AnalyticFunction;
+import com.questdb.ql.impl.analytic.AnalyticFunctionType;
 import com.questdb.ql.impl.map.DirectMap;
+import com.questdb.ql.impl.map.DirectMapEntry;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
+import com.questdb.std.DirectCharSequence;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
+import com.questdb.store.SymbolTable;
+import com.questdb.store.VariableColumn;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class PrevStrPartitionedAnalyticFunction extends AbstractPrevAnalyticFunction implements Closeable {
+public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Closeable {
     private final DirectMap map;
+    private final DirectCharSequence cs = new DirectCharSequence();
     private final ObjList<VirtualColumn> partitionBy;
-    private RecordCursor parent;
+    private final VirtualColumn valueColumn;
+    private long bufPtr = 0;
+    private int bufPtrLen = 0;
+    private boolean nextNull = true;
+    private boolean closed = false;
 
     public PrevStrPartitionedAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
-        super(valueColumn);
         this.partitionBy = partitionBy;
-        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(ColumnType.LONG));
+        this.valueColumn = valueColumn;
+        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(ColumnType.LONG, ColumnType.BYTE));
+    }
+
+    @Override
+    public void add(Record record) {
     }
 
     @Override
     public byte get() {
-        return nextNull ? 0 : valueColumn.get(getParentRecord());
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void getBin(OutputStream s) {
-        if (nextNull) {
-            return;
-        }
-        valueColumn.getBin(getParentRecord(), s);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public DirectInputStream getBin() {
-        return nextNull ? null : valueColumn.getBin(getParentRecord());
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getBinLen() {
-        return nextNull ? 0 : valueColumn.getBinLen(getParentRecord());
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public boolean getBool() {
-        return !nextNull && valueColumn.getBool(getParentRecord());
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getDate() {
-        return nextNull ? Numbers.LONG_NaN : valueColumn.getDate(getParentRecord());
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public double getDouble() {
-        return nextNull ? Double.NaN : valueColumn.getDouble(getParentRecord());
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public float getFloat() {
-        return nextNull ? Float.NaN : valueColumn.getFloat(getParentRecord());
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getFlyweightStr() {
-        return nextNull ? null : valueColumn.getFlyweightStr(getParentRecord());
+        return nextNull ? null : cs;
     }
 
     @Override
     public CharSequence getFlyweightStrB() {
-        return nextNull ? null : valueColumn.getFlyweightStrB(getParentRecord());
+        return nextNull ? null : cs;
     }
 
     @Override
     public int getInt() {
-        return nextNull ? Numbers.INT_NaN : valueColumn.getInt(getParentRecord());
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong() {
-        return nextNull ? Numbers.LONG_NaN : valueColumn.getLong(getParentRecord());
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public RecordColumnMetadata getMetadata() {
+        return valueColumn;
     }
 
     @Override
     public short getShort() {
-        return nextNull ? 0 : valueColumn.getShort(getParentRecord());
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void getStr(CharSink sink) {
-        if (nextNull) {
-            sink.put((CharSequence) null);
-        } else {
-            valueColumn.getStr(getParentRecord(), sink);
-        }
+        sink.put(nextNull ? null : cs);
     }
 
     @Override
     public CharSequence getStr() {
-        return nextNull ? null : valueColumn.getStr(getParentRecord());
+        return nextNull ? null : cs;
     }
 
     @Override
     public int getStrLen() {
-        return nextNull ? -1 : valueColumn.getStrLen(getParentRecord());
+        return nextNull ? VariableColumn.NULL_LEN : cs.length();
     }
 
     @Override
     public String getSym() {
-        return nextNull ? null : valueColumn.getSym(getParentRecord());
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public SymbolTable getSymbolTable() {
+        return null;
+    }
+
+    @Override
+    public AnalyticFunctionType getType() {
+        return AnalyticFunctionType.STREAM;
     }
 
     @Override
     public void prepare(RecordCursor cursor) {
-        parent = cursor;
-    }
-
-    @Override
-    public void reset() {
-        super.reset();
-        map.clear();
-    }
-
-    @Override
-    public void close() throws IOException {
-        if (closed) {
-            return;
-        }
-        super.close();
-        Misc.free(map);
     }
 
     @Override
@@ -171,16 +180,72 @@ public class PrevStrPartitionedAnalyticFunction extends AbstractPrevAnalyticFunc
         }
 
         DirectMapValues values = map.getOrCreateValues(kw);
+        final CharSequence str = valueColumn.getFlyweightStr(record);
+
         if (values.isNew()) {
             nextNull = true;
+            store(str, values);
         } else {
             nextNull = false;
-            Unsafe.getUnsafe().putLong(bufPtr, values.getLong(0));
+            long ptr = values.getLong(0);
+            int len = values.getInt(1);
+            copyToBuffer(ptr);
+            if (toByteLen(str.length()) > len) {
+                Unsafe.getUnsafe().freeMemory(ptr);
+                store(str, values);
+            } else {
+                Chars.put(ptr, str);
+            }
         }
-        values.putLong(0, record.getRowId());
     }
 
-    private Record getParentRecord() {
-        return parent.recordAt(Unsafe.getUnsafe().getLong(bufPtr));
+    @Override
+    public void reset() {
+        map.clear();
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (closed) {
+            return;
+        }
+
+        // free pointers in map values
+        for (DirectMapEntry e : map) {
+            Unsafe.getUnsafe().freeMemory(e.getLong(0));
+        }
+
+        Misc.free(map);
+        if (bufPtr != 0) {
+            Unsafe.getUnsafe().freeMemory(bufPtr);
+        }
+        closed = true;
+    }
+
+    private static int toByteLen(int charLen) {
+        return charLen * 2 + 4;
+    }
+
+    private void copyToBuffer(long ptr) {
+        int l = toByteLen(Unsafe.getUnsafe().getInt(ptr));
+        if (l >= bufPtrLen) {
+            if (bufPtr != 0) {
+                Unsafe.getUnsafe().freeMemory(bufPtr);
+            }
+            bufPtrLen = Numbers.ceilPow2(l);
+            bufPtr = Unsafe.getUnsafe().allocateMemory(bufPtrLen);
+            cs.of(bufPtr + 4, bufPtr + bufPtrLen);
+        } else {
+            cs.of(bufPtr + 4, bufPtr + l);
+        }
+        Unsafe.getUnsafe().copyMemory(ptr, bufPtr, l);
+    }
+
+    private void store(CharSequence str, DirectMapValues values) {
+        int l = Numbers.ceilPow2(toByteLen(str.length()));
+        long ptr = Unsafe.getUnsafe().allocateMemory(l);
+        values.putLong(0, ptr);
+        values.putInt(1, l);
+        Chars.put(ptr, str);
     }
 }

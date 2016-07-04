@@ -28,7 +28,7 @@ import com.questdb.ql.parser.QueryError;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
+public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
 
     private final static String expected = "-1148479920\tBZ\t2016-05-01T10:21:00.000Z\tNaN\n" +
             "1548800833\tKK\t2016-05-01T10:22:00.000Z\tNaN\n" +
@@ -164,6 +164,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "false\tBZ\t2016-05-01T10:39:00.000Z\tfalse\n" +
                 "false\tBZ\t2016-05-01T10:40:00.000Z\tfalse\n";
         assertThat(expected, "select boo, str, timestamp , prev(boo) over (partition by str) from abc");
+        assertThat(expected, "select boo, str, timestamp , prev(boo) over (partition by str) from '*!*abc'");
     }
 
     @Test
@@ -189,6 +190,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "-114\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-72\n" +
                 "70\tBZ\tAX\t2016-05-01T10:40:00.000Z\t-114\n";
         assertThat(expected, "select b, str, sym, timestamp , prev(b) over (partition by str) from abc");
+        assertThat(expected, "select b, str, sym, timestamp , prev(b) over (partition by str) from '*!*abc'");
     }
 
     @Test
@@ -326,6 +328,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "-640305320\tKK\t2016-05-01T11:59:00.000Z\t-805434743\n" +
                 "1751526583\tBZ\t2016-05-01T12:00:00.000Z\t-640305320\n";
         assertThat(expected, "select i, str, timestamp, prev(i) over () from xyz");
+        assertThat(expected, "select i, str, timestamp, prev(i) over () from '*!*xyz'");
     }
 
     @Test
@@ -351,6 +354,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "167787767-01-1258238T07:52:02.538Z\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t000-180943699-12-0-1356718T10:19:58.733Z\n" +
                 "000-56976438-01-0-426674T13:10:29.515Z\tBZ\tAX\t2016-05-01T10:40:00.000Z\t167787767-01-1258238T07:52:02.538Z\n";
         assertThat(expected, "select date, str, sym, timestamp , prev(date) over (partition by str) from abc");
+        assertThat(expected, "select date, str, sym, timestamp , prev(date) over (partition by str) from '*!*abc'");
     }
 
     @Test
@@ -376,6 +380,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "-842.000000000000\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t0.007371325744\n" +
                 "0.000032060649\tBZ\tAX\t2016-05-01T10:40:00.000Z\t-842.000000000000\n";
         assertThat(expected, "select d, str, sym, timestamp , prev(d) over (partition by str) from abc");
+        assertThat(expected, "select d, str, sym, timestamp , prev(d) over (partition by str) from '*!*abc'");
     }
 
     @Test
@@ -401,6 +406,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "0.1168\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t0.5442\n" +
                 "0.4967\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0.1168\n";
         assertThat(expected, "select f, str, sym, timestamp , prev(f) over (partition by str) from abc");
+        assertThat(expected, "select f, str, sym, timestamp , prev(f) over (partition by str) from '*!*abc'");
     }
 
     @Test
@@ -426,6 +432,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "8152044974329490473\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t8611582118025429627\n" +
                 "-6071768268784020226\tBZ\tAX\t2016-05-01T10:40:00.000Z\t8152044974329490473\n";
         assertThat(expected, "select l, str, sym, timestamp , prev(l) over (partition by str) from abc");
+        assertThat(expected, "select l, str, sym, timestamp , prev(l) over (partition by str) from '*!*abc'");
     }
 
     @Test
@@ -452,6 +459,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\tAX\n" +
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\tBZ\n";
         assertThat(expected, "select str, sym, timestamp , prev(sym) over(), prev(str) over () from abc", true);
+        assertThat(expected, "select str, sym, timestamp , prev(sym) over(), prev(str) over () from '*!*abc'", true);
     }
 
     @Test
@@ -533,6 +541,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-29572\n" +
                 "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t11755\n";
         assertThat(expected, "select sho, str, sym, timestamp , prev(sho) over (partition by str) from abc");
+        assertThat(expected, "select sho, str, sym, timestamp , prev(sho) over (partition by str) from '*!*abc'");
     }
 
     @Test
@@ -559,6 +568,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-29572\n" +
                 "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t11755\n";
         assertThat(expected, "select sho, str, sym, timestamp , prev(sho) blah over (partition by str) from abc", true);
+        assertThat(expected, "select sho, str, sym, timestamp , prev(sho) blah over (partition by str) from '*!*abc'", true);
     }
 
     @Test
@@ -584,6 +594,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tBZ\n" +
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\tAX\n";
         assertThat(expected, "select str, sym, timestamp , prev(str) over (partition by sym) from abc");
+        assertThat(expected, "select str, sym, timestamp , prev(str) over (partition by sym) from '*!*abc'");
     }
 
     @Test
@@ -634,6 +645,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\n" +
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\n";
         assertThat(expected, "select str, sym, timestamp , prev(str) over () from abc");
+        assertThat(expected, "select str, sym, timestamp , prev(str) over () from '*!*abc'");
     }
 
     @Test
@@ -659,6 +671,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\n" +
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\n";
         assertThat(expected, "select str, sym, timestamp , prev(sym) over () from abc");
+        assertThat(expected, "select str, sym, timestamp , prev(sym) over () from '*!*abc'");
     }
 
     @Test
@@ -684,6 +697,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tBZ\n" +
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\n";
         assertThat(expected, "select str, sym, timestamp , prev(sym) over (partition by str) from abc");
+        assertThat(expected, "select str, sym, timestamp , prev(sym) over (partition by str) from '*!*abc'");
     }
 
     @Test
@@ -717,6 +731,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "BZ\tAX\tBZ\n";
 
         assertThat(expectd, "select str, sym, p from (select str, sym, timestamp , prev(sym) p over (partition by str) from abc)", true);
+        assertThat(expectd, "select str, sym, p from (select str, sym, timestamp , prev(sym) p over (partition by str) from '*!*abc')", true);
     }
 
     @Test
@@ -743,6 +758,7 @@ public class PrevRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
                 "BZ\tfalse\t-841.883159995079\t0.1168\t-842.000000000000\tfalse\n" +
                 "BZ\tfalse\t0.496688359286\t0.4967\t0.000032060649\tfalse\n";
         assertThat(expected, "select str, boo, f+d, f, d , prev(boo) over (partition by str) from abc", true);
+        assertThat(expected, "select str, boo, f+d, f, d , prev(boo) over (partition by str) from '*!*abc'", true);
     }
 
     @Test
