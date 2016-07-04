@@ -431,6 +431,59 @@
             }
         }
 
+        function activeCellOff() {
+            activeCellContainer.className = 'qg-c qg-w' + activeCell;
+        }
+
+        function activeCellOn(focus) {
+            activeCellContainer = activeRowContainer.childNodes[activeCell];
+            activeCellContainer.className += ' qg-c-active';
+
+            if (focus) {
+                var w;
+                w = Math.max(0, activeCellContainer.offsetLeft - 5);
+                if (w < viewport.scrollLeft) {
+                    viewport.scrollLeft = w;
+                } else {
+                    w = activeCellContainer.offsetLeft + activeCellContainer.clientWidth + 5;
+                    if (w > viewport.scrollLeft + viewport.clientWidth) {
+                        viewport.scrollLeft = w - viewport.clientWidth;
+                    }
+                }
+
+            }
+        }
+
+        function activeRowUp(n) {
+            if (activeRow > 0) {
+                activeRow = Math.max(0, activeRow - n);
+                activeRowContainer.className = 'qg-r';
+                activeCellOff();
+                activeRowContainer = rows[activeRow & dcn];
+                activeRowContainer.className = 'qg-r qg-r-active';
+                activeCellOn();
+                var scrollTop = activeRow * rh - o;
+                if (scrollTop < viewport.scrollTop) {
+                    viewport.scrollTop = Math.max(0, scrollTop);
+                }
+            }
+        }
+
+        function activeRowDown(n) {
+            if (activeRow > -1 && activeRow < r - 1) {
+                activeRow = Math.min(r - 1, activeRow + n);
+                activeRowContainer.className = 'qg-r';
+                activeCellOff();
+                activeRowContainer = rows[activeRow & dcn];
+                activeRowContainer.className = 'qg-r qg-r-active';
+                activeCellOn();
+                var scrollTop = activeRow * rh - vp + rh - o;
+                if (scrollTop > viewport.scrollTop) {
+                    viewport.scrollTop = scrollTop;
+                }
+            }
+        }
+
         function viewportScroll(force) {
             header.scrollLeft(viewport.scrollLeft);
 
@@ -492,58 +545,6 @@
             activeCellContainer.className += ' qg-c-active';
         }
 
-        function activeCellOff() {
-            activeCellContainer.className = 'qg-c qg-w' + activeCell;
-        }
-
-        function activeCellOn(focus) {
-            activeCellContainer = activeRowContainer.childNodes[activeCell];
-            activeCellContainer.className += ' qg-c-active';
-
-            if (focus) {
-                var w;
-                w = Math.max(0, activeCellContainer.offsetLeft - 5);
-                if (w < viewport.scrollLeft) {
-                    viewport.scrollLeft = w;
-                } else {
-                    w = activeCellContainer.offsetLeft + activeCellContainer.clientWidth + 5;
-                    if (w > viewport.scrollLeft + viewport.clientWidth) {
-                        viewport.scrollLeft = w - viewport.clientWidth;
-                    }
-                }
-
-            }
-        }
-
-        function activeRowUp(n) {
-            if (activeRow > 0) {
-                activeRow = Math.max(0, activeRow - n);
-                activeRowContainer.className = 'qg-r';
-                activeCellOff();
-                activeRowContainer = rows[activeRow & dcn];
-                activeRowContainer.className = 'qg-r qg-r-active';
-                activeCellOn();
-                var scrollTop = activeRow * rh - o;
-                if (scrollTop < viewport.scrollTop) {
-                    viewport.scrollTop = Math.max(0, scrollTop);
-                }
-            }
-        }
-
-        function activeRowDown(n) {
-            if (activeRow > -1 && activeRow < r - 1) {
-                activeRow = Math.min(r - 1, activeRow + n);
-                activeRowContainer.className = 'qg-r';
-                activeCellOff();
-                activeRowContainer = rows[activeRow & dcn];
-                activeRowContainer.className = 'qg-r qg-r-active';
-                activeCellOn();
-                var scrollTop = activeRow * rh - vp + rh - o;
-                if (scrollTop > viewport.scrollTop) {
-                    viewport.scrollTop = scrollTop;
-                }
-            }
-        }
 
         function activeCellRight() {
             if (activeCell > -1 && activeCell < columns.length - 1) {
