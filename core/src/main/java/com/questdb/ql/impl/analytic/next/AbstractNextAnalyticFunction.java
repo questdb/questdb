@@ -1,122 +1,121 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic.prev;
+package com.questdb.ql.impl.analytic.next;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
+import com.questdb.ql.impl.NullRecord;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
+import com.questdb.ql.impl.analytic.AnalyticFunctionType;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
+import com.questdb.store.MemoryPages;
 import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.io.OutputStream;
 
-public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunction, Closeable {
-    protected final long bufPtr;
-    protected final VirtualColumn valueColumn;
-    protected boolean nextNull = true;
-    protected boolean closed = false;
+public abstract class AbstractNextAnalyticFunction implements AnalyticFunction, Closeable {
 
-    public AbstractPrevValueAnalyticFunction(VirtualColumn valueColumn) {
+    protected final MemoryPages pages;
+    private final VirtualColumn valueColumn;
+    private long offset;
+    private Record record;
+    private Record next;
+    private RecordCursor baseCursor;
+
+    public AbstractNextAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
+        this.pages = new MemoryPages(pageSize);
         this.valueColumn = valueColumn;
-        // buffer where "current" value is kept
-        this.bufPtr = Unsafe.getUnsafe().allocateMemory(8);
     }
 
     @Override
-    public void close() throws IOException {
-        if (closed) {
-            return;
-        }
-        Unsafe.getUnsafe().freeMemory(bufPtr);
-        closed = true;
+    public void close() {
+        pages.close();
     }
 
     @Override
     public byte get() {
-        return nextNull ? 0 : Unsafe.getUnsafe().getByte(bufPtr);
+        return valueColumn.get(next);
     }
 
     @Override
     public void getBin(OutputStream s) {
-        throw new UnsupportedOperationException();
+        valueColumn.getBin(next, s);
     }
 
     @Override
     public DirectInputStream getBin() {
-        throw new UnsupportedOperationException();
+        return valueColumn.getBin(next);
     }
 
     @Override
     public long getBinLen() {
-        throw new UnsupportedOperationException();
+        return valueColumn.getBinLen(next);
     }
 
     @Override
     public boolean getBool() {
-        return !nextNull && Unsafe.getUnsafe().getByte(bufPtr) == 1;
+        return valueColumn.getBool(next);
     }
 
     @Override
     public long getDate() {
-        return getLong();
+        return valueColumn.getDate(next);
     }
 
     @Override
     public double getDouble() {
-        return nextNull ? Double.NaN : Unsafe.getUnsafe().getDouble(bufPtr);
+        return valueColumn.getDouble(next);
     }
 
     @Override
     public float getFloat() {
-        return nextNull ? Float.NaN : Unsafe.getUnsafe().getFloat(bufPtr);
+        return valueColumn.getFloat(next);
     }
 
     @Override
     public CharSequence getFlyweightStr() {
-        throw new UnsupportedOperationException();
+        return valueColumn.getFlyweightStr(next);
     }
 
     @Override
     public CharSequence getFlyweightStrB() {
-        throw new UnsupportedOperationException();
+        return valueColumn.getFlyweightStrB(next);
     }
 
     @Override
     public int getInt() {
-        return nextNull ? (valueColumn.getType() == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : Numbers.INT_NaN) : Unsafe.getUnsafe().getInt(bufPtr);
+        return next == NullRecord.INSTANCE && valueColumn.getType() == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : valueColumn.getInt(next);
     }
 
     @Override
     public long getLong() {
-        return nextNull ? Numbers.LONG_NaN : Unsafe.getUnsafe().getLong(bufPtr);
+        return valueColumn.getLong(next);
     }
 
     @Override
@@ -126,27 +125,27 @@ public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunct
 
     @Override
     public short getShort() {
-        return nextNull ? 0 : (short) Unsafe.getUnsafe().getInt(bufPtr);
+        return valueColumn.getShort(next);
     }
 
     @Override
     public void getStr(CharSink sink) {
-        throw new UnsupportedOperationException();
+        valueColumn.getStr(next, sink);
     }
 
     @Override
     public CharSequence getStr() {
-        throw new UnsupportedOperationException();
+        return valueColumn.getStr(next);
     }
 
     @Override
     public int getStrLen() {
-        throw new UnsupportedOperationException();
+        return valueColumn.getStrLen(next);
     }
 
     @Override
     public String getSym() {
-        return nextNull ? null : valueColumn.getSymbolTable().value(getInt());
+        return (next instanceof NullRecord) ? null : valueColumn.getSymbolTable().value(getInt());
     }
 
     @Override
@@ -155,12 +154,32 @@ public abstract class AbstractPrevValueAnalyticFunction implements AnalyticFunct
     }
 
     @Override
+    public AnalyticFunctionType getType() {
+        return AnalyticFunctionType.TWO_PASS;
+    }
+
+    @Override
     public void prepare(RecordCursor cursor) {
+        this.baseCursor = cursor;
+        this.record = cursor.newRecord();
         valueColumn.prepare(cursor.getStorageFacade());
+        this.offset = 0;
+    }
+
+    @Override
+    public void prepareFor(Record rec) {
+        long rowid = Unsafe.getUnsafe().getLong(pages.addressOf(this.offset));
+        if (rowid == -1) {
+            next = NullRecord.INSTANCE;
+        } else {
+            baseCursor.recordAt(record, rowid);
+            next = record;
+        }
+        this.offset += 8;
     }
 
     @Override
     public void reset() {
-        nextNull = true;
+        pages.clear();
     }
 }

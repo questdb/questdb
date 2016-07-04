@@ -21,27 +21,60 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic.next;
+package com.questdb.ql.impl.analytic.old;
 
-import com.questdb.net.http.ServerConfiguration;
-import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.ql.impl.analytic.AnalyticFunctionFactory;
-import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.ObjList;
+import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.ql.Record;
+import com.questdb.ql.RecordCursor;
+import com.questdb.std.CharSink;
+import com.questdb.std.DirectInputStream;
+import com.questdb.store.SymbolTable;
 
-public class NextRowAnalyticFunctionFactory implements AnalyticFunctionFactory {
-    @Override
-    public AnalyticFunction newInstance(
-            ServerConfiguration configuration,
-            VirtualColumn valueColumn,
-            ObjList<VirtualColumn> partitionBy,
-            boolean supportsRowId
-    ) {
+import java.io.OutputStream;
 
-        if (partitionBy != null) {
-            return new NextRowAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
-        } else {
-            return new NextRowNonPartAnalyticFunction(configuration.getDbAnalyticFuncPage(), valueColumn);
-        }
-    }
+public interface AnalyticFunction {
+
+    byte get();
+
+    void getBin(OutputStream s);
+
+    DirectInputStream getBin();
+
+    long getBinLen();
+
+    boolean getBool();
+
+    long getDate();
+
+    double getDouble();
+
+    float getFloat();
+
+    CharSequence getFlyweightStr();
+
+    CharSequence getFlyweightStrB();
+
+    int getInt();
+
+    long getLong();
+
+    RecordColumnMetadata getMetadata();
+
+    short getShort();
+
+    void getStr(CharSink sink);
+
+    CharSequence getStr();
+
+    int getStrLen();
+
+    String getSym();
+
+    SymbolTable getSymbolTable();
+
+    void prepare(RecordCursor cursor);
+
+    void reset();
+
+    void scroll(Record record);
 }

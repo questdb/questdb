@@ -29,7 +29,7 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
+public class NextRowPartitionedAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
 
     private final static String expected = "-1148479920\tBZ\t2016-05-01T10:21:00.000Z\t-409854405\n" +
             "1548800833\tKK\t2016-05-01T10:22:00.000Z\t73575701\n" +
@@ -440,7 +440,7 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
         assertPlan2("{\n" +
                         "  \"op\": \"SelectedColumnsRecordSource\",\n" +
                         "  \"src\": {\n" +
-                        "    \"op\": \"CachingAnalyticRecordSource\",\n" +
+                        "    \"op\": \"AnalyticRecordSource\",\n" +
                         "    \"functions\": 1,\n" +
                         "    \"src\": {\n" +
                         "      \"op\": \"JournalRecordSource\",\n" +
@@ -609,6 +609,7 @@ public class NextRowAnalyticFunctionTest extends AbstractAnalyticRecordSourceTes
     }
 
     @Test
+    //todo: this is wrong output, rewrite next() to support alternative order
     public void testTwoSameOrder() throws Exception {
         final String result = "sho\tstr\tsym\ttimestamp\tblah\tcol0\n" +
                 "-19496\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t-391\tXX\n" +

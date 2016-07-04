@@ -20,63 +20,32 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic;
+package com.questdb.ql.impl.analytic.next;
 
-import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.std.CharSink;
-import com.questdb.std.DirectInputStream;
-import com.questdb.store.SymbolTable;
+import com.questdb.ql.ops.VirtualColumn;
 
-import java.io.OutputStream;
+public class NextAnalyticFunction extends AbstractNextAnalyticFunction {
 
-public interface AnalyticFunction {
-    void add(Record record);
+    private long prevAddress = -1;
 
-    byte get();
+    public NextAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
+        super(pageSize, valueColumn);
+    }
 
-    void getBin(OutputStream s);
+    @Override
+    public void add(Record record) {
+        if (prevAddress != -1) {
+            Unsafe.getUnsafe().putLong(prevAddress, record.getRowId());
+        }
+        prevAddress = pages.allocate(8);
+        Unsafe.getUnsafe().putLong(prevAddress, -1);
+    }
 
-    DirectInputStream getBin();
-
-    long getBinLen();
-
-    boolean getBool();
-
-    long getDate();
-
-    double getDouble();
-
-    float getFloat();
-
-    CharSequence getFlyweightStr();
-
-    CharSequence getFlyweightStrB();
-
-    int getInt();
-
-    long getLong();
-
-    RecordColumnMetadata getMetadata();
-
-    short getShort();
-
-    void getStr(CharSink sink);
-
-    CharSequence getStr();
-
-    int getStrLen();
-
-    String getSym();
-
-    SymbolTable getSymbolTable();
-
-    AnalyticFunctionType getType();
-
-    void prepare(RecordCursor cursor);
-
-    void prepareFor(Record record);
-
-    void reset();
+    @Override
+    public void reset() {
+        super.reset();
+        prevAddress = -1;
+    }
 }

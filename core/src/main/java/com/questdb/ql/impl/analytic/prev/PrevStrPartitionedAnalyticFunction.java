@@ -40,24 +40,15 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class PrevRowIdValueAnalyticFunction extends AbstractPrevValueAnalyticFunction implements Closeable {
+public class PrevStrPartitionedAnalyticFunction extends AbstractPrevAnalyticFunction implements Closeable {
     private final DirectMap map;
     private final ObjList<VirtualColumn> partitionBy;
     private RecordCursor parent;
 
-    public PrevRowIdValueAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
+    public PrevStrPartitionedAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
         super(valueColumn);
         this.partitionBy = partitionBy;
         this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(ColumnType.LONG));
-    }
-
-    @Override
-    public void close() throws IOException {
-        if (closed) {
-            return;
-        }
-        super.close();
-        Misc.free(map);
     }
 
     @Override
@@ -164,7 +155,16 @@ public class PrevRowIdValueAnalyticFunction extends AbstractPrevValueAnalyticFun
     }
 
     @Override
-    public void scroll(Record record) {
+    public void close() throws IOException {
+        if (closed) {
+            return;
+        }
+        super.close();
+        Misc.free(map);
+    }
+
+    @Override
+    public void prepareFor(Record record) {
         DirectMap.KeyWriter kw = map.keyWriter();
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));

@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.parser;
@@ -39,7 +38,9 @@ import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.*;
 import com.questdb.ql.impl.aggregation.*;
-import com.questdb.ql.impl.analytic.*;
+import com.questdb.ql.impl.analytic.AnalyticFunction;
+import com.questdb.ql.impl.analytic.AnalyticFunctionFactories;
+import com.questdb.ql.impl.analytic.AnalyticRecordSource;
 import com.questdb.ql.impl.interval.IntervalRecordSource;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.questdb.ql.impl.interval.SingleIntervalSource;
@@ -570,10 +571,13 @@ public class QueryCompiler {
 
     private RecordSource compileAnalytic(RecordSource rs, QueryModel model) throws ParserException {
         final int n = analyticColumns.size();
-        ObjList<AnalyticFunction> functions = null;
+
         grouppedAnalytic.clear();
+        analyticComparators.clear();
+
         final RecordMetadata metadata = rs.getMetadata();
-        boolean hasTwoPassFunctions = orderedAnalytic;
+
+        ObjList<AnalyticFunction> naturalOrderFunctions = null;
 
         for (int i = 0; i < n; i++) {
             AnalyticColumn col = analyticColumns.getQuick(i);
@@ -611,7 +615,7 @@ public class QueryCompiler {
                 throw QueryError.$(col.getAst().position, "Unknown function");
             }
 
-            if (orderedAnalytic) {
+            if (col.getOrderBy().size() > 0) {
                 IntList order = toOrderIndices(metadata, col.getOrderBy(), col.getOrderByDirection());
                 ObjList<AnalyticFunction> funcs = grouppedAnalytic.get(order);
                 if (funcs == null) {
@@ -619,52 +623,32 @@ public class QueryCompiler {
                 }
                 funcs.add(f);
             } else {
-                if (!hasTwoPassFunctions && (f instanceof TwoPassAnalyticFunction)) {
-                    hasTwoPassFunctions = true;
-                }
 
-                if (functions == null) {
-                    functions = new ObjList<>(n);
+                if (naturalOrderFunctions == null) {
+                    naturalOrderFunctions = new ObjList<>();
                 }
-
-                functions.add(f);
+                naturalOrderFunctions.add(f);
             }
         }
 
-        if (orderedAnalytic) {
-            analyticComparators.clear();
-            ObjList<ObjList<AnalyticFunction>> funcs = new ObjList<>(grouppedAnalytic.size());
-            for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
-                analyticComparators.add(cc.compile(metadata, e.key));
-                funcs.add(e.value);
-            }
-
-            if (rs.supportsRowIdAccess()) {
-                return new OrderedRowIdAnalyticRecordSource(
-                        configuration.getDbAnalyticWindowPage(),
-                        configuration.getDbSortKeyPage(),
-                        configuration.getDbSortDataPage(),
-                        rs,
-                        analyticComparators,
-                        funcs
-                );
-            }
-
-            return new OrderedAnalyticRecordSource(
-                    configuration.getDbAnalyticWindowPage(),
-                    configuration.getDbSortKeyPage(),
-                    configuration.getDbSortDataPage(),
-                    rs,
-                    analyticComparators,
-                    funcs
-            );
-        } else {
-            if (hasTwoPassFunctions) {
-                return new CachingAnalyticRecordSource(configuration.getDbAnalyticWindowPage(), rs, functions);
-            } else {
-                return new AnalyticRecordSource(rs, functions);
-            }
+        ObjList<ObjList<AnalyticFunction>> funcs = new ObjList<>(grouppedAnalytic.size());
+        for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
+            analyticComparators.add(cc.compile(metadata, e.key));
+            funcs.add(e.value);
         }
+
+        if (naturalOrderFunctions != null) {
+            analyticComparators.add(null);
+            funcs.add(naturalOrderFunctions);
+        }
+
+        return new AnalyticRecordSource(
+                configuration.getDbAnalyticWindowPage(),
+                configuration.getDbSortKeyPage(),
+                rs,
+                analyticComparators,
+                funcs
+        );
     }
 
     private RecordSource compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {

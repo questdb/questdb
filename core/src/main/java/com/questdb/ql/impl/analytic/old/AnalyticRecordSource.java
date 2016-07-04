@@ -1,27 +1,26 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic;
+package com.questdb.ql.impl.analytic.old;
 
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
@@ -29,24 +28,25 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
-import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
-    private final RecordList records;
+import java.io.Closeable;
+
+public class AnalyticRecordSource extends AbstractCombinedRecordSource implements Closeable {
     private final RecordSource parentSource;
     private final ObjList<AnalyticFunction> functions;
     private final RecordMetadata metadata;
     private final AnalyticRecord record;
     private final AnalyticRecordStorageFacade storageFacade;
+    private final int split;
+    private RecordCursor parentCursor;
 
-    public CachingAnalyticRecordSource(int pageSize, RecordSource parentSource, ObjList<AnalyticFunction> functions) {
+    public AnalyticRecordSource(RecordSource parentSource, ObjList<AnalyticFunction> functions) {
         this.parentSource = parentSource;
-        this.records = new RecordList(parentSource.getMetadata(), pageSize);
         this.functions = functions;
 
         CollectionRecordMetadata funcMetadata = new CollectionRecordMetadata();
@@ -54,7 +54,7 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
             funcMetadata.add(functions.getQuick(i).getMetadata());
         }
         this.metadata = new SplitRecordMetadata(parentSource.getMetadata(), funcMetadata);
-        int split = parentSource.getMetadata().getColumnCount();
+        this.split = parentSource.getMetadata().getColumnCount();
         this.record = new AnalyticRecord(split, functions);
         this.storageFacade = new AnalyticRecordStorageFacade(split, functions);
     }
@@ -64,8 +64,6 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
         for (int i = 0, n = functions.size(); i < n; i++) {
             Misc.free(functions.getQuick(i));
         }
-        Misc.free(parentSource);
-        Misc.free(records);
     }
 
     @Override
@@ -75,43 +73,19 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
-        RecordCursor cursor = this.parentSource.prepareCursor(factory, cancellationHandler);
-        final StorageFacade storageFacade = cursor.getStorageFacade();
-        records.setStorageFacade(storageFacade);
+        this.parentCursor = this.parentSource.prepareCursor(factory, cancellationHandler);
+        final StorageFacade storageFacade = parentCursor.getStorageFacade();
         this.storageFacade.prepare(factory, storageFacade);
         int n = functions.size();
         for (int i = 0; i < n; i++) {
-            functions.getQuick(i).prepare(cursor);
+            functions.getQuick(i).prepare(this.parentCursor);
         }
-
-        long rowid = -1;
-        while (cursor.hasNext()) {
-            Record record = cursor.next();
-            rowid = records.append(record, rowid);
-            for (int i = 0; i < n; i++) {
-                AnalyticFunction f = functions.getQuick(i);
-                if (f instanceof TwoPassAnalyticFunction) {
-                    ((TwoPassAnalyticFunction) f).addRecord(record, rowid);
-                }
-            }
-        }
-
-        for (int i = 0; i < n; i++) {
-            AnalyticFunction f = functions.getQuick(i);
-            if (f instanceof TwoPassAnalyticFunction) {
-                ((TwoPassAnalyticFunction) f).compute(records);
-            }
-        }
-
-        records.toTop();
         return this;
     }
 
     @Override
     public void reset() {
-        records.clear();
         parentSource.reset();
-
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).reset();
         }
@@ -124,8 +98,8 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public boolean hasNext() {
-        if (records.hasNext()) {
-            record.of(records.next());
+        if (parentCursor.hasNext()) {
+            record.of(parentCursor.next());
             for (int i = 0, n = functions.size(); i < n; i++) {
                 functions.getQuick(i).scroll(record);
             }
@@ -141,9 +115,14 @@ public class CachingAnalyticRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record newRecord() {
+        return new AnalyticRecord(split, functions);
+    }
+
+    @Override
     public void toSink(CharSink sink) {
         sink.put('{');
-        sink.putQuoted("op").put(':').putQuoted("CachingAnalyticRecordSource").put(',');
+        sink.putQuoted("op").put(':').putQuoted("AnalyticRecordSource").put(',');
         sink.putQuoted("functions").put(':').put(functions.size()).put(',');
         sink.putQuoted("src").put(':').put(parentSource);
         sink.put('}');

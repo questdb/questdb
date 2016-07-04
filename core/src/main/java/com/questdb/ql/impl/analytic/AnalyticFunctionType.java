@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic.v2;
+package com.questdb.ql.impl.analytic;
 
 public enum AnalyticFunctionType {
     STREAM, TWO_PASS, THREE_PASS

@@ -20,7 +20,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic;
+package com.questdb.ql.impl.analytic.old;
 
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;

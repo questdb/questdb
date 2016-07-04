@@ -21,32 +21,39 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic.next;
+package com.questdb.ql.impl.analytic.old;
 
-import com.questdb.misc.Unsafe;
-import com.questdb.ql.Record;
-import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.factory.JournalReaderFactory;
+import com.questdb.ql.StorageFacade;
+import com.questdb.std.ObjList;
+import com.questdb.store.SymbolTable;
 
-public class NextRowNonPartAnalyticFunction extends AbstractNextRowAnalyticFunction {
+public class AnalyticRecordStorageFacade implements StorageFacade {
+    private final int split;
+    private final ObjList<AnalyticFunction> functions;
+    private JournalReaderFactory factory;
+    private StorageFacade a;
 
-    private long prevAddress = -1;
-
-    public NextRowNonPartAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
-        super(pageSize, valueColumn);
+    public AnalyticRecordStorageFacade(int split, ObjList<AnalyticFunction> functions) {
+        this.split = split;
+        this.functions = functions;
     }
 
     @Override
-    public void addRecord(Record record, long rowid) {
-        if (prevAddress != -1) {
-            Unsafe.getUnsafe().putLong(prevAddress, rowid);
+    public JournalReaderFactory getFactory() {
+        return factory;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int index) {
+        if (index < split) {
+            return a.getSymbolTable(index);
         }
-        prevAddress = pages.allocate(8);
-        Unsafe.getUnsafe().putLong(prevAddress, -1);
+        return functions.get(index - split).getSymbolTable();
     }
 
-    @Override
-    public void reset() {
-        super.reset();
-        prevAddress = -1;
+    public void prepare(JournalReaderFactory factory, StorageFacade a) {
+        this.factory = factory;
+        this.a = a;
     }
 }

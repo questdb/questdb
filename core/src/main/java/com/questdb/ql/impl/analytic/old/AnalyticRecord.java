@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic.v2;
+package com.questdb.ql.impl.analytic.old;
 
 import com.questdb.ql.Record;
 import com.questdb.std.CharSink;
@@ -30,12 +30,12 @@ import com.questdb.std.ObjList;
 
 import java.io.OutputStream;
 
-public class AnalyticRecord2 implements Record {
-    private final ObjList<AnalyticFunction2> functions;
+public class AnalyticRecord implements Record {
+    private final ObjList<AnalyticFunction> functions;
     private final int split;
     private Record base;
 
-    public AnalyticRecord2(int split, ObjList<AnalyticFunction2> functions) {
+    public AnalyticRecord(int split, ObjList<AnalyticFunction> functions) {
         this.functions = functions;
         this.split = split;
     }

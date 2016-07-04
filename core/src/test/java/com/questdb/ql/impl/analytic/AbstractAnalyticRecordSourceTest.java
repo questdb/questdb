@@ -39,7 +39,7 @@ public abstract class AbstractAnalyticRecordSourceTest extends AbstractOptimiser
                 .$str("str")
                 .$ts()
                 .$())) {
-            int n = 100;
+            int n = 100;//100;
             String[] sym = {"AX", "XX", "BZ", "KK"};
             Rnd rnd = new Rnd();
 

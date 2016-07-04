@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic.prev;
@@ -31,32 +30,17 @@ import com.questdb.ql.ops.VirtualColumn;
 import java.io.Closeable;
 import java.io.IOException;
 
-public class PrevValueNonPartAnalyticFunction extends AbstractPrevValueAnalyticFunction implements Closeable {
+public class PrevAnalyticFunction extends AbstractPrevAnalyticFunction implements Closeable {
     private final long prevPtr;
     private boolean firstPass = true;
 
-    public PrevValueNonPartAnalyticFunction(VirtualColumn valueColumn) {
+    public PrevAnalyticFunction(VirtualColumn valueColumn) {
         super(valueColumn);
         this.prevPtr = Unsafe.getUnsafe().allocateMemory(8);
     }
 
     @Override
-    public void close() throws IOException {
-        if (closed) {
-            return;
-        }
-        super.close();
-        Unsafe.getUnsafe().freeMemory(prevPtr);
-    }
-
-    @Override
-    public void reset() {
-        super.reset();
-        firstPass = true;
-    }
-
-    @Override
-    public void scroll(Record record) {
+    public void prepareFor(Record record) {
         if (firstPass) {
             nextNull = true;
             firstPass = false;
@@ -94,5 +78,20 @@ public class PrevValueNonPartAnalyticFunction extends AbstractPrevValueAnalyticF
             default:
                 throw new JournalRuntimeException("Unsupported type: " + valueColumn.getType());
         }
+    }
+
+    @Override
+    public void reset() {
+        super.reset();
+        firstPass = true;
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (closed) {
+            return;
+        }
+        super.close();
+        Unsafe.getUnsafe().freeMemory(prevPtr);
     }
 }

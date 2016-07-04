@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic.prev;
@@ -28,6 +27,7 @@ import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
+import com.questdb.ql.impl.analytic.AnalyticFunctionType;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
@@ -36,15 +36,19 @@ import com.questdb.store.SymbolTable;
 
 import java.io.OutputStream;
 
-public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
+public class PrevRowAnalyticFunction implements AnalyticFunction {
     private final VirtualColumn valueColumn;
     private RecordCursor parent;
     private long prevRowId = -1;
     private long currentRowId = -1;
     private Record record;
 
-    public PrevRowIdValueNonPartAnalyticFunction(VirtualColumn valueColumn) {
+    public PrevRowAnalyticFunction(VirtualColumn valueColumn) {
         this.valueColumn = valueColumn;
+    }
+
+    @Override
+    public void add(Record record) {
     }
 
     @Override
@@ -156,6 +160,11 @@ public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
     }
 
     @Override
+    public AnalyticFunctionType getType() {
+        return AnalyticFunctionType.STREAM;
+    }
+
+    @Override
     public void prepare(RecordCursor cursor) {
         parent = cursor;
         this.record = cursor.newRecord();
@@ -163,14 +172,14 @@ public class PrevRowIdValueNonPartAnalyticFunction implements AnalyticFunction {
     }
 
     @Override
-    public void reset() {
-        this.prevRowId = this.currentRowId = -1;
+    public void prepareFor(Record record) {
+        this.prevRowId = this.currentRowId;
+        this.currentRowId = record.getRowId();
     }
 
     @Override
-    public void scroll(Record record) {
-        this.prevRowId = this.currentRowId;
-        this.currentRowId = record.getRowId();
+    public void reset() {
+        this.prevRowId = this.currentRowId = -1;
     }
 
     private Record getParentRecord() {

@@ -21,39 +21,28 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic.v2;
+package com.questdb.ql.impl.analytic.next;
 
-import com.questdb.factory.JournalReaderFactory;
-import com.questdb.ql.StorageFacade;
+import com.questdb.net.http.ServerConfiguration;
+import com.questdb.ql.impl.analytic.AnalyticFunction;
+import com.questdb.ql.impl.analytic.AnalyticFunctionFactory;
+import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
-import com.questdb.store.SymbolTable;
 
-public class AnalyticRecordStorageFacade2 implements StorageFacade {
-    private final int split;
-    private final ObjList<AnalyticFunction2> functions;
-    private JournalReaderFactory factory;
-    private StorageFacade a;
-
-    public AnalyticRecordStorageFacade2(int split, ObjList<AnalyticFunction2> functions) {
-        this.split = split;
-        this.functions = functions;
-    }
-
+public class NextAnalyticFunctionFactory implements AnalyticFunctionFactory {
     @Override
-    public JournalReaderFactory getFactory() {
-        return factory;
-    }
+    public AnalyticFunction newInstance(
+            ServerConfiguration configuration,
+            VirtualColumn valueColumn,
+            ObjList<VirtualColumn> partitionBy,
+            boolean supportsRowId,
+            boolean ordered
+    ) {
 
-    @Override
-    public SymbolTable getSymbolTable(int index) {
-        if (index < split) {
-            return a.getSymbolTable(index);
+        if (partitionBy != null) {
+            return new NextPartitionedAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
+        } else {
+            return new NextAnalyticFunction(configuration.getDbAnalyticFuncPage(), valueColumn);
         }
-        return functions.get(index - split).getSymbolTable();
-    }
-
-    public void prepare(JournalReaderFactory factory, StorageFacade a) {
-        this.factory = factory;
-        this.a = a;
     }
 }

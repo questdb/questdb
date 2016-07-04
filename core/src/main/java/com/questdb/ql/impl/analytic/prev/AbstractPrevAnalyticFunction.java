@@ -1,128 +1,118 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic.next;
+package com.questdb.ql.impl.analytic.prev;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
-import com.questdb.ql.impl.NullRecord;
-import com.questdb.ql.impl.analytic.TwoPassAnalyticFunction;
+import com.questdb.ql.impl.analytic.AnalyticFunction;
+import com.questdb.ql.impl.analytic.AnalyticFunctionType;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
-import com.questdb.store.MemoryPages;
 import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
+import java.io.IOException;
 import java.io.OutputStream;
 
-public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalyticFunction, Closeable {
+public abstract class AbstractPrevAnalyticFunction implements AnalyticFunction, Closeable {
+    protected final long bufPtr;
+    protected final VirtualColumn valueColumn;
+    protected boolean nextNull = true;
+    protected boolean closed = false;
 
-    protected final MemoryPages pages;
-    private final VirtualColumn valueColumn;
-    private long offset;
-    private Record record;
-    private Record next;
-    private RecordCursor baseCursor;
-
-    public AbstractNextRowAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
-        this.pages = new MemoryPages(pageSize);
+    public AbstractPrevAnalyticFunction(VirtualColumn valueColumn) {
         this.valueColumn = valueColumn;
+        // buffer where "current" value is kept
+        this.bufPtr = Unsafe.getUnsafe().allocateMemory(8);
     }
 
     @Override
-    public void close() {
-        pages.close();
-    }
-
-    @Override
-    public void compute(RecordCursor base) {
-        this.baseCursor = base;
-        this.record = base.newRecord();
-        this.offset = 0;
+    public void add(Record record) {
     }
 
     @Override
     public byte get() {
-        return valueColumn.get(next);
+        return nextNull ? 0 : Unsafe.getUnsafe().getByte(bufPtr);
     }
 
     @Override
     public void getBin(OutputStream s) {
-        valueColumn.getBin(next, s);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public DirectInputStream getBin() {
-        return valueColumn.getBin(next);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getBinLen() {
-        return valueColumn.getBinLen(next);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public boolean getBool() {
-        return valueColumn.getBool(next);
+        return !nextNull && Unsafe.getUnsafe().getByte(bufPtr) == 1;
     }
 
     @Override
     public long getDate() {
-        return valueColumn.getDate(next);
+        return getLong();
     }
 
     @Override
     public double getDouble() {
-        return valueColumn.getDouble(next);
+        return nextNull ? Double.NaN : Unsafe.getUnsafe().getDouble(bufPtr);
     }
 
     @Override
     public float getFloat() {
-        return valueColumn.getFloat(next);
+        return nextNull ? Float.NaN : Unsafe.getUnsafe().getFloat(bufPtr);
     }
 
     @Override
     public CharSequence getFlyweightStr() {
-        return valueColumn.getFlyweightStr(next);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getFlyweightStrB() {
-        return valueColumn.getFlyweightStrB(next);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getInt() {
-        return next == NullRecord.INSTANCE && valueColumn.getType() == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : valueColumn.getInt(next);
+        return nextNull ? (valueColumn.getType() == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : Numbers.INT_NaN) : Unsafe.getUnsafe().getInt(bufPtr);
     }
 
     @Override
     public long getLong() {
-        return valueColumn.getLong(next);
+        return nextNull ? Numbers.LONG_NaN : Unsafe.getUnsafe().getLong(bufPtr);
     }
 
     @Override
@@ -132,32 +122,37 @@ public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalytic
 
     @Override
     public short getShort() {
-        return valueColumn.getShort(next);
+        return nextNull ? 0 : (short) Unsafe.getUnsafe().getInt(bufPtr);
     }
 
     @Override
     public void getStr(CharSink sink) {
-        valueColumn.getStr(next, sink);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStr() {
-        return valueColumn.getStr(next);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getStrLen() {
-        return valueColumn.getStrLen(next);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public String getSym() {
-        return (next instanceof NullRecord) ? null : valueColumn.getSymbolTable().value(getInt());
+        return nextNull ? null : valueColumn.getSymbolTable().value(getInt());
     }
 
     @Override
     public SymbolTable getSymbolTable() {
         return valueColumn.getSymbolTable();
+    }
+
+    @Override
+    public AnalyticFunctionType getType() {
+        return AnalyticFunctionType.STREAM;
     }
 
     @Override
@@ -167,18 +162,15 @@ public abstract class AbstractNextRowAnalyticFunction implements TwoPassAnalytic
 
     @Override
     public void reset() {
-        pages.clear();
+        nextNull = true;
     }
 
     @Override
-    public void scroll(Record rec) {
-        long rowid = Unsafe.getUnsafe().getLong(pages.addressOf(this.offset));
-        if (rowid == -1) {
-            next = NullRecord.INSTANCE;
-        } else {
-            baseCursor.recordAt(record, rowid);
-            next = record;
+    public void close() throws IOException {
+        if (closed) {
+            return;
         }
-        this.offset += 8;
+        Unsafe.getUnsafe().freeMemory(bufPtr);
+        closed = true;
     }
 }

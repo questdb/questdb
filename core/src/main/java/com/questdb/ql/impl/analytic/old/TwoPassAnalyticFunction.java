@@ -21,61 +21,13 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic.v2;
+package com.questdb.ql.impl.analytic.old;
 
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
-import com.questdb.std.CharSink;
-import com.questdb.std.DirectInputStream;
-import com.questdb.store.SymbolTable;
 
-import java.io.OutputStream;
+public interface TwoPassAnalyticFunction extends AnalyticFunction {
+    void addRecord(Record record, long rowid);
 
-public interface AnalyticFunction2 {
-    void add(Record record);
-
-    byte get();
-
-    void getBin(OutputStream s);
-
-    DirectInputStream getBin();
-
-    long getBinLen();
-
-    boolean getBool();
-
-    long getDate();
-
-    double getDouble();
-
-    float getFloat();
-
-    CharSequence getFlyweightStr();
-
-    CharSequence getFlyweightStrB();
-
-    int getInt();
-
-    long getLong();
-
-    RecordColumnMetadata getMetadata();
-
-    short getShort();
-
-    void getStr(CharSink sink);
-
-    CharSequence getStr();
-
-    int getStrLen();
-
-    String getSym();
-
-    SymbolTable getSymbolTable();
-
-    AnalyticFunctionType getType();
-
-    void prepareAll(RecordCursor base);
-
-    void prepareFor(Record record);
+    void compute(RecordCursor base);
 }
