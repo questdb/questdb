@@ -219,17 +219,17 @@ public class QueryHandler implements ContextHandler {
                 final int i = rec.getInt(col);
                 if (i == Integer.MIN_VALUE) {
                     sink.put("null");
-                    break;
+                } else {
+                    Numbers.append(sink, i);
                 }
-                Numbers.append(sink, i);
                 break;
             case LONG:
                 final long l = rec.getLong(col);
                 if (l == Long.MIN_VALUE) {
                     sink.put("null");
-                    break;
+                } else {
+                    sink.put('"').put(l).put('"');
                 }
-                sink.put(l);
                 break;
             case DATE:
                 final long d = rec.getDate(col);
