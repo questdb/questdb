@@ -400,6 +400,8 @@ public class HttpServerTest extends AbstractJournalTest {
         try {
             Assert.assertEquals(200, HttpTestUtils.upload("/com/questdb/std/AssociativeCache.class", "http://localhost:9000/imp", null, response));
             TestUtils.assertEquals("Unsupported data format", response);
+        } catch (IOException e) {
+            Assert.assertTrue(e.getMessage().contains("Connection reset"));
         } finally {
             server.halt();
         }
