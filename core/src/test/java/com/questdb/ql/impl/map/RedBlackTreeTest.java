@@ -37,7 +37,7 @@ public class RedBlackTreeTest {
     public void testAddAndGet() throws Exception {
         Rnd rnd = new Rnd();
         TreeSet<Long> control = new TreeSet<>();
-        try (RedBlackTree set = new RedBlackTree(new RedBlackTree.LongComparator() {
+        try (RedBlackTree tree = new RedBlackTree(new RedBlackTree.LongComparator() {
             private long left;
 
             @Override
@@ -53,20 +53,20 @@ public class RedBlackTreeTest {
 
             long l;
             for (int i = 0; i < 10000; i++) {
-                set.put(l = rnd.nextLong());
+                tree.add(l = rnd.nextLong());
                 control.add(l);
             }
 
             Iterator<Long> controlIterator = control.iterator();
-            RedBlackTree.LongIterator iterator = set.iterator();
+            RedBlackTree.LongIterator iterator = tree.iterator();
             while (iterator.hasNext()) {
                 Assert.assertTrue(controlIterator.hasNext());
                 Assert.assertEquals(controlIterator.next().longValue(), iterator.next());
             }
 
-            set.clear();
+            tree.clear();
 
-            Assert.assertFalse(set.iterator().hasNext());
+            Assert.assertFalse(tree.iterator().hasNext());
         }
     }
 
@@ -86,10 +86,10 @@ public class RedBlackTreeTest {
             }
         }, 1024)) {
 
-            set.put(200);
-            set.put(200);
-            set.put(100);
-            set.put(100);
+            set.add(200);
+            set.add(200);
+            set.add(100);
+            set.add(100);
 
             RedBlackTree.LongIterator iterator = set.iterator();
             StringBuilder b = new StringBuilder();

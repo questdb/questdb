@@ -49,6 +49,40 @@ public class RedBlackTree implements Mutable, Closeable {
         this.mem = new MemoryPages(keyPageSize);
     }
 
+    public void add(long value) {
+        if (root == -1) {
+            putParent(value);
+            return;
+        }
+
+        comparator.setLeft(value);
+
+        long p = root;
+        long parent;
+        int cmp;
+        do {
+            parent = p;
+            long r = refOf(p);
+            cmp = comparator.compare(r);
+            if (cmp <= 0) {
+                p = leftOf(p);
+            } else {
+                p = rightOf(p);
+            }
+        } while (p > -1);
+
+        p = allocateBlock();
+        setParent(p, parent);
+        setRef(p, value);
+
+        if (cmp <= 0) {
+            setLeft(parent, p);
+        } else {
+            setRight(parent, p);
+        }
+        fix(p);
+    }
+
     @Override
     public void clear() {
         root = -1;
@@ -70,40 +104,6 @@ public class RedBlackTree implements Mutable, Closeable {
         }
         cursor.current = p;
         return cursor;
-    }
-
-    public void put(long value) {
-        if (root == -1) {
-            putParent(value);
-            return;
-        }
-
-        comparator.setLeft(value);
-
-        long p = root;
-        long parent;
-        int cmp;
-        do {
-            parent = p;
-            long r = refOf(p);
-            cmp = comparator.compare(r);
-            if (cmp <= 0) {
-                p = leftOf(p);
-            } else if (cmp > 0) {
-                p = rightOf(p);
-            }
-        } while (p > -1);
-
-        p = allocateBlock();
-        setParent(p, parent);
-        setRef(p, value);
-
-        if (cmp < 0) {
-            setLeft(parent, p);
-        } else {
-            setRight(parent, p);
-        }
-        fix(p);
     }
 
     private static void setLeft(long blockAddress, long left) {

@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
@@ -567,6 +568,31 @@ public class NextAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\t\n";
         assertThat(expected, "select str, sym, timestamp , next(str) over (partition by sym) from 'abc'");
         assertThat(expected, "select str, sym, timestamp , next(str) over (partition by sym) from '*!*abc'");
+    }
+
+    @Test
+    public void testStreamingAndTwoPass() throws Exception {
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tXX\tnull\n" +
+                "XX\tBZ\t2016-05-01T10:22:00.000Z\tKK\tnull\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\tAX\tnull\n" +
+                "AX\tXX\t2016-05-01T10:24:00.000Z\tXX\tnull\n" +
+                "AX\tXX\t2016-05-01T10:25:00.000Z\tBZ\tXX\n" +
+                "AX\tBZ\t2016-05-01T10:26:00.000Z\tKK\tXX\n" +
+                "BZ\tXX\t2016-05-01T10:27:00.000Z\tKK\tBZ\n" +
+                "BZ\tKK\t2016-05-01T10:28:00.000Z\tAX\tXX\n" +
+                "AX\tKK\t2016-05-01T10:29:00.000Z\tAX\tBZ\n" +
+                "BZ\tAX\t2016-05-01T10:30:00.000Z\tBZ\tKK\n" +
+                "XX\tKK\t2016-05-01T10:31:00.000Z\tAX\tBZ\n" +
+                "KK\tAX\t2016-05-01T10:32:00.000Z\tnull\tXX\n" +
+                "AX\tAX\t2016-05-01T10:33:00.000Z\tAX\tKK\n" +
+                "BZ\tBZ\t2016-05-01T10:34:00.000Z\tBZ\tAX\n" +
+                "XX\tAX\t2016-05-01T10:35:00.000Z\tKK\tKK\n" +
+                "AX\tAX\t2016-05-01T10:36:00.000Z\tAX\tAX\n" +
+                "XX\tKK\t2016-05-01T10:37:00.000Z\tnull\tAX\n" +
+                "AX\tAX\t2016-05-01T10:38:00.000Z\tnull\tAX\n" +
+                "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\tBZ\n" +
+                "BZ\tAX\t2016-05-01T10:40:00.000Z\tnull\tBZ\n";
+        assertThat(expected, "select str, sym, timestamp , next(sym) over (partition by str), prev(sym) over (partition by str) from abc");
     }
 
     @Test

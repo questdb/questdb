@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
@@ -30,7 +31,6 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.SplitRecordMetadata;
-import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.map.RedBlackTree;
 import com.questdb.ql.impl.sort.RecordComparator;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
@@ -45,7 +45,6 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource recordSource;
     private final ObjList<RedBlackTree> orderedSources;
     private final int orderGroupCount;
-    private final FakeRecord fakeRecord = new FakeRecord();
     private final ObjList<ObjList<AnalyticFunction>> functionGroups;
     private final ObjList<AnalyticFunction> functions;
     private final RecordMetadata metadata;
@@ -75,11 +74,8 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
                 // different order on records, which makes us take a copy of
                 // parent record source and walk data at least twice.
                 if (list == null) {
-//                    list = new RecordList(MapUtils.ROWID_RECORD_METADATA, rowidPageSize);
-                    // todo: support rowid
                     list = new RecordList(recordSource.getMetadata(), rowidPageSize);
                 }
-
                 orderedSources.add(new RedBlackTree(new MyComparator(cmp, list), keyPageSize));
             } else {
                 // even though there is no order we must check if there are
@@ -88,8 +84,6 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
                     ObjList<AnalyticFunction> functions = functionGroups.getQuick(i);
                     for (int j = 0, n = functions.size(); j < n; j++) {
                         if (functions.getQuick(i).getType() != AnalyticFunctionType.STREAM) {
-//                            list = new RecordList(MapUtils.ROWID_RECORD_METADATA, rowidPageSize);
-                            // todo: support rowid
                             list = new RecordList(recordSource.getMetadata(), rowidPageSize);
                             break;
                         }
@@ -116,6 +110,9 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
         this.split = recordSource.getMetadata().getColumnCount();
         this.record = new AnalyticRecord(split, functions);
         this.storageFacade = new AnalyticRecordStorageFacade(split, functions);
+        if (this.recordList != null) {
+            this.recordList.setStorageFacade(storageFacade);
+        }
     }
 
     @Override
@@ -153,8 +150,6 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
             return this;
         }
 
-        recordList.setStorageFacade(cursor.getStorageFacade());
-
         // step #1: store source cursor in record list
         // - add record list' row ids to all trees, which will put these row ids in necessary order
         // for this we will be using out comparator, which helps tree compare long values
@@ -163,13 +158,12 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
         while (cursor.hasNext()) {
             cancellationHandler.check();
             Record record = cursor.next();
-//            rowid = recordList.append(fakeRecord.of(record.getRowId()), rowid);
             rowid = recordList.append(record, rowid);
             if (orderGroupCount > 0) {
                 for (int i = 0; i < orderGroupCount; i++) {
                     RedBlackTree tree = orderedSources.getQuick(i);
                     if (tree != null) {
-                        tree.put(rowid);
+                        tree.add(rowid);
                     }
                 }
             }
@@ -274,20 +268,26 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
     private static class MyComparator implements RedBlackTree.LongComparator {
         private final RecordComparator delegate;
         private final RecordCursor cursor;
+        private final Record left;
+        private final Record right;
 
         public MyComparator(RecordComparator delegate, RecordCursor cursor) {
             this.delegate = delegate;
             this.cursor = cursor;
+            this.left = cursor.newRecord();
+            this.right = cursor.newRecord();
         }
 
         @Override
         public int compare(long right) {
-            return delegate.compare(cursor.recordAt(right));
+            cursor.recordAt(this.right, right);
+            return delegate.compare(this.right);
         }
 
         @Override
         public void setLeft(long left) {
-            delegate.setLeft(cursor.recordAt(left));
+            cursor.recordAt(this.left, left);
+            delegate.setLeft(this.left);
         }
     }
 }

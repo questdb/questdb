@@ -87,7 +87,9 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
 
     @Override
     public RecordListRecord newRecord() {
-        return new RecordListRecord(metadata, mem);
+        RecordListRecord record = new RecordListRecord(metadata, mem);
+        record.setStorageFacade(storageFacade);
+        return record;
     }
 
     @Override
