@@ -228,7 +228,7 @@ public class QueryHandler implements ContextHandler {
                 if (l == Long.MIN_VALUE) {
                     sink.put("null");
                 } else {
-                    sink.put('"').put(l).put('"');
+                    sink.put(l);
                 }
                 break;
             case DATE:

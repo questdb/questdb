@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.misc;
@@ -222,7 +221,9 @@ public final class Numbers {
                 sink.put('-');
                 i = -i;
             }
-            if (i < 100000000000L) { //  eleven
+            if (i < 10000000000L) {
+                appendLong10(sink, i);
+            } else if (i < 100000000000L) { //  eleven
                 appendLong11(sink, i);
             } else if (i < 1000000000000L) { //  twelve
                 appendLong12(sink, i);
@@ -755,6 +756,20 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
+    }
+
+    private static void appendLong10(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 1000000000L));
+        sink.put((char) ('0' + (c = i % 1000000000L) / 100000000));
+        sink.put((char) ('0' + (c %= 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
     }
 
     private static void appendLong11(CharSink sink, long i) {

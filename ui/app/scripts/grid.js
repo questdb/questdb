@@ -116,8 +116,10 @@
                 var k;
                 if (rowData) {
                     var d = rowData[offset];
-                    for (k = 0; k < columns.length; k++) {
-                        rowContainer.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
+                    if (d) {
+                        for (k = 0; k < columns.length; k++) {
+                            rowContainer.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
+                        }
                     }
                     rowContainer.questIndex = n;
                 } else {
@@ -293,7 +295,7 @@
             if (t === 0) {
                 b = dc;
             } else if (b > r - 2) {
-                t = b - dc;
+                t = Math.max(0, b - dc);
             }
 
             for (var i = t; i < b; i++) {

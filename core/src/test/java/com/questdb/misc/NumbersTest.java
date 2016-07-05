@@ -25,6 +25,7 @@ package com.questdb.misc;
 
 import com.questdb.ex.NumericException;
 import com.questdb.io.sink.StringSink;
+import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -216,6 +217,12 @@ public class NumbersTest {
 
         Numbers.append(sink, Long.MIN_VALUE);
         Assert.assertEquals(Long.MIN_VALUE, Numbers.parseLongQuiet(sink));
+    }
+
+    @Test
+    public void testLongToString() {
+        Numbers.append(sink, 6103390276L);
+        TestUtils.assertEquals("6103390276", sink);
     }
 
     @Test
