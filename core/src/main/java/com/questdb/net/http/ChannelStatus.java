@@ -24,5 +24,7 @@
 package com.questdb.net.http;
 
 public enum ChannelStatus {
-    READ, NEED_REQUEST, DISCONNECTED, WRITE, EOF
+    READ, NEED_REQUEST, DISCONNECTED, WRITE, EOF;
+
+    static final ChannelStatus[] VALUES = ChannelStatus.values();
 }

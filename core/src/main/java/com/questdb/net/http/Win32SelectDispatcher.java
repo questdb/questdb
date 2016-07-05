@@ -278,7 +278,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                 }
 
                 // not fired, simply re-arm
-                ChannelStatus op = ChannelStatus.values()[(int) pending.get(i, M_OPERATION)];
+                ChannelStatus op = ChannelStatus.VALUES[(int) pending.get(i, M_OPERATION)];
                 switch (op) {
                     case READ:
                         readFdSet.add(fd);
