@@ -706,6 +706,32 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     }
 
     @Test
+    public void testPrevMixed() throws Exception {
+        final String expected = "8920866532787660373\tBZ\t2016-05-01T10:21:00.000Z\tnull\tAX\n" +
+                "-6943924477733600060\tBZ\t2016-05-01T10:22:00.000Z\tBZ\tKK\n" +
+                "-6856503215590263904\tXX\t2016-05-01T10:23:00.000Z\tBZ\tBZ\n" +
+                "8416773233910814357\tXX\t2016-05-01T10:24:00.000Z\tXX\tBZ\n" +
+                "7199909180655756830\tXX\t2016-05-01T10:25:00.000Z\tXX\tAX\n" +
+                "6270672455202306717\tBZ\t2016-05-01T10:26:00.000Z\tXX\tKK\n" +
+                "-6253307669002054137\tXX\t2016-05-01T10:27:00.000Z\tBZ\tAX\n" +
+                "7392877322819819290\tKK\t2016-05-01T10:28:00.000Z\tXX\tXX\n" +
+                "-7316123607359392486\tKK\t2016-05-01T10:29:00.000Z\tKK\tKK\n" +
+                "-3107239868490395663\tAX\t2016-05-01T10:30:00.000Z\tKK\tAX\n" +
+                "-7387846268299105911\tKK\t2016-05-01T10:31:00.000Z\tAX\tAX\n" +
+                "7122109662042058469\tAX\t2016-05-01T10:32:00.000Z\tKK\tAX\n" +
+                "-6626590012581323602\tAX\t2016-05-01T10:33:00.000Z\tAX\tXX\n" +
+                "8611582118025429627\tBZ\t2016-05-01T10:34:00.000Z\tAX\tXX\n" +
+                "-8082754367165748693\tAX\t2016-05-01T10:35:00.000Z\tBZ\tnull\n" +
+                "6574958665733670985\tAX\t2016-05-01T10:36:00.000Z\tAX\tBZ\n" +
+                "3446015290144635451\tKK\t2016-05-01T10:37:00.000Z\tAX\tAX\n" +
+                "8889492928577876455\tAX\t2016-05-01T10:38:00.000Z\tKK\tBZ\n" +
+                "8152044974329490473\tBZ\t2016-05-01T10:39:00.000Z\tAX\tKK\n" +
+                "-6071768268784020226\tAX\t2016-05-01T10:40:00.000Z\tBZ\tXX\n";
+        assertThat(expected, "select l, sym, timestamp , prev(sym) over(), prev(sym) over (order by l) from abc");
+        assertThat(expected, "select l, sym, timestamp , prev(sym) over(), prev(sym) over (order by l) from '*!*abc'");
+    }
+
+    @Test
     public void testShort() throws Exception {
         final String expected = "-19496\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t0\n" +
                 "-24357\tXX\tBZ\t2016-05-01T10:22:00.000Z\t0\n" +
@@ -1045,5 +1071,4 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
             Assert.assertEquals(58, QueryError.getPosition());
         }
     }
-
 }
