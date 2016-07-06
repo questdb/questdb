@@ -123,7 +123,6 @@ public class QueryCompiler {
     private final ServerConfiguration configuration;
     private final ObjList<RecordComparator> analyticComparators = new ObjList<>();
     private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> grouppedAnalytic = new ObjObjHashMap<>();
-    private boolean orderedAnalytic = false;
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
 
@@ -608,7 +607,7 @@ public class QueryCompiler {
                     valueColumn,
                     partitionBy,
                     rs.supportsRowIdAccess(),
-                    orderedAnalytic
+                    col.getOrderBy().size() > 0
             );
 
             if (f == null) {
@@ -1878,7 +1877,6 @@ public class QueryCompiler {
         this.groupKeyColumns.clear();
         this.aggregateColumnSequence = 0;
         this.analyticColumns.clear();
-        this.orderedAnalytic = false;
 
         ObjList<VirtualColumn> virtualColumns = null;
 
@@ -1941,7 +1939,6 @@ public class QueryCompiler {
                 }
 
                 AnalyticColumn ac = (AnalyticColumn) qc;
-                orderedAnalytic = ac.getOrderBy().size() > 0;
                 analyticColumns.add(ac);
             } else {
                 // this is either a constant or non-aggregate expression

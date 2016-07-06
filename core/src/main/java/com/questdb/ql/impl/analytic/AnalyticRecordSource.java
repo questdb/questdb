@@ -83,7 +83,7 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
                 if (list == null) {
                     ObjList<AnalyticFunction> functions = functionGroups.getQuick(i);
                     for (int j = 0, n = functions.size(); j < n; j++) {
-                        if (functions.getQuick(i).getType() != AnalyticFunctionType.STREAM) {
+                        if (functions.getQuick(j).getType() != AnalyticFunctionType.STREAM) {
                             list = new RecordList(recordSource.getMetadata(), rowidPageSize);
                             break;
                         }

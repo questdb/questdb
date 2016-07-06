@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
@@ -729,6 +728,58 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "-6071768268784020226\tAX\t2016-05-01T10:40:00.000Z\tBZ\tXX\n";
         assertThat(expected, "select l, sym, timestamp , prev(sym) over(), prev(sym) over (order by l) from abc");
         assertThat(expected, "select l, sym, timestamp , prev(sym) over(), prev(sym) over (order by l) from '*!*abc'");
+    }
+
+    @Test
+    public void testPrevMixed2() throws Exception {
+        final String expected = "BZ\t8920866532787660373\tBZ\t2016-05-01T10:21:00.000Z\tnull\tAX\n" +
+                "XX\t-6943924477733600060\tBZ\t2016-05-01T10:22:00.000Z\tnull\tKK\n" +
+                "KK\t-6856503215590263904\tXX\t2016-05-01T10:23:00.000Z\tnull\tBZ\n" +
+                "AX\t8416773233910814357\tXX\t2016-05-01T10:24:00.000Z\tnull\tBZ\n" +
+                "AX\t7199909180655756830\tXX\t2016-05-01T10:25:00.000Z\tXX\tAX\n" +
+                "AX\t6270672455202306717\tBZ\t2016-05-01T10:26:00.000Z\tXX\tKK\n" +
+                "BZ\t-6253307669002054137\tXX\t2016-05-01T10:27:00.000Z\tBZ\tAX\n" +
+                "BZ\t7392877322819819290\tKK\t2016-05-01T10:28:00.000Z\tXX\tXX\n" +
+                "AX\t-7316123607359392486\tKK\t2016-05-01T10:29:00.000Z\tBZ\tKK\n" +
+                "BZ\t-3107239868490395663\tAX\t2016-05-01T10:30:00.000Z\tKK\tAX\n" +
+                "XX\t-7387846268299105911\tKK\t2016-05-01T10:31:00.000Z\tBZ\tAX\n" +
+                "KK\t7122109662042058469\tAX\t2016-05-01T10:32:00.000Z\tXX\tAX\n" +
+                "AX\t-6626590012581323602\tAX\t2016-05-01T10:33:00.000Z\tKK\tXX\n" +
+                "BZ\t8611582118025429627\tBZ\t2016-05-01T10:34:00.000Z\tAX\tXX\n" +
+                "XX\t-8082754367165748693\tAX\t2016-05-01T10:35:00.000Z\tKK\tnull\n" +
+                "AX\t6574958665733670985\tAX\t2016-05-01T10:36:00.000Z\tAX\tBZ\n" +
+                "XX\t3446015290144635451\tKK\t2016-05-01T10:37:00.000Z\tAX\tAX\n" +
+                "AX\t8889492928577876455\tAX\t2016-05-01T10:38:00.000Z\tAX\tBZ\n" +
+                "BZ\t8152044974329490473\tBZ\t2016-05-01T10:39:00.000Z\tBZ\tKK\n" +
+                "BZ\t-6071768268784020226\tAX\t2016-05-01T10:40:00.000Z\tBZ\tXX\n";
+        assertThat(expected, "select str, l, sym, timestamp , prev(sym) over(partition by str), prev(sym) over (order by l) from abc");
+        assertThat(expected, "select str, l, sym, timestamp , prev(sym) over(partition by str), prev(sym) over (order by l) from '*!*abc'");
+    }
+
+    @Test
+    public void testPrevNextMixed() throws Exception {
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\tXX\n" +
+                "XX\tBZ\t2016-05-01T10:22:00.000Z\tnull\tKK\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\tnull\tAX\n" +
+                "AX\tXX\t2016-05-01T10:24:00.000Z\tnull\tXX\n" +
+                "AX\tXX\t2016-05-01T10:25:00.000Z\tXX\tBZ\n" +
+                "AX\tBZ\t2016-05-01T10:26:00.000Z\tXX\tKK\n" +
+                "BZ\tXX\t2016-05-01T10:27:00.000Z\tBZ\tKK\n" +
+                "BZ\tKK\t2016-05-01T10:28:00.000Z\tXX\tAX\n" +
+                "AX\tKK\t2016-05-01T10:29:00.000Z\tBZ\tAX\n" +
+                "BZ\tAX\t2016-05-01T10:30:00.000Z\tKK\tBZ\n" +
+                "XX\tKK\t2016-05-01T10:31:00.000Z\tBZ\tAX\n" +
+                "KK\tAX\t2016-05-01T10:32:00.000Z\tXX\tnull\n" +
+                "AX\tAX\t2016-05-01T10:33:00.000Z\tKK\tAX\n" +
+                "BZ\tBZ\t2016-05-01T10:34:00.000Z\tAX\tBZ\n" +
+                "XX\tAX\t2016-05-01T10:35:00.000Z\tKK\tKK\n" +
+                "AX\tAX\t2016-05-01T10:36:00.000Z\tAX\tAX\n" +
+                "XX\tKK\t2016-05-01T10:37:00.000Z\tAX\tnull\n" +
+                "AX\tAX\t2016-05-01T10:38:00.000Z\tAX\tnull\n" +
+                "BZ\tBZ\t2016-05-01T10:39:00.000Z\tBZ\tAX\n" +
+                "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\tnull\n";
+        assertThat(expected, "select str, sym, timestamp , prev(sym) over(partition by str), next(sym) over (partition by str) from abc");
+        assertThat(expected, "select str, sym, timestamp , prev(sym) over(partition by str), next(sym) over (partition by str) from '*!*abc'");
     }
 
     @Test
