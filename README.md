@@ -16,6 +16,9 @@ Existing features and component are:
 - Can be used as both standalone server or embedded database thanks to small library size and no external dependencies
 - Minimal memory footprint, data streaming query engine and no-GC operation
 
+## UI Screenshots
+
+![Alt text](https://cloud.githubusercontent.com/assets/7276403/16667611/5339f3fa-4485-11e6-89d3-e2c92c440bd6.png "Query Editor")
 
 ## License
 
