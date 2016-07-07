@@ -1,6 +1,5 @@
 [![Codacy Badge](https://api.codacy.com/project/badge/grade/83c6250bd9fc45a98c12c191af710754)](https://www.codacy.com/app/bluestreak/nfsdb)
 [![Build Status](https://semaphoreci.com/api/v1/appsicle/questdb/branches/master/badge.svg)](https://semaphoreci.com/appsicle/questdb)
-[![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/NFSdb/nfsdb?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 QuestDB is a time series database built for non-compromising performance, data accessibility and operational simplicity. It bridges the gap between traditional relational and time series databases by providing fast SQL access to both types of data. 
 
