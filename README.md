@@ -2,9 +2,9 @@
 [![Build Status](https://semaphoreci.com/api/v1/appsicle/questdb/branches/master/badge.svg)](https://semaphoreci.com/appsicle/questdb)
 [![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/NFSdb/nfsdb?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-QuestDB is a time series database built for non-compromising performance, data accessibility and operational simplicity. It bridges the
-gap between traditional relational and time series databases by providing fast SQL access to both types of data. Existing features and
-component are:
+QuestDB is a time series database built for non-compromising performance, data accessibility and operational simplicity. It bridges the gap between traditional relational and time series databases by providing fast SQL access to both types of data. 
+
+Existing features and component are:
 
 - SQL language supporting filtering, aggregation, joins, time series joins, sub-queries, analytic functions
 - SQL language optimiser to help making queries declarative rather than procedural
