@@ -18,7 +18,17 @@ Existing features and component are:
 
 ## UI Screenshots
 
-![Alt text](https://cloud.githubusercontent.com/assets/7276403/16667611/5339f3fa-4485-11e6-89d3-e2c92c440bd6.png "Query Editor")
+
+Drag-Drop bulk import
+![Import Progress] (https://cloud.githubusercontent.com/assets/7276403/16665958/70eecec8-447d-11e6-8e78-1437c9c15db5.png)
+
+
+Automatic format recognition 
+![Data Import Summary](https://cloud.githubusercontent.com/assets/7276403/16666673/ae88722c-4480-11e6-96d3-cd309475ca9d.png)
+
+
+Query editor
+![Query Editor](https://cloud.githubusercontent.com/assets/7276403/16667611/5339f3fa-4485-11e6-89d3-e2c92c440bd6.png "Query Editor")
 
 ## License
 
