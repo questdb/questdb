@@ -25,28 +25,54 @@ package com.questdb.ql.impl.analytic.prev;
 
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMap;
+import com.questdb.ql.impl.map.DirectMapValues;
+import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.std.ObjList;
 
-public class PrevOrderedAnalyticFunction extends AbstractPrevOrderedAnalyticFunction {
+import java.io.IOException;
 
-    private long prevRow = -1;
+public class PrevOrderedPartitionedAnalyticFunction extends AbstractPrevOrderedAnalyticFunction {
 
-    public PrevOrderedAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
+    private final DirectMap prevMap;
+    private final ObjList<VirtualColumn> partitionBy;
+
+    public PrevOrderedPartitionedAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
         super(pageSize, valueColumn);
+        this.prevMap = new DirectMap(pageSize, 1, MapUtils.ROWID_MAP_VALUES);
+        this.partitionBy = partitionBy;
     }
 
     @Override
     public void add(Record record) {
         long row = record.getRowId();
-        DirectMap.KeyWriter kw = map.keyWriter();
-        kw.putLong(row);
-        map.getOrCreateValues(kw).putLong(0, prevRow);
-        prevRow = row;
+        DirectMap.KeyWriter kw = prevMap.keyWriter();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
+        }
+        long prevRow;
+        DirectMapValues prevValues = prevMap.getOrCreateValues(kw);
+        if (prevValues.isNew()) {
+            prevRow = -1;
+        } else {
+            prevRow = prevValues.getLong(0);
+        }
+
+        prevValues.putLong(0, row);
+        DirectMap.KeyWriter kw2 = map.keyWriter();
+        kw2.putLong(row);
+        map.getOrCreateValues(kw2).putLong(0, prevRow);
+    }
+
+    @Override
+    public void close() throws IOException {
+        prevMap.close();
+        super.close();
     }
 
     @Override
     public void reset() {
+        prevMap.clear();
         super.reset();
-        prevRow = -1;
     }
 }

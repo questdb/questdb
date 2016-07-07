@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.aggregation;
@@ -32,7 +33,6 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.*;
-import com.questdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
@@ -104,14 +104,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
         this.storageFacade = new DirectMapStorageFacade(columns.size() + 1, keyIndices);
         this.metadata = new DirectMapMetadata(rm, keyCols, columns);
         this.record = new DirectMapRecord(this.storageFacade);
-
-        ObjList<ColumnType> types = AggregationUtils.TL_COLUMN_TYPES.get();
-        types.clear();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            types.add(columns.getQuick(i).getType());
-        }
-
-        this.map = new DirectMap(pageSize, keyCols.size(), types);
+        this.map = new DirectMap(pageSize, keyCols.size(), AggregationUtils.toThreadLocalTypes(columns));
         this.recordSource = recordSource;
     }
 

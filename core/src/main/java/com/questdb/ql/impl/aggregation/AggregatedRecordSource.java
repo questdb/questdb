@@ -33,7 +33,6 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.*;
-import com.questdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -69,6 +68,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
             keyIndices.add(rm.getColumnIndex(keyColumns.get(i)));
         }
 
+        // todo: generalise this and ResampledRecordSource
         ObjList<MapRecordValueInterceptor> interceptors = null;
         ObjList<RecordColumnMetadata> columns = AggregationUtils.TL_COLUMNS.get();
         columns.clear();
@@ -91,14 +91,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
         this.interceptors = interceptors;
         this.metadata = new DirectMapMetadata(rm, keyColumns, columns);
         this.storageFacade = new DirectMapStorageFacade(columns.size(), keyIndices);
-
-        ObjList<ColumnType> types = AggregationUtils.TL_COLUMN_TYPES.get();
-        types.clear();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            types.add(columns.getQuick(i).getType());
-        }
-
-        this.map = new DirectMap(pageSize, keyColumnsSize, types);
+        this.map = new DirectMap(pageSize, keyColumnsSize, AggregationUtils.toThreadLocalTypes(columns));
         this.recordSource = recordSource;
         this.record = new DirectMapRecord(storageFacade);
     }
@@ -129,13 +122,22 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     }
 
     @Override
-    public boolean supportsRowIdAccess() {
-        return true;
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return storageFacade;
+    public boolean hasNext() {
+        return mapCursor.hasNext();
+    }
+
+    @Override
+    public Record next() {
+        DirectMapEntry entry = mapCursor.next();
+        if (interceptors != null) {
+            notifyInterceptors(entry);
+        }
+        return record.of(entry);
     }
 
     @Override
@@ -159,17 +161,8 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     }
 
     @Override
-    public boolean hasNext() {
-        return mapCursor.hasNext();
-    }
-
-    @Override
-    public Record next() {
-        DirectMapEntry entry = mapCursor.next();
-        if (interceptors != null) {
-            notifyInterceptors(entry);
-        }
-        return record.of(entry);
+    public boolean supportsRowIdAccess() {
+        return true;
     }
 
     @Override

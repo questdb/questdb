@@ -29,15 +29,14 @@ import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
 import com.questdb.store.ColumnType;
 
-final class AggregationUtils {
+public final class AggregationUtils {
     static final ThreadLocal<ObjList<RecordColumnMetadata>> TL_COLUMNS = new ThreadLocal<>(new ObjectFactory<ObjList<RecordColumnMetadata>>() {
         @Override
         public ObjList<RecordColumnMetadata> newInstance() {
             return new ObjList<>();
         }
     });
-
-    static final ThreadLocal<ObjList<ColumnType>> TL_COLUMN_TYPES = new ThreadLocal<>(new ObjectFactory<ObjList<ColumnType>>() {
+    private static final ThreadLocal<ObjList<ColumnType>> TL_COLUMN_TYPES = new ThreadLocal<>(new ObjectFactory<ObjList<ColumnType>>() {
         @Override
         public ObjList<ColumnType> newInstance() {
             return new ObjList<>();
@@ -45,5 +44,14 @@ final class AggregationUtils {
     });
 
     private AggregationUtils() {
+    }
+
+    public static ObjList<ColumnType> toThreadLocalTypes(ObjList<? extends RecordColumnMetadata> metadata) {
+        ObjList<ColumnType> types = AggregationUtils.TL_COLUMN_TYPES.get();
+        types.clear();
+        for (int i = 0, n = metadata.size(); i < n; i++) {
+            types.add(metadata.getQuick(i).getType());
+        }
+        return types;
     }
 }

@@ -44,7 +44,7 @@ public class PrevAnalyticFunctionFactory implements AnalyticFunctionFactory {
         }
 
         if (ordered) {
-            return null;
+            return new PrevOrderedPartitionedAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
         }
 
         boolean valueIsString = valueColumn.getType() == ColumnType.STRING;
