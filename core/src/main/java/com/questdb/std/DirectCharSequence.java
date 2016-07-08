@@ -31,6 +31,14 @@ public class DirectCharSequence extends AbstractCharSequence {
     private long hi;
     private int len;
 
+    public long getHi() {
+        return hi;
+    }
+
+    public long getLo() {
+        return lo;
+    }
+
     @Override
     public int hashCode() {
         if (lo == hi) {
@@ -73,5 +81,4 @@ public class DirectCharSequence extends AbstractCharSequence {
         seq.hi = this.lo + end;
         return seq;
     }
-
 }

@@ -106,6 +106,27 @@ public abstract class AbstractOptimiserTest {
         }
     }
 
+    protected void assertString(String query, int columnIndex) throws JournalException, ParserException {
+        RecordCursor cursor = compiler.compile(factory, query);
+        while (cursor.hasNext()) {
+            Record r = cursor.next();
+            int len = r.getStrLen(columnIndex);
+            CharSequence s = r.getStr(columnIndex);
+            if (s != null) {
+                CharSequence csA = r.getFlyweightStr(columnIndex);
+                CharSequence csB = r.getFlyweightStrB(columnIndex);
+                TestUtils.assertEquals(s, csA);
+                TestUtils.assertEquals(s, csB);
+                Assert.assertEquals(len, s.length());
+                Assert.assertFalse(csA == csB);
+            } else {
+                Assert.assertEquals(-1, len);
+                Assert.assertNull(r.getFlyweightStr(columnIndex));
+                Assert.assertNull(r.getFlyweightStrB(columnIndex));
+            }
+        }
+    }
+
     protected void assertSymbol(String query, int columnIndex) throws JournalException, ParserException {
         RecordCursor cursor = compiler.compile(factory, query);
         SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);

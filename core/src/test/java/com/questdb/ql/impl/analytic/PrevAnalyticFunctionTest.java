@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
@@ -193,6 +194,32 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     }
 
     @Test
+    public void testBoolean2() throws Exception {
+        final String expected = "true\tBZ\t2016-05-01T10:21:00.000Z\tfalse\n" +
+                "false\tXX\t2016-05-01T10:22:00.000Z\ttrue\n" +
+                "false\tKK\t2016-05-01T10:23:00.000Z\tfalse\n" +
+                "false\tAX\t2016-05-01T10:24:00.000Z\tfalse\n" +
+                "true\tAX\t2016-05-01T10:25:00.000Z\tfalse\n" +
+                "true\tAX\t2016-05-01T10:26:00.000Z\ttrue\n" +
+                "false\tBZ\t2016-05-01T10:27:00.000Z\ttrue\n" +
+                "true\tBZ\t2016-05-01T10:28:00.000Z\tfalse\n" +
+                "false\tAX\t2016-05-01T10:29:00.000Z\ttrue\n" +
+                "false\tBZ\t2016-05-01T10:30:00.000Z\tfalse\n" +
+                "false\tXX\t2016-05-01T10:31:00.000Z\tfalse\n" +
+                "false\tKK\t2016-05-01T10:32:00.000Z\tfalse\n" +
+                "false\tAX\t2016-05-01T10:33:00.000Z\tfalse\n" +
+                "false\tBZ\t2016-05-01T10:34:00.000Z\tfalse\n" +
+                "true\tXX\t2016-05-01T10:35:00.000Z\tfalse\n" +
+                "true\tAX\t2016-05-01T10:36:00.000Z\ttrue\n" +
+                "true\tXX\t2016-05-01T10:37:00.000Z\ttrue\n" +
+                "true\tAX\t2016-05-01T10:38:00.000Z\ttrue\n" +
+                "false\tBZ\t2016-05-01T10:39:00.000Z\ttrue\n" +
+                "false\tBZ\t2016-05-01T10:40:00.000Z\tfalse\n";
+        assertThat(expected, "select boo, str, timestamp , prev(boo) over () from abc");
+        assertThat(expected, "select boo, str, timestamp , prev(boo) over () from '*!*abc'");
+    }
+
+    @Test
     public void testByte() throws Exception {
         final String expected = "21\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t0\n" +
                 "-120\tXX\tBZ\t2016-05-01T10:22:00.000Z\t0\n" +
@@ -216,6 +243,32 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "70\tBZ\tAX\t2016-05-01T10:40:00.000Z\t-114\n";
         assertThat(expected, "select b, str, sym, timestamp , prev(b) over (partition by str) from abc");
         assertThat(expected, "select b, str, sym, timestamp , prev(b) over (partition by str) from '*!*abc'");
+    }
+
+    @Test
+    public void testByte2() throws Exception {
+        final String expected = "21\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t0\n" +
+                "-120\tXX\tBZ\t2016-05-01T10:22:00.000Z\t21\n" +
+                "-34\tKK\tXX\t2016-05-01T10:23:00.000Z\t-120\n" +
+                "-60\tAX\tXX\t2016-05-01T10:24:00.000Z\t-34\n" +
+                "-95\tAX\tXX\t2016-05-01T10:25:00.000Z\t-60\n" +
+                "-40\tAX\tBZ\t2016-05-01T10:26:00.000Z\t-95\n" +
+                "53\tBZ\tXX\t2016-05-01T10:27:00.000Z\t-40\n" +
+                "77\tBZ\tKK\t2016-05-01T10:28:00.000Z\t53\n" +
+                "-69\tAX\tKK\t2016-05-01T10:29:00.000Z\t77\n" +
+                "-15\tBZ\tAX\t2016-05-01T10:30:00.000Z\t-69\n" +
+                "-126\tXX\tKK\t2016-05-01T10:31:00.000Z\t-15\n" +
+                "-114\tKK\tAX\t2016-05-01T10:32:00.000Z\t-126\n" +
+                "-55\tAX\tAX\t2016-05-01T10:33:00.000Z\t-114\n" +
+                "-72\tBZ\tBZ\t2016-05-01T10:34:00.000Z\t-55\n" +
+                "-77\tXX\tAX\t2016-05-01T10:35:00.000Z\t-72\n" +
+                "-83\tAX\tAX\t2016-05-01T10:36:00.000Z\t-77\n" +
+                "-36\tXX\tKK\t2016-05-01T10:37:00.000Z\t-83\n" +
+                "-102\tAX\tAX\t2016-05-01T10:38:00.000Z\t-36\n" +
+                "-114\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-102\n" +
+                "70\tBZ\tAX\t2016-05-01T10:40:00.000Z\t-114\n";
+        assertThat(expected, "select b, str, sym, timestamp , prev(b) over () from abc");
+        assertThat(expected, "select b, str, sym, timestamp , prev(b) over () from '*!*abc'");
     }
 
     @Test
@@ -409,6 +462,32 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     }
 
     @Test
+    public void testDate2() throws Exception {
+        final String expected = "277427992-01-2080342T08:51:21.932Z\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t\n" +
+                "000-284204894-12-0-2131416T06:37:25.107Z\tXX\tBZ\t2016-05-01T10:22:00.000Z\t277427992-01-2080342T08:51:21.932Z\n" +
+                "000-142142802-12-0-1065746T10:07:22.984Z\tKK\tXX\t2016-05-01T10:23:00.000Z\t000-284204894-12-0-2131416T06:37:25.107Z\n" +
+                "000-268690388-12-0-2015078T00:06:37.492Z\tAX\tXX\t2016-05-01T10:24:00.000Z\t000-142142802-12-0-1065746T10:07:22.984Z\n" +
+                "217212983-05-1628908T18:39:59.220Z\tAX\tXX\t2016-05-01T10:25:00.000Z\t000-268690388-12-0-2015078T00:06:37.492Z\n" +
+                "263834991-01-1978681T18:15:05.778Z\tAX\tBZ\t2016-05-01T10:26:00.000Z\t217212983-05-1628908T18:39:59.220Z\n" +
+                "231474144-12-1735467T12:18:04.767Z\tBZ\tXX\t2016-05-01T10:27:00.000Z\t263834991-01-1978681T18:15:05.778Z\n" +
+                "220348391-12-1652040T00:08:45.841Z\tBZ\tKK\t2016-05-01T10:28:00.000Z\t231474144-12-1735467T12:18:04.767Z\n" +
+                "000-230262069-12-0-1726604T22:57:03.970Z\tAX\tKK\t2016-05-01T10:29:00.000Z\t220348391-12-1652040T00:08:45.841Z\n" +
+                "18125162-01-135753T04:06:38.086Z\tBZ\tAX\t2016-05-01T10:30:00.000Z\t000-230262069-12-0-1726604T22:57:03.970Z\n" +
+                "000-201710735-12-0-1512581T10:14:48.134Z\tXX\tKK\t2016-05-01T10:31:00.000Z\t18125162-01-135753T04:06:38.086Z\n" +
+                "132056646-12-989842T08:27:45.836Z\tKK\tAX\t2016-05-01T10:32:00.000Z\t000-201710735-12-0-1512581T10:14:48.134Z\n" +
+                "000-253356772-01-0-1899589T02:07:37.180Z\tAX\tAX\t2016-05-01T10:33:00.000Z\t132056646-12-989842T08:27:45.836Z\n" +
+                "000-180943699-12-0-1356718T10:19:58.733Z\tBZ\tBZ\t2016-05-01T10:34:00.000Z\t000-253356772-01-0-1899589T02:07:37.180Z\n" +
+                "000-225081705-01-0-1687457T21:53:40.936Z\tXX\tAX\t2016-05-01T10:35:00.000Z\t000-180943699-12-0-1356718T10:19:58.733Z\n" +
+                "252672790-12-1894671T03:29:33.753Z\tAX\tAX\t2016-05-01T10:36:00.000Z\t000-225081705-01-0-1687457T21:53:40.936Z\n" +
+                "000-244299855-12-0-1831941T17:50:45.758Z\tXX\tKK\t2016-05-01T10:37:00.000Z\t252672790-12-1894671T03:29:33.753Z\n" +
+                "000-196064580-12-0-1470233T05:32:43.747Z\tAX\tAX\t2016-05-01T10:38:00.000Z\t000-244299855-12-0-1831941T17:50:45.758Z\n" +
+                "167787767-01-1258238T07:52:02.538Z\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t000-196064580-12-0-1470233T05:32:43.747Z\n" +
+                "000-56976438-01-0-426674T13:10:29.515Z\tBZ\tAX\t2016-05-01T10:40:00.000Z\t167787767-01-1258238T07:52:02.538Z\n";
+        assertThat(expected, "select date, str, sym, timestamp , prev(date) over () from abc");
+        assertThat(expected, "select date, str, sym, timestamp , prev(date) over () from '*!*abc'");
+    }
+
+    @Test
     public void testDateOrdered() throws Exception {
         final String expected = "8920866532787660373\t277427992-01-2080342T08:51:21.932Z\t2016-05-01T10:21:00.000Z\t000-196064580-12-0-1470233T05:32:43.747Z\n" +
                 "-6943924477733600060\t000-284204894-12-0-2131416T06:37:25.107Z\t2016-05-01T10:22:00.000Z\t000-230262069-12-0-1726604T22:57:03.970Z\n" +
@@ -461,6 +540,32 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     }
 
     @Test
+    public void testDouble2() throws Exception {
+        final String expected = "1.050231933594\tBZ\tBZ\t2016-05-01T10:21:00.000Z\tNaN\n" +
+                "566.734375000000\tXX\tBZ\t2016-05-01T10:22:00.000Z\t1.050231933594\n" +
+                "0.000013792171\tKK\tXX\t2016-05-01T10:23:00.000Z\t566.734375000000\n" +
+                "0.000000567185\tAX\tXX\t2016-05-01T10:24:00.000Z\t0.000013792171\n" +
+                "-512.000000000000\tAX\tXX\t2016-05-01T10:25:00.000Z\t0.000000567185\n" +
+                "0.675451681018\tAX\tBZ\t2016-05-01T10:26:00.000Z\t-512.000000000000\n" +
+                "0.332301996648\tBZ\tXX\t2016-05-01T10:27:00.000Z\t0.675451681018\n" +
+                "0.000001752813\tBZ\tKK\t2016-05-01T10:28:00.000Z\t0.332301996648\n" +
+                "0.000076281818\tAX\tKK\t2016-05-01T10:29:00.000Z\t0.000001752813\n" +
+                "0.000000005555\tBZ\tAX\t2016-05-01T10:30:00.000Z\t0.000076281818\n" +
+                "0.000002473130\tXX\tKK\t2016-05-01T10:31:00.000Z\t0.000000005555\n" +
+                "632.921875000000\tKK\tAX\t2016-05-01T10:32:00.000Z\t0.000002473130\n" +
+                "0.000000020896\tAX\tAX\t2016-05-01T10:33:00.000Z\t632.921875000000\n" +
+                "0.007371325744\tBZ\tBZ\t2016-05-01T10:34:00.000Z\t0.000000020896\n" +
+                "0.000000014643\tXX\tAX\t2016-05-01T10:35:00.000Z\t0.007371325744\n" +
+                "512.000000000000\tAX\tAX\t2016-05-01T10:36:00.000Z\t0.000000014643\n" +
+                "864.000000000000\tXX\tKK\t2016-05-01T10:37:00.000Z\t512.000000000000\n" +
+                "0.000000157437\tAX\tAX\t2016-05-01T10:38:00.000Z\t864.000000000000\n" +
+                "-842.000000000000\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t0.000000157437\n" +
+                "0.000032060649\tBZ\tAX\t2016-05-01T10:40:00.000Z\t-842.000000000000\n";
+        assertThat(expected, "select d, str, sym, timestamp , prev(d) over () from abc");
+        assertThat(expected, "select d, str, sym, timestamp , prev(d) over () from '*!*abc'");
+    }
+
+    @Test
     public void testDoubleOrdered() throws Exception {
         final String expected = "8920866532787660373\t1.050231933594\t2016-05-01T10:21:00.000Z\t0.000000157437\n" +
                 "-6943924477733600060\t566.734375000000\t2016-05-01T10:22:00.000Z\t0.000076281818\n" +
@@ -510,6 +615,32 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "0.4967\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0.1168\n";
         assertThat(expected, "select f, str, sym, timestamp , prev(f) over (partition by str) from abc");
         assertThat(expected, "select f, str, sym, timestamp , prev(f) over (partition by str) from '*!*abc'");
+    }
+
+    @Test
+    public void testFloat2() throws Exception {
+        final String expected = "0.6235\tBZ\tBZ\t2016-05-01T10:21:00.000Z\tNaN\n" +
+                "0.7780\tXX\tBZ\t2016-05-01T10:22:00.000Z\t0.6235\n" +
+                "0.5509\tKK\tXX\t2016-05-01T10:23:00.000Z\t0.7780\n" +
+                "0.0204\tAX\tXX\t2016-05-01T10:24:00.000Z\t0.5509\n" +
+                "0.4848\tAX\tXX\t2016-05-01T10:25:00.000Z\t0.0204\n" +
+                "0.2969\tAX\tBZ\t2016-05-01T10:26:00.000Z\t0.4848\n" +
+                "0.5725\tBZ\tXX\t2016-05-01T10:27:00.000Z\t0.2969\n" +
+                "0.5967\tBZ\tKK\t2016-05-01T10:28:00.000Z\t0.5725\n" +
+                "0.1609\tAX\tKK\t2016-05-01T10:29:00.000Z\t0.5967\n" +
+                "0.3509\tBZ\tAX\t2016-05-01T10:30:00.000Z\t0.1609\n" +
+                "0.7274\tXX\tKK\t2016-05-01T10:31:00.000Z\t0.3509\n" +
+                "0.5619\tKK\tAX\t2016-05-01T10:32:00.000Z\t0.7274\n" +
+                "0.5433\tAX\tAX\t2016-05-01T10:33:00.000Z\t0.5619\n" +
+                "0.5442\tBZ\tBZ\t2016-05-01T10:34:00.000Z\t0.5433\n" +
+                "0.6746\tXX\tAX\t2016-05-01T10:35:00.000Z\t0.5442\n" +
+                "0.8217\tAX\tAX\t2016-05-01T10:36:00.000Z\t0.6746\n" +
+                "0.3591\tXX\tKK\t2016-05-01T10:37:00.000Z\t0.8217\n" +
+                "0.6827\tAX\tAX\t2016-05-01T10:38:00.000Z\t0.3591\n" +
+                "0.1168\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t0.6827\n" +
+                "0.4967\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0.1168\n";
+        assertThat(expected, "select f, str, sym, timestamp , prev(f) over () from abc");
+        assertThat(expected, "select f, str, sym, timestamp , prev(f) over () from '*!*abc'");
     }
 
     @Test
@@ -591,6 +722,32 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     }
 
     @Test
+    public void testLong2() throws Exception {
+        final String expected = "8920866532787660373\tBZ\tBZ\t2016-05-01T10:21:00.000Z\tNaN\n" +
+                "-6943924477733600060\tXX\tBZ\t2016-05-01T10:22:00.000Z\t8920866532787660373\n" +
+                "-6856503215590263904\tKK\tXX\t2016-05-01T10:23:00.000Z\t-6943924477733600060\n" +
+                "8416773233910814357\tAX\tXX\t2016-05-01T10:24:00.000Z\t-6856503215590263904\n" +
+                "7199909180655756830\tAX\tXX\t2016-05-01T10:25:00.000Z\t8416773233910814357\n" +
+                "6270672455202306717\tAX\tBZ\t2016-05-01T10:26:00.000Z\t7199909180655756830\n" +
+                "-6253307669002054137\tBZ\tXX\t2016-05-01T10:27:00.000Z\t6270672455202306717\n" +
+                "7392877322819819290\tBZ\tKK\t2016-05-01T10:28:00.000Z\t-6253307669002054137\n" +
+                "-7316123607359392486\tAX\tKK\t2016-05-01T10:29:00.000Z\t7392877322819819290\n" +
+                "-3107239868490395663\tBZ\tAX\t2016-05-01T10:30:00.000Z\t-7316123607359392486\n" +
+                "-7387846268299105911\tXX\tKK\t2016-05-01T10:31:00.000Z\t-3107239868490395663\n" +
+                "7122109662042058469\tKK\tAX\t2016-05-01T10:32:00.000Z\t-7387846268299105911\n" +
+                "-6626590012581323602\tAX\tAX\t2016-05-01T10:33:00.000Z\t7122109662042058469\n" +
+                "8611582118025429627\tBZ\tBZ\t2016-05-01T10:34:00.000Z\t-6626590012581323602\n" +
+                "-8082754367165748693\tXX\tAX\t2016-05-01T10:35:00.000Z\t8611582118025429627\n" +
+                "6574958665733670985\tAX\tAX\t2016-05-01T10:36:00.000Z\t-8082754367165748693\n" +
+                "3446015290144635451\tXX\tKK\t2016-05-01T10:37:00.000Z\t6574958665733670985\n" +
+                "8889492928577876455\tAX\tAX\t2016-05-01T10:38:00.000Z\t3446015290144635451\n" +
+                "8152044974329490473\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t8889492928577876455\n" +
+                "-6071768268784020226\tBZ\tAX\t2016-05-01T10:40:00.000Z\t8152044974329490473\n";
+        assertThat(expected, "select l, str, sym, timestamp , prev(l) over () from abc");
+        assertThat(expected, "select l, str, sym, timestamp , prev(l) over () from '*!*abc'");
+    }
+
+    @Test
     public void testLongOrdered() throws Exception {
         final String expected = "8920866532787660373\t-1148479920\t2016-05-01T10:21:00.000Z\t8416773233910814357\n" +
                 "-6943924477733600060\t-2041844972\t2016-05-01T10:22:00.000Z\tNaN\n" +
@@ -619,7 +776,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     @Test
     public void testMultipleNoPart() throws Exception {
         final String expected = "str\tsym\ttimestamp\tcol0\tcol1\n" +
-                "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\tnull\n" +
+                "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\t\n" +
                 "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\tBZ\n" +
                 "KK\tXX\t2016-05-01T10:23:00.000Z\tBZ\tXX\n" +
                 "AX\tXX\t2016-05-01T10:24:00.000Z\tXX\tKK\n" +
@@ -809,6 +966,32 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     }
 
     @Test
+    public void testShort2() throws Exception {
+        final String expected = "-19496\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t0\n" +
+                "-24357\tXX\tBZ\t2016-05-01T10:22:00.000Z\t-19496\n" +
+                "21781\tKK\tXX\t2016-05-01T10:23:00.000Z\t-24357\n" +
+                "-19127\tAX\tXX\t2016-05-01T10:24:00.000Z\t21781\n" +
+                "-15458\tAX\tXX\t2016-05-01T10:25:00.000Z\t-19127\n" +
+                "-22934\tAX\tBZ\t2016-05-01T10:26:00.000Z\t-15458\n" +
+                "-391\tBZ\tXX\t2016-05-01T10:27:00.000Z\t-22934\n" +
+                "-26951\tBZ\tKK\t2016-05-01T10:28:00.000Z\t-391\n" +
+                "-19136\tAX\tKK\t2016-05-01T10:29:00.000Z\t-26951\n" +
+                "-15331\tBZ\tAX\t2016-05-01T10:30:00.000Z\t-19136\n" +
+                "-4874\tXX\tKK\t2016-05-01T10:31:00.000Z\t-15331\n" +
+                "25102\tKK\tAX\t2016-05-01T10:32:00.000Z\t-4874\n" +
+                "-20409\tAX\tAX\t2016-05-01T10:33:00.000Z\t25102\n" +
+                "-29572\tBZ\tBZ\t2016-05-01T10:34:00.000Z\t-20409\n" +
+                "25974\tXX\tAX\t2016-05-01T10:35:00.000Z\t-29572\n" +
+                "5869\tAX\tAX\t2016-05-01T10:36:00.000Z\t25974\n" +
+                "-22894\tXX\tKK\t2016-05-01T10:37:00.000Z\t5869\n" +
+                "-18600\tAX\tAX\t2016-05-01T10:38:00.000Z\t-22894\n" +
+                "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-18600\n" +
+                "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t11755\n";
+        assertThat(expected, "select sho, str, sym, timestamp , prev(sho) over () from abc");
+        assertThat(expected, "select sho, str, sym, timestamp , prev(sho) over () from '*!*abc'");
+    }
+
+    @Test
     public void testShortAliased() throws Exception {
         final String expected = "sho\tstr\tsym\ttimestamp\tblah\n" +
                 "-19496\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t0\n" +
@@ -863,16 +1046,16 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
 
     @Test
     public void testStr() throws Exception {
-        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\t\n" +
                 "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
-                "KK\tXX\t2016-05-01T10:23:00.000Z\tnull\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\t\n" +
                 "AX\tXX\t2016-05-01T10:24:00.000Z\tKK\n" +
                 "AX\tXX\t2016-05-01T10:25:00.000Z\tAX\n" +
                 "AX\tBZ\t2016-05-01T10:26:00.000Z\tXX\n" +
                 "BZ\tXX\t2016-05-01T10:27:00.000Z\tAX\n" +
-                "BZ\tKK\t2016-05-01T10:28:00.000Z\tnull\n" +
+                "BZ\tKK\t2016-05-01T10:28:00.000Z\t\n" +
                 "AX\tKK\t2016-05-01T10:29:00.000Z\tBZ\n" +
-                "BZ\tAX\t2016-05-01T10:30:00.000Z\tnull\n" +
+                "BZ\tAX\t2016-05-01T10:30:00.000Z\t\n" +
                 "XX\tKK\t2016-05-01T10:31:00.000Z\tAX\n" +
                 "KK\tAX\t2016-05-01T10:32:00.000Z\tBZ\n" +
                 "AX\tAX\t2016-05-01T10:33:00.000Z\tKK\n" +
@@ -885,20 +1068,50 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\tAX\n";
         assertThat(expected, "select str, sym, timestamp , prev(str) over (partition by sym) from abc");
         assertThat(expected, "select str, sym, timestamp , prev(str) over (partition by sym) from '*!*abc'");
+        assertString("select str, sym, timestamp , prev(str) over (partition by sym) from abc", 3);
+        assertString("select str, sym, timestamp , prev(str) over (partition by sym) from '*!*abc'", 3);
+    }
+
+    @Test
+    public void testStr2() throws Exception {
+        final String expected = "21\tBZ\tBZ\t2016-05-01T10:21:00.000Z\t\n" +
+                "-120\tXX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
+                "-34\tKK\tXX\t2016-05-01T10:23:00.000Z\tXX\n" +
+                "-60\tAX\tXX\t2016-05-01T10:24:00.000Z\tKK\n" +
+                "-95\tAX\tXX\t2016-05-01T10:25:00.000Z\tAX\n" +
+                "-40\tAX\tBZ\t2016-05-01T10:26:00.000Z\tAX\n" +
+                "53\tBZ\tXX\t2016-05-01T10:27:00.000Z\tAX\n" +
+                "77\tBZ\tKK\t2016-05-01T10:28:00.000Z\tBZ\n" +
+                "-69\tAX\tKK\t2016-05-01T10:29:00.000Z\tBZ\n" +
+                "-15\tBZ\tAX\t2016-05-01T10:30:00.000Z\tAX\n" +
+                "-126\tXX\tKK\t2016-05-01T10:31:00.000Z\tBZ\n" +
+                "-114\tKK\tAX\t2016-05-01T10:32:00.000Z\tXX\n" +
+                "-55\tAX\tAX\t2016-05-01T10:33:00.000Z\tKK\n" +
+                "-72\tBZ\tBZ\t2016-05-01T10:34:00.000Z\tAX\n" +
+                "-77\tXX\tAX\t2016-05-01T10:35:00.000Z\tBZ\n" +
+                "-83\tAX\tAX\t2016-05-01T10:36:00.000Z\tXX\n" +
+                "-36\tXX\tKK\t2016-05-01T10:37:00.000Z\tAX\n" +
+                "-102\tAX\tAX\t2016-05-01T10:38:00.000Z\tXX\n" +
+                "-114\tBZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\n" +
+                "70\tBZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\n";
+        assertThat(expected, "select b, str, sym, timestamp , prev(str) over () from abc");
+        assertThat(expected, "select b, str, sym, timestamp , prev(str) over () from '*!*abc'");
+        assertString("select b, str, sym, timestamp , prev(str) over () from '*!*abc'", 4);
+        assertString("select b, str, sym, timestamp , prev(str) over () from abc", 4);
     }
 
     @Test
     public void testStrNoRowId() throws Exception {
-        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\t\n" +
                 "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
-                "KK\tXX\t2016-05-01T10:23:00.000Z\tnull\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\t\n" +
                 "AX\tXX\t2016-05-01T10:24:00.000Z\tKK\n" +
                 "AX\tXX\t2016-05-01T10:25:00.000Z\tAX\n" +
                 "AX\tBZ\t2016-05-01T10:26:00.000Z\tXX\n" +
                 "BZ\tXX\t2016-05-01T10:27:00.000Z\tAX\n" +
-                "BZ\tKK\t2016-05-01T10:28:00.000Z\tnull\n" +
+                "BZ\tKK\t2016-05-01T10:28:00.000Z\t\n" +
                 "AX\tKK\t2016-05-01T10:29:00.000Z\tBZ\n" +
-                "BZ\tAX\t2016-05-01T10:30:00.000Z\tnull\n" +
+                "BZ\tAX\t2016-05-01T10:30:00.000Z\t\n" +
                 "XX\tKK\t2016-05-01T10:31:00.000Z\tAX\n" +
                 "KK\tAX\t2016-05-01T10:32:00.000Z\tBZ\n" +
                 "AX\tAX\t2016-05-01T10:33:00.000Z\tKK\n" +
@@ -910,11 +1123,14 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tBZ\n" +
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\tAX\n";
         assertThat(expected, "select str, sym, timestamp , prev(str) over (partition by sym) from '*!*abc'");
+        assertThat(expected, "select str, sym, timestamp , prev(str) over (partition by sym) from abc");
+        assertString("select str, sym, timestamp , prev(str) over (partition by sym) from '*!*abc'", 3);
+        assertString("select str, sym, timestamp , prev(str) over (partition by sym) from abc", 3);
     }
 
     @Test
     public void testStrNonPart() throws Exception {
-        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\t\n" +
                 "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
                 "KK\tXX\t2016-05-01T10:23:00.000Z\tXX\n" +
                 "AX\tXX\t2016-05-01T10:24:00.000Z\tKK\n" +
@@ -962,6 +1178,35 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "-6071768268784020226\tBZ\t2016-05-01T10:40:00.000Z\tBZ\n";
         assertThat(expected, "select l, str, timestamp , prev(str) over (order by l) from abc");
         assertThat(expected, "select l, str, timestamp , prev(str) over (order by l) from '*!*abc'");
+        assertString("select l, str, timestamp , prev(str) over (order by l) from abc", 3);
+    }
+
+    @Test
+    public void testStrPartitionedOrdered() throws Exception {
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\t\n" +
+                "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\t\n" +
+                "AX\tXX\t2016-05-01T10:24:00.000Z\tKK\n" +
+                "AX\tXX\t2016-05-01T10:25:00.000Z\tAX\n" +
+                "AX\tBZ\t2016-05-01T10:26:00.000Z\tXX\n" +
+                "BZ\tXX\t2016-05-01T10:27:00.000Z\tAX\n" +
+                "BZ\tKK\t2016-05-01T10:28:00.000Z\t\n" +
+                "AX\tKK\t2016-05-01T10:29:00.000Z\tBZ\n" +
+                "BZ\tAX\t2016-05-01T10:30:00.000Z\t\n" +
+                "XX\tKK\t2016-05-01T10:31:00.000Z\tAX\n" +
+                "KK\tAX\t2016-05-01T10:32:00.000Z\tBZ\n" +
+                "AX\tAX\t2016-05-01T10:33:00.000Z\tKK\n" +
+                "BZ\tBZ\t2016-05-01T10:34:00.000Z\tAX\n" +
+                "XX\tAX\t2016-05-01T10:35:00.000Z\tAX\n" +
+                "AX\tAX\t2016-05-01T10:36:00.000Z\tXX\n" +
+                "XX\tKK\t2016-05-01T10:37:00.000Z\tXX\n" +
+                "AX\tAX\t2016-05-01T10:38:00.000Z\tAX\n" +
+                "BZ\tBZ\t2016-05-01T10:39:00.000Z\tBZ\n" +
+                "BZ\tAX\t2016-05-01T10:40:00.000Z\tAX\n";
+        assertThat(expected, "select str, sym, timestamp , prev(str) over (partition by sym order by timestamp) from abc");
+        assertThat(expected, "select str, sym, timestamp , prev(str) over (partition by sym order by timestamp) from '*!*abc'");
+        assertString("select str, sym, timestamp , prev(str) over (partition by sym order by timestamp) from abc", 3);
+        assertString("select str, sym, timestamp , prev(str) over (partition by sym order by timestamp) from '*!*abc'", 3);
     }
 
     @Test
@@ -1040,6 +1285,34 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\n";
         assertThat(expected, "select str, sym, timestamp , prev(sym) over (partition by str) from abc");
         assertThat(expected, "select str, sym, timestamp , prev(sym) over (partition by str) from '*!*abc'");
+    }
+
+    @Test
+    public void testSymbol2() throws Exception {
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
+                "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\tBZ\n" +
+                "AX\tXX\t2016-05-01T10:24:00.000Z\tXX\n" +
+                "AX\tXX\t2016-05-01T10:25:00.000Z\tXX\n" +
+                "AX\tBZ\t2016-05-01T10:26:00.000Z\tXX\n" +
+                "BZ\tXX\t2016-05-01T10:27:00.000Z\tBZ\n" +
+                "BZ\tKK\t2016-05-01T10:28:00.000Z\tXX\n" +
+                "AX\tKK\t2016-05-01T10:29:00.000Z\tKK\n" +
+                "BZ\tAX\t2016-05-01T10:30:00.000Z\tKK\n" +
+                "XX\tKK\t2016-05-01T10:31:00.000Z\tAX\n" +
+                "KK\tAX\t2016-05-01T10:32:00.000Z\tKK\n" +
+                "AX\tAX\t2016-05-01T10:33:00.000Z\tAX\n" +
+                "BZ\tBZ\t2016-05-01T10:34:00.000Z\tAX\n" +
+                "XX\tAX\t2016-05-01T10:35:00.000Z\tBZ\n" +
+                "AX\tAX\t2016-05-01T10:36:00.000Z\tAX\n" +
+                "XX\tKK\t2016-05-01T10:37:00.000Z\tAX\n" +
+                "AX\tAX\t2016-05-01T10:38:00.000Z\tKK\n" +
+                "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\n" +
+                "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\n";
+        assertThat(expected, "select str, sym, timestamp , prev(sym) over () from abc");
+        assertThat(expected, "select str, sym, timestamp , prev(sym) over () from '*!*abc'");
+        assertSymbol("select str, sym, timestamp , prev(sym) over () from abc", 3);
+        assertSymbol("select str, sym, timestamp , prev(sym) over () from '*!*abc'", 3);
     }
 
     @Test

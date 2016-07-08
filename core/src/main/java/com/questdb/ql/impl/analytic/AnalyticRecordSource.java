@@ -31,11 +31,11 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.SplitRecordMetadata;
-import com.questdb.ql.impl.map.RedBlackTree;
 import com.questdb.ql.impl.sort.RecordComparator;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
+import com.questdb.std.RedBlackTree;
 import com.questdb.std.Transient;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 

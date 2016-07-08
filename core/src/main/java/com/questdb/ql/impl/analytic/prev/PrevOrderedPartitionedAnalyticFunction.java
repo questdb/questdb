@@ -24,6 +24,7 @@
 package com.questdb.ql.impl.analytic.prev;
 
 import com.questdb.ql.Record;
+import com.questdb.ql.impl.analytic.AbstractOrderedAnalyticFunction;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
@@ -32,7 +33,7 @@ import com.questdb.std.ObjList;
 
 import java.io.IOException;
 
-public class PrevOrderedPartitionedAnalyticFunction extends AbstractPrevOrderedAnalyticFunction {
+public class PrevOrderedPartitionedAnalyticFunction extends AbstractOrderedAnalyticFunction {
 
     private final DirectMap prevMap;
     private final ObjList<VirtualColumn> partitionBy;

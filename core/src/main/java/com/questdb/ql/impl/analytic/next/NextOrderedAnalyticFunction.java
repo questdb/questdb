@@ -21,33 +21,30 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic.prev;
+package com.questdb.ql.impl.analytic.next;
 
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.analytic.AbstractOrderedAnalyticFunction;
 import com.questdb.ql.impl.map.DirectMap;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.VirtualColumn;
 
-public class PrevOrderedAnalyticFunction extends AbstractOrderedAnalyticFunction {
-
+public class NextOrderedAnalyticFunction extends AbstractOrderedAnalyticFunction {
     private long prevRow = -1;
 
-    public PrevOrderedAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
+    public NextOrderedAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
         super(pageSize, valueColumn);
     }
 
     @Override
     public void add(Record record) {
         long row = record.getRowId();
-        DirectMap.KeyWriter kw = map.keyWriter();
-        kw.putLong(row);
-        map.getOrCreateValues(kw).putLong(0, prevRow);
+        if (prevRow != -1) {
+            DirectMap.KeyWriter kw = map.keyWriter();
+            kw.putLong(prevRow);
+            DirectMapValues values = map.getOrCreateValues(kw);
+            values.putLong(0, row);
+        }
         prevRow = row;
-    }
-
-    @Override
-    public void reset() {
-        super.reset();
-        prevRow = -1;
     }
 }

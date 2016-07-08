@@ -21,15 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic.prev;
+package com.questdb.ql.impl.analytic;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.NullRecord;
-import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.ql.impl.analytic.AnalyticFunctionType;
 import com.questdb.ql.impl.map.DirectMap;
+import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
@@ -40,7 +39,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public abstract class AbstractPrevOrderedAnalyticFunction implements AnalyticFunction, Closeable {
+public abstract class AbstractOrderedAnalyticFunction implements AnalyticFunction, Closeable {
 
     protected final DirectMap map;
     private final VirtualColumn valueColumn;
@@ -48,7 +47,7 @@ public abstract class AbstractPrevOrderedAnalyticFunction implements AnalyticFun
     private Record record;
     private RecordCursor cursor;
 
-    public AbstractPrevOrderedAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
+    public AbstractOrderedAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
         this.map = new DirectMap(pageSize, 1, MapUtils.ROWID_MAP_VALUES);
         this.valueColumn = valueColumn;
     }
@@ -169,8 +168,9 @@ public abstract class AbstractPrevOrderedAnalyticFunction implements AnalyticFun
     public void prepareFor(Record record) {
         DirectMap.KeyWriter kw = map.keyWriter();
         kw.putLong(record.getRowId());
-        long row = map.getValues(kw).getLong(0);
-        if (row == -1) {
+        DirectMapValues values = map.getValues(kw);
+        long row;
+        if (values == null || (row = values.getLong(0)) == -1) {
             out = NullRecord.INSTANCE;
         } else {
             cursor.recordAt(this.record, row);

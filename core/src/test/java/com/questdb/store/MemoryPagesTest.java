@@ -23,6 +23,7 @@
 
 package com.questdb.store;
 
+import com.questdb.std.MemoryPages;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;

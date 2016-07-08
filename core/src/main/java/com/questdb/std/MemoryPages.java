@@ -21,12 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.store;
+package com.questdb.std;
 
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.LongList;
-import com.questdb.std.Mutable;
 
 import java.io.Closeable;
 

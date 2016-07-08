@@ -34,8 +34,8 @@ import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.AbstractRecordSource;
 import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.CharSink;
+import com.questdb.std.MemoryPages;
 import com.questdb.std.Mutable;
-import com.questdb.store.MemoryPages;
 
 import java.io.Closeable;
 

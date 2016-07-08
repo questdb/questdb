@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic.prev;
@@ -51,6 +52,7 @@ import java.io.OutputStream;
 public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Closeable {
     private final DirectMap map;
     private final DirectCharSequence cs = new DirectCharSequence();
+    private final DirectCharSequence csB = new DirectCharSequence();
     private final ObjList<VirtualColumn> partitionBy;
     private final VirtualColumn valueColumn;
     private long bufPtr = 0;
@@ -115,7 +117,7 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
 
     @Override
     public CharSequence getFlyweightStrB() {
-        return nextNull ? null : cs;
+        return nextNull ? null : csB.of(cs.getLo(), cs.getHi());
     }
 
     @Override
@@ -140,7 +142,10 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
 
     @Override
     public void getStr(CharSink sink) {
-        sink.put(nextNull ? null : cs);
+        if (nextNull) {
+            return;
+        }
+        sink.put(cs);
     }
 
     @Override

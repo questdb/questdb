@@ -24,6 +24,7 @@
 package com.questdb.ql.impl.map;
 
 import com.questdb.misc.Rnd;
+import com.questdb.std.RedBlackTree;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

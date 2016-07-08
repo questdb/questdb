@@ -21,11 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.map;
+package com.questdb.std;
 
 import com.questdb.misc.Unsafe;
-import com.questdb.std.Mutable;
-import com.questdb.store.MemoryPages;
 
 import java.io.Closeable;
 

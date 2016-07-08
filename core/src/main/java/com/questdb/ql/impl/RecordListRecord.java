@@ -31,8 +31,8 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
 import com.questdb.std.DirectInputStream;
+import com.questdb.std.MemoryPages;
 import com.questdb.store.ColumnType;
-import com.questdb.store.MemoryPages;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
