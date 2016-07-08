@@ -54,4 +54,8 @@ class PLong {
     void fencedSet(final long value) {
         Unsafe.getUnsafe().putLongVolatile(this.value, VALUE_OFFSET, value);
     }
+
+    void increment(long n) {
+        Unsafe.getUnsafe().putLong(value, VALUE_OFFSET, Unsafe.getUnsafe().getLong(value, VALUE_OFFSET) + n);
+    }
 }

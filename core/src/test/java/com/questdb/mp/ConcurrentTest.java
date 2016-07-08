@@ -1,31 +1,29 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.mp;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.std.ObjectFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -332,7 +330,7 @@ public class ConcurrentTest {
         }
     }
 
-    private static void publishEOE(RingQueue<Event> queue, Sequence sequence) {
+    static void publishEOE(RingQueue<Event> queue, Sequence sequence) {
         long cursor = sequence.nextBully();
         queue.get(cursor).value = Integer.MIN_VALUE;
         sequence.done(cursor);
@@ -470,15 +468,5 @@ public class ConcurrentTest {
                 e.printStackTrace();
             }
         }
-    }
-
-    private static class Event {
-        private static final ObjectFactory<Event> FACTORY = new ObjectFactory<Event>() {
-            @Override
-            public Event newInstance() {
-                return new Event();
-            }
-        };
-        private int value;
     }
 }
