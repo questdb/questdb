@@ -50,18 +50,24 @@ public class AnalyticRecord implements Record {
         if (col < split) {
             base.getBin(col, s);
         } else {
-            functions.getQuick(col - split).getBin(s);
+            throw new UnsupportedOperationException();
         }
     }
 
     @Override
     public DirectInputStream getBin(int col) {
-        return col < split ? base.getBin(col) : functions.getQuick(col - split).getBin();
+        if (col < split) {
+            return base.getBin(col);
+        }
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getBinLen(int col) {
-        return col < split ? base.getBinLen(col) : functions.getQuick(col - split).getBinLen();
+        if (col < split) {
+            return base.getBinLen(col);
+        }
+        throw new UnsupportedOperationException();
     }
 
     @Override

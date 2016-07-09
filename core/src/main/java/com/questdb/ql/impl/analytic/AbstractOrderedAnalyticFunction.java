@@ -32,12 +32,10 @@ import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
-import com.questdb.std.DirectInputStream;
 import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.OutputStream;
 
 public abstract class AbstractOrderedAnalyticFunction implements AnalyticFunction, Closeable {
 
@@ -60,21 +58,6 @@ public abstract class AbstractOrderedAnalyticFunction implements AnalyticFunctio
     @Override
     public byte get() {
         return valueColumn.get(out);
-    }
-
-    @Override
-    public void getBin(OutputStream s) {
-        valueColumn.getBin(out, s);
-    }
-
-    @Override
-    public DirectInputStream getBin() {
-        return valueColumn.getBin(out);
-    }
-
-    @Override
-    public long getBinLen() {
-        return valueColumn.getBinLen(out);
     }
 
     @Override

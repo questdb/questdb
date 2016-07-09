@@ -39,7 +39,6 @@ import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
-import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
@@ -47,7 +46,6 @@ import com.questdb.store.VariableColumn;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.OutputStream;
 
 public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Closeable {
     private final DirectMap map;
@@ -72,21 +70,6 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
 
     @Override
     public byte get() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void getBin(OutputStream s) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public DirectInputStream getBin() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getBinLen() {
         throw new UnsupportedOperationException();
     }
 

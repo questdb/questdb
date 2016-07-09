@@ -323,6 +323,7 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
                 "-230430837\tZZ\n";
 
         assertThat(expected, "(xyz where i < 100 order by i) order by str, i desc");
+        assertString("(xyz where i < 100 order by i) order by str, i desc", 1);
     }
 
     @Test

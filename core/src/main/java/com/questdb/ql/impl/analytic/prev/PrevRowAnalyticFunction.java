@@ -31,11 +31,8 @@ import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.impl.analytic.AnalyticFunctionType;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
-import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
-
-import java.io.OutputStream;
 
 public class PrevRowAnalyticFunction implements AnalyticFunction {
     private final VirtualColumn valueColumn;
@@ -55,24 +52,6 @@ public class PrevRowAnalyticFunction implements AnalyticFunction {
     @Override
     public byte get() {
         return prevRowId == -1 ? 0 : valueColumn.get(getParentRecord());
-    }
-
-    @Override
-    public void getBin(OutputStream s) {
-        if (prevRowId == -1) {
-            return;
-        }
-        valueColumn.getBin(getParentRecord(), s);
-    }
-
-    @Override
-    public DirectInputStream getBin() {
-        return prevRowId == -1 ? null : valueColumn.getBin(getParentRecord());
-    }
-
-    @Override
-    public long getBinLen() {
-        return prevRowId == -1 ? 0 : valueColumn.getBinLen(getParentRecord());
     }
 
     @Override

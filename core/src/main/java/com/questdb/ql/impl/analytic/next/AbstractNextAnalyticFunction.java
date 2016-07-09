@@ -32,13 +32,11 @@ import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.impl.analytic.AnalyticFunctionType;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
-import com.questdb.std.DirectInputStream;
 import com.questdb.std.MemoryPages;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
-import java.io.OutputStream;
 
 public abstract class AbstractNextAnalyticFunction implements AnalyticFunction, Closeable {
 
@@ -62,21 +60,6 @@ public abstract class AbstractNextAnalyticFunction implements AnalyticFunction, 
     @Override
     public byte get() {
         return valueColumn.get(next);
-    }
-
-    @Override
-    public void getBin(OutputStream s) {
-        valueColumn.getBin(next, s);
-    }
-
-    @Override
-    public DirectInputStream getBin() {
-        return valueColumn.getBin(next);
-    }
-
-    @Override
-    public long getBinLen() {
-        return valueColumn.getBinLen(next);
     }
 
     @Override

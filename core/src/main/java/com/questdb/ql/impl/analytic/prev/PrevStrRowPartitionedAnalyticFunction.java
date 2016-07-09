@@ -33,13 +33,11 @@ import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
-import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.OutputStream;
 
 public class PrevStrRowPartitionedAnalyticFunction extends AbstractPrevAnalyticFunction implements Closeable {
     private final DirectMap map;
@@ -55,24 +53,6 @@ public class PrevStrRowPartitionedAnalyticFunction extends AbstractPrevAnalyticF
     @Override
     public byte get() {
         return nextNull ? 0 : valueColumn.get(getParentRecord());
-    }
-
-    @Override
-    public void getBin(OutputStream s) {
-        if (nextNull) {
-            return;
-        }
-        valueColumn.getBin(getParentRecord(), s);
-    }
-
-    @Override
-    public DirectInputStream getBin() {
-        return nextNull ? null : valueColumn.getBin(getParentRecord());
-    }
-
-    @Override
-    public long getBinLen() {
-        return nextNull ? 0 : valueColumn.getBinLen(getParentRecord());
     }
 
     @Override

@@ -44,7 +44,7 @@ public class NextAnalyticFunctionFactory implements AnalyticFunctionFactory {
         }
 
         if (ordered) {
-            return null;
+            return new NextOrderedPartitionedAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
         }
 
         if (partitionBy != null) {
