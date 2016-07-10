@@ -65,6 +65,7 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public void close() {
+        Misc.free(recordSource);
         for (int i = 0, n = functions.size(); i < n; i++) {
             Misc.free(functions.getQuick(i));
         }
@@ -87,6 +88,7 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public void reset() {
+        recordSource.reset();
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).reset();
         }

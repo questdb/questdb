@@ -26,6 +26,7 @@ package com.questdb.ql.impl.sort;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.RecordList;
@@ -78,8 +79,9 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     @Override
     public void close() {
-        recordList.close();
-        mem.close();
+        Misc.free(recordSource);
+        Misc.free(recordList);
+        Misc.free(mem);
     }
 
     @Override

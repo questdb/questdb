@@ -23,6 +23,7 @@
 
 package com.questdb.ql.impl.analytic.next;
 
+import com.questdb.misc.Misc;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.analytic.AbstractOrderedAnalyticFunction;
 import com.questdb.ql.impl.map.DirectMap;
@@ -64,7 +65,10 @@ public class NextOrderedPartitionedAnalyticFunction extends AbstractOrderedAnaly
 
     @Override
     public void close() throws IOException {
-        prevMap.close();
+        if (closed) {
+            return;
+        }
+        Misc.free(prevMap);
         super.close();
     }
 

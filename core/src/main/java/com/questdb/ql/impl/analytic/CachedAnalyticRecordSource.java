@@ -52,6 +52,7 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
     private final AnalyticRecordStorageFacade storageFacade;
     private final int split;
     private RecordCursor cursor;
+    private boolean closed = false;
 
     public CachedAnalyticRecordSource(
             int rowidPageSize,
@@ -94,18 +95,20 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public void close() {
-        recordList.close();
-
+        if (closed) {
+            return;
+        }
+        Misc.free(recordSource);
+        Misc.free(recordList);
         for (int i = 0; i < orderGroupCount; i++) {
-            RedBlackTree tree = orderedSources.getQuick(i);
-            if (tree != null) {
-                tree.close();
-            }
+            Misc.free(orderedSources.getQuick(i));
         }
 
         for (int i = 0, n = functions.size(); i < n; i++) {
             Misc.free(functions.getQuick(i));
         }
+
+        closed = true;
     }
 
     @Override
@@ -172,6 +175,7 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public void reset() {
+        recordSource.reset();
         recordList.clear();
         for (int i = 0; i < orderGroupCount; i++) {
             RedBlackTree tree = orderedSources.getQuick(i);

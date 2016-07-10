@@ -110,7 +110,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public void close() {
-        map.close();
+        Misc.free(map);
         Misc.free(recordSource);
     }
 

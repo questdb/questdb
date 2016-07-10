@@ -1,31 +1,33 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
 
+import com.questdb.ex.DisconnectedChannelRuntimeException;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
@@ -41,7 +43,7 @@ import com.questdb.std.RedBlackTree;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource {
-
+    private final static Log LOG = LogFactory.getLog(CachedRowAnalyticRecordSource.class);
     private final RecordList recordList;
     private final RecordSource recordSource;
     private final ObjList<RedBlackTree> orderedSources;
@@ -90,20 +92,18 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
 
     @Override
     public void close() {
-        if (recordList != null) {
-            recordList.close();
-        }
-
+        Misc.free(recordSource);
+        Misc.free(recordList);
         for (int i = 0; i < orderGroupCount; i++) {
-            RedBlackTree tree = orderedSources.getQuick(i);
-            if (tree != null) {
-                tree.close();
-            }
+            Misc.free(orderedSources.getQuick(i));
         }
+        orderedSources.clear();
 
         for (int i = 0, n = functions.size(); i < n; i++) {
             Misc.free(functions.getQuick(i));
         }
+        functions.clear();
+
     }
 
     @Override
@@ -113,81 +113,86 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+        LOG.debug().$("Preparing ").$(this).$();
         RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.parentCursor = cursor;
         this.storageFacade.prepare(factory, cursor.getStorageFacade());
 
-        // red&black trees, one for each comparator where comparator is not null
-        for (int i = 0; i < orderGroupCount; i++) {
-            RecordComparator cmp = comparators.getQuick(i);
-            if (cmp != null) {
-                orderedSources.add(new RedBlackTree(new MyComparator(cmp, cursor), pageSize));
-            } else {
-                orderedSources.add(null);
-            }
-        }
-
-        // step #1: store source cursor in record list
-        // - add record list' row ids to all trees, which will put these row ids in necessary order
-        // for this we will be using out comparator, which helps tree compare long values
-        // based on record these values are addressing
-        long rowid = -1;
-        while (cursor.hasNext()) {
-            cancellationHandler.check();
-            Record record = cursor.next();
-            long row = record.getRowId();
-            rowid = recordList.append(fakeRecord.of(row), rowid);
-            if (orderGroupCount > 0) {
-                for (int i = 0; i < orderGroupCount; i++) {
-                    RedBlackTree tree = orderedSources.getQuick(i);
-                    if (tree != null) {
-                        tree.add(row);
-                    }
+        try {
+            // red&black trees, one for each comparator where comparator is not null
+            for (int i = 0; i < orderGroupCount; i++) {
+                RecordComparator cmp = comparators.getQuick(i);
+                if (cmp != null) {
+                    orderedSources.add(new RedBlackTree(new MyComparator(cmp, cursor), pageSize));
+                } else {
+                    orderedSources.add(null);
                 }
             }
-        }
 
-        for (int i = 0; i < orderGroupCount; i++) {
-            RedBlackTree tree = orderedSources.getQuick(i);
-            ObjList<AnalyticFunction> functions = functionGroups.getQuick(i);
-            if (tree != null) {
-                // step #2: populate all analytic functions with records in order of respective tree
-                RedBlackTree.LongIterator iterator = tree.iterator();
-                while (iterator.hasNext()) {
-
-                    cancellationHandler.check();
-
-                    Record record = cursor.recordAt(iterator.next());
-                    for (int j = 0, n = functions.size(); j < n; j++) {
-                        functions.getQuick(j).add(record);
-                    }
-                }
-            } else {
-                // step #2: alternatively run record list through two-pass functions
-                for (int j = 0, n = functions.size(); j < n; j++) {
-                    AnalyticFunction f = functions.getQuick(j);
-                    if (f.getType() != AnalyticFunctionType.STREAM) {
-                        recordList.toTop();
-                        while (recordList.hasNext()) {
-                            f.add(cursor.recordAt(recordList.next().getLong(0)));
+            // step #1: store source cursor in record list
+            // - add record list' row ids to all trees, which will put these row ids in necessary order
+            // for this we will be using out comparator, which helps tree compare long values
+            // based on record these values are addressing
+            long rowid = -1;
+            while (cursor.hasNext()) {
+                cancellationHandler.check();
+                Record record = cursor.next();
+                long row = record.getRowId();
+                rowid = recordList.append(fakeRecord.of(row), rowid);
+                if (orderGroupCount > 0) {
+                    for (int i = 0; i < orderGroupCount; i++) {
+                        RedBlackTree tree = orderedSources.getQuick(i);
+                        if (tree != null) {
+                            tree.add(row);
                         }
                     }
                 }
             }
-        }
 
-        recordList.toTop();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).prepare(cursor);
+            for (int i = 0; i < orderGroupCount; i++) {
+                RedBlackTree tree = orderedSources.getQuick(i);
+                ObjList<AnalyticFunction> functions = functionGroups.getQuick(i);
+                if (tree != null) {
+                    // step #2: populate all analytic functions with records in order of respective tree
+                    RedBlackTree.LongIterator iterator = tree.iterator();
+                    while (iterator.hasNext()) {
+
+                        cancellationHandler.check();
+
+                        Record record = cursor.recordAt(iterator.next());
+                        for (int j = 0, n = functions.size(); j < n; j++) {
+                            functions.getQuick(j).add(record);
+                        }
+                    }
+                } else {
+                    // step #2: alternatively run record list through two-pass functions
+                    for (int j = 0, n = functions.size(); j < n; j++) {
+                        AnalyticFunction f = functions.getQuick(j);
+                        if (f.getType() != AnalyticFunctionType.STREAM) {
+                            recordList.toTop();
+                            while (recordList.hasNext()) {
+                                f.add(cursor.recordAt(recordList.next().getLong(0)));
+                            }
+                        }
+                    }
+                }
+            }
+
+            recordList.toTop();
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                functions.getQuick(i).prepare(cursor);
+            }
+        } catch (DisconnectedChannelRuntimeException e) {
+            LOG.debug().$("Cancelling ").$(this).$();
+            throw e;
         }
         return this;
     }
 
     @Override
     public void reset() {
-        if (recordList != null) {
-            recordList.clear();
-        }
+        recordSource.reset();
+        recordList.clear();
 
         for (int i = 0; i < orderGroupCount; i++) {
             RedBlackTree tree = orderedSources.getQuick(i);
@@ -196,6 +201,7 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
             }
         }
 
+        orderedSources.clear();
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).reset();
         }
@@ -254,13 +260,17 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
 
         @Override
         public int compare(long right) {
+            assert right > -1;
             cursor.recordAt(this.right, right);
+            assert this.right != null;
             return delegate.compare(this.right);
         }
 
         @Override
         public void setLeft(long left) {
+            assert left > -1;
             cursor.recordAt(this.left, left);
+            assert this.left != null;
             delegate.setLeft(this.left);
         }
     }

@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.net.http;
@@ -26,6 +25,8 @@ package com.questdb.net.http;
 import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.SlowWritableChannelException;
 import com.questdb.iter.clock.Clock;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.Misc;
 import com.questdb.net.NetworkChannel;
 import com.questdb.net.NonBlockingSecureSocketChannel;
@@ -37,6 +38,7 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class IOContext implements Closeable, Mutable, Locality {
+    private static final Log LOG = LogFactory.getLog(IOContext.class);
     public final NetworkChannel channel;
     public final Request request;
     private final ServerConfiguration serverConfiguration;
@@ -67,11 +69,13 @@ public class IOContext implements Closeable, Mutable, Locality {
     @Override
     public void close() {
         if (open.compareAndSet(true, false)) {
+            LOG.debug().$("Releasing context for ").$(channel.getFd()).$();
             // !!! it is important not to close request before closing local value map !!!
             Misc.free(map);
             Misc.free(channel);
             Misc.free(request);
             Misc.free(response);
+            LOG.debug().$("Released context for ").$(channel.getFd()).$();
         }
     }
 

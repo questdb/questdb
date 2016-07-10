@@ -22,6 +22,7 @@
 
 package com.questdb.ql.impl.analytic.next;
 
+import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMap;
@@ -60,7 +61,7 @@ public class NextPartitionedAnalyticFunction extends AbstractNextAnalyticFunctio
     @Override
     public void close() {
         super.close();
-        map.close();
+        Misc.free(map);
     }
 
     @Override

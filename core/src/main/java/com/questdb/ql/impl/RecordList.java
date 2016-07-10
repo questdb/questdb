@@ -26,6 +26,7 @@ package com.questdb.ql.impl;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Chars;
+import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
@@ -73,7 +74,7 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
 
     @Override
     public void close() {
-        mem.close();
+        Misc.free(mem);
     }
 
     @Override

@@ -115,15 +115,11 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
         }
 
         if (unwrapped.hasRemaining()) {
-//            System.out.println("copied");
             ByteBuffers.copy(unwrapped, dst);
         }
 
         OUT:
         while ((limit = dst.remaining()) > 0) {
-
-//            System.out.println(readState);
-
             switch (readState) {
                 case READ_CLEAN_CHANNEL:
                     in.clear();

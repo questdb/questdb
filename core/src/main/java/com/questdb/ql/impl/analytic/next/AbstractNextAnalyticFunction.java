@@ -24,6 +24,7 @@
 package com.questdb.ql.impl.analytic.next;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
@@ -54,7 +55,7 @@ public abstract class AbstractNextAnalyticFunction implements AnalyticFunction, 
 
     @Override
     public void close() {
-        pages.close();
+        Misc.free(pages);
     }
 
     @Override

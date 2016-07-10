@@ -24,6 +24,7 @@
 package com.questdb.ql.impl.analytic;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.misc.Misc;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.NullRecord;
@@ -41,6 +42,7 @@ public abstract class AbstractOrderedAnalyticFunction implements AnalyticFunctio
 
     protected final DirectMap map;
     private final VirtualColumn valueColumn;
+    protected boolean closed = false;
     private Record out;
     private Record record;
     private RecordCursor cursor;
@@ -52,7 +54,11 @@ public abstract class AbstractOrderedAnalyticFunction implements AnalyticFunctio
 
     @Override
     public void close() throws IOException {
-        map.close();
+        if (closed) {
+            return;
+        }
+        Misc.free(map);
+        closed = true;
     }
 
     @Override
