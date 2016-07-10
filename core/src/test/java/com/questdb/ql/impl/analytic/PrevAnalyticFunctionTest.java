@@ -805,7 +805,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
         final String expected = "{\n" +
                 "  \"op\": \"SelectedColumnsRecordSource\",\n" +
                 "  \"src\": {\n" +
-                "    \"op\": \"AnalyticRecordSource\",\n" +
+                "    \"op\": \"CachedAnalyticRecordSource\",\n" +
                 "    \"functions\": 1,\n" +
                 "    \"src\": {\n" +
                 "      \"op\": \"NoRowIdRecordSource\",\n" +
@@ -845,7 +845,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
         assertPlan2("{\n" +
                 "  \"op\": \"SelectedColumnsRecordSource\",\n" +
                 "  \"src\": {\n" +
-                "    \"op\": \"AnalyticRecordSource\",\n" +
+                "    \"op\": \"CachedAnalyticRecordSource\",\n" +
                 "    \"functions\": 1,\n" +
                 "    \"src\": {\n" +
                 "      \"op\": \"JournalRecordSource\",\n" +

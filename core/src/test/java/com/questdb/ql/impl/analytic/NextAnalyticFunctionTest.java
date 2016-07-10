@@ -447,7 +447,7 @@ public class NextAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
         assertPlan2("{\n" +
                         "  \"op\": \"SelectedColumnsRecordSource\",\n" +
                         "  \"src\": {\n" +
-                        "    \"op\": \"AnalyticRecordSource\",\n" +
+                        "    \"op\": \"CachedAnalyticRecordSource\",\n" +
                         "    \"functions\": 1,\n" +
                         "    \"src\": {\n" +
                         "      \"op\": \"JournalRecordSource\",\n" +

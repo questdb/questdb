@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.parser;
@@ -38,9 +39,7 @@ import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.*;
 import com.questdb.ql.impl.aggregation.*;
-import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.ql.impl.analytic.AnalyticFunctionFactories;
-import com.questdb.ql.impl.analytic.AnalyticRecordSource;
+import com.questdb.ql.impl.analytic.*;
 import com.questdb.ql.impl.interval.IntervalRecordSource;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.questdb.ql.impl.interval.SingleIntervalSource;
@@ -121,7 +120,6 @@ public class QueryCompiler {
     private final ComparatorCompiler cc = new ComparatorCompiler();
     private final LiteralMatcher literalMatcher = new LiteralMatcher(traversalAlgo);
     private final ServerConfiguration configuration;
-    private final ObjList<RecordComparator> analyticComparators = new ObjList<>();
     private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> grouppedAnalytic = new ObjObjHashMap<>();
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
@@ -570,13 +568,10 @@ public class QueryCompiler {
 
     private RecordSource compileAnalytic(RecordSource rs, QueryModel model) throws ParserException {
         final int n = analyticColumns.size();
-
         grouppedAnalytic.clear();
-        analyticComparators.clear();
-
         final RecordMetadata metadata = rs.getMetadata();
-
         ObjList<AnalyticFunction> naturalOrderFunctions = null;
+        boolean needCache = false;
 
         for (int i = 0; i < n; i++) {
             AnalyticColumn col = analyticColumns.getQuick(i);
@@ -621,33 +616,48 @@ public class QueryCompiler {
                     grouppedAnalytic.put(order, funcs = new ObjList<>());
                 }
                 funcs.add(f);
+                needCache = true;
             } else {
-
                 if (naturalOrderFunctions == null) {
                     naturalOrderFunctions = new ObjList<>();
                 }
+                needCache = needCache || f.getType() != AnalyticFunctionType.STREAM;
                 naturalOrderFunctions.add(f);
             }
         }
 
-        ObjList<ObjList<AnalyticFunction>> funcs = new ObjList<>(grouppedAnalytic.size());
-        for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
-            analyticComparators.add(cc.compile(metadata, e.key));
-            funcs.add(e.value);
-        }
 
-        if (naturalOrderFunctions != null) {
-            analyticComparators.add(null);
-            funcs.add(naturalOrderFunctions);
-        }
+        if (needCache) {
+            final ObjList<RecordComparator> analyticComparators = new ObjList<>(grouppedAnalytic.size());
+            final ObjList<ObjList<AnalyticFunction>> functionGroups = new ObjList<>(grouppedAnalytic.size());
+            for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
+                analyticComparators.add(cc.compile(metadata, e.key));
+                functionGroups.add(e.value);
+            }
 
-        return new AnalyticRecordSource(
-                configuration.getDbAnalyticWindowPage(),
-                configuration.getDbSortKeyPage(),
-                rs,
-                analyticComparators,
-                funcs
-        );
+            if (naturalOrderFunctions != null) {
+                analyticComparators.add(null);
+                functionGroups.add(naturalOrderFunctions);
+            }
+
+            if (rs.supportsRowIdAccess()) {
+                return new CachedRowAnalyticRecordSource(
+                        configuration.getDbAnalyticWindowPage(),
+                        rs,
+                        analyticComparators,
+                        functionGroups);
+            }
+
+            return new CachedAnalyticRecordSource(
+                    configuration.getDbAnalyticWindowPage(),
+                    configuration.getDbSortKeyPage(),
+                    rs,
+                    analyticComparators,
+                    functionGroups
+            );
+        } else {
+            return new AnalyticRecordSource(rs, naturalOrderFunctions);
+        }
     }
 
     private RecordSource compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
