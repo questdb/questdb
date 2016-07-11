@@ -26,6 +26,7 @@ package com.questdb;
 import com.questdb.factory.JournalFactory;
 import com.questdb.factory.JournalFactoryPool;
 import com.questdb.log.*;
+import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
@@ -88,7 +89,7 @@ class BootstrapMain {
         HttpServer server = new HttpServer(configuration, matcher);
         server.start(LogFactory.INSTANCE.getJobs(), configuration.getHttpQueueDepth());
 
-        StringBuilder welcome = new StringBuilder();
+        StringBuilder welcome = Misc.getThreadLocalBuilder();
         welcome.append("Listening on ").append(configuration.getHttpIP()).append(':').append(configuration.getHttpPort());
         if (configuration.getSslConfig().isSecure()) {
             welcome.append(" [HTTPS]");

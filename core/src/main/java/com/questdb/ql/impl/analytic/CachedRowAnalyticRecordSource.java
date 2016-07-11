@@ -22,12 +22,9 @@
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.ex.DisconnectedChannelRuntimeException;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.log.Log;
-import com.questdb.log.LogFactory;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
@@ -43,7 +40,6 @@ import com.questdb.std.RedBlackTree;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource {
-    private final static Log LOG = LogFactory.getLog(CachedRowAnalyticRecordSource.class);
     private final RecordList recordList;
     private final RecordSource recordSource;
     private final ObjList<RedBlackTree> orderedSources;
@@ -113,78 +109,72 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
-        LOG.debug().$("Preparing ").$(this).$();
         RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.parentCursor = cursor;
         this.storageFacade.prepare(factory, cursor.getStorageFacade());
 
-        try {
-            // red&black trees, one for each comparator where comparator is not null
-            for (int i = 0; i < orderGroupCount; i++) {
-                RecordComparator cmp = comparators.getQuick(i);
-                if (cmp != null) {
-                    orderedSources.add(new RedBlackTree(new MyComparator(cmp, cursor), pageSize));
-                } else {
-                    orderedSources.add(null);
-                }
+        // red&black trees, one for each comparator where comparator is not null
+        for (int i = 0; i < orderGroupCount; i++) {
+            RecordComparator cmp = comparators.getQuick(i);
+            if (cmp != null) {
+                orderedSources.add(new RedBlackTree(new MyComparator(cmp, cursor), pageSize));
+            } else {
+                orderedSources.add(null);
             }
+        }
 
-            // step #1: store source cursor in record list
-            // - add record list' row ids to all trees, which will put these row ids in necessary order
-            // for this we will be using out comparator, which helps tree compare long values
-            // based on record these values are addressing
-            long rowid = -1;
-            while (cursor.hasNext()) {
-                cancellationHandler.check();
-                Record record = cursor.next();
-                long row = record.getRowId();
-                rowid = recordList.append(fakeRecord.of(row), rowid);
-                if (orderGroupCount > 0) {
-                    for (int i = 0; i < orderGroupCount; i++) {
-                        RedBlackTree tree = orderedSources.getQuick(i);
-                        if (tree != null) {
-                            tree.add(row);
-                        }
+        // step #1: store source cursor in record list
+        // - add record list' row ids to all trees, which will put these row ids in necessary order
+        // for this we will be using out comparator, which helps tree compare long values
+        // based on record these values are addressing
+        long rowid = -1;
+        while (cursor.hasNext()) {
+            cancellationHandler.check();
+            Record record = cursor.next();
+            long row = record.getRowId();
+            rowid = recordList.append(fakeRecord.of(row), rowid);
+            if (orderGroupCount > 0) {
+                for (int i = 0; i < orderGroupCount; i++) {
+                    RedBlackTree tree = orderedSources.getQuick(i);
+                    if (tree != null) {
+                        tree.add(row);
                     }
                 }
             }
+        }
 
-            for (int i = 0; i < orderGroupCount; i++) {
-                RedBlackTree tree = orderedSources.getQuick(i);
-                ObjList<AnalyticFunction> functions = functionGroups.getQuick(i);
-                if (tree != null) {
-                    // step #2: populate all analytic functions with records in order of respective tree
-                    RedBlackTree.LongIterator iterator = tree.iterator();
-                    while (iterator.hasNext()) {
+        for (int i = 0; i < orderGroupCount; i++) {
+            RedBlackTree tree = orderedSources.getQuick(i);
+            ObjList<AnalyticFunction> functions = functionGroups.getQuick(i);
+            if (tree != null) {
+                // step #2: populate all analytic functions with records in order of respective tree
+                RedBlackTree.LongIterator iterator = tree.iterator();
+                while (iterator.hasNext()) {
 
-                        cancellationHandler.check();
+                    cancellationHandler.check();
 
-                        Record record = cursor.recordAt(iterator.next());
-                        for (int j = 0, n = functions.size(); j < n; j++) {
-                            functions.getQuick(j).add(record);
-                        }
-                    }
-                } else {
-                    // step #2: alternatively run record list through two-pass functions
+                    Record record = cursor.recordAt(iterator.next());
                     for (int j = 0, n = functions.size(); j < n; j++) {
-                        AnalyticFunction f = functions.getQuick(j);
-                        if (f.getType() != AnalyticFunctionType.STREAM) {
-                            recordList.toTop();
-                            while (recordList.hasNext()) {
-                                f.add(cursor.recordAt(recordList.next().getLong(0)));
-                            }
+                        functions.getQuick(j).add(record);
+                    }
+                }
+            } else {
+                // step #2: alternatively run record list through two-pass functions
+                for (int j = 0, n = functions.size(); j < n; j++) {
+                    AnalyticFunction f = functions.getQuick(j);
+                    if (f.getType() != AnalyticFunctionType.STREAM) {
+                        recordList.toTop();
+                        while (recordList.hasNext()) {
+                            f.add(cursor.recordAt(recordList.next().getLong(0)));
                         }
                     }
                 }
             }
+        }
 
-            recordList.toTop();
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                functions.getQuick(i).prepare(cursor);
-            }
-        } catch (DisconnectedChannelRuntimeException e) {
-            LOG.debug().$("Cancelling ").$(this).$();
-            throw e;
+        recordList.toTop();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).prepare(cursor);
         }
         return this;
     }

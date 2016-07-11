@@ -24,9 +24,8 @@ package com.questdb.misc;
 
 import com.questdb.ex.FatalError;
 import com.questdb.ex.NumericException;
-import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.DirectByteCharSequence;
-import com.questdb.std.ObjectPool;
+import com.questdb.std.*;
+import com.questdb.std.ThreadLocal;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
@@ -34,6 +33,12 @@ import java.io.IOException;
 
 public final class Misc {
     public static final String EOL = "\r\n";
+    private final static ThreadLocal<StringBuilder> tlBuilder = new ThreadLocal<>(new ObjectFactory<StringBuilder>() {
+        @Override
+        public StringBuilder newInstance() {
+            return new StringBuilder();
+        }
+    });
 
     private Misc() {
     }
@@ -49,6 +54,12 @@ public final class Misc {
             }
         }
         return null;
+    }
+
+    public static StringBuilder getThreadLocalBuilder() {
+        StringBuilder b = tlBuilder.get();
+        b.setLength(0);
+        return b;
     }
 
     public static int urlDecode(long lo, long hi, CharSequenceObjHashMap<CharSequence> map, ObjectPool<DirectByteCharSequence> pool) {

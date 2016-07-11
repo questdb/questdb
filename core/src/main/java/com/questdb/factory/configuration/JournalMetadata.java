@@ -28,6 +28,7 @@ import com.questdb.PartitionType;
 import com.questdb.ex.JournalConfigurationException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.misc.Chars;
+import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.store.UnstructuredFile;
@@ -277,7 +278,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     @Override
     public String toString() {
 
-        StringBuilder b = new StringBuilder();
+        StringBuilder b = Misc.getThreadLocalBuilder();
         sep(b);
         b.append('|');
         pad(b, TO_STRING_COL1_PAD, "Location:");

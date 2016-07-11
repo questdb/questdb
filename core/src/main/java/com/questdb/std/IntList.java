@@ -1,28 +1,28 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.std;
 
+import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 
 import java.util.Arrays;
@@ -32,7 +32,6 @@ public class IntList implements Mutable {
     private static final int noEntryValue = -1;
     private int[] buffer;
     private int pos = 0;
-    private StringBuilder toStringBuilder;
 
     @SuppressWarnings("unchecked")
     public IntList() {
@@ -177,20 +176,18 @@ public class IntList implements Mutable {
      */
     @Override
     public String toString() {
-        if (toStringBuilder == null) {
-            toStringBuilder = new StringBuilder();
-        }
+        StringBuilder b = Misc.getThreadLocalBuilder();
 
-        toStringBuilder.setLength(0);
-        toStringBuilder.append('[');
+        b.setLength(0);
+        b.append('[');
         for (int i = 0, k = size(); i < k; i++) {
             if (i > 0) {
-                toStringBuilder.append(',');
+                b.append(',');
             }
-            toStringBuilder.append(get(i));
+            b.append(get(i));
         }
-        toStringBuilder.append(']');
-        return toStringBuilder.toString();
+        b.append(']');
+        return b.toString();
     }
 
     public void increment(int index) {

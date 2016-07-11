@@ -23,6 +23,7 @@
 
 package com.questdb.io.sink;
 
+import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSink;
 
@@ -67,7 +68,7 @@ public class DirectUnboundedAnsiSink extends AbstractCharSink {
 
     @Override
     public String toString() {
-        StringBuilder b = new StringBuilder();
+        StringBuilder b = Misc.getThreadLocalBuilder();
         for (long p = address, hi = _wptr; p < hi; p++) {
             b.append((char) Unsafe.getUnsafe().getByte(p));
         }

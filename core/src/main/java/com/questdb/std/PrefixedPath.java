@@ -23,6 +23,7 @@
 
 package com.questdb.std;
 
+import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -107,7 +108,7 @@ public final class PrefixedPath extends AbstractCharSequence implements Closeabl
             return "";
         }
 
-        StringBuilder builder = new StringBuilder();
+        StringBuilder builder = Misc.getThreadLocalBuilder();
         long p = this.ptr;
         byte b;
         while ((b = Unsafe.getUnsafe().getByte(p++)) != 0) {

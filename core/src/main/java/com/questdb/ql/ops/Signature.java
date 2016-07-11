@@ -23,6 +23,7 @@
 
 package com.questdb.ql.ops;
 
+import com.questdb.misc.Misc;
 import com.questdb.std.IntList;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
@@ -30,9 +31,8 @@ import com.questdb.store.ColumnType;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class Signature implements Mutable {
-    public final ObjList<ColumnType> paramTypes = new ObjList<>();
-    private final IntList constParams = new IntList();
-    private final StringBuilder b = new StringBuilder();
+    public final ObjList<ColumnType> paramTypes = new ObjList<>(2);
+    private final IntList constParams = new IntList(2);
     public CharSequence name;
     public int paramCount;
 
@@ -72,6 +72,7 @@ public final class Signature implements Mutable {
     }
 
     public CharSequence userReadable() {
+        StringBuilder b = Misc.getThreadLocalBuilder();
         b.setLength(0);
         b.append('\'');
         b.append(name);

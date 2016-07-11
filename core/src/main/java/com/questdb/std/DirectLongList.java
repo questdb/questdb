@@ -23,6 +23,7 @@
 
 package com.questdb.std;
 
+import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 
 public class DirectLongList extends DirectMemoryStructure implements Mutable {
@@ -135,7 +136,7 @@ public class DirectLongList extends DirectMemoryStructure implements Mutable {
 
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder();
+        StringBuilder sb = Misc.getThreadLocalBuilder();
         sb.append('{');
         for (int i = 0; i < size(); i++) {
             if (i > 0) {
