@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.parser;
@@ -529,6 +528,7 @@ public class QueryCompiler {
     private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         optimiseOrderBy(model, OrderByState.UNKNOWN);
         optimiseSubQueries(model, factory);
+        createOrderHash(model);
         return compileNoOptimise(model, factory);
     }
 
@@ -596,20 +596,36 @@ public class QueryCompiler {
             VirtualColumn valueColumn = virtualColumnBuilder.createVirtualColumn(model, col.getAst().rhs, metadata);
             valueColumn.setName(col.getAlias());
 
+            final int osz = col.getOrderBy().size();
             AnalyticFunction f = AnalyticFunctionFactories.newInstance(
                     configuration,
                     col.getAst().token,
                     valueColumn,
                     partitionBy,
                     rs.supportsRowIdAccess(),
-                    col.getOrderBy().size() > 0
+                    osz > 0
             );
 
             if (f == null) {
                 throw QueryError.$(col.getAst().position, "Unknown function");
             }
+            CharSequenceIntHashMap orderHash = model.getOrderHash();
 
-            if (col.getOrderBy().size() > 0) {
+            boolean dismissOrder;
+            if (osz > 0 && orderHash.size() > 0) {
+                dismissOrder = true;
+                for (int j = 0; j < osz; j++) {
+                    ExprNode node = col.getOrderBy().getQuick(j);
+                    int direction = col.getOrderByDirection().getQuick(j);
+                    if (orderHash.get(node.token) != direction) {
+                        dismissOrder = false;
+                    }
+                }
+            } else {
+                dismissOrder = false;
+            }
+
+            if (osz > 0 && !dismissOrder) {
                 IntList order = toOrderIndices(metadata, col.getOrderBy(), col.getOrderByDirection());
                 ObjList<AnalyticFunction> funcs = grouppedAnalytic.get(order);
                 if (funcs == null) {
@@ -927,6 +943,7 @@ public class QueryCompiler {
             rs = compileJournal(model, factory);
         } else {
             rs = compileSubQuery(model, factory);
+            model.getNestedModel().setRecordSource(rs);
         }
 
         return limit(order(selectColumns(rs, model), model), model);
@@ -1107,6 +1124,39 @@ public class QueryCompiler {
                     m.setContext(jc = contextPool.next());
                     jc.parents.add(0);
                     jc.slaveIndex = i;
+                }
+            }
+        }
+    }
+
+    private void createOrderHash(QueryModel model) {
+        CharSequenceIntHashMap hash = model.getOrderHash();
+        hash.clear();
+
+        final ObjList<ExprNode> orderBy = model.getOrderBy();
+        final int n = orderBy.size();
+        final ObjList<QueryColumn> columns = model.getColumns();
+        final int m = columns.size();
+        final QueryModel nestedModel = model.getNestedModel();
+
+        if (n > 0) {
+            final IntList orderByDirection = model.getOrderByDirection();
+            for (int i = 0; i < n; i++) {
+                hash.put(orderBy.getQuick(i).token, orderByDirection.getQuick(i));
+            }
+        } else if (nestedModel != null && m > 0) {
+            createOrderHash(nestedModel);
+            CharSequenceIntHashMap thatHash = nestedModel.getOrderHash();
+            if (thatHash.size() > 0) {
+                for (int i = 0; i < m; i++) {
+                    QueryColumn column = columns.getQuick(i);
+                    ExprNode node = column.getAst();
+                    if (node.type == ExprNode.NodeType.LITERAL) {
+                        int direction = thatHash.get(node.token);
+                        if (direction != -1) {
+                            hash.put(column.getAlias() == null ? node.token : column.getAlias(), direction);
+                        }
+                    }
                 }
             }
         }

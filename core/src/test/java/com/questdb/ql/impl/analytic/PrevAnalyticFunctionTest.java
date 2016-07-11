@@ -1,24 +1,23 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
+ * ___                  _   ____  ____
+ * / _ \ _   _  ___  ___| |_|  _ \| __ )
+ * | | | | | | |/ _ \/ __| __| | | |  _ \
+ * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ * \__\_\\__,_|\___||___/\__|____/|____/
+ * <p>
  * Copyright (C) 2014-2016 Appsicle
- *
+ * <p>
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- *
+ * <p>
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- *
+ * <p>
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
@@ -670,6 +669,84 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     }
 
     @Test
+    public void testImplicitOrderFromSubQueryOnRenamedColumn() throws Exception {
+        final String expected = "BZ\tBZ\t\t2016-05-01T10:21:00.000Z\n" +
+                "BZ\tXX\tBZ\t2016-05-01T10:22:00.000Z\n" +
+                "XX\tKK\t\t2016-05-01T10:23:00.000Z\n" +
+                "XX\tAX\tKK\t2016-05-01T10:24:00.000Z\n" +
+                "XX\tAX\tAX\t2016-05-01T10:25:00.000Z\n" +
+                "BZ\tAX\tXX\t2016-05-01T10:26:00.000Z\n" +
+                "XX\tBZ\tAX\t2016-05-01T10:27:00.000Z\n" +
+                "KK\tBZ\t\t2016-05-01T10:28:00.000Z\n" +
+                "KK\tAX\tBZ\t2016-05-01T10:29:00.000Z\n" +
+                "AX\tBZ\t\t2016-05-01T10:30:00.000Z\n" +
+                "KK\tXX\tAX\t2016-05-01T10:31:00.000Z\n" +
+                "AX\tKK\tBZ\t2016-05-01T10:32:00.000Z\n" +
+                "AX\tAX\tKK\t2016-05-01T10:33:00.000Z\n" +
+                "BZ\tBZ\tAX\t2016-05-01T10:34:00.000Z\n" +
+                "AX\tXX\tAX\t2016-05-01T10:35:00.000Z\n" +
+                "AX\tAX\tXX\t2016-05-01T10:36:00.000Z\n" +
+                "KK\tXX\tXX\t2016-05-01T10:37:00.000Z\n" +
+                "AX\tAX\tAX\t2016-05-01T10:38:00.000Z\n" +
+                "BZ\tBZ\tBZ\t2016-05-01T10:39:00.000Z\n" +
+                "AX\tBZ\tAX\t2016-05-01T10:40:00.000Z\n";
+
+        assertThat(expected, "select sym, str, prev(str) over (partition by sym order by x), x from (select timestamp x, sym, str from (abc order by timestamp))");
+
+        assertPlan2("{\n" +
+                "  \"op\": \"SelectedColumnsRecordSource\",\n" +
+                "  \"src\": {\n" +
+                "    \"op\": \"CachedRowAnalyticRecordSource\",\n" +
+                "    \"functions\": 1,\n" +
+                "    \"orderedSources\": 0,\n" +
+                "    \"src\": {\n" +
+                "      \"op\": \"SelectedColumnsRecordSource\",\n" +
+                "      \"src\": {\n" +
+                "        \"op\": \"RBTreeSortedRecordSource\",\n" +
+                "        \"byRowId\": true,\n" +
+                "        \"src\": {\n" +
+                "          \"op\": \"JournalRecordSource\",\n" +
+                "          \"psrc\": {\n" +
+                "            \"op\": \"JournalPartitionSource\",\n" +
+                "            \"journal\": \"abc\"\n" +
+                "          },\n" +
+                "          \"rsrc\": {\n" +
+                "            \"op\": \"AllRowSource\"\n" +
+                "          }\n" +
+                "        }\n" +
+                "      }\n" +
+                "    }\n" +
+                "  }\n" +
+                "}", "select sym, str, prev(str) over (partition by sym order by x), x from (select timestamp x, sym, str from (abc order by timestamp))");
+    }
+
+    @Test
+    public void testImplicitOrderSimple() throws Exception {
+        assertPlan2("{\n" +
+                "  \"op\": \"RBTreeSortedRecordSource\",\n" +
+                "  \"byRowId\": false,\n" +
+                "  \"src\": {\n" +
+                "    \"op\": \"SelectedColumnsRecordSource\",\n" +
+                "    \"src\": {\n" +
+                "      \"op\": \"CachedRowAnalyticRecordSource\",\n" +
+                "      \"functions\": 1,\n" +
+                "      \"orderedSources\": 0,\n" +
+                "      \"src\": {\n" +
+                "        \"op\": \"JournalRecordSource\",\n" +
+                "        \"psrc\": {\n" +
+                "          \"op\": \"JournalPartitionSource\",\n" +
+                "          \"journal\": \"abc\"\n" +
+                "        },\n" +
+                "        \"rsrc\": {\n" +
+                "          \"op\": \"AllRowSource\"\n" +
+                "        }\n" +
+                "      }\n" +
+                "    }\n" +
+                "  }\n" +
+                "}", "select sym, str, prev(str) over (partition by sym order by timestamp), timestamp from abc order by timestamp");
+    }
+
+    @Test
     public void testIntOrdered() throws Exception {
         final String expected = "8920866532787660373\t-1148479920\t2016-05-01T10:21:00.000Z\t-1383560599\n" +
                 "-6943924477733600060\t-2041844972\t2016-05-01T10:22:00.000Z\t-1787109293\n" +
@@ -1179,6 +1256,27 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
         assertThat(expected, "select l, str, timestamp , prev(str) over (order by l) from abc");
         assertThat(expected, "select l, str, timestamp , prev(str) over (order by l) from '*!*abc'");
         assertString("select l, str, timestamp , prev(str) over (order by l) from abc", 3);
+        assertPlan2("{\n" +
+                "  \"op\": \"SelectedColumnsRecordSource\",\n" +
+                "  \"src\": {\n" +
+                "    \"op\": \"CachedAnalyticRecordSource\",\n" +
+                "    \"functions\": 1,\n" +
+                "    \"orderedSources\": 1,\n" +
+                "    \"src\": {\n" +
+                "      \"op\": \"NoRowIdRecordSource\",\n" +
+                "      \"src\": {\n" +
+                "        \"op\": \"JournalRecordSource\",\n" +
+                "        \"psrc\": {\n" +
+                "          \"op\": \"JournalPartitionSource\",\n" +
+                "          \"journal\": \"abc\"\n" +
+                "        },\n" +
+                "        \"rsrc\": {\n" +
+                "          \"op\": \"AllRowSource\"\n" +
+                "        }\n" +
+                "      }\n" +
+                "    }\n" +
+                "  }\n" +
+                "}", "select l, str, timestamp , prev(str) over (order by l) from '*!*abc'");
     }
 
     @Test

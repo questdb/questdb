@@ -231,6 +231,7 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("CachedRowAnalyticRecordSource").put(',');
         sink.putQuoted("functions").put(':').put(functions.size()).put(',');
+        sink.putQuoted("orderedSources").put(':').put(orderedSources.size()).put(',');
         sink.putQuoted("src").put(':').put(recordSource);
         sink.put('}');
     }
