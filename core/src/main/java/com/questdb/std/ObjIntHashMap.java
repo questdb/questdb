@@ -94,22 +94,9 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
 
     public void put(K key, int value) {
         int index = key.hashCode() & mask;
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
-            free--;
-            if (free == 0) {
-                rehash();
-            }
-            return;
+        if (cantPutAt(index, key, value)) {
+            probeInsert(key, index, value);
         }
-
-        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-            Unsafe.arrayPut(values, index, value);
-            return;
-        }
-
-        probeInsert(key, index, value);
     }
 
     public boolean putIfAbsent(K key, int value) {
@@ -131,6 +118,24 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         return capacity - free;
     }
 
+    private boolean cantPutAt(int index, K key, int value) {
+        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+            Unsafe.arrayPut(keys, index, key);
+            Unsafe.arrayPut(values, index, value);
+            free--;
+            if (free == 0) {
+                rehash();
+            }
+            return false;
+        }
+
+        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+            Unsafe.arrayPut(values, index, value);
+            return false;
+        }
+        return true;
+    }
+
     private int probe(K key, int index) {
         do {
             index = (index + 1) & mask;
@@ -146,21 +151,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     private void probeInsert(K key, int index, int value) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, value);
-                free--;
-                if (free == 0) {
-                    rehash();
-                }
-                return;
-            }
-
-            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-                Unsafe.arrayPut(values, index, value);
-                return;
-            }
-        } while (true);
+        } while (cantPutAt(index, key, value));
     }
 
     private boolean probeInsertIfAbsent(K key, int index, int value) {

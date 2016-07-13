@@ -92,6 +92,16 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
 
     public void put(K key, V value) {
         int index = key.hashCode() & mask;
+        if (cantPutAt(index, key, value)) {
+            probeInsert(key, index, value);
+        }
+    }
+
+    public int size() {
+        return capacity - free;
+    }
+
+    private boolean cantPutAt(int index, K key, V value) {
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
             Unsafe.arrayPut(keys, index, key);
             Unsafe.arrayPut(values, index, value);
@@ -99,19 +109,14 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
             if (free == 0) {
                 rehash();
             }
-            return;
+            return false;
         }
 
         if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
             Unsafe.arrayPut(values, index, value);
-            return;
+            return false;
         }
-
-        probeInsert(key, index, value);
-    }
-
-    public int size() {
-        return capacity - free;
+        return true;
     }
 
     private V probe(K key, int index) {
@@ -129,21 +134,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
     private void probeInsert(K key, int index, V value) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, value);
-                free--;
-                if (free == 0) {
-                    rehash();
-                }
-                return;
-            }
-
-            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-                Unsafe.arrayPut(values, index, value);
-                return;
-            }
-        } while (true);
+        } while (cantPutAt(index, key, value));
     }
 
     @SuppressWarnings({"unchecked"})

@@ -39,22 +39,15 @@ public class DenseRankOrderedPartitionedAnalyticFunction extends AbstractRankOrd
 
     public DenseRankOrderedPartitionedAnalyticFunction(int pageSize, String name, ObjList<VirtualColumn> partitionBy) {
         super(pageSize, name);
-
         this.partitionMap = new DirectMap(pageSize, 1, MapUtils.ROWID_MAP_VALUES);
         this.partitionBy = partitionBy;
-
     }
 
     @Override
     public void add(Record record) {
         long row = record.getRowId();
-
-        DirectMap.KeyWriter kw = partitionMap.keyWriter();
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
-        }
         long rank;
-        DirectMapValues values = partitionMap.getOrCreateValues(kw);
+        DirectMapValues values = MapUtils.getMapValues(partitionMap, record, partitionBy);
         if (values.isNew()) {
             values.putLong(0, rank = 0);
         } else {

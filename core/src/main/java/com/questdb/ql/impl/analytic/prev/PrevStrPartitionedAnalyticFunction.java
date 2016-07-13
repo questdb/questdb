@@ -162,12 +162,7 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
 
     @Override
     public void prepareFor(Record record) {
-        DirectMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
-        }
-
-        DirectMapValues values = map.getOrCreateValues(kw);
+        DirectMapValues values = MapUtils.getMapValues(map, record, partitionBy);
         final CharSequence str = valueColumn.getFlyweightStr(record);
 
         if (values.isNew()) {

@@ -269,16 +269,7 @@ public class QueryCompiler {
 
     @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
     private void analyseEquals(QueryModel parent, ExprNode node) throws ParserException {
-        literalCollectorAIndexes.clear();
-        literalCollectorBIndexes.clear();
-
-        literalCollectorANames.clear();
-        literalCollectorBNames.clear();
-
-        literalCollector.withParent(parent);
-        literalCollector.resetNullCount();
-        traversalAlgo.traverse(node.lhs, literalCollector.lhs());
-        traversalAlgo.traverse(node.rhs, literalCollector.rhs());
+        traverseNamesAndIndices(parent, node);
 
         int aSize = literalCollectorAIndexes.size();
         int bSize = literalCollectorBIndexes.size();
@@ -352,16 +343,7 @@ public class QueryCompiler {
     }
 
     private void analyseRegex(QueryModel parent, ExprNode node) throws ParserException {
-        literalCollectorAIndexes.clear();
-        literalCollectorBIndexes.clear();
-
-        literalCollectorANames.clear();
-        literalCollectorBNames.clear();
-
-        literalCollector.withParent(parent);
-        literalCollector.resetNullCount();
-        traversalAlgo.traverse(node.lhs, literalCollector.lhs());
-        traversalAlgo.traverse(node.rhs, literalCollector.rhs());
+        traverseNamesAndIndices(parent, node);
 
         if (literalCollector.nullCount == 0) {
             int aSize = literalCollectorAIndexes.size();
@@ -2170,6 +2152,19 @@ public class QueryCompiler {
             indices.add(index);
         }
         return indices;
+    }
+
+    private void traverseNamesAndIndices(QueryModel parent, ExprNode node) throws ParserException {
+        literalCollectorAIndexes.clear();
+        literalCollectorBIndexes.clear();
+
+        literalCollectorANames.clear();
+        literalCollectorBNames.clear();
+
+        literalCollector.withParent(parent);
+        literalCollector.resetNullCount();
+        traversalAlgo.traverse(node.lhs, literalCollector.lhs());
+        traversalAlgo.traverse(node.rhs, literalCollector.rhs());
     }
 
     private void unlinkDependencies(QueryModel model, int parent, int child) {

@@ -44,6 +44,14 @@ public class MapUtils {
     private MapUtils() {
     }
 
+    public static DirectMapValues getMapValues(DirectMap map, Record rec, ObjList<VirtualColumn> partitionBy) {
+        final DirectMap.KeyWriter kw = map.keyWriter();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            writeVirtualColumn(kw, rec, partitionBy.getQuick(i));
+        }
+        return map.getOrCreateValues(kw);
+    }
+
     public static void putRecord(DirectMap.KeyWriter w, Record r, int columnIndex, ColumnType columnType) {
         switch (columnType) {
             case BOOLEAN:
@@ -84,18 +92,18 @@ public class MapUtils {
         }
     }
 
-    public static ObjList<ColumnType> toTypeList(ColumnType type) {
-        ObjList<ColumnType> l = tlTypeList.get();
-        l.clear();
-        l.add(type);
-        return l;
-    }
-
     public static ObjList<ColumnType> toTypeList(ColumnType type1, ColumnType type2) {
         ObjList<ColumnType> l = tlTypeList.get();
         l.clear();
         l.add(type1);
         l.add(type2);
+        return l;
+    }
+
+    public static ObjList<ColumnType> toTypeList(ColumnType type) {
+        ObjList<ColumnType> l = tlTypeList.get();
+        l.clear();
+        l.add(type);
         return l;
     }
 

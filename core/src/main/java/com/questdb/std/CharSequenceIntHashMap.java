@@ -85,22 +85,9 @@ public class CharSequenceIntHashMap implements Mutable {
 
     public void increment(CharSequence key) {
         int index = Chars.hashCode(key) & mask;
-        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
-            free--;
-            if (free == 0) {
-                rehash();
-            }
-            return;
+        if (cantIncrementAt(index, key)) {
+            probeIncrement(key, index);
         }
-
-        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
-            return;
-        }
-
-        probeIncrement(key, index);
     }
 
     public boolean put(CharSequence key, int value) {
@@ -145,6 +132,24 @@ public class CharSequenceIntHashMap implements Mutable {
         return capacity - free;
     }
 
+    private boolean cantIncrementAt(int index, CharSequence key) {
+        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+            Unsafe.arrayPut(keys, index, key);
+            Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
+            free--;
+            if (free == 0) {
+                rehash();
+            }
+            return false;
+        }
+
+        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+            Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
+            return false;
+        }
+        return true;
+    }
+
     private int probe(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
@@ -160,21 +165,7 @@ public class CharSequenceIntHashMap implements Mutable {
     private void probeIncrement(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
-                free--;
-                if (free == 0) {
-                    rehash();
-                }
-                return;
-            }
-
-            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
-                return;
-            }
-        } while (true);
+        } while (cantIncrementAt(index, key));
     }
 
     private boolean probeInsert(CharSequence key, int index, int value) {

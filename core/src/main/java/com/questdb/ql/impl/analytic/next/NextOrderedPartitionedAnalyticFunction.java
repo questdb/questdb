@@ -48,12 +48,7 @@ public class NextOrderedPartitionedAnalyticFunction extends AbstractOrderedAnaly
     @Override
     public void add(Record record) {
         long row = record.getRowId();
-        DirectMap.KeyWriter kw = prevMap.keyWriter();
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            MapUtils.writeVirtualColumn(kw, record, partitionBy.getQuick(i));
-        }
-
-        DirectMapValues prevValues = prevMap.getOrCreateValues(kw);
+        DirectMapValues prevValues = MapUtils.getMapValues(prevMap, record, partitionBy);
         if (!prevValues.isNew()) {
             DirectMap.KeyWriter kw2 = map.keyWriter();
             kw2.putLong(prevValues.getLong(0));

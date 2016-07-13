@@ -153,15 +153,7 @@ public abstract class AbstractCharSink implements CharSink {
             char c = cs.charAt(i++);
             if (c > 31 && c < 128) {
                 put(c);
-            } else if (c < 32) {
-                putEscaped(c);
-            } else if (c < 2048) {
-                put((char) (192 | c >> 6)).put((char) (128 | c & 63));
-            } else if (Character.isSurrogate(c)) {
-                i = encodeSurrogate(c, cs, i, hi);
-            } else {
-                put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
-            }
+            } else i = putUtf8Internal(cs, hi, i, c);
         }
         return this;
     }
@@ -184,15 +176,7 @@ public abstract class AbstractCharSink implements CharSink {
                         put(c);
                         break;
                 }
-            } else if (c < 32) {
-                putEscaped(c);
-            } else if (c < 2048) {
-                put((char) (192 | c >> 6)).put((char) (128 | c & 63));
-            } else if (Character.isSurrogate(c)) {
-                i = encodeSurrogate(c, cs, i, hi);
-            } else {
-                put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
-            }
+            } else i = putUtf8Internal(cs, hi, i, c);
         }
         return this;
     }
@@ -322,5 +306,18 @@ public abstract class AbstractCharSink implements CharSink {
                 put(c);
                 break;
         }
+    }
+
+    private int putUtf8Internal(CharSequence cs, int hi, int i, char c) {
+        if (c < 32) {
+            putEscaped(c);
+        } else if (c < 2048) {
+            put((char) (192 | c >> 6)).put((char) (128 | c & 63));
+        } else if (Character.isSurrogate(c)) {
+            i = encodeSurrogate(c, cs, i, hi);
+        } else {
+            put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
+        }
+        return i;
     }
 }

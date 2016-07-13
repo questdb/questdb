@@ -52,11 +52,7 @@ public class DenseRankPartitionedAnalyticFunction extends AbstractRankAnalyticFu
 
     @Override
     public void prepareFor(Record rec) {
-        DirectMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            MapUtils.writeVirtualColumn(kw, rec, partitionBy.getQuick(i));
-        }
-        DirectMapValues values = map.getOrCreateValues(kw);
+        DirectMapValues values = MapUtils.getMapValues(map, rec, partitionBy);
         if (values.isNew()) {
             rank = 0;
             values.putLong(0, 1);

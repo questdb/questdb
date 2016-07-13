@@ -70,15 +70,11 @@ public final class DirectMapEntry {
     }
 
     public CharSequence getFlyweightStr(int index) {
-        long address = address0(index);
-        int len = Unsafe.getUnsafe().getInt(address);
-        return len == VariableColumn.NULL_LEN ? null : csA.of(address + 4, address + 4 + len * 2);
+        return getFlyweightStr0(index, csA);
     }
 
     public CharSequence getFlyweightStrB(int index) {
-        long address = address0(index);
-        int len = Unsafe.getUnsafe().getInt(address);
-        return len == VariableColumn.NULL_LEN ? null : csB.of(address + 4, address + 4 + len * 2);
+        return getFlyweightStr0(index, csB);
     }
 
     public int getInt(int index) {
@@ -139,6 +135,12 @@ public final class DirectMapEntry {
         }
 
         return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4) + address0;
+    }
+
+    private CharSequence getFlyweightStr0(int index, DirectCharSequence cs) {
+        long address = address0(index);
+        int len = Unsafe.getUnsafe().getInt(address);
+        return len == VariableColumn.NULL_LEN ? null : cs.of(address + 4, address + 4 + len * 2);
     }
 
     DirectMapEntry init(long address) {

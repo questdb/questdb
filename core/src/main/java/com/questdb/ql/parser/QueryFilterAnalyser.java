@@ -371,7 +371,6 @@ final class QueryFilterAnalyser {
                 }
                 keyNodes.clear();
                 model.keyColumn = col;
-
                 keyNodes.add(node);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
