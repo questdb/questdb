@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.parser;
@@ -585,22 +586,26 @@ public class QueryCompiler {
                 }
             }
 
-            if (col.getAst().paramCount > 1) {
+            ExprNode ast = col.getAst();
+
+            if (ast.paramCount > 1) {
                 throw QueryError.$(col.getAst().position, "Too many arguments");
             }
 
-            if (col.getAst().paramCount < 1) {
-                throw QueryError.$(col.getAst().position, "Expression expected");
+            VirtualColumn valueColumn;
+            if (ast.paramCount == 1) {
+                valueColumn = virtualColumnBuilder.createVirtualColumn(model, col.getAst().rhs, metadata);
+                valueColumn.setName(col.getAlias());
+            } else {
+                valueColumn = null;
             }
-
-            VirtualColumn valueColumn = virtualColumnBuilder.createVirtualColumn(model, col.getAst().rhs, metadata);
-            valueColumn.setName(col.getAlias());
 
             final int osz = col.getOrderBy().size();
             AnalyticFunction f = AnalyticFunctionFactories.newInstance(
                     configuration,
-                    col.getAst().token,
+                    ast.token,
                     valueColumn,
+                    col.getAlias(),
                     partitionBy,
                     rs.supportsRowIdAccess(),
                     osz > 0
@@ -2010,8 +2015,8 @@ public class QueryCompiler {
                 VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), recordSource.getMetadata());
                 vc.setName(qc.getAlias());
                 virtualColumns.add(vc);
+                groupKeyColumns.add(qc.getAlias());
             }
-            groupKeyColumns.add(qc.getAlias());
         }
 
         RecordSource rs = recordSource;

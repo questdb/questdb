@@ -35,6 +35,7 @@ public class PrevAnalyticFunctionFactory implements AnalyticFunctionFactory {
     public AnalyticFunction newInstance(
             ServerConfiguration configuration,
             VirtualColumn valueColumn,
+            String valueColumnAlias,
             ObjList<VirtualColumn> partitionBy,
             boolean supportsRowId,
             boolean ordered) {

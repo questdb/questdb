@@ -23,16 +23,16 @@
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.net.http.ServerConfiguration;
-import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.ObjList;
+import org.junit.Test;
 
-public interface AnalyticFunctionFactory {
-    AnalyticFunction newInstance(
-            ServerConfiguration configuration,
-            VirtualColumn valueColumn,
-            String valueColumnAlias,
-            ObjList<VirtualColumn> partitionBy,
-            boolean supportsRowId,
-            boolean ordered);
+public class DenseRankAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
+    @Test
+    public void testRank() throws Exception {
+        assertThat("5\ttrue\tAX\t2016-05-01T10:26:00.000Z\n" +
+                        "6\tfalse\tBZ\t2016-05-01T10:27:00.000Z\n" +
+                        "7\ttrue\tBZ\t2016-05-01T10:28:00.000Z\n" +
+                        "8\tfalse\tAX\t2016-05-01T10:29:00.000Z\n" +
+                        "9\tfalse\tBZ\t2016-05-01T10:30:00.000Z\n",
+                "select dense_rank() x over(), boo, str, timestamp from 'abc' limit 5,10");
+    }
 }

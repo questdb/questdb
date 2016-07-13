@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic.next;
+package com.questdb.ql.impl.analytic.denserank;
 
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
@@ -29,7 +29,7 @@ import com.questdb.ql.impl.analytic.AnalyticFunctionFactory;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
 
-public class NextAnalyticFunctionFactory implements AnalyticFunctionFactory {
+public class DenseRankAnalyticFunctionFactory implements AnalyticFunctionFactory {
     @Override
     public AnalyticFunction newInstance(
             ServerConfiguration configuration,
@@ -41,17 +41,17 @@ public class NextAnalyticFunctionFactory implements AnalyticFunctionFactory {
     ) {
 
         if (ordered && partitionBy == null) {
-            return new NextOrderedAnalyticFunction(configuration.getDbAnalyticFuncPage(), valueColumn);
+            throw new UnsupportedOperationException();
         }
 
         if (ordered) {
-            return new NextOrderedPartitionedAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
+            throw new UnsupportedOperationException();
         }
 
         if (partitionBy != null) {
-            return new NextPartitionedAnalyticFunction(configuration.getDbAnalyticFuncPage(), partitionBy, valueColumn);
+            throw new UnsupportedOperationException();
         } else {
-            return new NextAnalyticFunction(configuration.getDbAnalyticFuncPage(), valueColumn);
+            return new DenseRankAnalyticFunction(valueColumnAlias);
         }
     }
 }
