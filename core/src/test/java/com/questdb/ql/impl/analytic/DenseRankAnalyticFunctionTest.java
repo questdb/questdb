@@ -66,6 +66,31 @@ public class DenseRankAnalyticFunctionTest extends AbstractAnalyticRecordSourceT
     }
 
     @Test
+    public void testRankOrderedPartitioned() throws Exception {
+        assertThat("BZ\t0\n" +
+                        "XX\t0\n" +
+                        "KK\t0\n" +
+                        "AX\t0\n" +
+                        "AX\t1\n" +
+                        "AX\t2\n" +
+                        "BZ\t1\n" +
+                        "BZ\t2\n" +
+                        "AX\t3\n" +
+                        "BZ\t3\n" +
+                        "XX\t1\n" +
+                        "KK\t1\n" +
+                        "AX\t4\n" +
+                        "BZ\t4\n" +
+                        "XX\t2\n" +
+                        "AX\t5\n" +
+                        "XX\t3\n" +
+                        "AX\t6\n" +
+                        "BZ\t5\n" +
+                        "BZ\t6\n",
+                "select str, dense_rank() rank over(partition by str order by timestamp) from 'abc'");
+    }
+
+    @Test
     public void testRankPartitioned() throws Exception {
         assertThat("BZ\t0\n" +
                         "XX\t0\n" +
