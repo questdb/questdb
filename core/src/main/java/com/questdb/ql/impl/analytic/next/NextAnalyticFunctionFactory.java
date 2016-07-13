@@ -40,6 +40,10 @@ public class NextAnalyticFunctionFactory implements AnalyticFunctionFactory {
             boolean ordered
     ) {
 
+        if (valueColumn == null) {
+            return null;
+        }
+
         if (ordered && partitionBy == null) {
             return new NextOrderedAnalyticFunction(configuration.getDbAnalyticFuncPage(), valueColumn);
         }

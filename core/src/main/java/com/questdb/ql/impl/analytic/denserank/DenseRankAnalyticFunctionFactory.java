@@ -40,8 +40,12 @@ public class DenseRankAnalyticFunctionFactory implements AnalyticFunctionFactory
             boolean ordered
     ) {
 
+        if (valueColumn != null) {
+            return null;
+        }
+
         if (ordered && partitionBy == null) {
-            throw new UnsupportedOperationException();
+            return new DenseRankOrderedAnalyticFunction(configuration.getDbAnalyticFuncPage(), valueColumnAlias);
         }
 
         if (ordered) {
@@ -49,7 +53,7 @@ public class DenseRankAnalyticFunctionFactory implements AnalyticFunctionFactory
         }
 
         if (partitionBy != null) {
-            throw new UnsupportedOperationException();
+            return new DenseRankPartitionedAnalyticFunction(configuration.getDbAnalyticFuncPage(), valueColumnAlias, partitionBy);
         } else {
             return new DenseRankAnalyticFunction(valueColumnAlias);
         }

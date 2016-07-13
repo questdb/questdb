@@ -23,21 +23,49 @@
 
 package com.questdb.ql.impl.analytic.denserank;
 
+import com.questdb.misc.Misc;
 import com.questdb.ql.Record;
+import com.questdb.ql.impl.analytic.AnalyticFunctionType;
+import com.questdb.ql.impl.map.DirectMap;
+import com.questdb.ql.impl.map.MapUtils;
 
-public class DenseRankAnalyticFunction extends AbstractRankAnalyticFunction {
+import java.io.Closeable;
+import java.io.IOException;
 
-    public DenseRankAnalyticFunction(String name) {
+public abstract class AbstractRankOrderedAnalyticFunction extends AbstractRankAnalyticFunction implements Closeable {
+
+    protected final DirectMap map;
+    protected boolean closed = false;
+
+    public AbstractRankOrderedAnalyticFunction(int pageSize, String name) {
         super(name);
+        this.map = new DirectMap(pageSize, 1, MapUtils.ROWID_MAP_VALUES);
     }
 
     @Override
-    public void prepareFor(Record rec) {
-        this.rank++;
+    public void close() throws IOException {
+        if (closed) {
+            return;
+        }
+        Misc.free(map);
+        closed = true;
+    }
+
+    @Override
+    public AnalyticFunctionType getType() {
+        return AnalyticFunctionType.TWO_PASS;
+    }
+
+    @Override
+    public void prepareFor(Record record) {
+        DirectMap.KeyWriter kw = map.keyWriter();
+        kw.putLong(record.getRowId());
+        rank = map.getValues(kw).getLong(0);
     }
 
     @Override
     public void reset() {
+        map.clear();
         rank = -1;
     }
 }

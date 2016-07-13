@@ -1,29 +1,31 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl.analytic;
 
 import com.questdb.ex.ParserException;
 import com.questdb.ql.parser.QueryError;
+import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -875,6 +877,16 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\tBZ\n";
         assertThat(expected, "select str, sym, timestamp , prev(sym) over(), prev(str) over () from abc", true);
         assertThat(expected, "select str, sym, timestamp , prev(sym) over(), prev(str) over () from '*!*abc'", true);
+    }
+
+    @Test
+    public void testNoArg() throws Exception {
+        try {
+            compiler.compile(factory, "select str, prev() rank over(partition by str) from 'abc'");
+            Assert.fail();
+        } catch (ParserException e) {
+            TestUtils.assertEquals("Unknown function", QueryError.getMessage());
+        }
     }
 
     @Test

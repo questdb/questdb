@@ -40,6 +40,10 @@ public class PrevAnalyticFunctionFactory implements AnalyticFunctionFactory {
             boolean supportsRowId,
             boolean ordered) {
 
+        if (valueColumn == null) {
+            return null;
+        }
+
         if (ordered && partitionBy == null) {
             return new PrevOrderedAnalyticFunction(configuration.getDbAnalyticFuncPage(), valueColumn);
         }

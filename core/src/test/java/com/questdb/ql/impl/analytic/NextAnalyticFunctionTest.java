@@ -25,6 +25,7 @@ package com.questdb.ql.impl.analytic;
 
 import com.questdb.ex.ParserException;
 import com.questdb.ql.parser.QueryError;
+import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -435,6 +436,16 @@ public class NextAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "-6071768268784020226\tBZ\tAX\t2016-05-01T10:40:00.000Z\tNaN\n";
         assertThat(expected, "select l, str, sym, timestamp , next(l) over (partition by str) from abc");
         assertThat(expected, "select l, str, sym, timestamp , next(l) over (partition by str) from '*!*abc'");
+    }
+
+    @Test
+    public void testNoArg() throws Exception {
+        try {
+            compiler.compile(factory, "select str, next() rank over(partition by str) from 'abc'");
+            Assert.fail();
+        } catch (ParserException e) {
+            TestUtils.assertEquals("Unknown function", QueryError.getMessage());
+        }
     }
 
     @Test
