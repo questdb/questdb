@@ -23,48 +23,10 @@
 
 package com.questdb.ql;
 
-import com.questdb.std.CharSink;
-import com.questdb.std.DirectInputStream;
-
-import java.io.OutputStream;
-
-public interface Record {
-
-    String asString(int col);
-
-    byte get(int col);
-
-    void getBin(int col, OutputStream s);
-
-    DirectInputStream getBin(int col);
-
-    long getBinLen(int col);
-
-    boolean getBool(int col);
-
-    long getDate(int col);
-
-    double getDouble(int col);
-
-    float getFloat(int col);
-
-    CharSequence getFlyweightStr(int col);
-
-    CharSequence getFlyweightStrB(int col);
-
-    int getInt(int col);
-
-    long getLong(int col);
-
-    long getRowId();
-
-    short getShort(int col);
-
-    CharSequence getStr(int col);
-
-    void getStr(int col, CharSink sink);
-
-    int getStrLen(int col);
-
-    String getSym(int col);
+public abstract class AbstractRecord implements Record {
+    @Override
+    public String asString(int col) {
+        CharSequence s = getStr(col);
+        return s == null ? null : s.toString();
+    }
 }

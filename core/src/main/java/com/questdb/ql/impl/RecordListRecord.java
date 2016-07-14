@@ -1,32 +1,32 @@
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
+/*
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2016 Appsicle
+ *  Copyright (C) 2014-2016 Appsicle
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ *  This program is free software: you can redistribute it and/or  modify
+ *  it under the terms of the GNU Affero General Public License, version 3,
+ *  as published by the Free Software Foundation.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *  You should have received a copy of the GNU Affero General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- ******************************************************************************/
+ */
 
 package com.questdb.ql.impl;
 
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.Record;
+import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
@@ -38,7 +38,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class RecordListRecord implements Record {
+public class RecordListRecord extends AbstractRecord {
     private final DirectCharSequence csA = new DirectCharSequence();
     private final DirectCharSequence csB = new DirectCharSequence();
     private final MemoryPages mem;
@@ -167,11 +167,11 @@ public class RecordListRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public String getStr(int col) {
         long readAddress = addressOf(col);
         final int len = Unsafe.getUnsafe().getInt(readAddress);
         if (len < 0) return null;
-        return new DirectCharSequence().of(readAddress + 4, readAddress + 4 + len * 2);
+        return new DirectCharSequence().of(readAddress + 4, readAddress + 4 + len * 2).toString();
     }
 
     @Override
