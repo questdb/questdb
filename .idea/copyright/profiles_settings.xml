@@ -1,10 +1,13 @@
 <component name="CopyrightManager">
-  <settings default="AGPL">
+  <settings default="">
     <module2copyright>
-      <element module="All" copyright="AGPL" />
-      <element module="core" copyright="AGPL" />
       <element module="examples" copyright="Apache 2.0" />
+      <element module="core" copyright="AGPLv3" />
       <element module="ui" copyright="MIT" />
     </module2copyright>
+    <LanguageOptions name="__TEMPLATE__">
+      <option name="separateBefore" value="true" />
+      <option name="separateAfter" value="true" />
+    </LanguageOptions>
   </settings>
 </component>

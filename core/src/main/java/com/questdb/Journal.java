@@ -1,25 +1,25 @@
-/*
- *     ___                  _   ____  ____
- *    / _ \ _   _  ___  ___| |_|  _ \| __ )
- *   | | | | | | |/ _ \/ __| __| | | |  _ \
- *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *    \__\_\\__,_|\___||___/\__|____/|____/
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- *  Copyright (C) 2014-2016 Appsicle
+ * Copyright (C) 2014-2016 Appsicle
  *
- *  This program is free software: you can redistribute it and/or  modify
- *  it under the terms of the GNU Affero General Public License, version 3,
- *  as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU Affero General Public License for more details.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- *  You should have received a copy of the GNU Affero General Public License
- *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- */
+ ******************************************************************************/
 
 package com.questdb;
 
@@ -46,7 +46,10 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.FileFilter;
 import java.lang.reflect.Array;
-import java.util.*;
+import java.util.Arrays;
+import java.util.BitSet;
+import java.util.Comparator;
+import java.util.Iterator;
 
 @SuppressFBWarnings({"PATH_TRAVERSAL_IN", "LII_LIST_INDEXED_ITERATING", "CD_CIRCULAR_DEPENDENCY"})
 public class Journal<T> implements Iterable<T>, Closeable {
@@ -57,6 +60,12 @@ public class Journal<T> implements Iterable<T>, Closeable {
     // empty container for current transaction
     final Tx tx = new Tx();
     final JournalMetadata<T> metadata;
+    private final Comparator<Partition<T>> partitionAccessTimeComparator = new Comparator<Partition<T>>() {
+        @Override
+        public int compare(Partition<T> o1, Partition<T> o2) {
+            return Long.compare(o2.getLastAccessed(), o1.getLastAccessed());
+        }
+    };
     private final File location;
     private final ObjObjHashMap<String, SymbolTable> symbolTableMap = new ObjObjHashMap<>();
     private final ObjList<SymbolTable> symbolTables = new ObjList<>();
@@ -72,12 +81,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     };
     private final BitSet inactiveColumns;
-    private final TreeSet<Partition<T>> toClose = new TreeSet<>(new Comparator<Partition<T>>() {
-        @Override
-        public int compare(Partition<T> o1, Partition<T> o2) {
-            return Long.compare(o2.getLastAccessed(), o1.getLastAccessed());
-        }
-    });
+    private final ObjList<Partition<T>> toClose = new ObjList<>();
     TxLog txLog;
     boolean open;
     private volatile Partition<T> irregularPartition;
@@ -169,13 +173,16 @@ public class Journal<T> implements Iterable<T>, Closeable {
             }
 
             int total = toClose.size();
-            Iterator<Partition<T>> iterator = toClose.descendingIterator();
-            while (iterator.hasNext() && total-- > 1) {
-                Partition<T> partition = iterator.next();
-                if (delta > partition.getLastAccessed()) {
-                    partition.close();
-                } else {
-                    break;
+            if (total > 1) {
+                toClose.sort(partitionAccessTimeComparator);
+
+                for (int i = 1; i < total; i++) {
+                    Partition<T> partition = toClose.getQuick(i);
+                    if (delta > partition.getLastAccessed()) {
+                        partition.close();
+                    } else {
+                        break;
+                    }
                 }
             }
         }
