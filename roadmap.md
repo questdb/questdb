@@ -18,7 +18,7 @@ __lang__
 - [ ] bottom x rows
 - [x] query parameters
 - [x] support for comments (both block /* */ and line --)
-- [ ] __analytic functions (in-progress)__
+- [x] analytic functions
 - [x] subquery optimiser
 - [x] order by optimiser
 
@@ -44,6 +44,7 @@ __misc__
 
 - [ ] collectd protocol support and console administration
 - [ ] circular memory buffer for "bottom x rows"
+- [ ] __error handling__ (in-progress)
 
 __clients__
 
