@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.model;
@@ -65,6 +66,7 @@ public class QueryModel implements Mutable {
     private final IntHashSet parsedWhereConsts = new IntHashSet();
     private final ArrayDeque<ExprNode> exprNodeStack = new ArrayDeque<>();
     private final CharSequenceIntHashMap orderHash = new CharSequenceIntHashMap(4, 0.5, -1);
+    private final ObjList<ExprNode> joinColumns = new ObjList<>(4);
     private CharSequenceObjHashMap<Parameter> parameterMap = new CharSequenceObjHashMap<>();
     private ExprNode whereClause;
     private ExprNode postJoinWhereClause;
@@ -108,6 +110,10 @@ public class QueryModel implements Mutable {
 
     public void addDependency(int index) {
         dependencies.add(index);
+    }
+
+    public void addJoinColumn(ExprNode node) {
+        joinColumns.add(node);
     }
 
     public void addJoinModel(QueryModel model) {
@@ -161,6 +167,7 @@ public class QueryModel implements Mutable {
         timestamp = null;
         exprNodeStack.clear();
         journalMetadata = null;
+        joinColumns.clear();
     }
 
     public JournalMetadata collectJournalMetadata(JournalReaderFactory factory) throws ParserException, JournalException {
@@ -230,6 +237,10 @@ public class QueryModel implements Mutable {
 
     public IntHashSet getDependencies() {
         return dependencies;
+    }
+
+    public ObjList<ExprNode> getJoinColumns() {
+        return joinColumns;
     }
 
     public ExprNode getJoinCriteria() {

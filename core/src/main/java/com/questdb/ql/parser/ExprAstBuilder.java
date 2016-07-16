@@ -55,11 +55,15 @@ final class ExprAstBuilder implements ExprListener {
         stack.push(node);
     }
 
+    public ExprNode poll() {
+        return stack.poll();
+    }
+
     public void reset() {
         stack.clear();
     }
 
-    public ExprNode root() {
-        return stack.poll();
+    public int size() {
+        return stack.size();
     }
 }

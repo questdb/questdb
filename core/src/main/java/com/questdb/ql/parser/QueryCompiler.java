@@ -1539,7 +1539,7 @@ public class QueryCompiler {
      * @param model   query model to analyse
      * @param factory factory is used to collect journal columns.
      * @throws JournalException
-     * @throws ParserException
+     * @throws ParserException usually syntax exceptions
      */
     private void optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
         QueryModel nm;

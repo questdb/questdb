@@ -29,6 +29,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.GenericIntBuilder;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Chars;
+import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.ql.model.*;
 import com.questdb.std.CharSequenceHashSet;
@@ -75,7 +76,7 @@ public final class QueryParser {
     private ExprNode expr() throws ParserException {
         astBuilder.reset();
         exprParser.parseExpr(astBuilder);
-        return astBuilder.root();
+        return astBuilder.poll();
     }
 
     private boolean isFieldTerm(CharSequence tok) {
@@ -88,6 +89,35 @@ public final class QueryParser {
             return null;
         }
         return exprNodePool.next().of(ExprNode.NodeType.LITERAL, Chars.stripQuotes(tok.toString()), 0, lexer.position());
+    }
+
+    private ExprNode makeJoinAlias(int index) {
+        StringBuilder b = Misc.getThreadLocalBuilder();
+        ExprNode node = exprNodePool.next();
+        node.token = b.append("_xQdbA").append(index).toString();
+        node.type = ExprNode.NodeType.LITERAL;
+        return node;
+    }
+
+    private ExprNode makeModelAlias(String modelAlias, ExprNode node) {
+        StringBuilder b = Misc.getThreadLocalBuilder();
+        ExprNode exprNode = exprNodePool.next();
+        b.append(modelAlias).append('.').append(node.token);
+        exprNode.token = b.toString();
+        exprNode.type = ExprNode.NodeType.LITERAL;
+        exprNode.position = node.position;
+        return exprNode;
+    }
+
+    private ExprNode makeOperation(String token, ExprNode lhs, ExprNode rhs) {
+        ExprNode expr = exprNodePool.next();
+        expr.token = token;
+        expr.type = ExprNode.NodeType.OPERATION;
+        expr.position = 0;
+        expr.paramCount = 2;
+        expr.lhs = lhs;
+        expr.rhs = rhs;
+        return expr;
     }
 
     private String notTermTok() throws ParserException {
@@ -207,11 +237,31 @@ public final class QueryParser {
             case INNER:
             case OUTER:
                 expectTok(tok, "on");
-                ExprNode expr = expr();
-                if (expr == null) {
-                    throw QueryError.$(lexer.position(), "Expression expected");
+                astBuilder.reset();
+                exprParser.parseExpr(astBuilder);
+                ExprNode expr;
+                switch (astBuilder.size()) {
+                    case 0:
+                        throw QueryError.$(lexer.position(), "Expression expected");
+                    case 1:
+                        expr = astBuilder.poll();
+                        if (expr.type == ExprNode.NodeType.LITERAL) {
+                            do {
+                                joinModel.addJoinColumn(expr);
+                            } while ((expr = astBuilder.poll()) != null);
+                        } else {
+                            joinModel.setJoinCriteria(expr);
+                        }
+                        break;
+                    default:
+                        while ((expr = astBuilder.poll()) != null) {
+                            if (expr.type != ExprNode.NodeType.LITERAL) {
+                                throw QueryError.$(lexer.position(), "Column name expected");
+                            }
+                            joinModel.addJoinColumn(expr);
+                        }
+                        break;
                 }
-                joinModel.setJoinCriteria(expr);
                 break;
             default:
                 lexer.unparse();
@@ -426,6 +476,9 @@ public final class QueryParser {
         } else if (tok != null) {
             throw QueryError.position(lexer.position()).$("Unexpected token: ").$(tok).$();
         }
+
+        resolveJoinColumns(model);
+
         return model;
     }
 
@@ -509,6 +562,57 @@ public final class QueryParser {
             return lexer.optionTok();
         }
         return tok;
+    }
+
+    private void resolveJoinColumns(QueryModel model) throws ParserException {
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        if (joinModels.size() == 0) {
+            return;
+        }
+
+        String modelAlias;
+
+        if (model.getAlias() != null) {
+            modelAlias = model.getAlias().token;
+        } else if (model.getJournalName() != null) {
+            modelAlias = model.getJournalName().token;
+        } else {
+            ExprNode alias = makeJoinAlias(0);
+            model.setAlias(alias);
+            modelAlias = alias.token;
+        }
+
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            QueryModel jm = joinModels.getQuick(i);
+
+            ObjList<ExprNode> jc = jm.getJoinColumns();
+            if (jc.size() > 0) {
+
+                String jmAlias;
+
+                if (jm.getAlias() != null) {
+                    jmAlias = jm.getAlias().token;
+                } else if (jm.getJournalName() != null) {
+                    jmAlias = jm.getJournalName().token;
+                } else {
+                    ExprNode alias = makeJoinAlias(i);
+                    jm.setAlias(alias);
+                    jmAlias = alias.token;
+                }
+
+                ExprNode joinCriteria = jm.getJoinCriteria();
+                for (int j = 0, m = jc.size(); j < m; j++) {
+                    ExprNode node = jc.getQuick(j);
+                    ExprNode eq = makeOperation("=", makeModelAlias(modelAlias, node), makeModelAlias(jmAlias, node));
+                    if (joinCriteria == null) {
+                        joinCriteria = eq;
+                    } else {
+                        joinCriteria = makeOperation("and", joinCriteria, eq);
+                    }
+                }
+                jm.setJoinCriteria(joinCriteria);
+            }
+        }
     }
 
     private CharSequence tok() throws ParserException {

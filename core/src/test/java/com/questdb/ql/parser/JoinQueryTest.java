@@ -204,6 +204,88 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAsOfJoinSubQuerySimpleAlias() throws Exception {
+        assertPlan2("{\n" +
+                        "  \"op\": \"AsOfPartitionedJoinRecordSource\",\n" +
+                        "  \"master\": {\n" +
+                        "    \"op\": \"JournalRecordSource\",\n" +
+                        "    \"psrc\": {\n" +
+                        "      \"op\": \"JournalPartitionSource\",\n" +
+                        "      \"journal\": \"customers\"\n" +
+                        "    },\n" +
+                        "    \"rsrc\": {\n" +
+                        "      \"op\": \"AllRowSource\"\n" +
+                        "    }\n" +
+                        "  },\n" +
+                        "  \"slave\": {\n" +
+                        "    \"op\": \"RBTreeSortedRecordSource\",\n" +
+                        "    \"byRowId\": true,\n" +
+                        "    \"src\": {\n" +
+                        "      \"op\": \"SelectedColumnsRecordSource\",\n" +
+                        "      \"src\": {\n" +
+                        "        \"op\": \"VirtualColumnRecordSource\",\n" +
+                        "        \"src\": {\n" +
+                        "          \"op\": \"JournalRecordSource\",\n" +
+                        "          \"psrc\": {\n" +
+                        "            \"op\": \"JournalPartitionSource\",\n" +
+                        "            \"journal\": \"employees\"\n" +
+                        "          },\n" +
+                        "          \"rsrc\": {\n" +
+                        "            \"op\": \"AllRowSource\"\n" +
+                        "          }\n" +
+                        "        }\n" +
+                        "      }\n" +
+                        "    }\n" +
+                        "  },\n" +
+                        "  \"masterTsIndex\": 7,\n" +
+                        "  \"slaveTsIndex\": 3\n" +
+                        "}",
+                "customers c" +
+                        " asof join (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName) a on (customerId)");
+    }
+
+    @Test
+    public void testAsOfJoinSubQuerySimpleNoAlias() throws Exception {
+        assertPlan2("{\n" +
+                        "  \"op\": \"AsOfPartitionedJoinRecordSource\",\n" +
+                        "  \"master\": {\n" +
+                        "    \"op\": \"JournalRecordSource\",\n" +
+                        "    \"psrc\": {\n" +
+                        "      \"op\": \"JournalPartitionSource\",\n" +
+                        "      \"journal\": \"customers\"\n" +
+                        "    },\n" +
+                        "    \"rsrc\": {\n" +
+                        "      \"op\": \"AllRowSource\"\n" +
+                        "    }\n" +
+                        "  },\n" +
+                        "  \"slave\": {\n" +
+                        "    \"op\": \"RBTreeSortedRecordSource\",\n" +
+                        "    \"byRowId\": true,\n" +
+                        "    \"src\": {\n" +
+                        "      \"op\": \"SelectedColumnsRecordSource\",\n" +
+                        "      \"src\": {\n" +
+                        "        \"op\": \"VirtualColumnRecordSource\",\n" +
+                        "        \"src\": {\n" +
+                        "          \"op\": \"JournalRecordSource\",\n" +
+                        "          \"psrc\": {\n" +
+                        "            \"op\": \"JournalPartitionSource\",\n" +
+                        "            \"journal\": \"employees\"\n" +
+                        "          },\n" +
+                        "          \"rsrc\": {\n" +
+                        "            \"op\": \"AllRowSource\"\n" +
+                        "          }\n" +
+                        "        }\n" +
+                        "      }\n" +
+                        "    }\n" +
+                        "  },\n" +
+                        "  \"masterTsIndex\": 7,\n" +
+                        "  \"slaveTsIndex\": 3\n" +
+                        "}",
+                "customers c" +
+                        " asof join (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName) on (customerId)");
+    }
+
+    @Test
     public void testAsOfJoinSymbolBehaviour() throws Exception {
         assertSymbol("select customerId, country from customers c" +
                 " asof join employees e on c.customerId = e.employeeId" +
