@@ -25,7 +25,6 @@ package com.questdb.ql;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
-import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.io.sink.StringSink;
@@ -512,7 +511,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         TestUtils.assertEquals(expected, sink);
     }
 
-    private void compile(CharSequence query) throws JournalException, ParserException {
+    private void compile(CharSequence query) throws ParserException {
         compiler.compile(factory, query);
     }
 

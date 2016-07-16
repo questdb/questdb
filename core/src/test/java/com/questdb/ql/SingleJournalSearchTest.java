@@ -24,7 +24,6 @@
 package com.questdb.ql;
 
 import com.questdb.JournalWriter;
-import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.StringSink;
@@ -145,7 +144,7 @@ public class SingleJournalSearchTest {
 
     }
 
-    private void assertEquals(CharSequence expected, RecordSource src) throws JournalException, IOException {
+    private void assertEquals(CharSequence expected, RecordSource src) throws IOException {
         new RecordSourcePrinter(sink).print(src, factory);
         Assert.assertEquals(expected, sink.toString());
         sink.flush();

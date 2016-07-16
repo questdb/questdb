@@ -23,7 +23,6 @@
 
 package com.questdb.io;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Dates;
@@ -49,11 +48,11 @@ public class RecordSourcePrinter {
         this.delimiter = delimiter;
     }
 
-    public void print(RecordSource src, JournalReaderFactory factory) throws IOException, JournalException {
+    public void print(RecordSource src, JournalReaderFactory factory) throws IOException {
         print(src.prepareCursor(factory), false, src.getMetadata());
     }
 
-    public void print(RecordSource src, JournalReaderFactory factory, boolean header) throws IOException, JournalException {
+    public void print(RecordSource src, JournalReaderFactory factory, boolean header) throws IOException {
         print(src.prepareCursor(factory), header, src.getMetadata());
     }
 

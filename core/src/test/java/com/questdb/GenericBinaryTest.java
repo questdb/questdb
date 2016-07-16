@@ -134,7 +134,7 @@ public class GenericBinaryTest extends AbstractTest {
         return actual;
     }
 
-    private List<byte[]> readOutputStream() throws JournalException, ParserException {
+    private List<byte[]> readOutputStream() throws ParserException {
         List<byte[]> result = new ArrayList<>();
         for (Record e : compiler.compile(factory, "bintest")) {
             ByteArrayOutputStream o = new ByteArrayOutputStream();
@@ -167,6 +167,7 @@ public class GenericBinaryTest extends AbstractTest {
 
     }
 
+    @SuppressWarnings("CanBeFinal")
     public static class BinContainer {
         private ByteBuffer image;
     }

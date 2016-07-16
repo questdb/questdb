@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
@@ -58,7 +57,7 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this._top = lo.getLong(null);
         this._count = hi.getLong(null) - this._top;
         this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
@@ -73,13 +72,23 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean supportsRowIdAccess() {
-        return recordSource.supportsRowIdAccess();
+    public StorageFacade getStorageFacade() {
+        return recordCursor.getStorageFacade();
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return recordCursor.getStorageFacade();
+    public boolean hasNext() {
+        if (_top > 0) {
+            return scrollToStart();
+        } else {
+            return _count > 0 && recordCursor.hasNext();
+        }
+    }
+
+    @Override
+    public Record next() {
+        _count--;
+        return recordCursor.next();
     }
 
     @Override
@@ -98,18 +107,8 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean hasNext() {
-        if (_top > 0) {
-            return scrollToStart();
-        } else {
-            return _count > 0 && recordCursor.hasNext();
-        }
-    }
-
-    @Override
-    public Record next() {
-        _count--;
-        return recordCursor.next();
+    public boolean supportsRowIdAccess() {
+        return recordSource.supportsRowIdAccess();
     }
 
     @Override

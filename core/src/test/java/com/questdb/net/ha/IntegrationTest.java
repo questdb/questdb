@@ -91,8 +91,6 @@ public class IntegrationTest extends AbstractTest {
      * Server will offer rollback by proving txn of its latest transaction.
      * Client will have same txn but different pin, because it was advancing out of sync with server.
      * Client should produce and error by reporting unknown txn from server.
-     *
-     * @throws Exception
      */
     @Test
     public void testOutOfSyncClient() throws Exception {

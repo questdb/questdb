@@ -564,7 +564,7 @@ public final class QueryParser {
         return tok;
     }
 
-    private void resolveJoinColumns(QueryModel model) throws ParserException {
+    private void resolveJoinColumns(QueryModel model) {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         if (joinModels.size() == 0) {
             return;

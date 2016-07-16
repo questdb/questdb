@@ -26,7 +26,6 @@ package com.questdb.ql.parser;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParser;
-import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.StringSink;
@@ -59,7 +58,7 @@ public abstract class AbstractOptimiserTest {
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private static final JsonParser jp = new JsonParser();
 
-    protected static void assertRowId(String query, String longColumn) throws JournalException, ParserException {
+    protected static void assertRowId(String query, String longColumn) throws ParserException {
         RecordSource src = compiler.compileSource(factory, query);
         try {
             RecordCursor cursor = src.prepareCursor(factory);
@@ -87,17 +86,17 @@ public abstract class AbstractOptimiserTest {
         }
     }
 
-    protected void assertEmpty(String query) throws ParserException, JournalException {
+    protected void assertEmpty(String query) throws ParserException {
         try (RecordSource src = compiler.compileSource(factory, query)) {
             Assert.assertFalse(src.prepareCursor(factory).hasNext());
         }
     }
 
-    protected void assertPlan(String expected, String query) throws ParserException, JournalException {
+    protected void assertPlan(String expected, String query) throws ParserException {
         TestUtils.assertEquals(expected, compiler.plan(factory, query));
     }
 
-    protected void assertPlan2(CharSequence expected, CharSequence query) throws JournalException, ParserException {
+    protected void assertPlan2(CharSequence expected, CharSequence query) throws ParserException {
         sink.clear();
         try (RecordSource recordSource = compiler.compileSource(factory, query)) {
             recordSource.toSink(sink);
@@ -106,7 +105,7 @@ public abstract class AbstractOptimiserTest {
         }
     }
 
-    protected void assertString(String query, int columnIndex) throws JournalException, ParserException {
+    protected void assertString(String query, int columnIndex) throws ParserException {
         RecordCursor cursor = compiler.compile(factory, query);
         while (cursor.hasNext()) {
             Record r = cursor.next();
@@ -127,7 +126,7 @@ public abstract class AbstractOptimiserTest {
         }
     }
 
-    protected void assertSymbol(String query, int columnIndex) throws JournalException, ParserException {
+    protected void assertSymbol(String query, int columnIndex) throws ParserException {
         RecordCursor cursor = compiler.compile(factory, query);
         SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
         Assert.assertNotNull(cursor.getStorageFacade().getFactory());
@@ -137,7 +136,7 @@ public abstract class AbstractOptimiserTest {
         }
     }
 
-    protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
+    protected void assertThat(String expected, String query, boolean header) throws ParserException, IOException {
         sink.clear();
         RecordSource rs = cache.peek(query);
         if (rs == null) {
@@ -151,7 +150,7 @@ public abstract class AbstractOptimiserTest {
         TestUtils.assertStrings(rs, factory);
     }
 
-    protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
+    protected void assertThat(String expected, String query) throws ParserException, IOException {
         assertThat(expected, query, false);
         assertThat(expected, query, false);
         Misc.free(cache.poll(query));

@@ -32,6 +32,7 @@ import java.io.Closeable;
 
 public interface LastRecordMap extends Closeable {
 
+    @SuppressWarnings("NumericOverflow")
     long SET_BIT = 1L << 63;
     long CLR_BIT = ~SET_BIT;
 

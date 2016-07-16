@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
@@ -77,7 +76,7 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this.cursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(factory, cursor.getStorageFacade());
         for (int i = 0, n = functions.size(); i < n; i++) {

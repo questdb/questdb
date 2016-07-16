@@ -60,8 +60,12 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     }
 
     @Override
-    public PartitionCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
-        this.journal = factory.reader(metadata);
+    public PartitionCursor prepareCursor(JournalReaderFactory factory) {
+        try {
+            this.journal = factory.reader(metadata);
+        } catch (JournalException e) {
+            throw new JournalRuntimeException(e);
+        }
         storageFacade.setJournal(journal);
         storageFacade.setFactory(factory);
         partitionCount = journal.getPartitionCount();

@@ -23,7 +23,6 @@
 
 package com.questdb.ql.parser;
 
-import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalReaderFactory;
@@ -131,15 +130,15 @@ public class QueryCompiler {
         columnNamePrefixLen = 3;
     }
 
-    public <T> RecordCursor compile(JournalReaderFactory factory, Class<T> clazz) throws JournalException, ParserException {
+    public <T> RecordCursor compile(JournalReaderFactory factory, Class<T> clazz) throws ParserException {
         return compile(factory, clazz.getName());
     }
 
-    public RecordCursor compile(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
+    public RecordCursor compile(JournalReaderFactory factory, CharSequence query) throws ParserException {
         return compileSource(factory, query).prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
     }
 
-    public RecordSource compileSource(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
+    public RecordSource compileSource(JournalReaderFactory factory, CharSequence query) throws ParserException {
         clearState();
         final QueryModel model = parser.parse(query).getQueryModel();
         final CharSequenceObjHashMap<Parameter> map = new CharSequenceObjHashMap<>();
@@ -508,7 +507,7 @@ public class QueryCompiler {
         constNameToToken.clear();
     }
 
-    private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws ParserException {
         optimiseOrderBy(model, OrderByState.UNKNOWN);
         optimiseSubQueries(model, factory);
         createOrderHash(model);
@@ -663,7 +662,7 @@ public class QueryCompiler {
         }
     }
 
-    private RecordSource compileJoins(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource compileJoins(QueryModel model, JournalReaderFactory factory) throws ParserException {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
         RecordSource master = null;
@@ -723,7 +722,7 @@ public class QueryCompiler {
 
     @SuppressWarnings("ConstantConditions")
     @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY"})
-    private RecordSource compileJournal(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource compileJournal(QueryModel model, JournalReaderFactory factory) throws ParserException {
 
         applyLimit(model);
 
@@ -921,7 +920,7 @@ public class QueryCompiler {
         return recordSource;
     }
 
-    private RecordSource compileNoOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource compileNoOptimise(QueryModel model, JournalReaderFactory factory) throws ParserException {
         RecordSource rs;
         if (model.getJoinModels().size() > 1) {
             optimiseJoins(model, factory);
@@ -947,11 +946,11 @@ public class QueryCompiler {
         return new VirtualColumnRecordSource(rs, outer);
     }
 
-    private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
+    private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException {
         return compile(parser.parseInternal(query).getQueryModel(), factory);
     }
 
-    private RecordSource compileSubQuery(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private RecordSource compileSubQuery(QueryModel model, JournalReaderFactory factory) throws ParserException {
 
         applyLimit(model);
 
@@ -1435,7 +1434,7 @@ public class QueryCompiler {
         return result;
     }
 
-    private void optimiseJoins(QueryModel parent, JournalReaderFactory factory) throws JournalException, ParserException {
+    private void optimiseJoins(QueryModel parent, JournalReaderFactory factory) throws ParserException {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
 
         int n = joinModels.size();
@@ -1538,10 +1537,9 @@ public class QueryCompiler {
      *
      * @param model   query model to analyse
      * @param factory factory is used to collect journal columns.
-     * @throws JournalException
      * @throws ParserException usually syntax exceptions
      */
-    private void optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private void optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws ParserException {
         QueryModel nm;
         ObjList<QueryModel> jm = model.getJoinModels();
         ObjList<ExprNode> where = model.parseWhereClause();
@@ -1608,7 +1606,7 @@ public class QueryCompiler {
     }
 
     // todo: remove
-    CharSequence plan(JournalReaderFactory factory, CharSequence query) throws ParserException, JournalException {
+    CharSequence plan(JournalReaderFactory factory, CharSequence query) throws ParserException {
         QueryModel model = parser.parse(query).getQueryModel();
         resetAndOptimise(model, factory);
         return model.plan();
@@ -1636,7 +1634,6 @@ public class QueryCompiler {
      * Splits "where" clauses into "and" concatenated list of boolean expressions.
      *
      * @param node expression n
-     * @throws ParserException
      */
     private void processJoinConditions(QueryModel parent, ExprNode node) throws ParserException {
         ExprNode n = node;
@@ -1842,12 +1839,12 @@ public class QueryCompiler {
         return node;
     }
 
-    private void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws JournalException, ParserException {
+    private void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws ParserException {
         clearState();
         optimiseJoins(model, factory);
     }
 
-    private void resolveJoinMetadata(QueryModel parent, int index, JournalReaderFactory factory) throws JournalException, ParserException {
+    private void resolveJoinMetadata(QueryModel parent, int index, JournalReaderFactory factory) throws ParserException {
         QueryModel model = parent.getJoinModels().getQuick(index);
         RecordMetadata metadata;
         if (model.getJournalName() != null) {

@@ -23,7 +23,6 @@
 
 package com.questdb.ql;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.ops.Parameter;
@@ -41,9 +40,9 @@ public interface RecordSource extends Sinkable, Closeable {
 
     Parameter getParam(CharSequence name);
 
-    RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException;
+    RecordCursor prepareCursor(JournalReaderFactory factory);
 
-    RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException;
+    RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler);
 
     void reset();
 

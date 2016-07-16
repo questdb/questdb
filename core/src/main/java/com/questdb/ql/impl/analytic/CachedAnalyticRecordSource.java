@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
@@ -117,7 +116,7 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(factory, cursor.getStorageFacade());
         // step #1: store source cursor in record list

@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
@@ -52,7 +51,7 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this.cursor = delegate.prepareCursor(factory, cancellationHandler);
         return this;
     }
@@ -63,13 +62,19 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean supportsRowIdAccess() {
-        return delegate.supportsRowIdAccess();
+    public StorageFacade getStorageFacade() {
+        return cursor.getStorageFacade();
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return cursor.getStorageFacade();
+    public boolean hasNext() {
+        return false;
+    }
+
+    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
+    @Override
+    public Record next() {
+        return null;
     }
 
     @Override
@@ -88,14 +93,8 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean hasNext() {
-        return false;
-    }
-
-    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
-    @Override
-    public Record next() {
-        return null;
+    public boolean supportsRowIdAccess() {
+        return delegate.supportsRowIdAccess();
     }
 
     @Override

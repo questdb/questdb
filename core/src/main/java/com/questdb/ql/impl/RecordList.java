@@ -128,7 +128,7 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
         long headerAddress = address;
         long writeAddress = headerAddress + headerSize;
 
-        for (int i = 0, n = columnCount; i < n; i++) {
+        for (int i = 0; i < columnCount; i++) {
             switch (metadata.getColumnQuick(i).getType()) {
                 case BOOLEAN:
                     Unsafe.getUnsafe().putByte(writeAddress, (byte) (record.getBool(i) ? 1 : 0));

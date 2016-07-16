@@ -24,7 +24,6 @@
 package com.questdb.ql.impl.aggregation;
 
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -68,7 +67,6 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
             keyIndices.add(rm.getColumnIndex(keyColumns.get(i)));
         }
 
-        // todo: generalise this and ResampledRecordSource
         ObjList<MapRecordValueInterceptor> interceptors = null;
         ObjList<RecordColumnMetadata> columns = AggregationUtils.TL_COLUMNS.get();
         columns.clear();
@@ -108,7 +106,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(this.recordCursor);
         buildMap(cancellationHandler);

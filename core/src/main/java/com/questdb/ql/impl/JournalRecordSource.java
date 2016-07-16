@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -60,7 +59,7 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this.partitionCursor = partitionSource.prepareCursor(factory);
         this.rowSource.prepare(partitionCursor.getStorageFacade(), cancellationHandler);
         return this;

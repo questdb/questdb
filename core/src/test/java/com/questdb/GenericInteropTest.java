@@ -476,6 +476,7 @@ public class GenericInteropTest extends AbstractTest {
         }
     }
 
+    @SuppressWarnings("CanBeFinal")
     public static class Partial {
         private String sym;
         private long created;

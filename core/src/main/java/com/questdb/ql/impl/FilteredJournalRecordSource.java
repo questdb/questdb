@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
@@ -64,7 +63,7 @@ public class FilteredJournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this.cursor = delegate.prepareCursor(factory, cancellationHandler);
         filter.prepare(cursor.getStorageFacade());
         return this;
@@ -76,13 +75,25 @@ public class FilteredJournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean supportsRowIdAccess() {
-        return delegate.supportsRowIdAccess();
+    public StorageFacade getStorageFacade() {
+        return cursor.getStorageFacade();
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return cursor.getStorageFacade();
+    public boolean hasNext() {
+        while (cursor.hasNext()) {
+            record = cursor.next();
+            if (filter.getBool(record)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
+    @Override
+    public Record next() {
+        return record;
     }
 
     @Override
@@ -101,20 +112,8 @@ public class FilteredJournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean hasNext() {
-        while (cursor.hasNext()) {
-            record = cursor.next();
-            if (filter.getBool(record)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
-    @Override
-    public Record next() {
-        return record;
+    public boolean supportsRowIdAccess() {
+        return delegate.supportsRowIdAccess();
     }
 
     @Override

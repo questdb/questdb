@@ -89,7 +89,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
     protected void doRead(ReadableByteChannel channel) throws JournalNetworkException {
         buffer.position(0);
         ByteBuffers.copy(channel, buffer);
-        for (int i = 0, k = tabCount; i < k; i++) {
+        for (int i = 0; i < tabCount; i++) {
             symbolTableSizes.setQuick(i, symbolTables.getQuick(i).size());
             if (Unsafe.getUnsafe().getByte(address + i) == 0) {
                 continue;

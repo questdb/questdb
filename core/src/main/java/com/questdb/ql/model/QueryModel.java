@@ -170,7 +170,7 @@ public class QueryModel implements Mutable {
         joinColumns.clear();
     }
 
-    public JournalMetadata collectJournalMetadata(JournalReaderFactory factory) throws ParserException, JournalException {
+    public JournalMetadata collectJournalMetadata(JournalReaderFactory factory) throws ParserException {
         if (journalMetadata != null) {
             return journalMetadata;
         }
@@ -191,10 +191,14 @@ public class QueryModel implements Mutable {
             throw QueryError.$(readerNode.position, "Journal directory is of unknown format");
         }
 
-        return journalMetadata = factory.getOrCreateMetadata(new JournalKey<>(reader));
+        try {
+            return journalMetadata = factory.getOrCreateMetadata(new JournalKey<>(reader));
+        } catch (JournalException e) {
+            throw QueryError.$(readerNode.position, e.getMessage());
+        }
     }
 
-    public void createColumnNameHistogram(JournalReaderFactory factory) throws JournalException, ParserException {
+    public void createColumnNameHistogram(JournalReaderFactory factory) throws ParserException {
         columnNameHistogram.clear();
         createColumnNameHistogram0(columnNameHistogram, this, factory, false);
     }
@@ -460,7 +464,7 @@ public class QueryModel implements Mutable {
         return alias != null ? alias.token : (journalName != null ? journalName.token : '{' + nestedModel.toString() + '}');
     }
 
-    private static void createColumnNameHistogram0(CharSequenceIntHashMap histogram, QueryModel model, JournalReaderFactory factory, boolean ignoreJoins) throws JournalException, ParserException {
+    private static void createColumnNameHistogram0(CharSequenceIntHashMap histogram, QueryModel model, JournalReaderFactory factory, boolean ignoreJoins) throws ParserException {
         ObjList<QueryModel> jm = model.getJoinModels();
         int jmSize = ignoreJoins ? 0 : jm.size();
 

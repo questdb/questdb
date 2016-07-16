@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.sort;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
@@ -90,7 +89,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         setSourceCursor(recordSource.prepareCursor(factory, cancellationHandler));
         if (byRowId) {
             buildMapByRowId(sourceCursor, cancellationHandler);

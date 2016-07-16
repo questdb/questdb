@@ -65,9 +65,13 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
-    public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException {
+    public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) {
         if (dynamicJournal) {
-            this.journal = readerFactory.reader(metadata);
+            try {
+                this.journal = readerFactory.reader(metadata);
+            } catch (JournalException e) {
+                throw new JournalRuntimeException(e);
+            }
             this.symFacade.setJournal(journal);
         }
         reset();

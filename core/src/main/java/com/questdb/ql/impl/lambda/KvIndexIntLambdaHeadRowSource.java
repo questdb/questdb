@@ -118,12 +118,8 @@ public class KvIndexIntLambdaHeadRowSource extends AbstractRowSource {
         }
 
         keys.clear();
-        try {
-            for (Record r : recordSource.prepareCursor(fa.getFactory(), cancellationHandler)) {
-                keys.add(r.getInt(recordSourceColumn));
-            }
-        } catch (JournalException e) {
-            throw new JournalRuntimeException(e);
+        for (Record r : recordSource.prepareCursor(fa.getFactory(), cancellationHandler)) {
+            keys.add(r.getInt(recordSourceColumn));
         }
 
     }

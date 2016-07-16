@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.virtual;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
@@ -59,7 +58,7 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
         current.prepare(recordCursor.getStorageFacade());
         return this;
@@ -71,13 +70,19 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean supportsRowIdAccess() {
-        return recordSource.supportsRowIdAccess();
+    public StorageFacade getStorageFacade() {
+        return recordCursor.getStorageFacade();
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return recordCursor.getStorageFacade();
+    public boolean hasNext() {
+        return recordCursor.hasNext();
+    }
+
+    @Override
+    public Record next() {
+        current.setBase(recordCursor.next());
+        return current;
     }
 
     @Override
@@ -99,14 +104,8 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean hasNext() {
-        return recordCursor.hasNext();
-    }
-
-    @Override
-    public Record next() {
-        current.setBase(recordCursor.next());
-        return current;
+    public boolean supportsRowIdAccess() {
+        return recordSource.supportsRowIdAccess();
     }
 
     @Override

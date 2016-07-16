@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.ql.RecordCursor;
@@ -44,7 +43,7 @@ public abstract class AbstractRecordSource implements RecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) {
         return prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
     }
 

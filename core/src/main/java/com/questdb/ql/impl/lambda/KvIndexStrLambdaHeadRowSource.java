@@ -121,15 +121,11 @@ abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
 
         keys.clear();
         hashes.clear();
-        try {
-            for (Record r : recordSource.prepareCursor(fa.getFactory(), cancellationHandler)) {
-                CharSequence s = getKey(r, recordSourceColumn);
-                if (keys.add(s)) {
-                    hashes.add(Hash.boundedHash(s, buckets));
-                }
+        for (Record r : recordSource.prepareCursor(fa.getFactory(), cancellationHandler)) {
+            CharSequence s = getKey(r, recordSourceColumn);
+            if (keys.add(s)) {
+                hashes.add(Hash.boundedHash(s, buckets));
             }
-        } catch (JournalException e) {
-            throw new JournalRuntimeException(e);
         }
     }
 

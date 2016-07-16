@@ -114,15 +114,11 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
 
         SymbolTable tab = fa.getSymbolTable(columnIndex);
         keys.clear();
-        try {
-            for (Record r : recordSource.prepareCursor(fa.getFactory(), cancellationHandler)) {
-                int k = tab.getQuick(getKey(r, recordSourceColumn));
-                if (k > -1) {
-                    keys.add(k);
-                }
+        for (Record r : recordSource.prepareCursor(fa.getFactory(), cancellationHandler)) {
+            int k = tab.getQuick(getKey(r, recordSourceColumn));
+            if (k > -1) {
+                keys.add(k);
             }
-        } catch (JournalException e) {
-            throw new JournalRuntimeException(e);
         }
     }
 

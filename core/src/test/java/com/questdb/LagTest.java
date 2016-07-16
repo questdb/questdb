@@ -148,6 +148,7 @@ public class LagTest extends AbstractTest {
             }
         });
 
+        Assert.assertNotNull(tempDirs);
         Assert.assertEquals(2, tempDirs.length);
     }
 

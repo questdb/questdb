@@ -24,7 +24,6 @@
 package com.questdb.ql.impl.interval;
 
 import com.questdb.Partition;
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.misc.Interval;
@@ -61,7 +60,7 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     }
 
     @Override
-    public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException {
+    public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) {
         partitionCursor = partitionSource.prepareCursor(readerFactory);
         return this;
     }

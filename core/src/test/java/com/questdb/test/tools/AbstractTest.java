@@ -1,28 +1,28 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.test.tools;
 
-import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.StringSink;
@@ -44,18 +44,18 @@ public abstract class AbstractTest {
     protected final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
     protected final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
 
-    protected void assertEmpty(String query) throws ParserException, JournalException {
+    protected void assertEmpty(String query) throws ParserException {
         try (RecordSource src = compiler.compileSource(factory, query)) {
             Assert.assertFalse(src.prepareCursor(factory).hasNext());
         }
     }
 
-    protected void assertThat(String expected, String query) throws JournalException, ParserException, IOException {
+    protected void assertThat(String expected, String query) throws ParserException, IOException {
         assertThat(expected, query, false);
         assertThat(expected, query, false);
     }
 
-    protected void assertThat(String expected, String query, boolean header) throws ParserException, JournalException, IOException {
+    protected void assertThat(String expected, String query, boolean header) throws ParserException, IOException {
         sink.clear();
         try (RecordSource src = compiler.compileSource(factory, query)) {
             printer.print(src, factory, header);

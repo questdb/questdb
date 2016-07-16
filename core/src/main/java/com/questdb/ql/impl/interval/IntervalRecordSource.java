@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.interval;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Interval;
@@ -62,7 +61,7 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this.cursor = delegate.prepareCursor(factory, cancellationHandler);
         return this;
     }
@@ -76,28 +75,8 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public boolean supportsRowIdAccess() {
-        return delegate.supportsRowIdAccess();
-    }
-
-    @Override
     public StorageFacade getStorageFacade() {
         return cursor.getStorageFacade();
-    }
-
-    @Override
-    public Record newRecord() {
-        return cursor.newRecord();
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        return cursor.recordAt(rowId);
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        cursor.recordAt(record, atRowId);
     }
 
     @Override
@@ -145,6 +124,26 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
     @Override
     public Record next() {
         return record;
+    }
+
+    @Override
+    public Record newRecord() {
+        return cursor.newRecord();
+    }
+
+    @Override
+    public Record recordAt(long rowId) {
+        return cursor.recordAt(rowId);
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        cursor.recordAt(record, atRowId);
+    }
+
+    @Override
+    public boolean supportsRowIdAccess() {
+        return delegate.supportsRowIdAccess();
     }
 
     @Override

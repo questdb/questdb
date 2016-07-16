@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
@@ -53,13 +52,13 @@ public class NoRowIdRecordSource implements RecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory) {
         return delegate.prepareCursor(factory);
     }
 
     @SuppressWarnings("unchecked")
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         return delegate.prepareCursor(factory, cancellationHandler);
     }
 

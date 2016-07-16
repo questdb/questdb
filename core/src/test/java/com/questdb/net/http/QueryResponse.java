@@ -26,6 +26,7 @@ package com.questdb.net.http;
 import java.sql.Timestamp;
 import java.util.List;
 
+@SuppressWarnings("CanBeFinal")
 public class QueryResponse {
     public String error;
     public String query;

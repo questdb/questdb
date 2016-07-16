@@ -23,7 +23,6 @@
 
 package com.questdb.ql;
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.std.Sinkable;
@@ -31,5 +30,5 @@ import com.questdb.std.Sinkable;
 public interface PartitionSource extends Sinkable {
     JournalMetadata getMetadata();
 
-    PartitionCursor prepareCursor(JournalReaderFactory readerFactory) throws JournalException;
+    PartitionCursor prepareCursor(JournalReaderFactory readerFactory);
 }

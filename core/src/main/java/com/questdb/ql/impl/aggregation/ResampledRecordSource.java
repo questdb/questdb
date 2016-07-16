@@ -24,7 +24,6 @@
 package com.questdb.ql.impl.aggregation;
 
 
-import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -120,7 +119,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) throws JournalException {
+    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(this.recordCursor);
         return this;
