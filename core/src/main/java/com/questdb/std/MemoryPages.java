@@ -68,7 +68,7 @@ public class MemoryPages implements Closeable, Mutable {
         for (int i = 0; i < pages.size(); i++) {
             long address = pages.getQuick(i);
             if (address != 0) {
-                Unsafe.getUnsafe().freeMemory(address);
+                Unsafe.free(address, pageSize);
             }
         }
         pages.clear();
@@ -88,7 +88,7 @@ public class MemoryPages implements Closeable, Mutable {
         }
 
         if (index >= pages.size()) {
-            pages.extendAndSet((int) index, Unsafe.getUnsafe().allocateMemory(pageSize));
+            pages.extendAndSet((int) index, Unsafe.malloc(pageSize));
         }
 
         cachePageLo = index << bits;

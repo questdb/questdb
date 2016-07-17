@@ -56,9 +56,9 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     public PrevStrAnalyticFunction(VirtualColumn valueColumn) {
         this.valueColumn = valueColumn;
         this.bufASz = 32;
-        this.bufA = Unsafe.getUnsafe().allocateMemory(this.bufASz * 2);
+        this.bufA = Unsafe.malloc(this.bufASz * 2);
         this.bufBSz = 32;
-        this.bufB = Unsafe.getUnsafe().allocateMemory(this.bufBSz * 2);
+        this.bufB = Unsafe.malloc(this.bufBSz * 2);
         this.buf = bufA;
         this.bufLen = bufALen;
     }
@@ -169,9 +169,9 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
         } else {
             int l = cs.length();
             if (l > sz) {
-                long b = Unsafe.getUnsafe().allocateMemory(l * 2);
+                long b = Unsafe.malloc(l * 2);
                 Chars.putCharsOnly(b, cs);
-                Unsafe.getUnsafe().freeMemory(buf);
+                Unsafe.free(buf, sz * 2);
 
                 if (buf == bufA) {
                     bufASz = l;
@@ -218,8 +218,8 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
         if (closed) {
             return;
         }
-        Unsafe.getUnsafe().freeMemory(bufA);
-        Unsafe.getUnsafe().freeMemory(bufB);
+        Unsafe.free(bufA, bufASz * 2);
+        Unsafe.free(bufB, bufBSz * 2);
         closed = true;
     }
 }

@@ -30,6 +30,7 @@ import java.io.Closeable;
 public class DirectMemoryStructure implements Closeable {
 
     protected long address;
+    protected long capacity;
 
     @Override
     public void close() {
@@ -38,7 +39,7 @@ public class DirectMemoryStructure implements Closeable {
 
     public final void free() {
         if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
+            Unsafe.free(address, capacity);
             address = 0;
         }
     }

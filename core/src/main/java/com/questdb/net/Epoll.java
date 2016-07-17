@@ -48,7 +48,7 @@ public final class Epoll implements Closeable {
 
     public Epoll(int capacity) {
         this.capacity = capacity;
-        this.events = _rPtr = Unsafe.getUnsafe().allocateMemory(SIZEOF_EVENT * (long) capacity);
+        this.events = _rPtr = Unsafe.malloc(SIZEOF_EVENT * (long) capacity);
         this.epfd = epollCreate();
     }
 
@@ -58,7 +58,7 @@ public final class Epoll implements Closeable {
             return;
         }
         Files.close(epfd);
-        Unsafe.getUnsafe().freeMemory(events);
+        Unsafe.free(events, SIZEOF_EVENT * (long) capacity);
         closed = true;
     }
 

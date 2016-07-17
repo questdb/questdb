@@ -166,7 +166,7 @@ public class Request implements Closeable, Mutable {
 
         public BoundaryAugmenter() {
             this.lim = 64;
-            this.lo = this._wptr = Unsafe.getUnsafe().allocateMemory(this.lim);
+            this.lo = this._wptr = Unsafe.malloc(this.lim);
             of0(BOUNDARY_PREFIX);
         }
 
@@ -188,16 +188,16 @@ public class Request implements Closeable, Mutable {
         }
 
         private void resize(int lim) {
-            Unsafe.getUnsafe().freeMemory(this.lo);
+            Unsafe.free(this.lo, this.lim);
             this.lim = Numbers.ceilPow2(lim);
-            this.lo = _wptr = Unsafe.getUnsafe().allocateMemory(this.lim);
+            this.lo = _wptr = Unsafe.malloc(this.lim);
             of0(BOUNDARY_PREFIX);
         }
 
         @Override
         public void close() {
             if (lo > 0) {
-                Unsafe.getUnsafe().freeMemory(this.lo);
+                Unsafe.free(this.lo, this.lim);
                 this.lo = 0;
             }
         }

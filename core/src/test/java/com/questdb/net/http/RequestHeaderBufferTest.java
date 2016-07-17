@@ -56,7 +56,7 @@ public class RequestHeaderBufferTest {
                     assertHeaders(hb);
                 }
             } finally {
-                Unsafe.getUnsafe().freeMemory(p);
+                Unsafe.free(p, request.length());
             }
         }
     }
@@ -70,7 +70,7 @@ public class RequestHeaderBufferTest {
                 hb.write(p, request.length(), true);
                 assertHeaders(hb);
             } finally {
-                Unsafe.getUnsafe().freeMemory(p);
+                Unsafe.free(p, request.length());
             }
         }
     }

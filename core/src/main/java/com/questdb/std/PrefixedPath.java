@@ -70,7 +70,7 @@ public final class PrefixedPath extends AbstractCharSequence implements Closeabl
     @Override
     public void close() {
         if (ptr > 0) {
-            Unsafe.getUnsafe().freeMemory(ptr);
+            Unsafe.free(ptr, capacity + 1);
             ptr = 0;
         }
     }
@@ -118,10 +118,10 @@ public final class PrefixedPath extends AbstractCharSequence implements Closeabl
     }
 
     private void alloc(int l) {
-        long p = Unsafe.getUnsafe().allocateMemory(l + 1);
+        long p = Unsafe.malloc(l + 1);
         if (ptr > 0) {
             Unsafe.getUnsafe().copyMemory(ptr, p, len);
-            Unsafe.getUnsafe().freeMemory(ptr);
+            Unsafe.free(ptr, capacity + 1);
         }
         ptr = p;
         this.capacity = l;

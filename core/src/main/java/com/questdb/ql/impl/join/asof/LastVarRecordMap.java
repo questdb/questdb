@@ -127,7 +127,7 @@ public class LastVarRecordMap implements LastRecordMap {
     @Override
     public void close() {
         for (int i = 0; i < pages.size(); i++) {
-            Unsafe.getUnsafe().freeMemory(pages.getQuick(i));
+            Unsafe.free(pages.getQuick(i), pageSize);
         }
         pages.clear();
         map.close();
@@ -237,7 +237,7 @@ public class LastVarRecordMap implements LastRecordMap {
 
         // allocateOffset if necessary
         if (pgInx == pages.size()) {
-            pages.add(Unsafe.getUnsafe().allocateMemory(pageSize));
+            pages.add(Unsafe.malloc(pageSize));
         }
 
         long addr = pages.getQuick(pgInx) + pgOfs;

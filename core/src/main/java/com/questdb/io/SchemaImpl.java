@@ -55,7 +55,7 @@ public class SchemaImpl implements Schema, Closeable, Mutable {
     @Override
     public void close() {
         if (address > 0) {
-            Unsafe.getUnsafe().freeMemory(address);
+            Unsafe.free(address, hi - address);
             address = 0;
         }
     }
@@ -87,11 +87,12 @@ public class SchemaImpl implements Schema, Closeable, Mutable {
         if (wptr + l >= hi) {
             long old_address = this.address;
             long old_wptr = this.wptr;
+            long old_size = this.hi - this.address;
 
             allocate(((int) (hi - address)) + l * 2);
             Unsafe.getUnsafe().copyMemory(old_address, this.address, (old_wptr - old_address));
             this.wptr = this.address + (old_wptr - old_address);
-            Unsafe.getUnsafe().freeMemory(old_address);
+            Unsafe.free(old_address, old_size);
         }
         for (int i = 0; i < cs.length(); i++) {
             Unsafe.getUnsafe().putByte(wptr++, (byte) cs.charAt(i));
@@ -99,7 +100,7 @@ public class SchemaImpl implements Schema, Closeable, Mutable {
     }
 
     private void allocate(int size) {
-        this.address = this.wptr = Unsafe.getUnsafe().allocateMemory(size);
+        this.address = this.wptr = Unsafe.malloc(size);
         this.hi = this.address + size;
     }
 }

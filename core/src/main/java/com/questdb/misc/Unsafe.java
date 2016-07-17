@@ -26,6 +26,7 @@ package com.questdb.misc;
 import com.questdb.ex.FatalError;
 
 import java.lang.reflect.Field;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class Unsafe {
     public static final long CHAR_OFFSET;
@@ -40,7 +41,9 @@ public final class Unsafe {
     private static final long OBJ_SCALE;
     private static final long BOOL_OFFSET;
     private static final long BOOL_SCALE;
-
+    private static final AtomicLong MEM_USED = new AtomicLong(0);
+    private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
+    private static final AtomicLong FREE_COUNT = new AtomicLong(0);
 
     private Unsafe() {
     }
@@ -78,12 +81,25 @@ public final class Unsafe {
         Unsafe.getUnsafe().putLong(array, LONG_OFFSET + index * LONG_SCALE, value);
     }
 
+    public static void free(long ptr, long size) {
+        getUnsafe().freeMemory(ptr);
+        FREE_COUNT.incrementAndGet();
+        MEM_USED.addAndGet(-size);
+    }
+
     public static boolean getBool(long address) {
         return UNSAFE.getByte(address) == 1;
     }
 
     public static sun.misc.Unsafe getUnsafe() {
         return UNSAFE;
+    }
+
+    public static long malloc(long size) {
+        long ptr = getUnsafe().allocateMemory(size);
+        MEM_USED.addAndGet(size);
+        MALLOC_COUNT.incrementAndGet();
+        return ptr;
     }
 
     static {

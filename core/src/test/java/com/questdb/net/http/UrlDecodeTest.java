@@ -53,7 +53,7 @@ public class UrlDecodeTest {
             TestUtils.assertEquals("a", map.get("x"));
             TestUtils.assertEquals("b", map.get("y"));
         } finally {
-            Unsafe.getUnsafe().freeMemory(p);
+            Unsafe.free(p, v.length());
         }
     }
 
@@ -66,7 +66,7 @@ public class UrlDecodeTest {
             TestUtils.assertEquals("a", map.get("x"));
             TestUtils.assertEquals("b", map.get("y"));
         } finally {
-            Unsafe.getUnsafe().freeMemory(p);
+            Unsafe.free(p, v.length());
         }
     }
 
@@ -81,7 +81,7 @@ public class UrlDecodeTest {
             TestUtils.assertEquals("'a'", map.get("x"));
             TestUtils.assertEquals("b", map.get("y"));
         } finally {
-            Unsafe.getUnsafe().freeMemory(p);
+            Unsafe.free(p, v.length());
         }
     }
 
@@ -95,7 +95,7 @@ public class UrlDecodeTest {
             TestUtils.assertEquals("b", map.get("y"));
             Assert.assertNull(map.get("z"));
         } finally {
-            Unsafe.getUnsafe().freeMemory(p);
+            Unsafe.free(p, v.length());
         }
     }
 
@@ -108,7 +108,7 @@ public class UrlDecodeTest {
             TestUtils.assertEquals("a", map.get("x"));
             TestUtils.assertEquals("b", map.get("y"));
         } finally {
-            Unsafe.getUnsafe().freeMemory(p);
+            Unsafe.free(p, v.length());
         }
     }
 
@@ -123,7 +123,7 @@ public class UrlDecodeTest {
             TestUtils.assertEquals("ab ba", map.get("z"));
             TestUtils.assertEquals("2", map.get("w"));
         } finally {
-            Unsafe.getUnsafe().freeMemory(p);
+            Unsafe.free(p, v.length());
         }
     }
 
@@ -137,7 +137,7 @@ public class UrlDecodeTest {
             TestUtils.assertEquals("b c", map.get("y"));
             TestUtils.assertEquals("123", map.get("z"));
         } finally {
-            Unsafe.getUnsafe().freeMemory(p);
+            Unsafe.free(p, v.length());
         }
     }
 
@@ -150,7 +150,7 @@ public class UrlDecodeTest {
             TestUtils.assertEquals("a", map.get("x"));
             TestUtils.assertEquals("b c", map.get("y"));
         } finally {
-            Unsafe.getUnsafe().freeMemory(p);
+            Unsafe.free(p, v.length());
         }
     }
 

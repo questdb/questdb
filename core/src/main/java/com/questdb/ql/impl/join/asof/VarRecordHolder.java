@@ -154,7 +154,7 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
     @Override
     public void close() {
         if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
+            Unsafe.free(address, this.size);
             address = 0;
             size = 0;
         }
@@ -176,10 +176,10 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
 
     private void alloc(int size) {
         if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
+            Unsafe.free(address, this.size);
         }
 
-        address = Unsafe.getUnsafe().allocateMemory(size);
+        address = Unsafe.malloc(size);
         this.size = size;
     }
 }

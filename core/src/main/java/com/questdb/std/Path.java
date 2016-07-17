@@ -51,7 +51,7 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
     @Override
     public void close() {
         if (ptr != 0) {
-            Unsafe.getUnsafe().freeMemory(ptr);
+            Unsafe.free(ptr, capacity + 1);
             ptr = 0;
         }
     }
@@ -69,7 +69,7 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
     public Path of(CharSequence str) {
         int l = str.length();
         if (l >= capacity) {
-            Unsafe.getUnsafe().freeMemory(ptr);
+            Unsafe.free(ptr, capacity + 1);
             alloc(l);
         }
         copy(str, l);
@@ -79,7 +79,7 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
 
     private void alloc(int len) {
         this.capacity = len;
-        this.ptr = Unsafe.getUnsafe().allocateMemory(len + 1);
+        this.ptr = Unsafe.malloc(len + 1);
     }
 
     private void copy(CharSequence str, int len) {

@@ -57,7 +57,7 @@ public class DelimitedTextParser implements TextParser {
     private boolean calcFields;
     private long lastLineStart;
     private long lineRollBufLen = 4 * 1024L;
-    private long lineRollBufPtr = Unsafe.getUnsafe().allocateMemory(lineRollBufLen);
+    private long lineRollBufPtr = Unsafe.malloc(lineRollBufLen);
     private boolean header;
     private long lastQuotePos = -1;
 
@@ -109,17 +109,6 @@ public class DelimitedTextParser implements TextParser {
         }
     }
 
-    public final void restart() {
-        this.fieldLo = 0;
-        this.eol = false;
-        this.fieldIndex = 0;
-        this.inQuote = false;
-        this.delayedOutQuote = false;
-        this.lineCount = 0;
-        this.lineRollBufCur = lineRollBufPtr;
-        this.useLineRollBuf = false;
-    }
-
     @Override
     public void setHeader(boolean header) {
         this.header = header;
@@ -138,10 +127,21 @@ public class DelimitedTextParser implements TextParser {
     @Override
     public void close() {
         if (lineRollBufPtr != 0) {
-            Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
+            Unsafe.free(lineRollBufPtr, lineRollBufLen);
             lineRollBufPtr = 0;
         }
         schema.close();
+    }
+
+    public final void restart() {
+        this.fieldLo = 0;
+        this.eol = false;
+        this.fieldIndex = 0;
+        this.inQuote = false;
+        this.delayedOutQuote = false;
+        this.lineCount = 0;
+        this.lineRollBufCur = lineRollBufPtr;
+        this.useLineRollBuf = false;
     }
 
     private void calcField() {
@@ -152,12 +152,12 @@ public class DelimitedTextParser implements TextParser {
 
     private void growRollBuf(long len) {
         LOG.info().$("Resizing line roll buffer: ").$(lineRollBufLen).$(" -> ").$(len).$();
-        long p = Unsafe.getUnsafe().allocateMemory(len);
+        long p = Unsafe.malloc(len);
         long l = lineRollBufCur - lineRollBufPtr;
         if (l > 0) {
             Unsafe.getUnsafe().copyMemory(lineRollBufPtr, p, l);
         }
-        Unsafe.getUnsafe().freeMemory(lineRollBufPtr);
+        Unsafe.free(lineRollBufPtr, lineRollBufLen);
         shift(lineRollBufPtr - p);
         lineRollBufCur = p + l;
         lineRollBufPtr = p;

@@ -38,7 +38,7 @@ public class HashTest {
         IntHashSet hashes = new IntHashSet(100000);
         final int LEN = 30;
 
-        long address = Unsafe.getUnsafe().allocateMemory(LEN);
+        long address = Unsafe.malloc(LEN);
 
         for (int i = 0; i < 100000; i++) {
             rnd.nextChars(address, LEN);

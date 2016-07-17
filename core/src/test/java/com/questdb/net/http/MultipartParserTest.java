@@ -97,7 +97,7 @@ public class MultipartParserTest {
                 lsnr.clear();
             }
         } finally {
-            Unsafe.getUnsafe().freeMemory(p);
+            Unsafe.free(p, content.length());
         }
 
     }

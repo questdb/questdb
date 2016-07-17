@@ -70,7 +70,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         } else {
             bufSize = DEFAULT_BUFFER_SIZE;
         }
-        this.buf = _wptr = Unsafe.getUnsafe().allocateMemory(bufSize);
+        this.buf = _wptr = Unsafe.malloc(bufSize);
         this.lim = buf + bufSize;
         this.fd = Files.openAppend(new Path(location));
         if (this.fd < 0) {
@@ -84,7 +84,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
             if (_wptr > buf) {
                 flush();
             }
-            Unsafe.getUnsafe().freeMemory(buf);
+            Unsafe.free(buf, bufSize);
             buf = 0;
         }
         if (this.fd != 0) {

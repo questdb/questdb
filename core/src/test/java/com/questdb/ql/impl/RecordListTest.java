@@ -205,13 +205,16 @@ public class RecordListTest extends AbstractTest {
 
     private static void assertEquals(ByteBuffer expected, DirectInputStream actual) {
         int sz = (int) actual.size();
-        long address = Unsafe.getUnsafe().allocateMemory(sz);
-        long p = address;
-        actual.copyTo(address, 0, sz);
-        for (long i = 0; i < sz; i++) {
-            Assert.assertEquals(expected.get(), Unsafe.getUnsafe().getByte(p++));
+        long address = Unsafe.malloc(sz);
+        try {
+            long p = address;
+            actual.copyTo(address, 0, sz);
+            for (long i = 0; i < sz; i++) {
+                Assert.assertEquals(expected.get(), Unsafe.getUnsafe().getByte(p++));
+            }
+        } finally {
+            Unsafe.free(address, sz);
         }
-        Unsafe.getUnsafe().freeMemory(address);
     }
 
     private <T> void writeAndReadRecords(JournalWriter<T> journal, int count, int pageSize, RecordGenerator<T> generator) throws IOException, JournalException, ParserException {

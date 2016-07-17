@@ -336,7 +336,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
 
         private FDSet(int size) {
             int l = ARRAY_OFFSET + 8 * size;
-            this.address = Unsafe.getUnsafe().allocateMemory(l);
+            this.address = Unsafe.malloc(l);
             this.size = size;
             this._wptr = address + ARRAY_OFFSET;
             this.lim = address + l;
@@ -353,7 +353,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
 
         private void close() {
             if (address != 0) {
-                Unsafe.getUnsafe().freeMemory(address);
+                Unsafe.free(address, lim - address);
                 address = 0;
             }
         }
@@ -377,12 +377,12 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         private void resize() {
             int sz = size * 2;
             int l = ARRAY_OFFSET + 8 * sz;
-            long _addr = Unsafe.getUnsafe().allocateMemory(l);
+            long _addr = Unsafe.malloc(l);
             Unsafe.getUnsafe().copyMemory(address, _addr, lim - address);
+            Unsafe.free(address, lim - address);
             lim = _addr + l;
             size = sz;
             _wptr = _addr + (_wptr - address);
-            Unsafe.getUnsafe().freeMemory(address);
             address = _addr;
         }
     }

@@ -47,7 +47,7 @@ public abstract class AbstractPrevAnalyticFunction implements AnalyticFunction, 
     public AbstractPrevAnalyticFunction(VirtualColumn valueColumn) {
         this.valueColumn = valueColumn;
         // buffer where "current" value is kept
-        this.bufPtr = Unsafe.getUnsafe().allocateMemory(8);
+        this.bufPtr = Unsafe.malloc(8);
     }
 
     @Override
@@ -154,7 +154,7 @@ public abstract class AbstractPrevAnalyticFunction implements AnalyticFunction, 
         if (closed) {
             return;
         }
-        Unsafe.getUnsafe().freeMemory(bufPtr);
+        Unsafe.free(bufPtr, 8);
         closed = true;
     }
 }

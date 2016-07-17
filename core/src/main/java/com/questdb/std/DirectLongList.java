@@ -37,7 +37,7 @@ public class DirectLongList extends DirectMemoryStructure implements Mutable {
 
     public DirectLongList(long capacity) {
         this.pow2 = 3;
-        this.address = Unsafe.getUnsafe().allocateMemory((capacity << 3) + CACHE_LINE_SIZE);
+        this.address = Unsafe.malloc(this.capacity = ((capacity << 3) + CACHE_LINE_SIZE));
         this.start = this.pos = address + (address & (CACHE_LINE_SIZE - 1));
         this.limit = pos + ((capacity - 1) << 3);
         this.onePow2 = (1 << 3);
@@ -159,11 +159,11 @@ public class DirectLongList extends DirectMemoryStructure implements Mutable {
     }
 
     private void extend(long capacity) {
-        long address = Unsafe.getUnsafe().allocateMemory((capacity << pow2) + CACHE_LINE_SIZE);
+        long address = Unsafe.malloc(this.capacity = ((capacity << pow2) + CACHE_LINE_SIZE));
         long start = address + (address & (CACHE_LINE_SIZE - 1));
         Unsafe.getUnsafe().copyMemory(this.start, start, limit + onePow2 - this.start);
         if (this.address != 0) {
-            Unsafe.getUnsafe().freeMemory(this.address);
+            Unsafe.free(this.address, this.capacity);
         }
         this.pos = this.pos - this.start + start;
         this.limit = start + ((capacity - 1) << pow2);

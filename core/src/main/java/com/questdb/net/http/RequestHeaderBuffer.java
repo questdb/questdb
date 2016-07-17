@@ -63,7 +63,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
 
     public RequestHeaderBuffer(int size, ObjectPool<DirectByteCharSequence> pool) {
         int sz = Numbers.ceilPow2(size);
-        this.headerPtr = Unsafe.getUnsafe().allocateMemory(sz);
+        this.headerPtr = Unsafe.malloc(sz);
         this._wptr = headerPtr;
         this.hi = this.headerPtr + sz;
         this.pool = pool;
@@ -92,7 +92,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
     @Override
     public void close() {
         if (this.headerPtr != 0) {
-            Unsafe.getUnsafe().freeMemory(this.headerPtr);
+            Unsafe.free(this.headerPtr, this.hi - this.headerPtr);
             this.headerPtr = 0;
         }
     }

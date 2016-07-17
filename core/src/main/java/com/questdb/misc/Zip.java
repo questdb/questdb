@@ -63,7 +63,7 @@ public final class Zip {
     public static native int totalOut(long z_streamp);
 
     static {
-        gzipHeader = Unsafe.getUnsafe().allocateMemory(Numbers.ceilPow2(gzipHeaderLen));
+        gzipHeader = Unsafe.malloc(Numbers.ceilPow2(gzipHeaderLen));
         long p = gzipHeader;
         Unsafe.getUnsafe().setMemory(gzipHeader, gzipHeaderLen, (byte) 0);
         Unsafe.getUnsafe().putByte(p++, (byte) GZIP_MAGIC);

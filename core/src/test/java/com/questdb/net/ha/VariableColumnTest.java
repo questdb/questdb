@@ -216,14 +216,14 @@ public class VariableColumnTest {
                 int readLen = max - offset;
                 DirectInputStream readStream = col1.getBin(0);
 
-                long readAddress = Unsafe.getUnsafe().allocateMemory(readLen);
+                long readAddress = Unsafe.malloc(readLen);
                 readStream.copyTo(readAddress, offset, readLen);
                 for (int i = 0; i < readLen; i++) {
                     byte expected = (byte) ((offset + i) % 255);
                     byte actual = Unsafe.getUnsafe().getByte(readAddress + i);
                     Assert.assertEquals(String.format("difference at index %d with read offset %d", i, offset), expected, actual);
                 }
-                Unsafe.getUnsafe().freeMemory(readAddress);
+                Unsafe.free(readAddress, readLen);
             }
         }
     }

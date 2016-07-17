@@ -174,7 +174,7 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
             int len = values.getInt(1);
             copyToBuffer(ptr);
             if (toByteLen(str.length()) > len) {
-                Unsafe.getUnsafe().freeMemory(ptr);
+                Unsafe.free(ptr, len);
                 store(str, values);
             } else {
                 Chars.put(ptr, str);
@@ -195,12 +195,12 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
 
         // free pointers in map values
         for (DirectMapEntry e : map) {
-            Unsafe.getUnsafe().freeMemory(e.getLong(0));
+            Unsafe.free(e.getLong(0), e.getInt(1));
         }
 
         Misc.free(map);
         if (bufPtr != 0) {
-            Unsafe.getUnsafe().freeMemory(bufPtr);
+            Unsafe.free(bufPtr, bufPtrLen);
         }
         closed = true;
     }
@@ -213,10 +213,10 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
         int l = toByteLen(Unsafe.getUnsafe().getInt(ptr));
         if (l >= bufPtrLen) {
             if (bufPtr != 0) {
-                Unsafe.getUnsafe().freeMemory(bufPtr);
+                Unsafe.free(bufPtr, bufPtrLen);
             }
             bufPtrLen = Numbers.ceilPow2(l);
-            bufPtr = Unsafe.getUnsafe().allocateMemory(bufPtrLen);
+            bufPtr = Unsafe.malloc(bufPtrLen);
             cs.of(bufPtr + 4, bufPtr + bufPtrLen);
         } else {
             cs.of(bufPtr + 4, bufPtr + l);
@@ -226,7 +226,7 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
 
     private void store(CharSequence str, DirectMapValues values) {
         int l = Numbers.ceilPow2(toByteLen(str.length()));
-        long ptr = Unsafe.getUnsafe().allocateMemory(l);
+        long ptr = Unsafe.malloc(l);
         values.putLong(0, ptr);
         values.putInt(1, l);
         Chars.put(ptr, str);

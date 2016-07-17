@@ -36,6 +36,7 @@ import com.questdb.store.SymbolTable;
 public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     private final ObjList<ColumnType> types;
     private final IntList offsets;
+    private final int size;
     private long address;
     private StorageFacade storageFacade;
     private boolean held = false;
@@ -73,7 +74,7 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
                     break;
             }
         }
-        address = Unsafe.getUnsafe().allocateMemory(size);
+        address = Unsafe.malloc(this.size = size);
     }
 
     @Override
@@ -101,7 +102,7 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     @Override
     public void close() {
         if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
+            Unsafe.free(address, this.size);
             address = 0;
         }
     }

@@ -59,7 +59,7 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
     @Override
     public void close() {
         if (ptr != 0) {
-            Unsafe.getUnsafe().freeMemory(ptr);
+            Unsafe.free(ptr, capacity);
             ptr = 0;
         }
     }
@@ -98,7 +98,7 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
 
     private void alloc(int len) {
         this.capacity = len;
-        this.ptr = this.wptr = Unsafe.getUnsafe().allocateMemory(len + 1);
+        this.ptr = this.wptr = Unsafe.malloc(len + 1);
     }
 
     private void copy(CharSequence str, int len) {
@@ -113,10 +113,10 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
     }
 
     private void extend(int len) {
-        long p = Unsafe.getUnsafe().allocateMemory(len);
+        long p = Unsafe.malloc(len);
         Unsafe.getUnsafe().copyMemory(ptr, p, this.len);
         long d = wptr - ptr;
-        Unsafe.getUnsafe().freeMemory(this.ptr);
+        Unsafe.free(this.ptr, this.capacity);
         this.ptr = p;
         this.wptr = p + d;
         this.capacity = len;

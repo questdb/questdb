@@ -50,7 +50,7 @@ public final class Kqueue implements Closeable {
 
     public Kqueue(int capacity) {
         this.capacity = capacity;
-        this.eventList = this._rPtr = Unsafe.getUnsafe().allocateMemory(SIZEOF_KEVENT * (long) capacity);
+        this.eventList = this._rPtr = Unsafe.malloc(SIZEOF_KEVENT * (long) capacity);
         this.kq = kqueue();
     }
 

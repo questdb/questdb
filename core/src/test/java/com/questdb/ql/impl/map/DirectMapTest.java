@@ -63,8 +63,10 @@ public class DirectMapTest {
 
 
         Rnd rnd = new Rnd();
-        long address = Unsafe.getUnsafe().allocateMemory(2 * 1024 * 1024);
-        long tmp = Unsafe.getUnsafe().allocateMemory(140);
+        final int addressSize = 2 * 1024 * 1024;
+        long address = Unsafe.malloc(addressSize);
+        final int tmpSize = 140;
+        long tmp = Unsafe.malloc(tmpSize);
 
         DirectMap map = new DirectMap(1024, 64, types);
         StringSink sink = new StringSink();
@@ -198,8 +200,8 @@ public class DirectMapTest {
 
         map.close();
 
-        Unsafe.getUnsafe().freeMemory(address);
-        Unsafe.getUnsafe().freeMemory(tmp);
+        Unsafe.free(address, addressSize);
+        Unsafe.free(tmp, tmpSize);
     }
 
     @Test

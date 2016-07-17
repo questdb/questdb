@@ -49,7 +49,7 @@ public class TestChannel implements NetworkChannel {
     }
 
     public void free() {
-        Unsafe.getUnsafe().freeMemory(reqAddress);
+        Unsafe.free(reqAddress, reqLen);
     }
 
     @Override
