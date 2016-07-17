@@ -27,6 +27,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.factory.JournalFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
+import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
@@ -101,6 +102,20 @@ public class JournalTest extends AbstractTest {
         for (int i = 1; i < rs.size(); i++) {
             Assert.assertEquals(rs.getRowID(i), w.incrementRowID(rs.getRowID(i - 1)));
         }
+    }
+
+    @Test
+    public void testInvalidColumnName() throws Exception {
+        File base = factory.getConfiguration().getJournalBase();
+        File dir = new File(base, "x");
+        Assert.assertFalse(dir.exists());
+        try {
+            factory.writer(new JournalStructure("x").$sym("x").index().$sym("y").index().$sym("z\0is\0bad").index().$());
+            Assert.fail();
+        } catch (JournalException ignore) {
+        }
+        Assert.assertTrue(dir.exists());
+        Assert.assertTrue(Files.delete(dir));
     }
 
     @Test
