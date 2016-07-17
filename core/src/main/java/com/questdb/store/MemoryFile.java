@@ -66,8 +66,8 @@ public class MemoryFile implements Closeable {
             LOG.info().$("BitHint is too small for ").$(file).$();
         }
         this.bitHint = bitHint;
-        open();
-        this.buffers = new ObjList<>((int) (size() >>> bitHint) + 1);
+        long size = open();
+        this.buffers = new ObjList<>((int) (size >>> bitHint) + 1);
         this.stitches = new ObjList<>(buffers.size());
     }
 
@@ -284,7 +284,7 @@ public class MemoryFile implements Closeable {
         }
     }
 
-    private void open() throws JournalException {
+    private long open() throws JournalException {
         String m;
         switch (mode) {
             case READ:
@@ -295,10 +295,10 @@ public class MemoryFile implements Closeable {
                 m = "rw";
                 break;
         }
-        openInternal(m);
+        return openInternal(m);
     }
 
-    private void openInternal(String mode) throws JournalException {
+    private long openInternal(String mode) throws JournalException {
 
         File pf = file.getParentFile();
         if (pf == null) {
@@ -311,8 +311,20 @@ public class MemoryFile implements Closeable {
 
         try {
             this.channel = new RandomAccessFile(file, mode).getChannel();
+        } catch (FileNotFoundException e) {
+            throw new JournalNoSuchFileException(e);
+        }
+
+        long size;
+        try {
+            size = channel.size();
+        } catch (IOException e) {
+            throw new JournalException(e);
+        }
+
+        try {
             if ("r".equals(mode)) {
-                this.offsetBuffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, Math.min(channel.size(), 8));
+                this.offsetBuffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, Math.min(size, 8));
             } else {
                 this.offsetBuffer = channel.map(FileChannel.MapMode.READ_WRITE, 0, 8);
             }
@@ -332,11 +344,17 @@ public class MemoryFile implements Closeable {
                     }
                 }
             }
-        } catch (FileNotFoundException e) {
-            throw new JournalNoSuchFileException(e);
         } catch (IOException e) {
+            try {
+                this.channel.close();
+            } catch (IOException ignore) {
+                // ignore
+            }
+            this.channel = null;
             throw new JournalException(e);
         }
+
+        return size;
     }
 
     int pageRemaining(long offset) {
@@ -344,14 +362,6 @@ public class MemoryFile implements Closeable {
             return (int) (cachedBufferHi - offset - 1);
         } else {
             return 0;
-        }
-    }
-
-    private long size() throws JournalException {
-        try {
-            return channel.size();
-        } catch (IOException e) {
-            throw new JournalException("Could not get channel size", e);
         }
     }
 

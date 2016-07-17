@@ -77,12 +77,23 @@ public class SymbolTable implements Closeable {
         }
 
         MemoryFile dataFile = new MemoryFile(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(avgStringSize * 2 + 4, keyCount), m);
-        MemoryFile indexFile = new MemoryFile(new File(directory, column + INDEX_FILE_SUFFIX), ByteBuffers.getBitHint(8, keyCount), m);
+        MemoryFile indexFile;
+        try {
+            indexFile = new MemoryFile(new File(directory, column + INDEX_FILE_SUFFIX), ByteBuffers.getBitHint(8, keyCount), m);
+        } catch (JournalException e) {
+            dataFile.close();
+            throw e;
+        }
 
         this.data = new VariableColumn(dataFile, indexFile);
         this.size = size;
 
-        this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, keyCount, txCountHint, mode, indexTxAddress);
+        try {
+            this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, keyCount, txCountHint, mode, indexTxAddress);
+        } catch (JournalException e) {
+            this.data.close();
+            throw e;
+        }
         this.valueCache = new CharSequenceIntHashMap(noCache ? 0 : keyCount, 0.5, VALUE_NOT_FOUND);
         this.keyCache = new ObjList<>(noCache ? 0 : keyCount);
     }

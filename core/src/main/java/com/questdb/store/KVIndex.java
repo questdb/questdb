@@ -90,6 +90,7 @@ public class KVIndex implements Closeable {
             putLong(kData, keyBlockSizeOffset + 8, maxValue); // 8
             kData.setAppendOffset(8 + 8 + 8 + 8);
         } else {
+            this.kData.close();
             throw new JournalException("Cannot open uninitialized index in read-only mode");
         }
 
@@ -99,7 +100,12 @@ public class KVIndex implements Closeable {
         this.bits = Numbers.msb(rowBlockLen);
         this.firstEntryOffset = keyBlockSizeOffset + 16;
         this.rowBlockSize = rowBlockLen * 8 + 16;
-        this.rData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, keyCount), mode);
+        try {
+            this.rData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, keyCount), mode);
+        } catch (JournalException e) {
+            this.kData.close();
+            throw e;
+        }
     }
 
     public static void delete(File base) {

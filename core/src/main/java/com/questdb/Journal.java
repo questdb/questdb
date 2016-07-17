@@ -97,7 +97,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         this.open = true;
         this.timestampOffset = getMetadata().getTimestampMetadata() == null ? -1 : getMetadata().getTimestampMetadata().offset;
         this.inactiveColumns = new BitSet(metadata.getColumnCount());
-
         configure();
     }
 
@@ -112,10 +111,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
             }
 
             closePartitions();
-            for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
-                Misc.free(symbolTables.getQuick(i));
-            }
-            txLog.close();
+            closeSymbolTables();
+            Misc.free(txLog);
             open = false;
         } else {
             throw new JournalRuntimeException("Already closed: %s", this);
@@ -544,6 +541,12 @@ public class Journal<T> implements Iterable<T>, Closeable {
         partitions.clear();
     }
 
+    private void closeSymbolTables() {
+        for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
+            Misc.free(symbolTables.getQuick(i));
+        }
+    }
+
     void configure() throws JournalException {
         txLog.head(tx);
         configureColumns();
@@ -553,17 +556,22 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     private void configureColumns() throws JournalException {
         int columnCount = getMetadata().getColumnCount();
-        for (int i = 0; i < columnCount; i++) {
-            ColumnMetadata meta = metadata.getColumnQuick(i);
-            if (meta.type == ColumnType.SYMBOL && meta.sameAs == null) {
-                int tabIndex = symbolTables.size();
-                int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
-                long indexTxAddress = tx.symbolTableIndexPointers.length > tabIndex ? tx.symbolTableIndexPointers[tabIndex] : 0;
-                SymbolTable tab = new SymbolTable(meta.distinctCountHint, meta.avgSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress, meta.noCache);
-                symbolTables.add(tab);
-                symbolTableMap.put(meta.name, tab);
-                meta.symbolTable = tab;
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                ColumnMetadata meta = metadata.getColumnQuick(i);
+                if (meta.type == ColumnType.SYMBOL && meta.sameAs == null) {
+                    int tabIndex = symbolTables.size();
+                    int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
+                    long indexTxAddress = tx.symbolTableIndexPointers.length > tabIndex ? tx.symbolTableIndexPointers[tabIndex] : 0;
+                    SymbolTable tab = new SymbolTable(meta.distinctCountHint, meta.avgSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress, meta.noCache);
+                    symbolTables.add(tab);
+                    symbolTableMap.put(meta.name, tab);
+                    meta.symbolTable = tab;
+                }
             }
+        } catch (JournalException e) {
+            closeSymbolTables();
+            throw e;
         }
     }
 

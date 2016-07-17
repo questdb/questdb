@@ -233,33 +233,38 @@ public class JournalWriter<T> extends Journal<T> {
             close();
             throw new JournalException("Journal is already open for APPEND at %s", getLocation());
         }
-        if (txLog.isEmpty()) {
-            commit(Tx.TX_NORMAL, 0L, 0L);
-        }
-        txLog.head(tx);
 
-        File meta = new File(getLocation(), JournalConfiguration.FILE_NAME);
-        if (!meta.exists()) {
-            try (UnstructuredFile hb = new UnstructuredFile(meta, 12, JournalMode.APPEND)) {
-                getMetadata().write(hb);
+        try {
+            if (txLog.isEmpty()) {
+                commit(Tx.TX_NORMAL, 0L, 0L);
             }
-        }
+            txLog.head(tx);
 
-        super.configure();
+            File meta = new File(getLocation(), JournalConfiguration.FILE_NAME);
+            if (!meta.exists()) {
+                try (UnstructuredFile hb = new UnstructuredFile(meta, 12, JournalMode.APPEND)) {
+                    getMetadata().write(hb);
+                }
+            }
 
-        beginTx();
-        rollback();
-        rollbackPartitionDirs();
+            super.configure();
 
-        if (tx.journalMaxRowID > 0 && getPartitionCount() <= Rows.toPartitionIndex(tx.journalMaxRowID)) {
             beginTx();
-            commit();
-        }
-        if (getMetadata().getLag() != -1) {
-            this.partitionCleaner = new PartitionCleaner(this, getLocation().getName());
-            this.partitionCleaner.start();
-        }
+            rollback();
+            rollbackPartitionDirs();
 
+            if (tx.journalMaxRowID > 0 && getPartitionCount() <= Rows.toPartitionIndex(tx.journalMaxRowID)) {
+                beginTx();
+                commit();
+            }
+            if (getMetadata().getLag() != -1) {
+                this.partitionCleaner = new PartitionCleaner(this, getLocation().getName());
+                this.partitionCleaner.start();
+            }
+        } catch (JournalException e) {
+            close();
+            throw e;
+        }
     }
 
     public void commit() throws JournalException {
