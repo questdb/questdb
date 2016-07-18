@@ -27,6 +27,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Files;
+import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.RecordSource;
@@ -41,8 +42,8 @@ public abstract class AbstractTest {
     public final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
 
     protected final StringSink sink = new StringSink();
-    protected final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
     protected final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+    private final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
 
     protected void assertEmpty(String query) throws ParserException {
         try (RecordSource src = compiler.compileSource(factory, query)) {
@@ -50,18 +51,45 @@ public abstract class AbstractTest {
         }
     }
 
-    protected void assertThat(String expected, String query) throws ParserException, IOException {
-        assertThat(expected, query, false);
-        assertThat(expected, query, false);
+    protected void assertPlan(CharSequence plan, CharSequence query) throws ParserException {
+        long memUsed = Unsafe.getMemUsed();
+        try (RecordSource recordSource = compile(query)) {
+            sink.clear();
+            sink.put(recordSource);
+            TestUtils.assertEquals(plan, sink);
+        }
+        Assert.assertEquals(memUsed, Unsafe.getMemUsed());
     }
 
     protected void assertThat(String expected, String query, boolean header) throws ParserException, IOException {
         sink.clear();
+        long memUsed = Unsafe.getMemUsed();
         try (RecordSource src = compiler.compileSource(factory, query)) {
             printer.print(src, factory, header);
             TestUtils.assertEquals(expected, sink);
             src.reset();
             TestUtils.assertStrings(src, factory);
+        }
+        Assert.assertEquals(memUsed, Unsafe.getMemUsed());
+    }
+
+    protected void assertThat(String expected, String query) throws ParserException, IOException {
+        assertThat(expected, query, false);
+        assertThat(expected, query, false);
+    }
+
+    protected RecordSource compile(CharSequence query) throws ParserException {
+        return compiler.compileSource(factory, query);
+    }
+
+    protected void expectFailure(CharSequence query) throws ParserException {
+        long memUsed = Unsafe.getMemUsed();
+        try {
+            compile(query);
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(memUsed, Unsafe.getMemUsed());
+            throw e;
         }
     }
 }

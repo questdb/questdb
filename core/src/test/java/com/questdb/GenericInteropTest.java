@@ -30,6 +30,7 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Files;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
+import com.questdb.ql.RecordSource;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -81,46 +82,49 @@ public class GenericInteropTest extends AbstractTest {
 
         writer.commit();
 
-        RecordCursor src = compiler.compile(factory, "test");
-        Record e;
+        try (RecordSource rs = compile("test")) {
+            RecordCursor src = rs.prepareCursor(factory);
 
-        Assert.assertTrue(src.hasNext());
-        Assert.assertNotNull(e = src.next());
+            Record e;
 
-        Assert.assertEquals("EURUSD", e.getSym(0));
-        Assert.assertEquals(19999, e.getDate(1));
-        Assert.assertEquals(1.24, e.getDouble(2), 0.000001);
-        Assert.assertEquals(1.25, e.getDouble(3), 0.000001);
-        Assert.assertEquals(10000, e.getInt(4));
-        Assert.assertEquals(12000, e.getInt(5));
-        Assert.assertEquals(1, e.get(6));
-        Assert.assertEquals("OK", e.getStr(7));
-        Assert.assertEquals("system", e.getStr(8));
-        Assert.assertEquals("EURUSD:GLOBAL", e.getStr(9));
-        Assert.assertTrue(e.getBool(10));
-        Assert.assertNull(e.getStr(11));
-        Assert.assertEquals(13141516, e.getLong(12));
-        Assert.assertEquals(25000, e.getShort(13));
+            Assert.assertTrue(src.hasNext());
+            Assert.assertNotNull(e = src.next());
 
-        Assert.assertTrue(src.hasNext());
-        Assert.assertNotNull(e = src.next());
+            Assert.assertEquals("EURUSD", e.getSym(0));
+            Assert.assertEquals(19999, e.getDate(1));
+            Assert.assertEquals(1.24, e.getDouble(2), 0.000001);
+            Assert.assertEquals(1.25, e.getDouble(3), 0.000001);
+            Assert.assertEquals(10000, e.getInt(4));
+            Assert.assertEquals(12000, e.getInt(5));
+            Assert.assertEquals(1, e.get(6));
+            Assert.assertEquals("OK", e.getStr(7));
+            Assert.assertEquals("system", e.getStr(8));
+            Assert.assertEquals("EURUSD:GLOBAL", e.getStr(9));
+            Assert.assertTrue(e.getBool(10));
+            Assert.assertNull(e.getStr(11));
+            Assert.assertEquals(13141516, e.getLong(12));
+            Assert.assertEquals(25000, e.getShort(13));
 
-        Assert.assertEquals("EURUSD", e.getSym(0));
-        Assert.assertEquals(20000, e.getDate(1));
-        Assert.assertEquals(1.23, e.getDouble(2), 0.000001);
-        Assert.assertEquals(1.26, e.getDouble(3), 0.000001);
-        Assert.assertEquals(11000, e.getInt(4));
-        Assert.assertEquals(13000, e.getInt(5));
-        Assert.assertEquals(2, e.get(6));
-        Assert.assertEquals("STALE", e.getStr(7));
-        Assert.assertEquals("system", e.getStr(8));
-        Assert.assertEquals("EURUSD:GLOBAL", e.getStr(9));
-        Assert.assertFalse(e.getBool(10));
-        Assert.assertNull(e.getStr(11));
-        Assert.assertEquals(23242526, e.getLong(12));
-        Assert.assertEquals(30000, e.getShort(13));
+            Assert.assertTrue(src.hasNext());
+            Assert.assertNotNull(e = src.next());
 
-        Assert.assertFalse(src.hasNext());
+            Assert.assertEquals("EURUSD", e.getSym(0));
+            Assert.assertEquals(20000, e.getDate(1));
+            Assert.assertEquals(1.23, e.getDouble(2), 0.000001);
+            Assert.assertEquals(1.26, e.getDouble(3), 0.000001);
+            Assert.assertEquals(11000, e.getInt(4));
+            Assert.assertEquals(13000, e.getInt(5));
+            Assert.assertEquals(2, e.get(6));
+            Assert.assertEquals("STALE", e.getStr(7));
+            Assert.assertEquals("system", e.getStr(8));
+            Assert.assertEquals("EURUSD:GLOBAL", e.getStr(9));
+            Assert.assertFalse(e.getBool(10));
+            Assert.assertNull(e.getStr(11));
+            Assert.assertEquals(23242526, e.getLong(12));
+            Assert.assertEquals(30000, e.getShort(13));
+
+            Assert.assertFalse(src.hasNext());
+        }
     }
 
     @Test
@@ -346,28 +350,30 @@ public class GenericInteropTest extends AbstractTest {
         writer.append(d);
         writer.commit();
 
-        RecordCursor src = compiler.compile(factory, "test");
-        Record e;
+        try (RecordSource rs = compile("test")) {
+            RecordCursor src = rs.prepareCursor(factory);
+            Record e;
 
-        Assert.assertTrue(src.hasNext());
-        Assert.assertNotNull(e = src.next());
+            Assert.assertTrue(src.hasNext());
+            Assert.assertNotNull(e = src.next());
 
-        Assert.assertEquals("GBPUSD", e.getSym(0));
-        Assert.assertEquals(30000, e.getDate(1));
-        Assert.assertEquals(0.65, e.getDouble(2), 0.000001);
-        Assert.assertEquals(0.66, e.getDouble(3), 0.000001);
-        Assert.assertEquals(1000, e.getInt(4));
-        Assert.assertEquals(1100, e.getInt(5));
-        Assert.assertEquals(1, e.get(6));
-        Assert.assertEquals("OK", e.getStr(7));
-        Assert.assertEquals("system", e.getStr(8));
-        Assert.assertEquals("GBPUSD:GLOBAL", e.getStr(9));
-        Assert.assertTrue(e.getBool(10));
-        Assert.assertNull(e.getStr(11));
-        Assert.assertEquals(12345678, e.getLong(12));
-        Assert.assertEquals(425, e.getShort(13));
+            Assert.assertEquals("GBPUSD", e.getSym(0));
+            Assert.assertEquals(30000, e.getDate(1));
+            Assert.assertEquals(0.65, e.getDouble(2), 0.000001);
+            Assert.assertEquals(0.66, e.getDouble(3), 0.000001);
+            Assert.assertEquals(1000, e.getInt(4));
+            Assert.assertEquals(1100, e.getInt(5));
+            Assert.assertEquals(1, e.get(6));
+            Assert.assertEquals("OK", e.getStr(7));
+            Assert.assertEquals("system", e.getStr(8));
+            Assert.assertEquals("GBPUSD:GLOBAL", e.getStr(9));
+            Assert.assertTrue(e.getBool(10));
+            Assert.assertNull(e.getStr(11));
+            Assert.assertEquals(12345678, e.getLong(12));
+            Assert.assertEquals(425, e.getShort(13));
 
-        Assert.assertFalse(src.hasNext());
+            Assert.assertFalse(src.hasNext());
+        }
     }
 
     @Test

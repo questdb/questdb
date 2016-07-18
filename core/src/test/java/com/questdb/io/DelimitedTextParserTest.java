@@ -26,6 +26,7 @@ package com.questdb.io;
 import com.questdb.Journal;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
+import com.questdb.ql.RecordSource;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
@@ -65,8 +66,10 @@ public class DelimitedTextParserTest extends AbstractTest {
         File actual = new File(factory.getConfiguration().getJournalBase(), "exp.csv");
         File expected = new File(this.getClass().getResource("/csv/test-export-expected.csv").getFile());
 
-        ExportManager.export(compiler.compileSource(factory, "'" + location + "'"), factory, actual, TextFileFormat.CSV);
-        TestUtils.assertEquals(expected, actual);
+        try (RecordSource rs = compile("'" + location + "'")) {
+            ExportManager.export(rs, factory, actual, TextFileFormat.CSV);
+            TestUtils.assertEquals(expected, actual);
+        }
     }
 
     @Test

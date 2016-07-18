@@ -1292,6 +1292,9 @@ public class QueryCompiler {
 
         VirtualColumn col = virtualColumnBuilder.createVirtualColumn(model, current, null);
         if (col.isConstant()) {
+            if (col.getType() != ColumnType.BOOLEAN) {
+                throw QueryError.$(current.position, "Boolean expression expected");
+            }
             return !col.getBool(null);
         } else {
             throw QueryError.$(0, "Internal error: expected constant");

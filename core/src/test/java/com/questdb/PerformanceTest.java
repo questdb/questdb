@@ -35,6 +35,7 @@ import com.questdb.model.Quote;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
+import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.query.api.QueryAllBuilder;
 import com.questdb.query.api.QueryHeadBuilder;
@@ -204,20 +205,22 @@ public class PerformanceTest extends AbstractTest {
             if (i == 0) {
                 t = System.nanoTime();
             }
-            RecordCursor s = compiler.compile(factory, "quote");
-            int cnt = 0;
-            for (Record r : s) {
-                r.getLong(0);
-                r.getSym(1);
-                r.getDouble(2);
-                r.getDouble(3);
-                r.getInt(4);
-                r.getInt(5);
-                r.getSym(6);
-                r.getSym(7);
-                cnt++;
+            try (RecordSource rs = compile("quote")) {
+                RecordCursor s = rs.prepareCursor(factory);
+                int cnt = 0;
+                for (Record r : s) {
+                    r.getLong(0);
+                    r.getSym(1);
+                    r.getDouble(2);
+                    r.getDouble(3);
+                    r.getInt(4);
+                    r.getInt(5);
+                    r.getSym(6);
+                    r.getSym(7);
+                    cnt++;
+                }
+                Assert.assertEquals(TEST_DATA_SIZE, cnt);
             }
-            Assert.assertEquals(TEST_DATA_SIZE, cnt);
         }
         result = System.nanoTime() - t;
         LOG.info().$("generic read (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();

@@ -31,8 +31,8 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.test.tools.AbstractTest;
+import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class MultiColumnJoinTest extends AbstractTest {
@@ -40,6 +40,7 @@ public class MultiColumnJoinTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
 
+        factory.getConfiguration().exists("");
         JournalWriter a = factory.writer(new JournalStructure("a").$int("x").$str("y").$double("amount").$());
         JournalWriter b = factory.writer(new JournalStructure("b").$int("x").$str("y").$str("name").$());
 
@@ -86,13 +87,11 @@ public class MultiColumnJoinTest extends AbstractTest {
     }
 
     @Test
-    @Ignore
     public void testNonLiteral() throws Exception {
         try {
-            compiler.compile(factory, "a join b on (1+2)");
+            expectFailure("a join b on (1+2)");
         } catch (ParserException e) {
-            System.out.println(QueryError.getPosition());
-            System.out.println(QueryError.getMessage());
+            Assert.assertEquals(15, QueryError.getPosition());
         }
     }
 }

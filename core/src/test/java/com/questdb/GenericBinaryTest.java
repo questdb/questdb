@@ -28,6 +28,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.Record;
+import com.questdb.ql.RecordSource;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -63,18 +64,20 @@ public class GenericBinaryTest extends AbstractTest {
         writeOutputStream(writer, expected);
 
         List<byte[]> actual = new ArrayList<>();
-        for (Record e : compiler.compile(factory, "bintest")) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            InputStream in = e.getBin(0);
+        try (RecordSource rs = compile("bintest")) {
+            for (Record e : rs.prepareCursor(factory)) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                InputStream in = e.getBin(0);
 
-            int b;
-            while ((b = in.read()) != -1) {
-                out.write(b);
+                int b;
+                while ((b = in.read()) != -1) {
+                    out.write(b);
+                }
+                actual.add(out.toByteArray());
             }
-            actual.add(out.toByteArray());
-        }
 
-        assertEquals(expected, actual);
+            assertEquals(expected, actual);
+        }
     }
 
     @Test
@@ -136,12 +139,14 @@ public class GenericBinaryTest extends AbstractTest {
 
     private List<byte[]> readOutputStream() throws ParserException {
         List<byte[]> result = new ArrayList<>();
-        for (Record e : compiler.compile(factory, "bintest")) {
-            ByteArrayOutputStream o = new ByteArrayOutputStream();
-            e.getBin(0, o);
-            result.add(o.toByteArray());
+        try (RecordSource rs = compile("bintest")) {
+            for (Record e : rs.prepareCursor(factory)) {
+                ByteArrayOutputStream o = new ByteArrayOutputStream();
+                e.getBin(0, o);
+                result.add(o.toByteArray());
+            }
+            return result;
         }
-        return result;
     }
 
     private void writeInputStream(JournalWriter writer, List<byte[]> bytes) throws JournalException {
