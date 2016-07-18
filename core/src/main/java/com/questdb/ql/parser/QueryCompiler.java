@@ -669,6 +669,8 @@ public class QueryCompiler {
 
         boolean needColumnNameHistogram = model.getColumns().size() > 0;
 
+        model.getColumnNameHistogram().clear();
+
         for (int i = 0, n = ordered.size(); i < n; i++) {
             int index = ordered.getQuick(i);
             QueryModel m = joinModels.getQuick(index);

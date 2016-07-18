@@ -47,4 +47,10 @@ public class NextOrderedAnalyticFunction extends AbstractOrderedAnalyticFunction
         }
         prevRow = row;
     }
+
+    @Override
+    public void reset() {
+        super.reset();
+        prevRow = -1;
+    }
 }

@@ -460,7 +460,7 @@ public class NextAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                         "  \"src\": {\n" +
                         "    \"op\": \"CachedRowAnalyticRecordSource\",\n" +
                         "    \"functions\": 1,\n" +
-                        "    \"orderedSources\": 0,\n" +
+                        "    \"orderedSources\": 1,\n" +
                         "    \"src\": {\n" +
                         "      \"op\": \"JournalRecordSource\",\n" +
                         "      \"psrc\": {\n" +

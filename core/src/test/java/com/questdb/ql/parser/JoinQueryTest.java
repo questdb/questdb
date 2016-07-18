@@ -287,7 +287,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
 
     @Test
     public void testAsOfJoinSymbolBehaviour() throws Exception {
-        assertSymbol("select customerId, country from customers c" +
+        assertSymbol("select c.customerId, country from customers c" +
                 " asof join employees e on c.customerId = e.employeeId" +
                 " join orders o on c.customerId = o.customerId", 1);
 
@@ -893,11 +893,16 @@ public class JoinQueryTest extends AbstractOptimiserTest {
 
     @Test
     public void testJoinSymbolBehaviourOnSecondaryJournal() throws Exception {
-        assertSymbol("select customerName, productName, orderId, category from (" +
-                "select customerName, orderId, productId " +
-                "from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'" +
-                ") x" +
-                " join products p on p.productId = x.productId", 3);
+        try {
+            assertSymbol("select customerName, productName, orderId, category from (" +
+                    "select customerName, orderId, productId " +
+                    "from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'" +
+                    ") x" +
+                    " join products p on p.productId = x.productId", 3);
+        } catch (ParserException e) {
+            System.out.println(QueryError.getMessage());
+            System.out.println(QueryError.getPosition());
+        }
 
     }
 

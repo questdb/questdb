@@ -92,6 +92,10 @@ public class RedBlackTree implements Mutable, Closeable {
         mem.close();
     }
 
+    public LongComparator getComparator() {
+        return comparator;
+    }
+
     public LongIterator iterator() {
         long p = root;
         if (p != -1) {

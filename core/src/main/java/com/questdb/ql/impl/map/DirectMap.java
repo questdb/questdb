@@ -63,7 +63,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
             throw new IllegalArgumentException("pageSize must be > 0");
         }
         this.loadFactor = loadFactor;
-        this.address = Unsafe.malloc(pageSize + Unsafe.CACHE_LINE_SIZE);
+        this.address = Unsafe.malloc(this.capacity = (pageSize + Unsafe.CACHE_LINE_SIZE));
         this.kStart = kPos = this.address + (this.address & (Unsafe.CACHE_LINE_SIZE - 1));
         this.kLimit = kStart + pageSize;
 
@@ -269,7 +269,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         long kStart = kAddress + (kAddress & (Unsafe.CACHE_LINE_SIZE - 1));
 
         Unsafe.getUnsafe().copyMemory(this.kStart, kStart, kCapacity >> 1);
-        Unsafe.free(this.address, this.kLimit - this.kStart + Unsafe.CACHE_LINE_SIZE);
+        Unsafe.free(this.address, this.capacity);
 
         long d = kStart - this.kStart;
         keyWriter.startAddr += d;

@@ -204,7 +204,7 @@ public class QueryModel implements Mutable {
     }
 
     public void createColumnNameHistogram(RecordSource rs) {
-        columnNameHistogram.clear();
+//        columnNameHistogram.clear();
         RecordMetadata m = rs.getMetadata();
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
             columnNameHistogram.increment(m.getColumnName(i));

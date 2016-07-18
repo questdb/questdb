@@ -91,6 +91,18 @@ public final class Unsafe {
         return UNSAFE.getByte(address) == 1;
     }
 
+    public static long getFreeCount() {
+        return FREE_COUNT.get();
+    }
+
+    public static long getMallocCount() {
+        return MALLOC_COUNT.get();
+    }
+
+    public static long getMemUsed() {
+        return MEM_USED.get();
+    }
+
     public static sun.misc.Unsafe getUnsafe() {
         return UNSAFE;
     }

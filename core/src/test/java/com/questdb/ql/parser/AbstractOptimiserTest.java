@@ -31,6 +31,7 @@ import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Files;
 import com.questdb.misc.Misc;
+import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
@@ -127,16 +128,30 @@ public abstract class AbstractOptimiserTest {
     }
 
     protected void assertSymbol(String query, int columnIndex) throws ParserException {
-        RecordCursor cursor = compiler.compile(factory, query);
-        SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
-        Assert.assertNotNull(cursor.getStorageFacade().getFactory());
-        while (cursor.hasNext()) {
-            Record r = cursor.next();
-            TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));
+        try (RecordSource src = compiler.compileSource(factory, query)) {
+            RecordCursor cursor = src.prepareCursor(factory);
+            SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
+            Assert.assertNotNull(cursor.getStorageFacade().getFactory());
+            while (cursor.hasNext()) {
+                Record r = cursor.next();
+                TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));
+            }
         }
     }
 
+    protected void assertThat(String expected, String query) throws ParserException, IOException {
+        assertThat(expected, query, false);
+    }
+
     protected void assertThat(String expected, String query, boolean header) throws ParserException, IOException {
+        long allocated = Unsafe.getMemUsed();
+        assertThat0(expected, query, header);
+        assertThat0(expected, query, header);
+        Misc.free(cache.poll(query));
+        Assert.assertEquals(allocated, Unsafe.getMemUsed());
+    }
+
+    private void assertThat0(String expected, String query, boolean header) throws ParserException, IOException {
         sink.clear();
         RecordSource rs = cache.peek(query);
         if (rs == null) {
@@ -148,11 +163,6 @@ public abstract class AbstractOptimiserTest {
         TestUtils.assertEquals(expected, sink);
         rs.reset();
         TestUtils.assertStrings(rs, factory);
-    }
-
-    protected void assertThat(String expected, String query) throws ParserException, IOException {
-        assertThat(expected, query, false);
-        assertThat(expected, query, false);
-        Misc.free(cache.poll(query));
+        rs.reset();
     }
 }

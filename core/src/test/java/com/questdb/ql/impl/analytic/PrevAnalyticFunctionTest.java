@@ -27,6 +27,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
@@ -131,6 +132,12 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
             "-805434743\tAX\t2016-05-01T11:58:00.000Z\t1362833895\n" +
             "-640305320\tKK\t2016-05-01T11:59:00.000Z\t-636975106\n" +
             "1751526583\tBZ\t2016-05-01T12:00:00.000Z\t1100812407\n";
+
+    @BeforeClass
+    public static void setup() {
+        // this check will initialise thread local object outside of memory leak tests
+        factory.getConfiguration().exists("");
+    }
 
     @Test
     public void testAggregationContext() throws Exception {
@@ -700,7 +707,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "  \"src\": {\n" +
                 "    \"op\": \"CachedRowAnalyticRecordSource\",\n" +
                 "    \"functions\": 1,\n" +
-                "    \"orderedSources\": 0,\n" +
+                "    \"orderedSources\": 1,\n" +
                 "    \"src\": {\n" +
                 "      \"op\": \"SelectedColumnsRecordSource\",\n" +
                 "      \"src\": {\n" +
@@ -732,7 +739,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "    \"src\": {\n" +
                 "      \"op\": \"CachedRowAnalyticRecordSource\",\n" +
                 "      \"functions\": 1,\n" +
-                "      \"orderedSources\": 0,\n" +
+                "      \"orderedSources\": 1,\n" +
                 "      \"src\": {\n" +
                 "        \"op\": \"JournalRecordSource\",\n" +
                 "        \"psrc\": {\n" +

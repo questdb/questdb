@@ -51,8 +51,6 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
     private final AnalyticRecordStorageFacade storageFacade;
     private final int split;
     private final FakeRecord fakeRecord = new FakeRecord();
-    private final int pageSize;
-    private final ObjList<RecordComparator> comparators;
     private RecordCursor parentCursor;
 
     public CachedRowAnalyticRecordSource(
@@ -60,9 +58,7 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
             RecordSource recordSource,
             ObjList<RecordComparator> comparators,
             ObjList<ObjList<AnalyticFunction>> functionGroups) {
-        this.pageSize = pageSize;
         this.recordSource = recordSource;
-        this.comparators = comparators;
         this.orderGroupCount = comparators.size();
         assert orderGroupCount == functionGroups.size();
         this.orderedSources = new ObjList<>(orderGroupCount);
@@ -84,6 +80,17 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
         this.record = new AnalyticRecord(split, functions);
         this.storageFacade = new AnalyticRecordStorageFacade(split, functions);
         this.recordList.setStorageFacade(storageFacade);
+
+        // red&black trees, one for each comparator where comparator is not null
+        for (int i = 0; i < orderGroupCount; i++) {
+            RecordComparator cmp = comparators.getQuick(i);
+            if (cmp != null) {
+                orderedSources.add(new RedBlackTree(new MyComparator(cmp), pageSize));
+            } else {
+                orderedSources.add(null);
+            }
+        }
+
     }
 
     @Override
@@ -115,11 +122,9 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
 
         // red&black trees, one for each comparator where comparator is not null
         for (int i = 0; i < orderGroupCount; i++) {
-            RecordComparator cmp = comparators.getQuick(i);
-            if (cmp != null) {
-                orderedSources.add(new RedBlackTree(new MyComparator(cmp, cursor), pageSize));
-            } else {
-                orderedSources.add(null);
+            RedBlackTree tree = orderedSources.getQuick(i);
+            if (tree != null) {
+                ((MyComparator) tree.getComparator()).setCursor(cursor);
             }
         }
 
@@ -190,8 +195,6 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
                 tree.clear();
             }
         }
-
-        orderedSources.clear();
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).reset();
         }
@@ -238,15 +241,12 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
 
     private static class MyComparator implements RedBlackTree.LongComparator {
         private final RecordComparator delegate;
-        private final RecordCursor cursor;
-        private final Record left;
-        private final Record right;
+        private RecordCursor cursor;
+        private Record left;
+        private Record right;
 
-        public MyComparator(RecordComparator delegate, RecordCursor cursor) {
+        public MyComparator(RecordComparator delegate) {
             this.delegate = delegate;
-            this.cursor = cursor;
-            this.left = cursor.newRecord();
-            this.right = cursor.newRecord();
         }
 
         @Override
@@ -263,6 +263,14 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
             cursor.recordAt(this.left, left);
             assert this.left != null;
             delegate.setLeft(this.left);
+        }
+
+        public void setCursor(RecordCursor cursor) {
+            this.cursor = cursor;
+            if (left == null || right == null) {
+                this.left = cursor.newRecord();
+                this.right = cursor.newRecord();
+            }
         }
     }
 }
