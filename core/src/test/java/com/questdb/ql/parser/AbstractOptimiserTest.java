@@ -52,9 +52,9 @@ public abstract class AbstractOptimiserTest {
 
     @ClassRule
     public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
-    protected static final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
     protected static final StringSink sink = new StringSink();
     protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+    private static final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
     private static final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 16);
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private static final JsonParser jp = new JsonParser();
@@ -164,5 +164,20 @@ public abstract class AbstractOptimiserTest {
         rs.reset();
         TestUtils.assertStrings(rs, factory);
         rs.reset();
+    }
+
+    protected RecordSource compileSource(CharSequence query) throws ParserException {
+        return compiler.compileSource(factory, query);
+    }
+
+    protected void expectFailure(CharSequence query) throws ParserException {
+        long memUsed = Unsafe.getMemUsed();
+        try {
+            compiler.compile(factory, query);
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(memUsed, Unsafe.getMemUsed());
+            throw e;
+        }
     }
 }

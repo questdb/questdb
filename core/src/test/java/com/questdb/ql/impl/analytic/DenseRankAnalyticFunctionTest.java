@@ -26,7 +26,6 @@ package com.questdb.ql.impl.analytic;
 import com.questdb.ex.ParserException;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class DenseRankAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
@@ -118,8 +117,7 @@ public class DenseRankAnalyticFunctionTest extends AbstractAnalyticRecordSourceT
     @Test
     public void testRankWithArg() throws Exception {
         try {
-            compiler.compile(factory, "select str, dense_rank(sym) rank over(partition by str) from 'abc'");
-            Assert.fail();
+            expectFailure("select str, dense_rank(sym) rank over(partition by str) from 'abc'");
         } catch (ParserException e) {
             TestUtils.assertEquals("Unknown function", QueryError.getMessage());
         }

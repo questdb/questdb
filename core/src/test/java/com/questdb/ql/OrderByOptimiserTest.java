@@ -58,6 +58,7 @@ public class OrderByOptimiserTest extends AbstractOptimiserTest {
 
         w.close();
 
+        factory.getConfiguration().exists("");
     }
 
     @Before
@@ -68,8 +69,7 @@ public class OrderByOptimiserTest extends AbstractOptimiserTest {
     @Test
     public void testLiteralAnalysis() throws Exception {
         try {
-            compiler.compileSource(factory, "select x,count() from tab order by timestamp");
-            Assert.fail();
+            expectFailure("select x,count() from tab order by timestamp");
         } catch (ParserException e) {
             Assert.assertEquals(35, QueryError.getPosition());
             TestUtils.assertEquals("Invalid column: timestamp", QueryError.getMessage());
@@ -78,27 +78,25 @@ public class OrderByOptimiserTest extends AbstractOptimiserTest {
 
     @Test
     public void testOrderOnOneLevelSubQuery() throws Exception {
-        sink.put(compiler.compileSource(factory, "select x,count() from (tab order by timestamp)"));
+        sink.put(compileSource("select x,count() from (tab order by timestamp)"));
         TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"AggregatedRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}}", sink);
     }
 
     @Test
     public void testOrderOverride() throws Exception {
-        RecordSource rs = compiler.compileSource(factory, "select x,count() from ((tab order by y) order by timestamp)");
-        sink.put(rs);
+        sink.put(compileSource("select x,count() from ((tab order by y) order by timestamp)"));
         TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"AggregatedRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}}", sink);
     }
 
     @Test
     public void testRegularOrder() throws Exception {
-        RecordSource rs = compiler.compileSource(factory, "select x,y from ((tab order by y) order by timestamp)");
-        sink.put(rs);
+        sink.put(compileSource("select x,y from ((tab order by y) order by timestamp)"));
         TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}}", sink);
     }
 
     @Test
     public void testSampleByBackout() throws Exception {
-        sink.put(compiler.compileSource(factory, "(select x,count() from (select y, x, count() from (tab order by timestamp) sample by 1M order by y)) where x = 100"));
+        sink.put(compileSource("(select x,count() from (select y, x, count() from (tab order by timestamp) sample by 1M order by y)) where x = 100"));
         TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"AggregatedRecordSource\",\"src\":{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":false,\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"ResampledRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}},\"sampler\":{\"op\":\"MonthsSampler\",\"buckets\":1}}}}}}", sink);
     }
 }

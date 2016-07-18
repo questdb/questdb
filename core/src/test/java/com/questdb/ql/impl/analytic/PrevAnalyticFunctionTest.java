@@ -142,8 +142,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     @Test
     public void testAggregationContext() throws Exception {
         try {
-            compiler.compile(factory, "select sym, sum(d) x, prev(x) over() from abc");
-            Assert.fail();
+            expectFailure("select sym, sum(d) x, prev(x) over() from abc");
         } catch (ParserException e) {
             Assert.assertEquals(22, QueryError.getPosition());
         }
@@ -889,8 +888,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     @Test
     public void testNoArg() throws Exception {
         try {
-            compiler.compile(factory, "select str, prev() rank over(partition by str) from 'abc'");
-            Assert.fail();
+            expectFailure("select str, prev() rank over(partition by str) from 'abc'");
         } catch (ParserException e) {
             TestUtils.assertEquals("Unknown function", QueryError.getMessage());
         }
@@ -1496,8 +1494,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     @Test
     public void testWrongColumnInFunc() throws Exception {
         try {
-            compiler.compile(factory, "select str, sym, timestamp , prev(symx) over (partition by str) from abc");
-            Assert.fail();
+            expectFailure("select str, sym, timestamp , prev(symx) over (partition by str) from abc");
         } catch (ParserException e) {
             Assert.assertEquals(34, QueryError.getPosition());
         }
@@ -1506,8 +1503,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     @Test
     public void testWrongColumnInPartition() throws Exception {
         try {
-            compiler.compile(factory, "select str, sym, timestamp , prev(sym) over (partition by strx) from abc");
-            Assert.fail();
+            expectFailure("select str, sym, timestamp , prev(sym) over (partition by strx) from abc");
         } catch (ParserException e) {
             Assert.assertEquals(58, QueryError.getPosition());
         }

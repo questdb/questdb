@@ -91,7 +91,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         for (int i = 0, n = w.getMetadata().getColumnCount(); i < n; i++) {
             indices.add(i + 1);
         }
-        RecordSource rs = compiler.compileSource(factory, "xyz");
+        RecordSource rs = compileSource("xyz");
         RecordComparator rc = cc.compile(rs.getMetadata(), indices);
         RBTreeSortedRecordSource map = new RBTreeSortedRecordSource(rs, rc, 1024 * 1024, 4 * 1024 * 1024);
 

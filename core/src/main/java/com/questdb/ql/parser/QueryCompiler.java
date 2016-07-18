@@ -30,10 +30,7 @@ import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.io.sink.StringSink;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Interval;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
+import com.questdb.misc.*;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.*;
@@ -521,12 +518,17 @@ public class QueryCompiler {
         // create virtual columns
         for (int i = 0; i < n; i++) {
             QueryColumn qc = aggregators.get(i);
-            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
-            if (vc instanceof AggregatorFunction) {
-                vc.setName(qc.getAlias());
-                af.add((AggregatorFunction) vc);
-            } else {
-                throw QueryError.$(qc.getAst().position, "Internal configuration error. Not an aggregate");
+            try {
+                VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
+                if (vc instanceof AggregatorFunction) {
+                    vc.setName(qc.getAlias());
+                    af.add((AggregatorFunction) vc);
+                } else {
+                    throw QueryError.$(qc.getAst().position, "Internal configuration error. Not an aggregate");
+                }
+            } catch (ParserException e) {
+                Misc.free(rs);
+                throw e;
             }
         }
 
@@ -536,6 +538,7 @@ public class QueryCompiler {
         } else {
             TimestampSampler sampler = SamplerFactory.from(sampleBy.token);
             if (sampler == null) {
+                Misc.free(rs);
                 throw QueryError.$(sampleBy.position, "Invalid sample");
             }
             out = new ResampledRecordSource(rs,
@@ -570,6 +573,7 @@ public class QueryCompiler {
             ExprNode ast = col.getAst();
 
             if (ast.paramCount > 1) {
+                Misc.free(rs);
                 throw QueryError.$(col.getAst().position, "Too many arguments");
             }
 
@@ -593,6 +597,7 @@ public class QueryCompiler {
             );
 
             if (f == null) {
+                Misc.free(rs);
                 throw QueryError.$(col.getAst().position, "Unknown function");
             }
             CharSequenceIntHashMap orderHash = model.getOrderHash();
@@ -716,10 +721,15 @@ public class QueryCompiler {
             }
         }
 
-        if (joinModelIsFalse(model)) {
-            return new NoOpJournalRecordSource(master);
+        try {
+            if (joinModelIsFalse(model)) {
+                return new NoOpJournalRecordSource(master);
+            }
+            return master;
+        } catch (ParserException e) {
+            Misc.free(master);
+            throw e;
         }
-        return master;
     }
 
     @SuppressWarnings("ConstantConditions")
@@ -844,6 +854,7 @@ public class QueryCompiler {
 
                         switch (m.getColumnCount()) {
                             case 0:
+                                Misc.free(lambda);
                                 throw QueryError.$(im.keyValuePositions.getQuick(0), "Query must select at least one column");
                             case 1:
                                 lambdaColIndex = 0;
@@ -851,6 +862,7 @@ public class QueryCompiler {
                             default:
                                 lambdaColIndex = m.getColumnIndexQuiet(latestByCol);
                                 if (lambdaColIndex == -1) {
+                                    Misc.free(lambda);
                                     throw QueryError.$(im.keyValuePositions.getQuick(0), "Ambiguous column names in lambda query. Specify select clause");
                                 }
                                 break;
@@ -862,6 +874,7 @@ public class QueryCompiler {
                         if (fact != null) {
                             rs = fact.newInstance(latestByCol, lambda, lambdaColIndex, filter);
                         } else {
+                            Misc.free(lambda);
                             throw QueryError.$(im.keyValuePositions.getQuick(0), "Mismatched types");
                         }
                     } else {
@@ -877,6 +890,7 @@ public class QueryCompiler {
                                 if (im.keyColumn != null) {
                                     rs = new KvIndexStrListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
                                 } else {
+                                    Misc.free(rs);
                                     throw QueryError.$(latestByNode.position, "Filter on string column expected");
                                 }
                                 break;
@@ -884,6 +898,7 @@ public class QueryCompiler {
                                 if (im.keyColumn != null) {
                                     rs = new KvIndexIntListHeadRowSource(latestByCol, toIntHashSet(im), filter);
                                 } else {
+                                    Misc.free(rs);
                                     throw QueryError.$(latestByNode.position, "Filter on int column expected");
                                 }
                                 break;
@@ -899,6 +914,7 @@ public class QueryCompiler {
                     rs = new KvIndexSymAllHeadRowSource(latestByCol, null);
                     break;
                 default:
+                    Misc.free(rs);
                     throw QueryError.$(latestByNode.position, "Only SYM columns can be used here without filter");
             }
         }
@@ -924,17 +940,22 @@ public class QueryCompiler {
 
     private RecordSource compileNoOptimise(QueryModel model, JournalReaderFactory factory) throws ParserException {
         RecordSource rs;
-        if (model.getJoinModels().size() > 1) {
-            optimiseJoins(model, factory);
-            rs = compileJoins(model, factory);
-        } else if (model.getJournalName() != null) {
-            rs = compileJournal(model, factory);
-        } else {
-            rs = compileSubQuery(model, factory);
-            model.getNestedModel().setRecordSource(rs);
-        }
+        try {
+            if (model.getJoinModels().size() > 1) {
+                optimiseJoins(model, factory);
+                rs = compileJoins(model, factory);
+            } else if (model.getJournalName() != null) {
+                rs = compileJournal(model, factory);
+            } else {
+                rs = compileSubQuery(model, factory);
+                model.getNestedModel().setRecordSource(rs);
+            }
 
-        return limit(order(selectColumns(rs, model), model), model);
+            return limit(order(selectColumns(rs, model), model), model);
+        } catch (ParserException e) {
+            freeModelRecordSources(model);
+            throw e;
+        }
     }
 
     private RecordSource compileOuterVirtualColumns(RecordSource rs, QueryModel model) throws ParserException {
@@ -1069,6 +1090,8 @@ public class QueryCompiler {
             int ib = bm.getColumnIndex(cb);
 
             if (am.getColumnQuick(ia).getType() != bm.getColumnQuick(ib).getType()) {
+                Misc.free(master);
+                Misc.free(slave);
                 throw QueryError.$(jc.aNodes.getQuick(k).position, "Column type mismatch");
             }
 
@@ -1152,6 +1175,22 @@ public class QueryCompiler {
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
         return dot == -1 ? token : csPool.next().of(token, dot + 1, token.length() - dot - 1);
+    }
+
+    private void freeModelRecordSources(QueryModel model) {
+        if (model == null) {
+            return;
+        }
+        Misc.free(model.getRecordSource());
+        freeModelRecordSources(model.getNestedModel());
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        int n = joinModels.size();
+        if (n > 1) {
+            for (int i = 1; i < n; i++) {
+                freeModelRecordSources(joinModels.getQuick(i));
+            }
+        }
     }
 
     private int getTimestampIndex(QueryModel model, ExprNode node, RecordMetadata m) throws ParserException {
@@ -1594,14 +1633,19 @@ public class QueryCompiler {
     private RecordSource order(RecordSource rs, QueryModel model) throws ParserException {
         ObjList<ExprNode> orderBy = model.getOrderBy();
         if (orderBy.size() > 0) {
-            RecordMetadata m = rs.getMetadata();
-            return new RBTreeSortedRecordSource(rs,
-                    cc.compile(
-                            m,
-                            toOrderIndices(m, orderBy, model.getOrderByDirection())
-                    ),
-                    configuration.getDbSortKeyPage(),
-                    configuration.getDbSortDataPage());
+            try {
+                RecordMetadata m = rs.getMetadata();
+                return new RBTreeSortedRecordSource(rs,
+                        cc.compile(
+                                m,
+                                toOrderIndices(m, orderBy, model.getOrderByDirection())
+                        ),
+                        configuration.getDbSortKeyPage(),
+                        configuration.getDbSortDataPage());
+            } catch (ParserException e) {
+                Misc.free(rs);
+                throw e;
+            }
         } else {
             return rs;
         }
@@ -1926,78 +1970,83 @@ public class QueryCompiler {
 
         ObjList<VirtualColumn> virtualColumns = null;
 
-        // create virtual columns from select list
-        for (int i = 0, k = columns.size(); i < k; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            final ExprNode node = qc.getAst();
-            final boolean analytic = qc instanceof AnalyticColumn;
+        try {
+            // create virtual columns from select list
+            for (int i = 0, k = columns.size(); i < k; i++) {
+                final QueryColumn qc = columns.getQuick(i);
+                final ExprNode node = qc.getAst();
+                final boolean analytic = qc instanceof AnalyticColumn;
 
-            if (!analytic && node.type == ExprNode.NodeType.LITERAL) {
-                // check literal column validity
-                if (meta.getColumnIndexQuiet(node.token) == -1) {
-                    throw QueryError.invalidColumn(node.position, node.token);
-                }
+                if (!analytic && node.type == ExprNode.NodeType.LITERAL) {
+                    // check literal column validity
+                    if (meta.getColumnIndexQuiet(node.token) == -1) {
+                        throw QueryError.invalidColumn(node.position, node.token);
+                    }
 
-                // check if this column is exists in more than one journal/result set
-                if (columnNameHistogram.get(node.token) > 0) {
-                    throw QueryError.ambiguousColumn(node.position);
-                }
+                    // check if this column is exists in more than one journal/result set
+                    if (columnNameHistogram.get(node.token) > 0) {
+                        throw QueryError.ambiguousColumn(node.position);
+                    }
 
-                // add to selected columns
-                selectedColumns.add(node.token);
-                addAlias(node.position, qc.getAlias() == null ? node.token : qc.getAlias());
-                groupKeyColumns.add(node.token);
-                continue;
-            }
-
-            // generate missing alias for everything else
-            if (qc.getAlias() == null) {
-                qc.of(createAlias(aggregateColumnSequence++), node);
-            }
-
-            selectedColumns.add(qc.getAlias());
-            addAlias(node.position, qc.getAlias());
-
-            // outright aggregate
-            if (!analytic && node.type == ExprNode.NodeType.FUNCTION && FunctionFactories.isAggregate(node.token)) {
-                aggregators.add(qc);
-                continue;
-            }
-
-            // check if this expression references aggregate function
-            if (node.type == ExprNode.NodeType.OPERATION || node.type == ExprNode.NodeType.FUNCTION) {
-                int beforeSplit = aggregators.size();
-                splitAggregates(node, aggregators);
-                if (beforeSplit < aggregators.size()) {
-                    outerVirtualColumns.add(qc);
+                    // add to selected columns
+                    selectedColumns.add(node.token);
+                    addAlias(node.position, qc.getAlias() == null ? node.token : qc.getAlias());
+                    groupKeyColumns.add(node.token);
                     continue;
                 }
+
+                // generate missing alias for everything else
+                if (qc.getAlias() == null) {
+                    qc.of(createAlias(aggregateColumnSequence++), node);
+                }
+
+                selectedColumns.add(qc.getAlias());
+                addAlias(node.position, qc.getAlias());
+
+                // outright aggregate
+                if (!analytic && node.type == ExprNode.NodeType.FUNCTION && FunctionFactories.isAggregate(node.token)) {
+                    aggregators.add(qc);
+                    continue;
+                }
+
+                // check if this expression references aggregate function
+                if (node.type == ExprNode.NodeType.OPERATION || node.type == ExprNode.NodeType.FUNCTION) {
+                    int beforeSplit = aggregators.size();
+                    splitAggregates(node, aggregators);
+                    if (beforeSplit < aggregators.size()) {
+                        outerVirtualColumns.add(qc);
+                        continue;
+                    }
+                }
+
+
+                if (analytic) {
+                    if (qc.getAst().type != ExprNode.NodeType.FUNCTION) {
+                        throw QueryError.$(qc.getAst().position, "Analytic function expected");
+                    }
+
+                    if (aggregators.size() > 0) {
+                        throw QueryError.$(qc.getAst().position, "Analytic function is not allowed in context of aggregation. Use sub-query.");
+                    }
+
+                    AnalyticColumn ac = (AnalyticColumn) qc;
+                    analyticColumns.add(ac);
+                } else {
+                    // this is either a constant or non-aggregate expression
+                    // either case is a virtual column
+                    if (virtualColumns == null) {
+                        virtualColumns = new ObjList<>();
+                    }
+
+                    VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), recordSource.getMetadata());
+                    vc.setName(qc.getAlias());
+                    virtualColumns.add(vc);
+                    groupKeyColumns.add(qc.getAlias());
+                }
             }
-
-
-            if (analytic) {
-                if (qc.getAst().type != ExprNode.NodeType.FUNCTION) {
-                    throw QueryError.$(qc.getAst().position, "Analytic function expected");
-                }
-
-                if (aggregators.size() > 0) {
-                    throw QueryError.$(qc.getAst().position, "Analytic function is not allowed in context of aggregation. Use sub-query.");
-                }
-
-                AnalyticColumn ac = (AnalyticColumn) qc;
-                analyticColumns.add(ac);
-            } else {
-                // this is either a constant or non-aggregate expression
-                // either case is a virtual column
-                if (virtualColumns == null) {
-                    virtualColumns = new ObjList<>();
-                }
-
-                VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), recordSource.getMetadata());
-                vc.setName(qc.getAlias());
-                virtualColumns.add(vc);
-                groupKeyColumns.add(qc.getAlias());
-            }
+        } catch (ParserException e) {
+            Misc.free(recordSource);
+            throw e;
         }
 
         RecordSource rs = recordSource;
@@ -2013,6 +2062,7 @@ public class QueryCompiler {
         } else {
             ExprNode sampleBy = model.getSampleBy();
             if (sampleBy != null) {
+                Misc.free(rs);
                 throw QueryError.$(sampleBy.position, "There are no aggregation columns");
             }
         }

@@ -587,36 +587,33 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @Test
     public void testInvalidSelectColumn() throws Exception {
         try {
-            compiler.compile(factory, "select c.customerId, orderIdx, o.productId from " +
+            expectFailure("select c.customerId, orderIdx, o.productId from " +
                     "customers c " +
                     "join (" +
                     "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
                     ") o on c.customerId = o.customerId");
-            Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(21, QueryError.getPosition());
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Invalid column"));
         }
 
         try {
-            compiler.compile(factory, "select c.customerId, orderId, o.productId2 from " +
+            expectFailure("select c.customerId, orderId, o.productId2 from " +
                     "customers c " +
                     "join (" +
                     "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
                     ") o on c.customerId = o.customerId");
-            Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(30, QueryError.getPosition());
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Invalid column"));
         }
 
         try {
-            compiler.compile(factory, "select c.customerId, orderId, o2.productId from " +
+            expectFailure("select c.customerId, orderId, o2.productId from " +
                     "customers c " +
                     "join (" +
                     "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
                     ") o on c.customerId = o.customerId");
-            Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(30, QueryError.getPosition());
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Invalid column"));
@@ -717,8 +714,8 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t1528068156\t100\t400\tYBQE\t2015-07-10T00:01:20.643Z\tQXOLEEXZ\n" +
                 "100\tPJFSREKEUNMKWOF\tUVKWCCVTJSKMXVEGPIG\tnull\tVMY\tRT\tEYYPDVRGRQG\t2015-07-10T00:00:00.100Z\t1935884354\t100\t1503\tD\t2015-07-10T00:01:43.507Z\tRZVZJQRNYSRKZSJ\n";
 
-        final RecordSource m = compiler.compileSource(factory, "customers where customerName ~ 'PJFSREKEUNMKWOF'");
-        final RecordSource s = new NoRowIdRecordSource().of(compiler.compileSource(factory, "orders"));
+        final RecordSource m = compileSource("customers where customerName ~ 'PJFSREKEUNMKWOF'");
+        final RecordSource s = new NoRowIdRecordSource().of(compileSource("orders"));
 
         RecordSource r = new HashJoinRecordSource(
                 m,

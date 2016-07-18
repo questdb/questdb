@@ -233,8 +233,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     @Test
     public void testAmbiguousColumn() throws Exception {
         try {
-            compile("select timestamp from y asof join x on x.ccy = y.ccy");
-            Assert.fail();
+            expectFailure("select timestamp from y asof join x on x.ccy = y.ccy");
         } catch (ParserException e) {
             Assert.assertEquals(7, QueryError.getPosition());
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Ambiguous"));
@@ -244,8 +243,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     @Test
     public void testAmbiguousColumnInFunc() throws Exception {
         try {
-            compile("select sum(timestamp) from y asof join x on x.ccy = y.ccy");
-            Assert.fail();
+            expectFailure("select sum(timestamp) from y asof join x on x.ccy = y.ccy");
         } catch (ParserException e) {
             Assert.assertEquals(11, QueryError.getPosition());
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Ambiguous"));
@@ -255,8 +253,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     @Test
     public void testAnonymousSubqueriesFunc() throws Exception {
         try {
-            compile("select sum(timestamp) from (y) asof join (x) on x.ccy = y.ccy");
-            Assert.fail();
+            expectFailure("select sum(timestamp) from (y) asof join (x) on x.ccy = y.ccy");
         } catch (ParserException e) {
             Assert.assertEquals(48, QueryError.getPosition());
             TestUtils.assertEquals("Invalid journal name/alias", QueryError.getMessage());
@@ -278,9 +275,9 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
 
         long memUsed = Unsafe.getMemUsed();
         try (AsOfPartitionedJoinRecordSource source = new AsOfPartitionedJoinRecordSource(
-                compiler.compileSource(factory, "y")
+                compileSource("y")
                 , 0
-                , new NoRowIdRecordSource().of(compiler.compileSource(factory, "select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
+                , new NoRowIdRecordSource().of(compileSource("select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
                 , 0
                 , keys
                 , keys
@@ -313,9 +310,9 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
 
         long memUsed = Unsafe.getMemUsed();
         try (AsOfJoinRecordSource source = new AsOfJoinRecordSource(
-                compiler.compileSource(factory, "y")
+                compileSource("y")
                 , 0
-                , new NoRowIdRecordSource().of(compiler.compileSource(factory, "select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
+                , new NoRowIdRecordSource().of(compileSource("select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
                 , 0
         )) {
             printer.print(source, factory);
@@ -389,9 +386,9 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\tVTJWCP\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
 
         try (AsOfPartitionedJoinRecordSource source = new AsOfPartitionedJoinRecordSource(
-                compiler.compileSource(factory, "y")
+                compileSource("y")
                 , 0
-                , compiler.compileSource(factory, "x")
+                , compileSource("x")
                 , 0
                 , keys
                 , keys
@@ -412,9 +409,9 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     public void testRowidNonPartitioned() throws Exception {
 
         AsOfJoinRecordSource source = new AsOfJoinRecordSource(
-                compiler.compileSource(factory, "y")
+                compileSource("y")
                 , 0
-                , compiler.compileSource(factory, "x")
+                , compileSource("x")
                 , 0
         );
 
@@ -439,9 +436,9 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     @Test
     public void testStrings() throws Exception {
         try (AsOfPartitionedJoinRecordSource source = new AsOfPartitionedJoinRecordSource(
-                compiler.compileSource(factory, "y")
+                compileSource("y")
                 , 0
-                , new NoRowIdRecordSource().of(compiler.compileSource(factory, "x"))
+                , new NoRowIdRecordSource().of(compileSource("x"))
                 , 0
                 , keys
                 , keys
@@ -480,9 +477,9 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\tVTJWCP\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
 
         try (AsOfPartitionedJoinRecordSource source = new AsOfPartitionedJoinRecordSource(
-                compiler.compileSource(factory, "y")
+                compileSource("y")
                 , 0
-                , new NoRowIdRecordSource().of(compiler.compileSource(factory, "x"))
+                , new NoRowIdRecordSource().of(compileSource("x"))
                 , 0
                 , keys
                 , keys
@@ -503,9 +500,9 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     public void testVarNonPartitioned() throws Exception {
 
         try (AsOfJoinRecordSource source = new AsOfJoinRecordSource(
-                compiler.compileSource(factory, "y")
+                compileSource("y")
                 , 0
-                , new NoRowIdRecordSource().of(compiler.compileSource(factory, "x"))
+                , new NoRowIdRecordSource().of(compileSource("x"))
                 , 0
         )) {
 
@@ -522,10 +519,6 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
             printer.print(source, factory);
             TestUtils.assertEquals(expected, sink);
         }
-    }
-
-    private void compile(CharSequence query) throws ParserException {
-        compiler.compile(factory, query);
     }
 
     static {
