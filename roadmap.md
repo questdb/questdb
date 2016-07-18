@@ -44,7 +44,7 @@ __misc__
 
 - [ ] collectd protocol support and console administration
 - [ ] circular memory buffer for "bottom x rows"
-- [ ] __error handling__ (in-progress)
+- [x] error handling (releasing resources allocated to partially constructed query plans)
 
 __clients__
 
@@ -64,3 +64,8 @@ __core__
 
 - [ ] ORM for query results
 - [x] cache for compiled queries
+
+__project web site__
+
+- [ ] __create project presence online__ (in-progress)
+- [ ] documentation template
