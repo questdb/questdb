@@ -3,7 +3,7 @@
   "authors": [
     "Vlad Ilyushchenko (Appsicle Ltd.)"
   ],
-  "description": "QuestDB Web Console",
+  "description": "QuestDB Console",
   "license": "The MIT License",
   "homepage": "www.questdb.org",
   "private": true,

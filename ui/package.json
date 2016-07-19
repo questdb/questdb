@@ -1,11 +1,11 @@
 {
-  "name": "nfsdb-ui",
+  "name": "questdb-console",
   "version": "0.0.1",
-  "license": "Apache 2.0",
-  "description": "NFSdb Web Console",
+  "license": "The MIT License",
+  "description": "QuestDB Console",
   "repository": {
     "type": "git",
-    "url": "https://github.com/NFSdb/nfsdb.git"
+    "url": "https://github.com/bluestreak01/questdb.git"
   },
   "private": true,
   "engines": {
