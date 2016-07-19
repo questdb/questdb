@@ -63,7 +63,12 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private final Comparator<Partition<T>> partitionAccessTimeComparator = new Comparator<Partition<T>>() {
         @Override
         public int compare(Partition<T> o1, Partition<T> o2) {
-            return Long.compare(o2.getLastAccessed(), o1.getLastAccessed());
+            int c = Long.compare(o2.getLastAccessed(), o1.getLastAccessed());
+            if (c == 0) {
+                return Integer.compare(o2.getPartitionIndex(), o1.getPartitionIndex());
+            } else {
+                return c;
+            }
         }
     };
     private final File location;

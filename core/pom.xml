@@ -30,7 +30,7 @@
     </properties>
 
     <version>3.0.0-SNAPSHOT</version>
-    <groupId>com.questdb</groupId>
+    <groupId>org.questdb</groupId>
     <artifactId>core</artifactId>
     <packaging>jar</packaging>
 

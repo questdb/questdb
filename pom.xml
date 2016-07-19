@@ -38,7 +38,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <version>1.0</version>
-    <groupId>com.questdb</groupId>
+    <groupId>org.questdb</groupId>
     <artifactId>parent</artifactId>
     <packaging>pom</packaging>
 
