@@ -25,8 +25,14 @@ package com.questdb.mp;
 
 public class SCSequence extends AbstractSSequence {
 
+    protected long p0 = 0;
+    protected long p1 = 0;
+    protected long p2 = 0;
+    protected long p3 = 0;
+    protected long p4 = 0;
+    protected long p5 = 0;
     private volatile long index = -1;
-    private volatile long cache = -1;
+    private long cache = -1;
 
     public SCSequence(WaitStrategy waitStrategy) {
         super(waitStrategy);

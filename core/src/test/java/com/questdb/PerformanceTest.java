@@ -65,9 +65,10 @@ public class PerformanceTest extends AbstractTest {
     @Test
     public void testAllBySymbolValueOverInterval() throws JournalException, NumericException {
 
-        JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
-        TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
-        w.commit();
+        try (JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE)) {
+            TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
+            w.commit();
+        }
 
         try (Journal<Quote> journal = factory.reader(Quote.class)) {
             int count = 1000;
@@ -88,25 +89,29 @@ public class PerformanceTest extends AbstractTest {
     @Test
     public void testAllBySymbolValueOverIntervalNew() throws JournalException, ParserException, InterruptedException, NumericException {
 
-        JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
-        TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
-        w.commit();
+        try (JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE)) {
+            TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
+            w.commit();
+        }
 
         JournalCachingFactory cf = new JournalCachingFactory(factory.getConfiguration());
         QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
-        int count = 1000;
-        long t = 0;
-        for (int i = -count; i < count; i++) {
-            if (i == 0) {
-                t = System.nanoTime();
-            }
-            RecordCursor c = compiler.compile(cf, "quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'");
-            for (; c.hasNext(); ) {
-                c.next();
-            }
-        }
-        LOG.info().$("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: ").$((System.nanoTime() - t) / count / 1000).$("μs").$();
 
+        try (RecordSource src = compiler.compileSource(cf, "quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
+            int count = 1000;
+            long t = 0;
+            for (int i = -count; i < count; i++) {
+                if (i == 0) {
+                    t = System.nanoTime();
+                }
+                RecordCursor c = src.prepareCursor(cf);
+                for (; c.hasNext(); ) {
+                    c.next();
+                }
+                src.reset();
+            }
+            LOG.info().$("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: ").$((System.nanoTime() - t) / count / 1000).$("μs").$();
+        }
         cf.close();
     }
 
@@ -248,5 +253,22 @@ public class PerformanceTest extends AbstractTest {
             }
             LOG.info().$("journal.query().head().withKeys() (query+read) latency: ").$((System.nanoTime() - t) / count).$("ns").$();
         }
+    }
+
+    @Test
+    public void testRawAppendPerformance() throws JournalException, ParserException, NumericException {
+        JournalWriter<Quote> w = factory.writer(Quote.class, "quote", TEST_DATA_SIZE);
+        long t = 0;
+        int count = 10;
+        for (int i = -count; i < count; i++) {
+            w.truncate();
+            if (i == 0) {
+                t = System.nanoTime();
+            }
+            TestUtils.generateQuoteData2(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
+            w.commit();
+        }
+        long result = System.nanoTime() - t;
+        LOG.info().$("raw append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
     }
 }

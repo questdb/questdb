@@ -25,8 +25,10 @@ package com.questdb.mp;
 
 public class SPSequence extends AbstractSSequence {
     private final int cycle;
+    protected int p0, p1, p2, p3, p4;
+    protected int p5, p6, p7, p8, p9;
     private volatile long index = -1;
-    private volatile long cache = -1;
+    private long cache = -1;
 
     private SPSequence(int cycle, WaitStrategy waitStrategy) {
         super(waitStrategy);

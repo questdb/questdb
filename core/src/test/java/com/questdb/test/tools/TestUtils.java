@@ -395,6 +395,25 @@ public final class TestUtils {
         }
     }
 
+    public static void generateQuoteData2(JournalWriter<Quote> w, int count, long timestamp, long increment) throws JournalException {
+        String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+        Rnd r = new Rnd();
+        int n = symbols.length - 1;
+        for (int i = 0; i < count; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putDate(0, timestamp);
+            ew.putSym(1, symbols[Math.abs(r.nextInt() % n)]);
+            ew.putDouble(2, Math.abs(r.nextDouble()));
+            ew.putDouble(3, Math.abs(r.nextDouble()));
+            ew.putInt(4, Math.abs(r.nextInt()));
+            ew.putInt(5, Math.abs(r.nextInt()));
+            ew.putSym(6, "LXE");
+            ew.putSym(7, "Fast trading");
+            ew.append();
+            timestamp += increment;
+        }
+    }
+
     public static void generateQuoteDataGeneric(JournalWriter w, int count, long timestamp, long increment) throws JournalException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Rnd r = new Rnd();
