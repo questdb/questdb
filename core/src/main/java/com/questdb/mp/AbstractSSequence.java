@@ -23,7 +23,7 @@
 
 package com.questdb.mp;
 
-abstract class AbstractSSequence implements Sequence {
+abstract class AbstractSSequence extends PaddedLong implements Sequence {
     private final WaitStrategy waitStrategy;
     Barrier barrier = OpenBarrier.INSTANCE;
 

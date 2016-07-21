@@ -25,10 +25,6 @@ package com.questdb.mp;
 
 public class SPSequence extends AbstractSSequence {
     private final int cycle;
-    protected int p0, p1, p2, p3, p4;
-    protected int p5, p6, p7, p8, p9;
-    private volatile long index = -1;
-    private long cache = -1;
 
     private SPSequence(int cycle, WaitStrategy waitStrategy) {
         super(waitStrategy);
@@ -41,23 +37,23 @@ public class SPSequence extends AbstractSSequence {
 
     @Override
     public long availableIndex(long lo) {
-        return index;
+        return value;
     }
 
     @Override
     public long current() {
-        return index;
+        return value;
     }
 
     @Override
     public void done(long cursor) {
-        index = cursor;
+        value = cursor;
         barrier.signal();
     }
 
     @Override
     public long next() {
-        long next = index + 1;
+        long next = value + 1;
         long lo = next - cycle;
         return lo > cache && lo > (cache = barrier.availableIndex(lo)) ? -1 : next;
     }

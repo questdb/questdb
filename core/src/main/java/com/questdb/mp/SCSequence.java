@@ -25,56 +25,47 @@ package com.questdb.mp;
 
 public class SCSequence extends AbstractSSequence {
 
-    protected long p0 = 0;
-    protected long p1 = 0;
-    protected long p2 = 0;
-    protected long p3 = 0;
-    protected long p4 = 0;
-    protected long p5 = 0;
-    private volatile long index = -1;
-    private long cache = -1;
-
     public SCSequence(WaitStrategy waitStrategy) {
         super(waitStrategy);
     }
 
     public SCSequence(long index, WaitStrategy waitStrategy) {
         super(waitStrategy);
-        this.index = index;
+        this.value = index;
     }
 
     public SCSequence() {
     }
 
     SCSequence(long index) {
-        this.index = index;
+        this.value = index;
     }
 
     @Override
     public long availableIndex(long lo) {
-        return this.index;
+        return this.value;
     }
 
     @Override
     public long current() {
-        return index;
+        return value;
     }
 
     @Override
     public void done(long cursor) {
-        index = cursor;
+        this.value = cursor;
         barrier.signal();
     }
 
     @Override
     public long next() {
-        long next = index + 1;
+        long next = value + 1;
         return next > cache && next > (cache = barrier.availableIndex(next)) ? -1 : next;
     }
 
     @Override
     public void reset() {
-        index = -1;
+        this.value = -1;
         cache = -1;
     }
 }

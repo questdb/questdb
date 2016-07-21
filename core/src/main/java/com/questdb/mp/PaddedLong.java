@@ -30,8 +30,8 @@ class LhsPadding {
 }
 
 class Value extends LhsPadding {
-    protected long value;
-    protected long cache;
+    protected volatile long value = -1;
+    protected long cache = -1;
 }
 
 class RhsPadding extends Value {
@@ -54,19 +54,12 @@ public class PaddedLong extends RhsPadding {
         Unsafe.getUnsafe().putOrderedLong(this, VALUE_OFFSET, cache);
     }
 
-    protected long getValueFenced() {
-        return Unsafe.getUnsafe().getLongVolatile(this, VALUE_OFFSET);
-    }
-
-    protected void setValueFenced(long value) {
-        Unsafe.getUnsafe().putOrderedLong(this, VALUE_OFFSET, value);
-    }
-
     static {
         try {
-            VALUE_OFFSET = Unsafe.getUnsafe().objectFieldOffset(PaddedLong.class.getDeclaredField("value"));
-            CACHE_OFFSET = Unsafe.getUnsafe().objectFieldOffset(PaddedLong.class.getDeclaredField("cache"));
+            VALUE_OFFSET = Unsafe.getUnsafe().objectFieldOffset(Value.class.getDeclaredField("value"));
+            CACHE_OFFSET = Unsafe.getUnsafe().objectFieldOffset(Value.class.getDeclaredField("cache"));
         } catch (Throwable e) {
+            e.printStackTrace();
             throw new Error("Failed to initialise");
         }
     }

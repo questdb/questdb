@@ -129,6 +129,7 @@ public class ConcurrentTest {
             }
         }
 
+        System.out.println("done");
         publishEOE(queue, pubSeq);
         publishEOE(queue, pubSeq);
 
