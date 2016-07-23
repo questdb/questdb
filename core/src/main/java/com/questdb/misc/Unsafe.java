@@ -50,35 +50,35 @@ public final class Unsafe {
 
     @SuppressWarnings("unchecked")
     public static <T> T arrayGet(T[] array, int index) {
-        return (T) Unsafe.getUnsafe().getObject(array, OBJ_OFFSET + (index * OBJ_SCALE));
+        return (T) Unsafe.getUnsafe().getObject(array, OBJ_OFFSET + (index << OBJ_SCALE));
     }
 
     public static int arrayGet(int[] array, int index) {
-        return Unsafe.getUnsafe().getInt(array, INT_OFFSET + (index * INT_SCALE));
+        return Unsafe.getUnsafe().getInt(array, INT_OFFSET + (index << INT_SCALE));
     }
 
     public static boolean arrayGet(boolean[] array, int index) {
-        return Unsafe.getUnsafe().getBoolean(array, BOOL_OFFSET + (index * BOOL_SCALE));
+        return Unsafe.getUnsafe().getBoolean(array, BOOL_OFFSET + (index << BOOL_SCALE));
     }
 
     public static long arrayGet(long[] array, int index) {
-        return Unsafe.getUnsafe().getLong(array, LONG_OFFSET + (index * LONG_SCALE));
+        return Unsafe.getUnsafe().getLong(array, LONG_OFFSET + (index << LONG_SCALE));
     }
 
     public static <T> void arrayPut(T[] array, int index, T obj) {
-        Unsafe.getUnsafe().putObject(array, OBJ_OFFSET + index * OBJ_SCALE, obj);
+        Unsafe.getUnsafe().putObject(array, OBJ_OFFSET + (index << OBJ_SCALE), obj);
     }
 
     public static void arrayPut(int[] array, int index, int value) {
-        Unsafe.getUnsafe().putInt(array, INT_OFFSET + index * INT_SCALE, value);
+        Unsafe.getUnsafe().putInt(array, INT_OFFSET + (index << INT_SCALE), value);
     }
 
     public static void arrayPut(boolean[] array, int index, boolean value) {
-        Unsafe.getUnsafe().putBoolean(array, BOOL_OFFSET + index * BOOL_SCALE, value);
+        Unsafe.getUnsafe().putBoolean(array, BOOL_OFFSET + (index << BOOL_SCALE), value);
     }
 
     public static void arrayPut(long[] array, long index, long value) {
-        Unsafe.getUnsafe().putLong(array, LONG_OFFSET + index * LONG_SCALE, value);
+        Unsafe.getUnsafe().putLong(array, LONG_OFFSET + (index << LONG_SCALE), value);
     }
 
     public static void free(long ptr, long size) {
@@ -114,27 +114,32 @@ public final class Unsafe {
         return ptr;
     }
 
+    private static int msb(int value) {
+        return 31 - Integer.numberOfLeadingZeros(value);
+    }
+
     static {
         try {
             Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             theUnsafe.setAccessible(true);
             UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
             OBJ_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(Object[].class);
-            OBJ_SCALE = Unsafe.getUnsafe().arrayIndexScale(Object[].class);
+            OBJ_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(Object[].class));
 
             INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);
-            INT_SCALE = Unsafe.getUnsafe().arrayIndexScale(int[].class);
+            INT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(int[].class));
 
             LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
-            LONG_SCALE = Unsafe.getUnsafe().arrayIndexScale(long[].class);
+            LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
 
             CHAR_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(char[].class);
             BYTE_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(byte[].class);
 
             BOOL_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(boolean[].class);
-            BOOL_SCALE = Unsafe.getUnsafe().arrayIndexScale(boolean[].class);
+            BOOL_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(boolean[].class));
         } catch (Exception e) {
             throw new FatalError(e);
         }
     }
+
 }

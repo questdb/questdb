@@ -27,7 +27,7 @@ public class MPSequence extends AbstractMSequence {
     private final int cycle;
 
     public MPSequence(int cycle) {
-        this(cycle, null);
+        this(cycle, NullWaitStrategy.INSTANCE);
     }
 
     private MPSequence(int cycle, WaitStrategy waitStrategy) {
@@ -37,16 +37,17 @@ public class MPSequence extends AbstractMSequence {
 
     @Override
     public long next() {
-        long current = index.fencedGet();
+        // reading cache before value is essential because algo relies on barrier inserted by value read.
+        long cached = cache;
+        long current = value;
         long next = current + 1;
         long lo = next - cycle;
-        long cached = cache.fencedGet();
 
         if (lo > cached) {
             long avail = barrier.availableIndex(lo);
 
             if (avail > cached) {
-                cache.fencedSet(avail);
+                setCacheFenced(avail);
                 if (lo > avail) {
                     return -1;
                 }
@@ -55,6 +56,6 @@ public class MPSequence extends AbstractMSequence {
             }
         }
 
-        return index.cas(current, next) ? next : -2;
+        return casValue(current, next) ? next : -2;
     }
 }

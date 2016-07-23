@@ -30,14 +30,15 @@ public class MCSequence extends AbstractMSequence {
 
     @Override
     public long next() {
-        long current = index.fencedGet();
+        long cached = cache;
+        // this is a volatile read, we should have correct order for "cache" too
+        long current = value;
         long next = current + 1;
-        long cached = cache.fencedGet();
 
         if (next > cached) {
             long avail = barrier.availableIndex(next);
             if (avail > cached) {
-                cache.fencedSet(avail);
+                setCacheFenced(avail);
                 if (next > avail) {
                     return -1;
                 }
@@ -45,6 +46,6 @@ public class MCSequence extends AbstractMSequence {
                 return -1;
             }
         }
-        return index.cas(current, next) ? next : -2;
+        return casValue(current, next) ? next : -2;
     }
 }

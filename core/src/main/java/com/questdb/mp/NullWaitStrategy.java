@@ -23,10 +23,21 @@
 
 package com.questdb.mp;
 
-public interface WaitStrategy {
-    void alert();
+public final class NullWaitStrategy implements WaitStrategy {
+    public static final NullWaitStrategy INSTANCE = new NullWaitStrategy();
 
-    void await();
+    private NullWaitStrategy() {
+    }
 
-    void signal();
+    @Override
+    public void alert() {
+    }
+
+    @Override
+    public void await() {
+    }
+
+    @Override
+    public void signal() {
+    }
 }

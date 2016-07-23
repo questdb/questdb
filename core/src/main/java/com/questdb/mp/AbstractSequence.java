@@ -30,28 +30,50 @@ class LhsPadding {
 }
 
 class Value extends LhsPadding {
+    private final WaitStrategy waitStrategy;
     protected volatile long value = -1;
     protected long cache = -1;
+    protected Barrier barrier = OpenBarrier.INSTANCE;
+
+    public Value(WaitStrategy waitStrategy) {
+        this.waitStrategy = waitStrategy == null ? NullWaitStrategy.INSTANCE : waitStrategy;
+    }
+
+    public WaitStrategy getWaitStrategy() {
+        return waitStrategy;
+    }
+
+    public boolean hasWaitStrategy() {
+        return waitStrategy != NullWaitStrategy.INSTANCE;
+    }
 }
 
 class RhsPadding extends Value {
     protected long p9, p10, p11, p12, p13, p14;
+
+    public RhsPadding(WaitStrategy waitStrategy) {
+        super(waitStrategy);
+    }
 }
 
-public class PaddedLong extends RhsPadding {
+public class AbstractSequence extends RhsPadding {
     private static final long VALUE_OFFSET;
     private static final long CACHE_OFFSET;
+
+    public AbstractSequence(WaitStrategy waitStrategy) {
+        super(waitStrategy);
+    }
 
     protected boolean casValue(long expected, long value) {
         return Unsafe.getUnsafe().compareAndSwapLong(this, VALUE_OFFSET, expected, value);
     }
 
-    protected long getCacheFenced() {
-        return Unsafe.getUnsafe().getLongVolatile(this, CACHE_OFFSET);
+    protected long getValue() {
+        return Unsafe.getUnsafe().getLong(this, VALUE_OFFSET);
     }
 
     protected void setCacheFenced(long cache) {
-        Unsafe.getUnsafe().putOrderedLong(this, VALUE_OFFSET, cache);
+        Unsafe.getUnsafe().putOrderedLong(this, CACHE_OFFSET, cache);
     }
 
     static {

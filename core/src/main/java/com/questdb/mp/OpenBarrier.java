@@ -35,6 +35,7 @@ final class OpenBarrier implements Barrier {
     }
 
     @Override
-    public void signal() {
+    public WaitStrategy getWaitStrategy() {
+        return NullWaitStrategy.INSTANCE;
     }
 }

@@ -54,18 +54,31 @@ public class SCSequence extends AbstractSSequence {
     @Override
     public void done(long cursor) {
         this.value = cursor;
-        barrier.signal();
+        barrier.getWaitStrategy().signal();
     }
 
     @Override
     public long next() {
-        long next = value + 1;
-        return next > cache && next > (cache = barrier.availableIndex(next)) ? -1 : next;
+        long next = getValue() + 1;
+        if (next <= cache) {
+            return next;
+        }
+
+        return next0(next);
     }
 
     @Override
     public void reset() {
         this.value = -1;
         cache = -1;
+    }
+
+    public long getHi() {
+        return cache + 1;
+    }
+
+    private long next0(long next) {
+        cache = barrier.availableIndex(next);
+        return next > cache ? -1 : next;
     }
 }

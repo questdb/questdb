@@ -29,8 +29,6 @@ import com.questdb.misc.Unsafe;
 import java.util.Arrays;
 
 abstract class AbstractMSequence extends AbstractSSequence {
-    final PLong index = new PLong();
-    final PLong cache = new PLong();
     private final int flags[];
     private final int mask;
     private final int shift;
@@ -47,29 +45,29 @@ abstract class AbstractMSequence extends AbstractSSequence {
     @Override
     public long availableIndex(final long lo) {
         long l = lo;
-        for (long hi = this.index.fencedGet() + 1; l < hi && available0(l); l++) ;
+        for (long hi = this.value + 1; l < hi && available0(l); l++) ;
         return l - 1;
     }
 
     @Override
     public long current() {
-        return index.fencedGet();
+        return value;
     }
 
     @Override
     public void done(long cursor) {
-        Unsafe.getUnsafe().putOrderedInt(flags, ((int) (cursor & mask)) * Unsafe.INT_SCALE + Unsafe.INT_OFFSET, (int) (cursor >>> shift));
-        barrier.signal();
+        Unsafe.getUnsafe().putOrderedInt(flags, (((int) (cursor & mask)) << Unsafe.INT_SCALE) + Unsafe.INT_OFFSET, (int) (cursor >>> shift));
+        barrier.getWaitStrategy().signal();
     }
 
     @Override
     public void reset() {
-        index.fencedSet(-1);
+        value = -1;
         Arrays.fill(flags, -1);
-        cache.fencedSet(-1);
+        setCacheFenced(-1);
     }
 
     private boolean available0(long lo) {
-        return Unsafe.getUnsafe().getIntVolatile(flags, ((int) (lo & mask)) * Unsafe.INT_SCALE + Unsafe.INT_OFFSET) == (int) (lo >>> shift);
+        return Unsafe.getUnsafe().getIntVolatile(flags, (((int) (lo & mask)) << Unsafe.INT_SCALE) + Unsafe.INT_OFFSET) == (int) (lo >>> shift);
     }
 }

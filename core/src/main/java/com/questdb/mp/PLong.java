@@ -27,7 +27,7 @@ import com.questdb.misc.Unsafe;
 
 class PLong {
     private static final long INITIAL_VALUE = -1;
-    private final static long VALUE_OFFSET = Unsafe.LONG_OFFSET + 4 * Unsafe.LONG_SCALE;
+    private final static long VALUE_OFFSET = Unsafe.LONG_OFFSET + 4 << Unsafe.LONG_SCALE;
     private final long value[] = new long[7];
 
     PLong() {

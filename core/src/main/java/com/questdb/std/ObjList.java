@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.std;
@@ -74,13 +75,13 @@ public class ObjList<T> implements Mutable {
         Unsafe.arrayPut(buffer, pos++, value);
     }
 
-//    public void addAll(ObjList<T> that) {
-//        int n = that.size();
-//        ensureCapacity0(pos + n);
-//        for (int i = 0; i < n; i++) {
-//            Unsafe.arrayPut(buffer, pos++, that.getQuick(i));
-//        }
-//    }
+    public void addAll(ObjList<T> that) {
+        int n = that.size();
+        ensureCapacity0(pos + n);
+        for (int i = 0; i < n; i++) {
+            Unsafe.arrayPut(buffer, pos++, that.getQuick(i));
+        }
+    }
 
     /**
      * {@inheritDoc}
@@ -202,6 +203,22 @@ public class ObjList<T> implements Mutable {
     /**
      * {@inheritDoc}
      */
+    public int indexOf(Object o) {
+        if (o == null) {
+            return indexOfNull();
+        } else {
+            for (int i = 0, n = pos; i < n; i++) {
+                if (o.equals(getQuick(i))) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     @NotNull
     public Iterator<T> iterator() {
         iterator.n = 0;
@@ -222,21 +239,6 @@ public class ObjList<T> implements Mutable {
         Unsafe.arrayPut(buffer, --pos, null);
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    public boolean remove(Object o) {
-        if (pos == 0) {
-            return false;
-        }
-        int index = indexOf(o);
-        if (index > -1) {
-            remove(index);
-            return true;
-        }
-        return false;
-    }
-
 // --Commented out by Inspection START (15/05/2016, 01:08):
 //    public void seed(int capacity, ObjectFactory<T> factory) {
 //        ensureCapacity0(capacity);
@@ -251,6 +253,21 @@ public class ObjList<T> implements Mutable {
 //        }
 //    }
 // --Commented out by Inspection STOP (15/05/2016, 01:08)
+
+    /**
+     * {@inheritDoc}
+     */
+    public boolean remove(Object o) {
+        if (pos == 0) {
+            return false;
+        }
+        int index = indexOf(o);
+        if (index > -1) {
+            remove(index);
+            return true;
+        }
+        return false;
+    }
 
     public void setAll(int capacity, T value) {
         ensureCapacity0(capacity);
@@ -296,22 +313,6 @@ public class ObjList<T> implements Mutable {
             }
         }
         return false;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    private int indexOf(Object o) {
-        if (o == null) {
-            return indexOfNull();
-        } else {
-            for (int i = 0, n = pos; i < n; i++) {
-                if (o.equals(getQuick(i))) {
-                    return i;
-                }
-            }
-            return -1;
-        }
     }
 
     private int indexOfNull() {

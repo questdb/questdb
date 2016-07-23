@@ -24,13 +24,14 @@
 package com.questdb.mp;
 
 public interface Sequence extends Barrier {
-    void alert();
 
     long current();
 
     void done(long cursor);
 
     void followedBy(Barrier barrier);
+
+    boolean hasWaitStrategy();
 
     long next();
 

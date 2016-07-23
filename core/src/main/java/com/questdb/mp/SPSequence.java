@@ -32,7 +32,7 @@ public class SPSequence extends AbstractSSequence {
     }
 
     public SPSequence(int cycle) {
-        this(cycle, null);
+        this(cycle, NullWaitStrategy.INSTANCE);
     }
 
     @Override
@@ -48,7 +48,7 @@ public class SPSequence extends AbstractSSequence {
     @Override
     public void done(long cursor) {
         value = cursor;
-        barrier.signal();
+        barrier.getWaitStrategy().signal();
     }
 
     @Override

@@ -23,23 +23,14 @@
 
 package com.questdb.mp;
 
-abstract class AbstractSSequence extends PaddedLong implements Sequence {
-    private final WaitStrategy waitStrategy;
-    Barrier barrier = OpenBarrier.INSTANCE;
+abstract class AbstractSSequence extends AbstractSequence implements Sequence {
 
     AbstractSSequence(WaitStrategy waitStrategy) {
-        this.waitStrategy = waitStrategy;
+        super(waitStrategy);
     }
 
     AbstractSSequence() {
-        this(null);
-    }
-
-    @Override
-    public void alert() {
-        if (waitStrategy != null) {
-            waitStrategy.alert();
-        }
+        this(NullWaitStrategy.INSTANCE);
     }
 
     @Override
@@ -60,25 +51,15 @@ abstract class AbstractSSequence extends PaddedLong implements Sequence {
 
     @Override
     public long waitForNext() {
-        return waitStrategy == null ? next() : waitForNext0();
-    }
-
-    @Override
-    public void signal() {
-        if (waitStrategy != null) {
-            waitStrategy.signal();
-        }
-    }
-
-    private void bully() {
-        this.barrier.signal();
-    }
-
-    private long waitForNext0() {
         long r;
+        WaitStrategy waitStrategy = getWaitStrategy();
         while ((r = next()) < 0) {
             waitStrategy.await();
         }
         return r;
+    }
+
+    private void bully() {
+        barrier.getWaitStrategy().signal();
     }
 }

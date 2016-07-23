@@ -26,5 +26,5 @@ package com.questdb.mp;
 interface Barrier {
     long availableIndex(long lo);
 
-    void signal();
+    WaitStrategy getWaitStrategy();
 }

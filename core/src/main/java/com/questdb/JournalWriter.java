@@ -932,7 +932,7 @@ public class JournalWriter<T> extends Journal<T> {
 
         public void halt() {
             executor.shutdown();
-            subSeq.alert();
+            subSeq.getWaitStrategy().alert();
             try {
                 if (running) {
                     haltLatch.await();
