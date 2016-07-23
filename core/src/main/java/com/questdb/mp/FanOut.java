@@ -30,6 +30,7 @@ import com.questdb.std.ObjList;
 public class FanOut implements Barrier {
     private static final long HOLDER;
     private Holder holder;
+    private Barrier barrier;
 
     public FanOut(Sequence... sequences) {
         Holder h = new Holder();
@@ -53,6 +54,9 @@ public class FanOut implements Barrier {
             if (h.sequences.indexOf(sequence) > -1) {
                 return;
             }
+            if (barrier != null) {
+                sequence.setBarrier(barrier);
+            }
             _new = new Holder();
             _new.sequences.addAll(h.sequences);
             _new.sequences.add(sequence);
@@ -62,7 +66,13 @@ public class FanOut implements Barrier {
                 _new.waitStrategies.add(sequence.getWaitStrategy());
             }
             _new.setupWaitStrategy();
+
         } while (!Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, holder, _new));
+    }
+
+    public Sequence addAndGet(Sequence sequence) {
+        add(sequence);
+        return sequence;
     }
 
     // this is firebug bug, the code does not write to array elements
@@ -79,14 +89,21 @@ public class FanOut implements Barrier {
     }
 
     @Override
+    public Barrier followedBy(Barrier barrier) {
+        barrier.setBarrier(this);
+        return barrier;
+    }
+
+    @Override
     public WaitStrategy getWaitStrategy() {
         return holder.waitStrategy;
     }
 
-    public void followedBy(Barrier barrier) {
+    public void setBarrier(Barrier barrier) {
+        this.barrier = barrier;
         ObjList<Sequence> sequences = holder.sequences;
         for (int i = 0, n = sequences.size(); i < n; i++) {
-            sequences.getQuick(i).followedBy(barrier);
+            sequences.getQuick(i).setBarrier(barrier);
         }
     }
 
@@ -125,10 +142,10 @@ public class FanOut implements Barrier {
 
     private static class Holder {
 
-        private ObjList<Sequence> sequences = new ObjList<>();
-        private ObjList<WaitStrategy> waitStrategies = new ObjList<>();
+        private final ObjList<Sequence> sequences = new ObjList<>();
+        private final ObjList<WaitStrategy> waitStrategies = new ObjList<>();
+        private final FanOutWaitStrategy fanOutWaitStrategy = new FanOutWaitStrategy();
         private WaitStrategy waitStrategy;
-        private FanOutWaitStrategy fanOutWaitStrategy = new FanOutWaitStrategy();
 
         private void setupWaitStrategy() {
             if (waitStrategies.size() > 0) {

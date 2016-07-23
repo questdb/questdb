@@ -23,8 +23,12 @@
 
 package com.questdb.mp;
 
-interface Barrier {
+public interface Barrier {
     long availableIndex(long lo);
 
+    Barrier followedBy(Barrier barrier);
+
     WaitStrategy getWaitStrategy();
+
+    void setBarrier(Barrier barrier);
 }

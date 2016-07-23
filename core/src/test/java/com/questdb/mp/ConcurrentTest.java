@@ -56,8 +56,8 @@ public class ConcurrentTest {
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         SPSequence pubSeq = new SPSequence(cycle);
         MCSequence subSeq = new MCSequence(cycle, null);
-        pubSeq.followedBy(subSeq);
-        subSeq.followedBy(pubSeq);
+        pubSeq.setBarrier(subSeq);
+        subSeq.setBarrier(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(3);
         CountDownLatch latch = new CountDownLatch(2);
@@ -106,8 +106,8 @@ public class ConcurrentTest {
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         SPSequence pubSeq = new SPSequence(cycle);
         MCSequence subSeq = new MCSequence(cycle, new BlockingWaitStrategy());
-        pubSeq.followedBy(subSeq);
-        subSeq.followedBy(pubSeq);
+        pubSeq.setBarrier(subSeq);
+        subSeq.setBarrier(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(3);
         CountDownLatch latch = new CountDownLatch(2);
@@ -152,8 +152,8 @@ public class ConcurrentTest {
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         Sequence pubSeq = new SPSequence(cycle);
         Sequence subSeq = new SCSequence(new BlockingWaitStrategy());
-        pubSeq.followedBy(subSeq);
-        subSeq.followedBy(pubSeq);
+        pubSeq.setBarrier(subSeq);
+        subSeq.setBarrier(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(2);
         CountDownLatch latch = new CountDownLatch(1);
@@ -193,8 +193,8 @@ public class ConcurrentTest {
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         Sequence pubSeq = new SPSequence(cycle);
         Sequence subSeq = new SCSequence(new BlockingWaitStrategy());
-        pubSeq.followedBy(subSeq);
-        subSeq.followedBy(pubSeq);
+        pubSeq.setBarrier(subSeq);
+        subSeq.setBarrier(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(2);
         CountDownLatch latch = new CountDownLatch(1);
@@ -232,9 +232,9 @@ public class ConcurrentTest {
         SPSequence pubSeq = new SPSequence(cycle);
         Sequence sub1 = new SCSequence();
         Sequence sub2 = new SCSequence();
-        pubSeq.followedBy(new FanOut(sub1, sub2));
-        sub1.followedBy(pubSeq);
-        sub2.followedBy(pubSeq);
+        pubSeq.setBarrier(new FanOut(sub1, sub2));
+        sub1.setBarrier(pubSeq);
+        sub2.setBarrier(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(3);
         CountDownLatch latch = new CountDownLatch(2);
@@ -284,9 +284,9 @@ public class ConcurrentTest {
         Sequence sub1 = new SCSequence();
         Sequence sub2 = new SCSequence();
         FanOut fanOut;
-        pubSeq.followedBy(fanOut = new FanOut(sub1, sub2));
-        sub1.followedBy(pubSeq);
-        sub2.followedBy(pubSeq);
+        pubSeq.setBarrier(fanOut = new FanOut(sub1, sub2));
+        sub1.setBarrier(pubSeq);
+        sub2.setBarrier(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(4);
         CountDownLatch latch = new CountDownLatch(3);
@@ -407,7 +407,7 @@ public class ConcurrentTest {
 
                 // subscribe
                 Sequence sequence = new SCSequence(publisher.current());
-                sequence.followedBy(publisher);
+                sequence.setBarrier(publisher);
                 fanOut.add(sequence);
                 int p = 0;
                 while (p < buf.length) {

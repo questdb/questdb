@@ -922,8 +922,8 @@ public class JournalWriter<T> extends Journal<T> {
             this.writer = writer;
             this.pubSeq = new SPSequence(32);
             this.subSeq = new SCSequence(new BlockingWaitStrategy());
-            this.pubSeq.followedBy(subSeq);
-            this.subSeq.followedBy(pubSeq);
+            this.pubSeq.setBarrier(subSeq);
+            this.subSeq.setBarrier(pubSeq);
             this.txLog = new TxLog(writer.getLocation(), JournalMode.READ, writer.getMetadata().getTxCountHint());
         }
 

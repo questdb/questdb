@@ -56,7 +56,7 @@ class RhsPadding extends Value {
     }
 }
 
-public class AbstractSequence extends RhsPadding {
+public abstract class AbstractSequence extends RhsPadding {
     private static final long VALUE_OFFSET;
     private static final long CACHE_OFFSET;
 

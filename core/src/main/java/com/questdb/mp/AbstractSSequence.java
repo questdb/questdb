@@ -34,7 +34,13 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence {
     }
 
     @Override
-    public void followedBy(Barrier barrier) {
+    public Barrier followedBy(Barrier barrier) {
+        barrier.setBarrier(this);
+        return barrier;
+    }
+
+    @Override
+    public void setBarrier(Barrier barrier) {
         this.barrier = barrier;
     }
 

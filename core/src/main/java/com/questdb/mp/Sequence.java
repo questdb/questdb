@@ -31,8 +31,6 @@ public interface Sequence extends Barrier {
 
     void done(long cursor);
 
-    void followedBy(Barrier barrier);
-
     long next();
 
     long nextBully();
