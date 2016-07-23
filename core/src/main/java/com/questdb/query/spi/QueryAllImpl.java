@@ -35,11 +35,9 @@ import com.questdb.query.OrderedResultSetBuilder;
 import com.questdb.query.api.QueryAll;
 import com.questdb.query.api.QueryAllBuilder;
 import com.questdb.std.ObjList;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Iterator;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class QueryAllImpl<T> implements QueryAll<T> {
 
     private final Journal<T> journal;

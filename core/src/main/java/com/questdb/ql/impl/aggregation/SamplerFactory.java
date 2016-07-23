@@ -27,7 +27,6 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Numbers;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class SamplerFactory {
 
@@ -37,7 +36,6 @@ public final class SamplerFactory {
      * @param cs the key
      * @return instance of appropriate TimestampSampler
      */
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public static TimestampSampler from(CharSequence cs) {
         int k = -1;
 

@@ -35,7 +35,6 @@ import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.CharSink;
 import com.questdb.store.BSearchType;
 import com.questdb.store.FixedColumn;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class MultiIntervalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
     private final PartitionSource partitionSource;
@@ -156,7 +155,6 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
         return true;
     }
 
-    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
     public PartitionSlice next() {
         return result;

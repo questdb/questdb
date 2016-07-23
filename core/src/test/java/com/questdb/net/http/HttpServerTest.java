@@ -48,7 +48,6 @@ import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.HttpTestUtils;
 import com.questdb.test.tools.TestUtils;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.apache.http.Header;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -284,7 +283,6 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
-    @SuppressFBWarnings("DM_DEFAULT_ENCODING")
     @Test
     public void testIdleTimeout() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
@@ -541,7 +539,6 @@ public class HttpServerTest extends AbstractJournalTest {
         assertRanges(configuration, server);
     }
 
-    @SuppressFBWarnings("OBL_UNSATISFIED_OBLIGATION")
     @Test
     public void testSslConcurrentDownload() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));

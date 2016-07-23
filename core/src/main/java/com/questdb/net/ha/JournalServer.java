@@ -43,7 +43,6 @@ import com.questdb.net.ha.protocol.CommandProducer;
 import com.questdb.net.ha.protocol.commands.IntResponseConsumer;
 import com.questdb.net.ha.protocol.commands.IntResponseProducer;
 import com.questdb.std.ObjIntHashMap;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -129,7 +128,6 @@ public class JournalServer {
         return factory;
     }
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS", "PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public void halt(long timeout, TimeUnit unit) {
         if (!running.compareAndSet(true, false)) {
             return;
@@ -327,7 +325,6 @@ public class JournalServer {
         }
     }
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     private SocketChannel openSocketChannel0(ServerNode node, long timeout) throws IOException {
         InetSocketAddress address = new InetSocketAddress(node.getHostname(), node.getPort());
         SocketChannel channel = SocketChannel.open()

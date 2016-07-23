@@ -25,9 +25,7 @@ package com.questdb.printer.converter;
 
 import com.questdb.misc.Unsafe;
 import com.questdb.printer.JournalPrinter;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public class StringConverter extends AbstractConverter {
 
     public StringConverter(JournalPrinter printer) {

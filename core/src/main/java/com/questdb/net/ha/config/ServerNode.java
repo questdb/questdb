@@ -26,7 +26,6 @@ package com.questdb.net.ha.config;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Numbers;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
 public class ServerNode {
@@ -35,7 +34,6 @@ public class ServerNode {
     private final String hostname;
     private final int port;
 
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public ServerNode(int id, @NotNull String address) {
         this.id = id;
         this.address = address;

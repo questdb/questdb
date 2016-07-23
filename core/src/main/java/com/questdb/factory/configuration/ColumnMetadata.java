@@ -26,9 +26,7 @@ package com.questdb.factory.configuration;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 import com.questdb.store.UnstructuredFile;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
 public class ColumnMetadata implements RecordColumnMetadata {
     public String name;
     public ColumnType type;

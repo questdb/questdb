@@ -26,7 +26,6 @@ package com.questdb.net.ha.config;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.net.*;
@@ -34,7 +33,6 @@ import java.nio.channels.ServerSocketChannel;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING", "LII_LIST_INDEXED_ITERATING"})
 public class ServerConfig extends NetworkConfig {
     public static final long SYNC_TIMEOUT = TimeUnit.SECONDS.toMillis(15);
     private static final long DEFAULT_HEARTBEAT_FREQUENCY = TimeUnit.SECONDS.toMillis(5);
@@ -63,7 +61,6 @@ public class ServerConfig extends NetworkConfig {
         throw new JournalNetworkException("Network interface " + ifn.getName() + " is down");
     }
 
-    @SuppressFBWarnings({"MDM_INETADDRESS_GETLOCALHOST"})
     public InetSocketAddress getSocketAddress(int instance) throws JournalNetworkException {
         ServerNode node = getNodeByUID(instance);
 
@@ -114,7 +111,6 @@ public class ServerConfig extends NetworkConfig {
         }
     }
 
-    @SuppressFBWarnings({"MDM_INETADDRESS_GETLOCALHOST"})
     private NetworkInterface getMultiCastInterface0(int instance) throws JournalNetworkException {
         ServerNode node = getNodeByUID(instance);
 

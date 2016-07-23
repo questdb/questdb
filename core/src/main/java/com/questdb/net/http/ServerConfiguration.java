@@ -26,7 +26,6 @@ package com.questdb.net.http;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Numbers;
 import com.questdb.net.SslConfig;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -35,7 +34,6 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.util.Properties;
 
-@SuppressFBWarnings("PATH_TRAVERSAL_IN")
 public class ServerConfiguration {
     private final SslConfig sslConfig = new SslConfig();
     private String httpIP = "0.0.0.0";
@@ -74,7 +72,6 @@ public class ServerConfiguration {
     public ServerConfiguration() {
     }
 
-    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public ServerConfiguration(File conf) throws Exception {
 
         final Properties props = new Properties();

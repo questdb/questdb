@@ -38,11 +38,9 @@ import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.IntrinsicModel;
 import com.questdb.ql.model.IntrinsicValue;
 import com.questdb.std.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 
-@SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
 final class QueryFilterAnalyser {
 
     private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
@@ -196,7 +194,6 @@ final class QueryFilterAnalyser {
                 || analyzeInLambda(model, col.token, metadata, node);
     }
 
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     private boolean analyzeInInterval(IntrinsicModel model, ExprNode col, ExprNode in) throws ParserException {
         if (!isTimestamp(col)) {
             return false;
@@ -458,7 +455,6 @@ final class QueryFilterAnalyser {
         return parseInterval(model, seq, 0, seq.length(), position);
     }
 
-    @SuppressFBWarnings({"CLI_CONSTANT_LIST_INDEX", "EXS_EXCEPTION_SOFTENING_RETURN_FALSE"})
     private boolean parseInterval(IntrinsicModel model, CharSequence seq, int lo, int lim, int position) throws ParserException {
         int pos[] = new int[3];
         int p = -1;

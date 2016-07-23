@@ -40,7 +40,6 @@ import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjObjHashMap;
 import com.questdb.store.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
@@ -51,7 +50,6 @@ import java.util.BitSet;
 import java.util.Comparator;
 import java.util.Iterator;
 
-@SuppressFBWarnings({"PATH_TRAVERSAL_IN", "LII_LIST_INDEXED_ITERATING", "CD_CIRCULAR_DEPENDENCY"})
 public class Journal<T> implements Iterable<T>, Closeable {
 
     public static final long TX_LIMIT_EVAL = -1L;
@@ -93,7 +91,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private JournalClosingListener closeListener;
     private TxIterator txIterator;
 
-    @SuppressFBWarnings({"PCOA_PARTIALLY_CONSTRUCTED_OBJECT_ACCESS"})
     public Journal(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
         this.metadata = metadata;
         this.key = key;

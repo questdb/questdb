@@ -34,11 +34,9 @@ import com.questdb.net.ha.ChannelProducer;
 import com.questdb.net.ha.model.JournalServerState;
 import com.questdb.std.ObjList;
 import com.questdb.store.Tx;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.channels.WritableByteChannel;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalDeltaProducer implements ChannelProducer {
     private static final Log LOG = LogFactory.getLog(JournalDeltaProducer.class);
     private final Journal journal;
@@ -120,7 +118,6 @@ public class JournalDeltaProducer implements ChannelProducer {
         journal.expireOpenFiles();
     }
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     private void configure0(Tx tx) throws JournalException {
         if (LOG.isDebugEnabled()) {
             LOG.debug().$("Journal ").$(journal.getLocation()).$(" size: ").$(journal.size()).$();

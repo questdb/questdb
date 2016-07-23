@@ -26,7 +26,6 @@ package com.questdb.misc;
 import com.questdb.ex.NetworkError;
 import com.questdb.ex.NumericException;
 import com.questdb.std.CharSink;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class Net {
 
@@ -76,7 +75,6 @@ public final class Net {
 
     private native static int getEwouldblock();
 
-    @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     private static int parseIPv4(CharSequence address) {
         int ip = 0;
         int count = 0;

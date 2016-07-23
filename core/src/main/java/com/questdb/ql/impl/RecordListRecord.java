@@ -1,25 +1,25 @@
-/*
- *     ___                  _   ____  ____
- *    / _ \ _   _  ___  ___| |_|  _ \| __ )
- *   | | | | | | |/ _ \/ __| __| | | |  _ \
- *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *    \__\_\\__,_|\___||___/\__|____/|____/
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- *  Copyright (C) 2014-2016 Appsicle
+ * Copyright (C) 2014-2016 Appsicle
  *
- *  This program is free software: you can redistribute it and/or  modify
- *  it under the terms of the GNU Affero General Public License, version 3,
- *  as published by the Free Software Foundation.
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
  *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU Affero General Public License for more details.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- *  You should have received a copy of the GNU Affero General Public License
- *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- */
+ ******************************************************************************/
 
 package com.questdb.ql.impl;
 
@@ -33,7 +33,6 @@ import com.questdb.std.DirectCharSequence;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.MemoryPages;
 import com.questdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -75,7 +74,6 @@ public class RecordListRecord extends AbstractRecord {
         return Unsafe.getUnsafe().getByte(address + Unsafe.arrayGet(offsets, col));
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public void getBin(int col, OutputStream s) {
         final long readOffset = offsetOf(col);

@@ -26,7 +26,6 @@ package com.questdb.std;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -100,7 +99,6 @@ public final class PrefixedPath extends AbstractCharSequence implements Closeabl
         return this;
     }
 
-    @SuppressFBWarnings("RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE")
     @Override
     @NotNull
     public String toString() {

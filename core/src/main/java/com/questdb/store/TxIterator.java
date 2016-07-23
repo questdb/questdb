@@ -26,7 +26,6 @@ package com.questdb.store;
 import com.questdb.io.sink.DelimitedCharSink;
 import com.questdb.io.sink.FlexBufferSink;
 import com.questdb.std.AbstractImmutableIterator;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.FileDescriptor;
@@ -56,7 +55,6 @@ public class TxIterator extends AbstractImmutableIterator<Tx> {
         return true;
     }
 
-    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
     public Tx next() {
         return tx;

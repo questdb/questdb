@@ -26,7 +26,6 @@ package com.questdb.mp;
 import com.questdb.ex.FatalError;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjHashSet;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -54,7 +53,6 @@ public class Worker extends Thread {
         running = 2;
     }
 
-    @SuppressFBWarnings({"MDM_THREAD_YIELD", "RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT"})
     @Override
     public void run() {
         if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {
@@ -102,7 +100,6 @@ public class Worker extends Thread {
         return fence;
     }
 
-    @SuppressFBWarnings("RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT")
     private void setupJobs() {
         if (running == 1) {
             for (int i = 0; i < jobs.size(); i++) {

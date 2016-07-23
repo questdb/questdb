@@ -23,12 +23,9 @@
 
 package com.questdb.std;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
 public class ThreadLocal<T> extends java.lang.ThreadLocal<T> {
     private final ObjectFactory<T> fact;
 
-    @SuppressFBWarnings("NM_SAME_SIMPLE_NAME_AS_SUPERCLASS")
     public ThreadLocal(ObjectFactory<T> fact) {
         this.fact = fact;
     }

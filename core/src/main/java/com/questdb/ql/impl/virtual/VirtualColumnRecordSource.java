@@ -31,9 +31,7 @@ import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource recordSource;
     private final RecordMetadata metadata;

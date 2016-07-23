@@ -26,14 +26,12 @@ package com.questdb.factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public class JournalFactoryPool implements Closeable {
     private static final Log LOG = LogFactory.getLog(JournalFactoryPool.class);
     private final ConcurrentLinkedDeque<JournalCachingFactory> pool;

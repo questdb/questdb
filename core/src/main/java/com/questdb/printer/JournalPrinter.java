@@ -29,14 +29,12 @@ import com.questdb.misc.Unsafe;
 import com.questdb.printer.appender.Appender;
 import com.questdb.printer.appender.StdOutAppender;
 import com.questdb.printer.converter.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class JournalPrinter implements Closeable {
 
     private static final long OBJECT_VALUE_OFFSET = -1;

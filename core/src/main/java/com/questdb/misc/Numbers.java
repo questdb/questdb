@@ -25,7 +25,6 @@ package com.questdb.misc;
 
 import com.questdb.ex.NumericException;
 import com.questdb.std.CharSink;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class Numbers {
 
@@ -643,7 +642,6 @@ public final class Numbers {
         }
     }
 
-    @SuppressFBWarnings("CC_CYCLOMATIC_COMPLEXITY")
     private static int parseHexInt(CharSequence sequence, final int p, int lim) throws NumericException {
 
         if (lim == p) {

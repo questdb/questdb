@@ -31,7 +31,6 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjObjHashMap;
 import com.questdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.lang.reflect.Constructor;
@@ -239,7 +238,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         return meta;
     }
 
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS", "LII_LIST_INDEXED_ITERATING"})
     private void parseClass() throws JournalConfigurationException {
         try {
             this.constructor = modelClass.getDeclaredConstructor();

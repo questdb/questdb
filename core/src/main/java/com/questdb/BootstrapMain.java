@@ -35,7 +35,6 @@ import com.questdb.net.http.MimeTypes;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.net.http.handlers.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.IOException;
@@ -50,7 +49,6 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 class BootstrapMain {
 
-    @SuppressFBWarnings("PATH_TRAVERSAL_IN")
     public static void main(String[] args) throws Exception {
         System.out.printf("QDB HTTP Server 3.0%nCopyright (C) Appsicle 2014-2016, all rights reserved.%n%n");
         if (args.length < 1) {

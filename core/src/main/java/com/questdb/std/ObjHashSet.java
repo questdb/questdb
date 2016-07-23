@@ -25,7 +25,6 @@ package com.questdb.std;
 
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.AbstractSet;
@@ -82,7 +81,6 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         return list.getQuick(index);
     }
 
-    @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
     @Override
     @NotNull
     public Iterator<T> iterator() {

@@ -32,7 +32,6 @@ import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class AnalyticRecordSource extends AbstractCombinedRecordSource {
 
@@ -110,7 +109,6 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
         return false;
     }
 
-    @SuppressFBWarnings("IT_NO_SUCH_ELEMENT")
     @Override
     public Record next() {
         return record;

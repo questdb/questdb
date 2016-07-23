@@ -25,9 +25,7 @@ package com.questdb.net.ha.producer;
 
 import com.questdb.std.ObjList;
 import com.questdb.store.VariableColumn;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class VariableColumnDeltaProducer extends ChannelProducerGroup<ColumnDeltaProducer> implements ColumnDeltaProducer {
 
     public VariableColumnDeltaProducer(VariableColumn column) {

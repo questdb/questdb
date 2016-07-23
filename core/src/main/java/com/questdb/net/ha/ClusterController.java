@@ -32,7 +32,6 @@ import com.questdb.log.LogFactory;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -87,7 +86,6 @@ public class ClusterController {
         return server != null && server.isLeader();
     }
 
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public void start() throws JournalNetworkException {
         if (running.compareAndSet(false, true)) {
             server = new JournalServer(serverConfig, factory, null, thisNode.getId());
@@ -117,7 +115,6 @@ public class ClusterController {
             }
         }
 
-        @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
         @Override
         @SuppressWarnings("unchecked")
         public void goPassive(ServerNode activeNode) {

@@ -25,7 +25,6 @@ package com.questdb.io.sink;
 
 import com.questdb.misc.ByteBuffers;
 import com.questdb.std.CharSink;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -55,7 +54,6 @@ public class FlexBufferSink extends AbstractCharSink implements Closeable {
         free();
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public void flush() throws IOException {
         buffer.flip();

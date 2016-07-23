@@ -58,11 +58,9 @@ import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.constant.LongConstant;
 import com.questdb.std.*;
 import com.questdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 
-@SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
 public class QueryCompiler {
 
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
@@ -263,7 +261,6 @@ public class QueryCompiler {
         }
     }
 
-    @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
     private void analyseEquals(QueryModel parent, ExprNode node) throws ParserException {
         traverseNamesAndIndices(parent, node);
 
@@ -366,7 +363,6 @@ public class QueryCompiler {
         }
     }
 
-    @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
     private void assignFilters(QueryModel parent) throws ParserException {
 
         journalsSoFar.clear();
@@ -733,7 +729,6 @@ public class QueryCompiler {
     }
 
     @SuppressWarnings("ConstantConditions")
-    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY"})
     private RecordSource compileJournal(QueryModel model, JournalReaderFactory factory) throws ParserException {
 
         applyLimit(model);
@@ -1957,7 +1952,6 @@ public class QueryCompiler {
         return model.getColumns().size() == 0 ? rs : selectColumns0(rs, model);
     }
 
-    @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
     private RecordSource selectColumns0(final RecordSource recordSource, QueryModel model) throws ParserException {
         final ObjList<QueryColumn> columns = model.getColumns();
         final CharSequenceIntHashMap columnNameHistogram = model.getColumnNameHistogram();

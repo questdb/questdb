@@ -33,9 +33,7 @@ import com.questdb.std.CharSink;
 import com.questdb.store.FixedColumn;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class KvIndexIntLookupRowSource extends AbstractRowSource {
 
     private final String columnName;

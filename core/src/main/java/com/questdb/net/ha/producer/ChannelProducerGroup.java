@@ -26,11 +26,9 @@ package com.questdb.net.ha.producer;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.net.ha.ChannelProducer;
 import com.questdb.std.ObjList;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.channels.WritableByteChannel;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class ChannelProducerGroup<T extends ChannelProducer> implements ChannelProducer {
 
     private final ObjList<T> producers = new ObjList<>();

@@ -29,7 +29,6 @@ import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.PartitionSlice;
 import com.questdb.ql.RowCursor;
 import com.questdb.std.CharSink;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class AllRowSource extends AbstractRowSource {
     private long lo;
@@ -39,7 +38,6 @@ public class AllRowSource extends AbstractRowSource {
     public void configure(JournalMetadata metadata) {
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {

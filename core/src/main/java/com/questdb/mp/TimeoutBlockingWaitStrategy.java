@@ -25,7 +25,6 @@ package com.questdb.mp;
 
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.TimeoutException;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
@@ -48,7 +47,6 @@ public class TimeoutBlockingWaitStrategy extends AbstractWaitStrategy {
         return true;
     }
 
-    @SuppressFBWarnings({"WA_AWAIT_NOT_IN_LOOP", "EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public void await() {
         lock.lock();

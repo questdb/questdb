@@ -26,9 +26,7 @@ package com.questdb.misc;
 import com.questdb.ex.NumericException;
 import com.questdb.io.sink.StringSink;
 import com.questdb.std.CharSink;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 final public class Dates {
 
     public static final long DAY_MILLIS = 86400000L;
@@ -371,7 +369,6 @@ final public class Dates {
         return parseInterval(seq, 0, seq.length());
     }
 
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     public static Interval parseInterval(CharSequence seq, final int pos, int lim) throws NumericException {
         int len = lim - pos - 1;
         int p = pos;
@@ -487,7 +484,6 @@ final public class Dates {
         }
     }
 
-    @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG"})
     public static long toMillis(int y, int m, int d, int h, int mi) {
         boolean l = isLeapYear(y);
         return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS + h * HOUR_MILLIS + mi * MINUTE_MILLIS;
@@ -606,7 +602,6 @@ final public class Dates {
         return millis < 0 ? DAY_MILLIS - 1 + (millis % DAY_MILLIS) : millis % DAY_MILLIS;
     }
 
-    @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
         int p = lo;
         if (p + 4 > lim) {
@@ -668,7 +663,6 @@ final public class Dates {
     }
 
     // YYYY-MM-DD hh:mm:ss
-    @SuppressFBWarnings({"ICAST_INTEGER_MULTIPLY_CAST_TO_LONG", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     private static long parseDateTimeFmt1(CharSequence seq, int lo, int lim) throws NumericException {
         int p = lo;
         if (p + 4 > lim) {
@@ -716,7 +710,6 @@ final public class Dates {
     }
 
     // MM/DD/YYYY
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     private static long parseDateTimeFmt2(CharSequence seq, int lo, int lim) throws NumericException {
         int p = lo;
         if (p + 2 > lim) {

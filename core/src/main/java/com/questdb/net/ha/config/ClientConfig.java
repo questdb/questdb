@@ -27,7 +27,6 @@ import com.questdb.ex.JournalNetworkException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.net.ha.mcast.OnDemandAddressPoller;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -39,7 +38,6 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
-@SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 public class ClientConfig extends NetworkConfig {
 
     private static final Log LOG = LogFactory.getLog(ClientConfig.class);
@@ -78,7 +76,6 @@ public class ClientConfig extends NetworkConfig {
         return openDatagramChannel(getMultiCastInterface());
     }
 
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public SocketChannel openSocketChannel() throws JournalNetworkException {
         if (getNodeCount() == 0) {
             if (isMultiCastEnabled()) {
@@ -126,7 +123,6 @@ public class ClientConfig extends NetworkConfig {
         this.linger = linger;
     }
 
-    @SuppressFBWarnings({"MDM_INETADDRESS_GETLOCALHOST"})
     private NetworkInterface getMultiCastInterface() throws JournalNetworkException {
         try {
             if (getIfName() == null) {

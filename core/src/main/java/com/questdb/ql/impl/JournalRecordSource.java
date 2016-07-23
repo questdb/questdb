@@ -30,7 +30,6 @@ import com.questdb.misc.Rows;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class JournalRecordSource extends AbstractCombinedRecordSource {
     private final PartitionSource partitionSource;
@@ -40,7 +39,6 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
     private PartitionCursor partitionCursor;
     private RowCursor cursor;
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public JournalRecordSource(PartitionSource partitionSource, RowSource rowSource) {
         this.metadata = partitionSource.getMetadata();
         this.rec = new JournalRecord();

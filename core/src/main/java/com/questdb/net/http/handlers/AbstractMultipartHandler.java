@@ -31,7 +31,6 @@ import com.questdb.std.ByteSequence;
 import com.questdb.std.DirectByteCharSequence;
 import com.questdb.std.LocalValue;
 import com.questdb.std.Mutable;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -46,7 +45,6 @@ public abstract class AbstractMultipartHandler implements ContextHandler, Multip
         onComplete0(context);
     }
 
-    @SuppressFBWarnings("ACEM_ABSTRACT_CLASS_EMPTY_METHODS")
     @Override
     public void resume(IOContext context) throws IOException {
     }

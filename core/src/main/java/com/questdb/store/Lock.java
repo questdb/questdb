@@ -26,7 +26,6 @@ package com.questdb.store;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.IOException;
@@ -35,7 +34,6 @@ import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public final class Lock {
 
     private static final Log LOG = LogFactory.getLog(Lock.class);
@@ -46,7 +44,6 @@ public final class Lock {
     private File lockName;
     private File location;
 
-    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
     Lock(File location, boolean shared) {
 
         try {

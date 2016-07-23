@@ -29,7 +29,6 @@ import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
 
@@ -71,7 +70,6 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
         return false;
     }
 
-    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
     public Record next() {
         return null;

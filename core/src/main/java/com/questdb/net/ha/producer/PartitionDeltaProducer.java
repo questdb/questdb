@@ -29,11 +29,9 @@ import com.questdb.ex.JournalNetworkException;
 import com.questdb.std.ObjList;
 import com.questdb.store.AbstractColumn;
 import com.questdb.store.VariableColumn;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.channels.WritableByteChannel;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class PartitionDeltaProducer extends ChannelProducerGroup<ColumnDeltaProducer> {
 
     private final Partition partition;

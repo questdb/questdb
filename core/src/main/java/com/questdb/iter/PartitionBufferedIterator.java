@@ -28,9 +28,7 @@ import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.std.AbstractImmutableIterator;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class PartitionBufferedIterator<T> extends AbstractImmutableIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
     private final long hi;
     private final long lo;
@@ -38,7 +36,6 @@ public class PartitionBufferedIterator<T> extends AbstractImmutableIterator<T> i
     private final Partition<T> partition;
     private long cursor;
 
-    @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
     public PartitionBufferedIterator(Partition<T> partition, long lo, long hi) {
         this.lo = lo;
         this.cursor = lo;

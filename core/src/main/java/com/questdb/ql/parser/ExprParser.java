@@ -29,7 +29,6 @@ import com.questdb.ql.model.ExprNode;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.IntStack;
 import com.questdb.std.ObjectPool;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -69,7 +68,6 @@ public class ExprParser {
     }
 
     @SuppressWarnings("ConstantConditions")
-    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY"})
     public void parseExpr(ExprListener listener) throws ParserException {
 
         opStack.clear();

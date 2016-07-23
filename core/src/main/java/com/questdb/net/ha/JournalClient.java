@@ -58,7 +58,6 @@ import com.questdb.net.ha.protocol.commands.*;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.store.TxListener;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.IOException;
@@ -69,7 +68,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalClient {
     private static final AtomicInteger counter = new AtomicInteger(0);
     private static final Log LOG = LogFactory.getLog(JournalClient.class);
@@ -299,7 +297,6 @@ public class JournalClient {
         commandProducer.write(channel, Command.CLIENT_DISCONNECT);
     }
 
-    @SuppressFBWarnings({"PL_PARALLEL_LISTS"})
     private void sendKeys() throws JournalNetworkException {
         for (int i = 0, sz = remoteKeys.size(); i < sz; i++) {
             commandProducer.write(channel, Command.SET_KEY_CMD);

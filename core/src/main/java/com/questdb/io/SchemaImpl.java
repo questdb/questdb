@@ -26,11 +26,9 @@ package com.questdb.io;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 
-@SuppressFBWarnings({"CLI_CONSTANT_LIST_INDEX"})
 public class SchemaImpl implements Schema, Closeable, Mutable {
 
     private final ObjList<ImportedColumnMetadata> metadata = new ObjList<>();

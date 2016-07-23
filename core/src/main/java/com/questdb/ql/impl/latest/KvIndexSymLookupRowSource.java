@@ -34,9 +34,7 @@ import com.questdb.ql.impl.AbstractRowSource;
 import com.questdb.std.CharSink;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class KvIndexSymLookupRowSource extends AbstractRowSource {
 
     private final String symbol;

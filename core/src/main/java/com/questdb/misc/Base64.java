@@ -23,8 +23,6 @@
 
 package com.questdb.misc;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
 public class Base64 {
 
     private static final byte PADDING = 127;
@@ -131,7 +129,6 @@ public class Base64 {
         return text.length() / 4 * 3 - padSize;
     }
 
-    @SuppressFBWarnings({"MRC_METHOD_RETURNS_CONSTANT"})
     private static byte[] initDecodeMap() {
         byte[] map = new byte[128];
         int i;

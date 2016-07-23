@@ -27,7 +27,6 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSink;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
@@ -36,7 +35,6 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class FileSink extends AbstractCharSink implements Closeable {
 
     private final RandomAccessFile raf;

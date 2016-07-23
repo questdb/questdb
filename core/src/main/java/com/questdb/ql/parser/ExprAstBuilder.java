@@ -24,7 +24,6 @@
 package com.questdb.ql.parser;
 
 import com.questdb.ql.model.ExprNode;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -33,7 +32,6 @@ final class ExprAstBuilder implements ExprListener {
 
     private final Deque<ExprNode> stack = new ArrayDeque<>();
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     @Override
     public void onNode(ExprNode node) {
         switch (node.paramCount) {

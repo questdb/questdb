@@ -31,7 +31,6 @@ import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Files;
 import com.questdb.misc.Misc;
 import com.questdb.std.ObjList;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
@@ -41,7 +40,6 @@ import java.nio.ByteOrder;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS", "EXS_EXCEPTION_SOFTENING_HAS_CHECKED"})
 public class PlainFile implements Closeable {
 
     private static final Log LOGGER = LogFactory.getLog(PlainFile.class);

@@ -38,7 +38,6 @@ import com.questdb.std.CharSink;
 import com.questdb.std.LongList;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class KvIndexSymAllHeadRowSource extends AbstractRowSource {
 
@@ -60,7 +59,6 @@ public class KvIndexSymAllHeadRowSource extends AbstractRowSource {
         this.columnIndex = metadata.getColumnIndex(column);
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {

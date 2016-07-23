@@ -38,7 +38,6 @@ import com.questdb.net.ha.config.ServerNode;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -358,7 +357,6 @@ public class ClusterControllerTest extends AbstractTest {
         controller.halt();
     }
 
-    @SuppressFBWarnings("RV_RETURN_VALUE_IGNORED")
     @Test
     public void testTiebreakFailOver() throws Exception {
 

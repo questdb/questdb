@@ -27,10 +27,8 @@ import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.RowCursor;
 import com.questdb.ql.RowSource;
 import com.questdb.ql.StorageFacade;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public abstract class AbstractRowSource implements RowSource, RowCursor {
-    @SuppressFBWarnings({"ACEM_ABSTRACT_CLASS_EMPTY_METHODS"})
     @Override
     public void prepare(StorageFacade storageFacade, CancellationHandler cancellationHandler) {
     }

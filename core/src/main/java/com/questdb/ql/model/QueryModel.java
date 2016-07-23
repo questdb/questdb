@@ -38,7 +38,6 @@ import com.questdb.ql.ops.Parameter;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 
@@ -458,7 +457,6 @@ public class QueryModel implements Mutable {
         this.limitHiVc = hi;
     }
 
-    @SuppressFBWarnings("ISB_TOSTRING_APPENDING")
     @Override
     public String toString() {
         return alias != null ? alias.token : (journalName != null ? journalName.token : '{' + nestedModel.toString() + '}');

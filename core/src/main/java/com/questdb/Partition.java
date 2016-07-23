@@ -35,7 +35,6 @@ import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
 import com.questdb.store.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
@@ -44,7 +43,6 @@ import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
-@SuppressFBWarnings({"PL_PARALLEL_LISTS", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class Partition<T> implements Closeable {
     private static final Log LOG = LogFactory.getLog(Partition.class);
     private final Journal<T> journal;
@@ -542,7 +540,6 @@ public class Partition<T> implements Closeable {
         }
     }
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     private void open0() throws JournalException {
         columns = new AbstractColumn[journal.getMetadata().getColumnCount()];
 

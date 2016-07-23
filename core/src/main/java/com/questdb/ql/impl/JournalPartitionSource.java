@@ -36,9 +36,7 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.CharSink;
 import com.questdb.std.FileNameExtractorCharSequence;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public class JournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
 
     private final boolean open;
@@ -99,7 +97,6 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
         return partitionIndex < partitionCount;
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     @Override
     public PartitionSlice next() {
         try {

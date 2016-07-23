@@ -37,7 +37,6 @@ import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectPool;
 import com.questdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class QueryParser {
 
@@ -66,7 +65,6 @@ public final class QueryParser {
         return n;
     }
 
-    @SuppressFBWarnings("UCPM_USE_CHARACTER_PARAMETERIZED_METHOD")
     private void expectTok(CharSequence tok, CharSequence expected) throws ParserException {
         if (tok == null || !Chars.equals(tok, expected)) {
             throw QueryError.position(lexer.position()).$('\'').$(expected).$("' expected").$();
@@ -157,7 +155,6 @@ public final class QueryParser {
         throw err("journal expected");
     }
 
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     private CharSequence parseIntDefinition(GenericIntBuilder genericIntBuilder) throws ParserException {
         CharSequence tok = tok();
 

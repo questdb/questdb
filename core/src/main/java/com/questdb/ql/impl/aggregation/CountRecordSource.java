@@ -32,7 +32,6 @@ import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.OutputStream;
 
@@ -85,7 +84,6 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
         return !done && (done = true);
     }
 
-    @SuppressFBWarnings("IT_NO_SUCH_ELEMENT")
     @Override
     public Record next() {
         return record;

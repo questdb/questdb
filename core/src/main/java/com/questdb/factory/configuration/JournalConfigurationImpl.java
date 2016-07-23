@@ -36,10 +36,8 @@ import com.questdb.store.LockManager;
 import com.questdb.store.TxLog;
 import com.questdb.store.UnstructuredFile;
 
-import javax.annotation.concurrent.Immutable;
 import java.io.File;
 
-@Immutable
 class JournalConfigurationImpl implements JournalConfiguration {
 
     private final static ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath.FACTORY);

@@ -30,7 +30,6 @@ import com.questdb.log.LogFactory;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.net.ha.config.DatagramChannelWrapper;
 import com.questdb.net.ha.config.ServerConfig;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.net.SocketAddress;
 import java.net.StandardSocketOptions;
@@ -41,7 +40,6 @@ import java.nio.channels.Selector;
 import java.util.Iterator;
 import java.util.concurrent.CountDownLatch;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public abstract class AbstractOnDemandSender {
 
     private static final Log LOG = LogFactory.getLog(AbstractOnDemandSender.class);
@@ -63,7 +61,6 @@ public abstract class AbstractOnDemandSender {
         this.instance = instance;
     }
 
-    @SuppressFBWarnings({"MDM_THREAD_YIELD"})
     public void halt() {
         if (running) {
             while (!selecting) {

@@ -30,7 +30,6 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
 import com.questdb.std.DirectInputStream;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -38,7 +37,6 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class VariableColumn extends AbstractColumn {
     public static final int NULL_LEN = -1;
     private final FixedColumn indexColumn;

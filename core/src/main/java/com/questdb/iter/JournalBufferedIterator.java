@@ -30,9 +30,7 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.misc.Rows;
 import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.ObjList;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class JournalBufferedIterator<T> extends AbstractImmutableIterator<T> implements JournalPeekingIterator<T> {
     private final ObjList<JournalIteratorRange> ranges;
     private final Journal<T> journal;

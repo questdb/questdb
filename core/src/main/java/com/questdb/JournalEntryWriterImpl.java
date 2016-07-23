@@ -29,7 +29,6 @@ import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.misc.Hash;
 import com.questdb.misc.Unsafe;
 import com.questdb.store.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -46,7 +45,6 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     private Partition partition;
     private long timestamp;
 
-    @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
     public JournalEntryWriterImpl(JournalWriter journal) {
         this.journal = journal;
         this.meta = new ColumnMetadata[journal.getMetadata().getColumnCount()];
@@ -56,7 +54,6 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         skipped = new boolean[meta.length];
     }
 
-    @SuppressFBWarnings({"PL_PARALLEL_LISTS"})
     @Override
     public void append() throws JournalException {
         for (int i = 0, l = meta.length; i < l; i++) {

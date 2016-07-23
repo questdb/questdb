@@ -25,7 +25,6 @@ package com.questdb.std;
 
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Arrays;
 import java.util.Iterator;
@@ -171,7 +170,6 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
             return index < values.length && (Unsafe.arrayGet(keys, index) != noEntryValue || scan());
         }
 
-        @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
         @Override
         public Entry<K, V> next() {
             entry.key = keys[index];

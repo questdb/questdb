@@ -24,7 +24,6 @@
 package com.questdb.net.ha;
 
 import com.questdb.ex.JournalNetworkException;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.nio.channels.ReadableByteChannel;
 
@@ -36,7 +35,6 @@ public abstract class AbstractChannelConsumer implements ChannelConsumer {
         commit();
     }
 
-    @SuppressFBWarnings({"ACEM_ABSTRACT_CLASS_EMPTY_METHODS"})
     protected void commit() throws JournalNetworkException {
     }
 

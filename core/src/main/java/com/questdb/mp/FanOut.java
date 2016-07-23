@@ -26,7 +26,6 @@ package com.questdb.mp;
 import com.questdb.ex.FatalError;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjList;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class FanOut implements Barrier {
     private static final long HOLDER;
@@ -66,7 +65,6 @@ public class FanOut implements Barrier {
         } while (!Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, holder, _new));
     }
 
-    @SuppressFBWarnings("CVAA_CONTRAVARIANT_ELEMENT_ASSIGNMENT")
     // this is firebug bug, the code does not write to array elements
     // it has to take a copy of this.barriers as this reference can change while
     // loop is in flight

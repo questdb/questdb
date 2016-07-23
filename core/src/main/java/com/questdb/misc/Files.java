@@ -26,7 +26,6 @@ package com.questdb.misc;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.std.LPSZ;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -34,7 +33,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public final class Files {
 
     public static final Charset UTF_8;
@@ -46,7 +44,6 @@ public final class Files {
 
     public native static int close(long fd);
 
-    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
     public static boolean delete(File file) {
         try {
             deleteOrException(file);
@@ -56,7 +53,6 @@ public final class Files {
         }
     }
 
-    @SuppressFBWarnings({"MDM_THREAD_YIELD"})
     public static void deleteOrException(File file) throws JournalException {
         if (!file.exists()) {
             return;
@@ -185,7 +181,6 @@ public final class Files {
 
     private native static boolean setLastModified(long lpszName, long millis);
 
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     private static void deleteDirContentsOrException(File file) throws JournalException {
         if (!file.exists()) {
             return;

@@ -25,9 +25,7 @@ package com.questdb.ql.parser;
 
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjList;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 final class ExprOperator {
 
     static final ObjList<ExprOperator> operators = new ObjList<ExprOperator>() {{

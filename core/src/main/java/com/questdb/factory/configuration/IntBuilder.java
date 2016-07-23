@@ -24,11 +24,9 @@
 package com.questdb.factory.configuration;
 
 import com.questdb.misc.Numbers;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class IntBuilder<T> extends AbstractMetadataBuilder<T> {
 
-    @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
     public IntBuilder(JournalMetadataBuilder<T> parent, ColumnMetadata meta) {
         super(parent, meta);
         this.meta.size = 4;

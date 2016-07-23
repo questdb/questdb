@@ -32,12 +32,10 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.util.Iterator;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class AggregatedRecordSource extends AbstractCombinedRecordSource implements Closeable {
 
     private final DirectMap map;
@@ -51,7 +49,6 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     private RecordCursor recordCursor;
     private Iterator<DirectMapEntry> mapCursor;
 
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public AggregatedRecordSource(
             RecordSource recordSource,
             @Transient ObjHashSet<String> keyColumns,

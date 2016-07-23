@@ -36,7 +36,6 @@ import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
 import com.questdb.std.RedBlackTree;
 import com.questdb.std.Transient;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
 
@@ -205,7 +204,6 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
         return false;
     }
 
-    @SuppressFBWarnings("IT_NO_SUCH_ELEMENT")
     @Override
     public Record next() {
         return record;

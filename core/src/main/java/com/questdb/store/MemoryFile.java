@@ -31,14 +31,12 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
 import com.questdb.std.ObjList;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.*;
 import java.nio.ByteOrder;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING", "EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS", "EXS_EXCEPTION_SOFTENING_HAS_CHECKED"})
 public class MemoryFile implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(MemoryFile.class);

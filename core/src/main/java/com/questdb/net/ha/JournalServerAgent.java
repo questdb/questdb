@@ -48,14 +48,12 @@ import com.questdb.net.ha.protocol.commands.*;
 import com.questdb.std.IntIntHashMap;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.net.SocketAddress;
 import java.nio.channels.ByteChannel;
 import java.nio.channels.WritableByteChannel;
 
-@SuppressFBWarnings({"PL_PARALLEL_LISTS", "LII_LIST_INDEXED_ITERATING", "LII_LIST_INDEXED_ITERATING"})
 public class JournalServerAgent {
 
     private final static Log LOG = LogFactory.getLog(JournalServerAgent.class);
@@ -152,7 +150,6 @@ public class JournalServerAgent {
         }
     }
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     private void authorize(WritableByteChannel channel, byte[] value) throws JournalNetworkException {
         if (!authorized) {
             try {

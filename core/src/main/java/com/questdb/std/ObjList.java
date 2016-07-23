@@ -25,7 +25,6 @@ package com.questdb.std;
 
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -441,7 +440,6 @@ public class ObjList<T> implements Mutable {
      * @param right    the index of the last element, inclusive, to be sorted
      * @param leftmost indicates if this part is the leftmost in the range
      */
-    @SuppressFBWarnings({"CC_CYCLOMATIC_COMPLEXITY"})
     private void sort(int left, int right, boolean leftmost, Comparator<T> cmp) {
         int length = right - left + 1;
 

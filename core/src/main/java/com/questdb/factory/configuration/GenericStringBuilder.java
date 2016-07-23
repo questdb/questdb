@@ -25,9 +25,7 @@ package com.questdb.factory.configuration;
 
 import com.questdb.misc.Numbers;
 import com.questdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 public class GenericStringBuilder extends AbstractGenericMetadataBuilder {
 
     public GenericStringBuilder(JournalStructure parent, ColumnMetadata meta) {

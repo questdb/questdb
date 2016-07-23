@@ -29,9 +29,7 @@ import com.questdb.io.Schema;
 import com.questdb.io.parser.listener.probe.*;
 import com.questdb.io.sink.StringSink;
 import com.questdb.std.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"PL_PARALLEL_LISTS", "LII_LIST_INDEXED_ITERATING"})
 public class MetadataExtractorListener implements Listener, Mutable {
     // order of probes in array is critical
     private static final TypeProbe probes[] = new TypeProbe[]{

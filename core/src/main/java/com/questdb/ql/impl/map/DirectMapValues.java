@@ -24,9 +24,7 @@
 package com.questdb.ql.impl.map;
 
 import com.questdb.misc.Unsafe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"EI_EXPOSE_REP2"})
 public final class DirectMapValues {
     private final int valueOffsets[];
     private long address;

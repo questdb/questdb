@@ -30,7 +30,6 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSink;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.Sinkable;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Set;
 
@@ -144,7 +143,6 @@ public abstract class AbstractCharSink implements CharSink {
         return this;
     }
 
-    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     @Override
     public CharSink putUtf8(CharSequence cs) {
         int hi = cs.length();
@@ -158,7 +156,6 @@ public abstract class AbstractCharSink implements CharSink {
         return this;
     }
 
-    @SuppressFBWarnings("SF_SWITCH_NO_DEFAULT")
     @Override
     public CharSink putUtf8Escaped(CharSequence cs) {
         int hi = cs.length();

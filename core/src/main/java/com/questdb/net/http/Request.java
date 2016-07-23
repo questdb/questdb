@@ -32,13 +32,11 @@ import com.questdb.net.NetworkChannel;
 import com.questdb.std.DirectByteCharSequence;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectPool;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
-@SuppressFBWarnings("CD_CIRCULAR_DEPENDENCY")
 public class Request implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(Request.class);
     private final ByteBuffer in;

@@ -31,7 +31,6 @@ import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class FilteredJournalRecordSource extends AbstractCombinedRecordSource {
 
@@ -90,7 +89,6 @@ public class FilteredJournalRecordSource extends AbstractCombinedRecordSource {
         return false;
     }
 
-    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
     public Record next() {
         return record;

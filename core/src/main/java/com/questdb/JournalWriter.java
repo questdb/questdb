@@ -43,7 +43,6 @@ import com.questdb.mp.Sequence;
 import com.questdb.query.ResultSet;
 import com.questdb.std.PeekingListIterator;
 import com.questdb.store.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.FileFilter;
@@ -59,7 +58,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-@SuppressFBWarnings({"PATH_TRAVERSAL_IN", "EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class JournalWriter<T> extends Journal<T> {
     private static final Log LOG = LogFactory.getLog(JournalWriter.class);
     private final long lagMillis;
@@ -910,7 +908,6 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     private static class PartitionCleaner {
         private final ExecutorService executor;
         private final Sequence pubSeq;

@@ -28,7 +28,6 @@ import com.questdb.iter.clock.Clock;
 import com.questdb.iter.clock.MilliClock;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.AbstractImmutableIterator;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.Iterator;
 
@@ -41,7 +40,6 @@ public class ReplayIterator<T> extends AbstractImmutableIterator<T> {
     private long lastObjTicks;
     private long lastTicks;
 
-    @SuppressFBWarnings({"OCP_OVERLY_CONCRETE_PARAMETER"})
     @SuppressWarnings("unchecked")
     public ReplayIterator(final Journal journal, float speed) {
         this((JournalIterator<T>) journal.iterator(), speed);

@@ -30,7 +30,6 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.net.http.IOHttpJob;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.net.ssl.*;
 import java.io.IOException;
@@ -98,7 +97,6 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
         }
     }
 
-    @SuppressFBWarnings("SF_SWITCH_FALLTHROUGH")
     @Override
     public int read(ByteBuffer dst) throws IOException {
 

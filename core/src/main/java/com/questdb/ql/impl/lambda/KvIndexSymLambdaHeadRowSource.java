@@ -36,7 +36,6 @@ import com.questdb.std.LongList;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
 import com.questdb.store.SymbolTable;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
     protected final RecordSource recordSource;
@@ -61,7 +60,6 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
         this.columnIndex = metadata.getColumnIndex(column);
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {
@@ -89,7 +87,6 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
         }
     }
 
-    @SuppressFBWarnings("ACEM_ABSTRACT_CLASS_EMPTY_METHODS")
     @Override
     public void reset() {
     }
@@ -104,7 +101,6 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
         return rec.rowid = rows.getQuick(cursor++);
     }
 
-    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CHECKED")
     @Override
     public void prepare(StorageFacade fa, CancellationHandler cancellationHandler) {
 

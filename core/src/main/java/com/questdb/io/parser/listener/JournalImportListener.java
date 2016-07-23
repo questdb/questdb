@@ -44,11 +44,9 @@ import com.questdb.std.LongList;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
 public class JournalImportListener implements InputAnalysisListener, Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(JournalImportListener.class);
     private final JournalWriterFactory factory;
@@ -75,7 +73,6 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
         clear();
     }
 
-    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS")
     public void commit() {
         if (writer != null) {
             try {
@@ -90,7 +87,6 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
         return errors;
     }
 
-    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS")
     public long getImportedRowCount() {
         try {
             return writer.size() - _size;

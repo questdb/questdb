@@ -26,7 +26,6 @@ package com.questdb.ql.impl.interval;
 import com.questdb.misc.Interval;
 import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.CharSink;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class SingleIntervalSource extends AbstractImmutableIterator<Interval> implements IntervalSource {
     private final Interval interval;
@@ -42,7 +41,6 @@ public class SingleIntervalSource extends AbstractImmutableIterator<Interval> im
         return next != null;
     }
 
-    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
     public Interval next() {
         Interval v = next;

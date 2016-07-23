@@ -32,7 +32,6 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.store.UnstructuredFile;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.lang.StringBuilder;
 import java.lang.reflect.Constructor;
@@ -101,7 +100,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         }
     }
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public JournalMetadata(UnstructuredFile buf) {
         buf.setPos(0);
         id = buf.getStr();
@@ -263,7 +261,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         return partialMapping;
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
     public Object newObject() {
         if (constructor == null) {
             throw new JournalRuntimeException("There is no object class associated with this journal. Please use generic access methods");

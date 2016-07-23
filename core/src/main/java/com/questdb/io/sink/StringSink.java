@@ -25,10 +25,8 @@ package com.questdb.io.sink;
 
 import com.questdb.std.CharSink;
 import com.questdb.std.Mutable;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.NotNull;
 
-@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY", "SCII_SPOILED_CHILD_INTERFACE_IMPLEMENTOR"})
 public class StringSink extends AbstractCharSink implements CharSequence, Mutable {
     private final StringBuilder builder = new StringBuilder();
 
@@ -79,7 +77,6 @@ public class StringSink extends AbstractCharSink implements CharSequence, Mutabl
     }
 
     /* Either IDEA or FireBug complain, annotation galore */
-    @SuppressFBWarnings({"RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE"})
     @NotNull
     @Override
     public String toString() {

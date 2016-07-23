@@ -27,9 +27,7 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"EI_EXPOSE_REP"})
 public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator implements AggregatorFunction {
 
     protected int valueIndex;

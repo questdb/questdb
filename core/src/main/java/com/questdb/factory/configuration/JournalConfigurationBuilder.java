@@ -25,7 +25,6 @@ package com.questdb.factory.configuration;
 
 import com.questdb.ex.JournalConfigurationException;
 import com.questdb.std.ObjObjHashMap;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -46,12 +45,10 @@ public class JournalConfigurationBuilder {
         return builder;
     }
 
-    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
     public JournalConfiguration build(String journalBase) {
         return build(new File(journalBase));
     }
 
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public JournalConfiguration build(File journalBase) {
         if (!journalBase.isDirectory()) {
             throw new JournalConfigurationException("Not a directory: %s", journalBase);

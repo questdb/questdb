@@ -30,13 +30,11 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.std.ObjObjHashMap;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
     private final ObjObjHashMap<JournalKey, Journal> readers = new ObjObjHashMap<>();
     private final ObjObjHashMap<JournalKey, JournalBulkReader> bulkReaders = new ObjObjHashMap<>();

@@ -23,8 +23,6 @@
 
 package com.questdb.mp;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -38,7 +36,6 @@ public class BlockingWaitStrategy extends AbstractWaitStrategy {
         return true;
     }
 
-    @SuppressFBWarnings("WA_AWAIT_NOT_IN_LOOP")
     @Override
     public void await() {
         lock.lock();

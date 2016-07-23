@@ -33,7 +33,6 @@ import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.mp.SynchronizedJob;
 import com.questdb.std.Path;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 
@@ -58,7 +57,6 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         this.level = level;
     }
 
-    @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     @Override
     public void bindProperties() {
         if (this.bufferSize != null) {

@@ -30,9 +30,7 @@ import com.questdb.iter.JournalIterator;
 import com.questdb.iter.PeekingIterator;
 import com.questdb.query.ResultSet;
 import com.questdb.std.AbstractImmutableIterator;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED", "CD_CIRCULAR_DEPENDENCY"})
 public class ResultSetIterator<T> extends AbstractImmutableIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
 
     private final ResultSet<T> rs;

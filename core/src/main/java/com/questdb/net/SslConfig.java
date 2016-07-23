@@ -24,7 +24,6 @@
 package com.questdb.net;
 
 import com.questdb.ex.NetworkError;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
@@ -39,7 +38,6 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class SslConfig {
     private static final X509TrustManager[] allowAllTrustManagers = new X509TrustManager[]{
             new AllowAllTrustManager()
@@ -154,7 +152,6 @@ public class SslConfig {
         trustManagerFactory.init(keyStore);
     }
 
-    @SuppressFBWarnings({"WEAK_TRUST_MANAGER", "BED_BOGUS_EXCEPTION_DECLARATION"})
     private final static class AllowAllTrustManager implements X509TrustManager {
         @Override
         public void checkClientTrusted(X509Certificate[] x509Certificates, String s) {
@@ -164,7 +161,6 @@ public class SslConfig {
         public void checkServerTrusted(X509Certificate[] x509Certificates, String s) {
         }
 
-        @SuppressFBWarnings({"WEAK_TRUST_MANAGER"})
         @Override
         public X509Certificate[] getAcceptedIssuers() {
             return new X509Certificate[0];

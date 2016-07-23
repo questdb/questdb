@@ -43,7 +43,6 @@ import com.questdb.net.http.IOContext;
 import com.questdb.net.http.RequestHeaderBuffer;
 import com.questdb.net.http.ResponseSink;
 import com.questdb.std.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -182,7 +181,6 @@ public class ImportHandler extends AbstractMultipartHandler {
         PARSER.set(FormatParser.FACTORY.newInstance());
     }
 
-    @SuppressFBWarnings("SF_SWITCH_FALLTHROUGH")
     private static void resumeJson(ImportHandlerContext ctx, ChunkedResponse r) throws DisconnectedChannelException, SlowWritableChannelException {
         final JournalMetadata m = ctx.importer.getMetadata();
         final int columnCount = m.getColumnCount();
@@ -281,7 +279,6 @@ public class ImportHandler extends AbstractMultipartHandler {
         );
     }
 
-    @SuppressFBWarnings("SF_SWITCH_FALLTHROUGH")
     private static void resumeText(ImportHandlerContext h, ChunkedResponse r) throws IOException {
         JournalMetadata m = h.importer.getMetadata();
         LongList errors = h.importer.getErrors();

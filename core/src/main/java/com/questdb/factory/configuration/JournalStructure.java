@@ -34,7 +34,6 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.lang.reflect.Constructor;
@@ -45,7 +44,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class JournalStructure implements MetadataBuilder<Object> {
     private static final Log LOG = LogFactory.getLog(JournalStructure.class);
     private final List<ColumnMetadata> metadata = new ArrayList<>();
@@ -249,7 +247,6 @@ public class JournalStructure implements MetadataBuilder<Object> {
         return this;
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     @SuppressWarnings("unchecked")
     public JournalMetadata map(Class clazz) {
         List<Field> classFields = getAllFields(new ArrayList<Field>(), clazz);

@@ -27,7 +27,6 @@ import com.questdb.ex.NumericException;
 import com.questdb.io.ImportedColumnMetadata;
 import com.questdb.io.ImportedColumnType;
 import com.questdb.misc.Dates;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class DateFmt2Probe implements TypeProbe {
     @Override
@@ -35,7 +34,6 @@ public class DateFmt2Probe implements TypeProbe {
         m.type = ImportedColumnType.DATE_2;
     }
 
-    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
     @Override
     public boolean probe(CharSequence seq) {
         try {

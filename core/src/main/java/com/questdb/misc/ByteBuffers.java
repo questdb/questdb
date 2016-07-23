@@ -24,7 +24,6 @@
 package com.questdb.misc;
 
 import com.questdb.ex.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;
@@ -142,7 +141,6 @@ public final class ByteBuffers {
         }
     }
 
-    @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     @SuppressWarnings("TryWithIdenticalCatches")
     public static void copyNonBlocking(ByteBuffer from, WritableByteChannel channel, final int retryCount)
             throws DisconnectedChannelException, SlowWritableChannelException {
@@ -175,7 +173,6 @@ public final class ByteBuffers {
         }
     }
 
-    @SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
     @SuppressWarnings("TryWithIdenticalCatches")
     public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, final int retryCount)
             throws DisconnectedChannelException, SlowReadableChannelException, EndOfChannelException {

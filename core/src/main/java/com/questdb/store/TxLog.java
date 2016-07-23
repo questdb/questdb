@@ -28,7 +28,6 @@ import com.questdb.ex.JournalException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Rnd;
 import com.questdb.misc.Unsafe;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
@@ -52,7 +51,6 @@ public class TxLog implements Closeable {
         hb.close();
     }
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public long findAddress(long txn, long txPin) {
         long address = getCurrentTxAddress();
         long curr;
@@ -120,7 +118,6 @@ public class TxLog implements Closeable {
         return hb.getAppendOffset() < 10 || readCurrentTxAddress() < 1;
     }
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public void read(long address, Tx tx) {
         assert address > 0 : "zero headAddress: " + address;
         tx.address = address;

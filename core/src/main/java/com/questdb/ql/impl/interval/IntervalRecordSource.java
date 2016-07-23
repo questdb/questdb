@@ -30,7 +30,6 @@ import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class IntervalRecordSource extends AbstractCombinedRecordSource {
 
@@ -120,7 +119,6 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
         }
     }
 
-    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
     public Record next() {
         return record;

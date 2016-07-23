@@ -29,11 +29,9 @@ import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.MetadataBuilder;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class JournalFactory extends AbstractJournalReaderFactory implements JournalReaderFactory, JournalWriterFactory {
 
-    @SuppressFBWarnings({"SCII_SPOILED_CHILD_INTERFACE_IMPLEMENTOR"})
     public JournalFactory(String journalBase) {
         super(new JournalConfigurationBuilder().build(journalBase));
     }

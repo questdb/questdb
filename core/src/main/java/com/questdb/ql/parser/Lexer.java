@@ -28,7 +28,6 @@ import com.questdb.std.AbstractCharSequence;
 import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntObjHashMap;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -214,7 +213,6 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
         unparsed = last;
     }
 
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     private CharSequence getSymbol(char c) {
 
         List<CharSequence> l = symbols.get(c);
@@ -256,7 +254,6 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
         }
     }
 
-    @SuppressFBWarnings({"SE_COMPARATOR_SHOULD_BE_SERIALIZABLE"})
     private static class LenComparator implements Comparator<CharSequence> {
         @Override
         public int compare(CharSequence o1, CharSequence o2) {

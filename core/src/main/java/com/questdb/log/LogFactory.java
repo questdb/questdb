@@ -31,7 +31,6 @@ import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.mp.*;
 import com.questdb.std.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.*;
 import java.lang.reflect.Constructor;
@@ -172,7 +171,6 @@ public class LogFactory implements Closeable {
         worker.start();
     }
 
-    @SuppressFBWarnings("PATH_TRAVERSAL_IN")
     static void configureFromSystemProperties(LogFactory factory) {
         String conf = System.getProperty("questDbLog");
         if (conf == null) {
@@ -205,7 +203,6 @@ public class LogFactory implements Closeable {
         factory.startThread();
     }
 
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE", "LEST_LOST_EXCEPTION_STACK_TRACE"})
     private static void setup(LogFactory factory, Properties properties) {
 
         String writers = properties.getProperty("writers");

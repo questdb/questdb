@@ -26,9 +26,7 @@ package com.questdb.net.ha.bridge;
 import com.questdb.ex.TimeoutException;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"})
 public class JournalEventProcessor {
     private final RingQueue<JournalEvent> queue;
     private final Sequence sequence;
@@ -42,7 +40,6 @@ public class JournalEventProcessor {
         return sequence;
     }
 
-    @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_RETURN_FALSE")
     public boolean process(JournalEventHandler handler, boolean blocking) {
         try {
             long cursor = blocking ? sequence.waitForNext() : sequence.next();

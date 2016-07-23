@@ -30,7 +30,6 @@ import com.questdb.io.parser.listener.InputAnalysisListener;
 import com.questdb.io.parser.listener.JournalImportListener;
 import com.questdb.io.parser.listener.Listener;
 import com.questdb.misc.ByteBuffers;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -90,7 +89,6 @@ public final class ImportManager {
         importFile(factory, fileName, format, schema, SAMPLE_SIZE);
     }
 
-    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
     public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, CharSequence schema, int sampleSize) throws IOException {
 
         try (TextParser parser = format.newParser()) {

@@ -33,7 +33,6 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.CharSink;
 import com.questdb.std.FileNameExtractorCharSequence;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class NoOpJournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
 
@@ -73,7 +72,6 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
         return false;
     }
 
-    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
     public PartitionSlice next() {
         return null;

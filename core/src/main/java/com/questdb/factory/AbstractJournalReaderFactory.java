@@ -27,12 +27,10 @@ import com.questdb.*;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.File;
 
-@SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
 public abstract class AbstractJournalReaderFactory implements JournalReaderFactory, Closeable {
 
     private final JournalConfiguration configuration;

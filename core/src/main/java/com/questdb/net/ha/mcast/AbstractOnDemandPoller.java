@@ -29,7 +29,6 @@ import com.questdb.log.LogFactory;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.DatagramChannelWrapper;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -42,7 +41,6 @@ import java.nio.channels.Selector;
 import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
-@SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
 public abstract class AbstractOnDemandPoller<T> {
     private static final Log LOG = LogFactory.getLog(AbstractOnDemandPoller.class);
     private final ClientConfig networkConfig;

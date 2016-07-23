@@ -37,9 +37,7 @@ import com.questdb.std.ObjList;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
 import com.questdb.store.SymbolTable;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"PL_PARALLEL_LISTS"})
 public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
     private final Journal<T> journal;

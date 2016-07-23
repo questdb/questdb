@@ -38,7 +38,6 @@ import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 
@@ -60,7 +59,6 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private RecordCursor masterCursor;
     private RecordCursor hashTableCursor;
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public HashJoinRecordSource(
             RecordSource master,
             IntList masterColIndices,
@@ -127,7 +125,6 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         return hasNext0();
     }
 
-    @SuppressFBWarnings({"IT_NO_SUCH_ELEMENT"})
     @Override
     public SplitRecord next() {
         return currentRecord;

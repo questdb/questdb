@@ -28,7 +28,6 @@ import com.questdb.std.IntList;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class Signature implements Mutable {
     public final ObjList<ColumnType> paramTypes = new ObjList<>(2);
@@ -92,7 +91,6 @@ public final class Signature implements Mutable {
         return b;
     }
 
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     private boolean typesEqual(Signature that) {
         int k;
         if ((k = this.paramTypes.size()) != that.paramTypes.size()) {
@@ -107,7 +105,6 @@ public final class Signature implements Mutable {
         return true;
     }
 
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     private int typesHashCode(int h) {
         for (int i = 0, k = paramTypes.size(); i < k; i++) {
             h = h * 32 + paramTypes.getQuick(i).ordinal();

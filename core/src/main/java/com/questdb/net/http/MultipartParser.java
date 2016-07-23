@@ -31,12 +31,10 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.DirectByteCharSequence;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectPool;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.Closeable;
 import java.io.IOException;
 
-@SuppressFBWarnings("SF_SWITCH_FALLTHROUGH")
 public class MultipartParser implements Closeable, Mutable {
 
     private final Log LOG = LogFactory.getLog(MultipartParser.class);

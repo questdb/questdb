@@ -75,7 +75,6 @@ import com.questdb.std.ObjList;
 import com.questdb.std.ObjObjHashMap;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public final class FunctionFactories {
 
@@ -85,7 +84,6 @@ public final class FunctionFactories {
     private FunctionFactories() {
     }
 
-    @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"})
     public static ObjectFactory<Function> find(Signature sig, ObjList<VirtualColumn> args) {
         final VirtualColumn vc;
         if (sig.paramCount == 2 && (vc = args.getQuick(1)).isConstant()) {

@@ -41,7 +41,6 @@ import com.questdb.std.LongList;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
 import com.questdb.store.VariableColumn;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class KvIndexStrListHeadRowSource extends AbstractRowSource {
 
@@ -66,7 +65,6 @@ public class KvIndexStrListHeadRowSource extends AbstractRowSource {
         this.buckets = metadata.getColumnQuick(columnIndex).distinctCountHint;
     }
 
-    @SuppressFBWarnings({"EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public RowCursor prepareCursor(PartitionSlice slice) {
         try {

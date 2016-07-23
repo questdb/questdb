@@ -38,7 +38,6 @@ import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.util.ArrayDeque;
 
@@ -103,7 +102,6 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
         return stack.poll();
     }
 
-    @SuppressFBWarnings({"LEST_LOST_EXCEPTION_STACK_TRACE"})
     private VirtualColumn lookupColumn(ExprNode node) throws ParserException {
         try {
             if (columnNameHistogram.get(node.token) > 0) {
@@ -160,7 +158,6 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
         return f.isConstant() ? processConstantExpression(f) : f;
     }
 
-    @SuppressFBWarnings({"ES_COMPARING_STRINGS_WITH_EQ"})
     private VirtualColumn parseConstant(ExprNode node) throws ParserException {
 
         if ("null".equals(node.token)) {

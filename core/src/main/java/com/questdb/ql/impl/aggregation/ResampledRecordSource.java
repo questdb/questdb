@@ -32,9 +32,7 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.*;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
-@SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
 public class ResampledRecordSource extends AbstractCombinedRecordSource {
     private final DirectMap map;
     private final RecordSource recordSource;
@@ -50,7 +48,6 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     private DirectMapIterator mapCursor;
     private Record nextRecord = null;
 
-    @SuppressFBWarnings({"LII_LIST_INDEXED_ITERATING"})
     public ResampledRecordSource(
             RecordSource recordSource,
             int timestampColumnIndex,

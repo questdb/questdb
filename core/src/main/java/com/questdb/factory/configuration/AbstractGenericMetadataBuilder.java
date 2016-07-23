@@ -23,13 +23,10 @@
 
 package com.questdb.factory.configuration;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
 public abstract class AbstractGenericMetadataBuilder {
     final ColumnMetadata meta;
     final JournalStructure parent;
 
-    @SuppressFBWarnings({"CD_CIRCULAR_DEPENDENCY"})
     AbstractGenericMetadataBuilder(JournalStructure parent, ColumnMetadata meta) {
         this.parent = parent;
         this.meta = meta;
