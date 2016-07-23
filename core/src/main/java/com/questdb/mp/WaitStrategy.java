@@ -24,6 +24,8 @@
 package com.questdb.mp;
 
 public interface WaitStrategy {
+    boolean acceptSignal();
+
     void alert();
 
     void await();

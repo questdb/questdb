@@ -33,6 +33,11 @@ public class BlockingWaitStrategy extends AbstractWaitStrategy {
     private final Lock lock = new ReentrantLock();
     private final Condition condition = lock.newCondition();
 
+    @Override
+    public boolean acceptSignal() {
+        return true;
+    }
+
     @SuppressFBWarnings("WA_AWAIT_NOT_IN_LOOP")
     @Override
     public void await() {

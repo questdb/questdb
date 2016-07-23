@@ -40,4 +40,9 @@ public final class NullWaitStrategy implements WaitStrategy {
     @Override
     public void signal() {
     }
+
+    @Override
+    public boolean acceptSignal() {
+        return false;
+    }
 }

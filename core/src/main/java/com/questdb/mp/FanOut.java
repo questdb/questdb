@@ -31,14 +31,13 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 public class FanOut implements Barrier {
     private static final long HOLDER;
     private Holder holder;
-    private volatile boolean barrier;
 
     public FanOut(Sequence... sequences) {
         Holder h = new Holder();
         for (int i = 0; i < sequences.length; i++) {
             Sequence sq = sequences[i];
             h.sequences.add(sq);
-            if (sq.hasWaitStrategy()) {
+            if (sq.getWaitStrategy().acceptSignal()) {
                 h.waitStrategies.add(sq.getWaitStrategy());
             }
         }
@@ -51,7 +50,6 @@ public class FanOut implements Barrier {
         do {
             Holder h = this.holder;
             // read barrier to make sure "holder" read doesn't fall below this
-            boolean b = barrier;
 
             if (h.sequences.indexOf(sequence) > -1) {
                 return;
@@ -61,7 +59,7 @@ public class FanOut implements Barrier {
             _new.sequences.add(sequence);
             _new.waitStrategies.addAll(h.waitStrategies);
 
-            if (sequence.hasWaitStrategy()) {
+            if (sequence.getWaitStrategy().acceptSignal()) {
                 _new.waitStrategies.add(sequence.getWaitStrategy());
             }
             _new.setupWaitStrategy();
@@ -99,7 +97,6 @@ public class FanOut implements Barrier {
         do {
             Holder h = this.holder;
             // read barrier to make sure "holder" read doesn't fall below this
-            boolean b = barrier;
 
             if (h.sequences.indexOf(sequence) == -1) {
                 return;
@@ -112,14 +109,16 @@ public class FanOut implements Barrier {
                 }
             }
 
-            if (sequence.hasWaitStrategy()) {
-                WaitStrategy that = sequence.getWaitStrategy();
+            WaitStrategy that = sequence.getWaitStrategy();
+            if (that.acceptSignal()) {
                 for (int i = 0, n = h.waitStrategies.size(); i < n; i++) {
                     WaitStrategy ws = h.waitStrategies.getQuick(i);
                     if (ws != that) {
                         _new.waitStrategies.add(ws);
                     }
                 }
+            } else {
+                _new.waitStrategies.addAll(h.waitStrategies);
             }
             _new.setupWaitStrategy();
 
@@ -142,6 +141,16 @@ public class FanOut implements Barrier {
         }
 
         private class FanOutWaitStrategy implements WaitStrategy {
+            @Override
+            public boolean acceptSignal() {
+                for (int i = 0, n = waitStrategies.size(); i < n; i++) {
+                    if (waitStrategies.getQuick(i).acceptSignal()) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             @Override
             public void alert() {
                 for (int i = 0, n = waitStrategies.size(); i < n; i++) {

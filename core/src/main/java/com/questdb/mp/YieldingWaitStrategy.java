@@ -27,6 +27,11 @@ import java.util.concurrent.locks.LockSupport;
 
 public class YieldingWaitStrategy extends AbstractWaitStrategy {
     @Override
+    public boolean acceptSignal() {
+        return false;
+    }
+
+    @Override
     public void await() {
         LockSupport.parkNanos(1L);
     }

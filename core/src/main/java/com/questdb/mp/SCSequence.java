@@ -73,10 +73,6 @@ public class SCSequence extends AbstractSSequence {
         cache = -1;
     }
 
-    public long getHi() {
-        return cache + 1;
-    }
-
     private long next0(long next) {
         cache = barrier.availableIndex(next);
         return next > cache ? -1 : next;

@@ -53,7 +53,7 @@ public class SPSequence extends AbstractSSequence {
 
     @Override
     public long next() {
-        long next = value + 1;
+        long next = getValue() + 1;
         long lo = next - cycle;
         return lo > cache && lo > (cache = barrier.availableIndex(lo)) ? -1 : next;
     }

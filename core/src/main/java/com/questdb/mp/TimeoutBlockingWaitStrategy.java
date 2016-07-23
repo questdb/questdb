@@ -43,6 +43,11 @@ public class TimeoutBlockingWaitStrategy extends AbstractWaitStrategy {
         this.unit = unit;
     }
 
+    @Override
+    public boolean acceptSignal() {
+        return true;
+    }
+
     @SuppressFBWarnings({"WA_AWAIT_NOT_IN_LOOP", "EXS_EXCEPTION_SOFTENING_NO_CHECKED"})
     @Override
     public void await() {

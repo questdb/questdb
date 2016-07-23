@@ -31,6 +31,7 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.locks.LockSupport;
 
 public class ConcurrentTest {
     private final static Log LOG = LogFactory.getLog(ConcurrentTest.class);
@@ -250,6 +251,7 @@ public class ConcurrentTest {
         while (true) {
             long cursor = pubSeq.next();
             if (cursor < 0) {
+                LockSupport.parkNanos(1);
                 continue;
             }
             queue.get(cursor).value = i++;
@@ -360,6 +362,7 @@ public class ConcurrentTest {
                 while (true) {
                     long cursor = sequence.next();
                     if (cursor < 0) {
+                        LockSupport.parkNanos(1);
                         continue;
                     }
                     int v = queue.get(cursor).value;
@@ -410,6 +413,7 @@ public class ConcurrentTest {
                 while (p < buf.length) {
                     long cursor = sequence.next();
                     if (cursor < 0) {
+                        LockSupport.parkNanos(1);
                         continue;
                     }
                     int v = queue.get(cursor).value;

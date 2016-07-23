@@ -39,12 +39,12 @@ class Value extends LhsPadding {
         this.waitStrategy = waitStrategy == null ? NullWaitStrategy.INSTANCE : waitStrategy;
     }
 
-    public WaitStrategy getWaitStrategy() {
-        return waitStrategy;
+    public long available() {
+        return cache + 1;
     }
 
-    public boolean hasWaitStrategy() {
-        return waitStrategy != NullWaitStrategy.INSTANCE;
+    public WaitStrategy getWaitStrategy() {
+        return waitStrategy;
     }
 }
 
