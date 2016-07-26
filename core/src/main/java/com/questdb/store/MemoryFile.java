@@ -56,6 +56,7 @@ public class MemoryFile implements Closeable {
     private long cachedAppendOffset = -1;
     private long cachedAddress;
     private long offsetDirectAddr;
+    private boolean unlockedBuffers = true;
 
     public MemoryFile(File file, int bitHint, JournalMode mode) throws JournalException {
         this.file = file;
@@ -152,9 +153,17 @@ public class MemoryFile implements Closeable {
         return cachedBuffer;
     }
 
+    public void lockBuffers() {
+        unlockedBuffers = false;
+    }
+
     @Override
     public String toString() {
         return this.getClass().getName() + "[file=" + file + ", appendOffset=" + getAppendOffset() + ']';
+    }
+
+    public void unlockBuffers() {
+        unlockedBuffers = true;
     }
 
     private long allocateAddress(long offset, int size) {
@@ -170,30 +179,25 @@ public class MemoryFile implements Closeable {
         buffer = mapBufferInternal(bufferOffset, bufferSize);
         assert bufferSize > 0;
         buffers.extendAndSet(index, buffer);
-        switch (mode) {
-            case BULK_READ:
-            case BULK_APPEND:
-                // for bulk operations unmap all buffers except for current one
-                // this is to prevent OS paging large files.
-                cachedBuffer = null;
-                cachedBufferLo = cachedBufferHi = -1;
-                int ssz = stitches.size();
-                for (int i = index - 1; i > -1; i--) {
-                    MappedByteBuffer b = buffers.getAndSetQuick(i, null);
-                    if (b != null) {
-                        ByteBuffers.release(b);
-                    }
-
-                    if (i < ssz) {
-                        ByteBufferWrapper stitch = stitches.getAndSetQuick(i, null);
-                        if (stitch != null) {
-                            stitch.release();
+        if (unlockedBuffers) {
+            switch (mode) {
+                case BULK_READ:
+                case BULK_APPEND:
+                    // for bulk operations unmap all buffers except for current one
+                    // this is to prevent OS paging large files.
+                    cachedBuffer = null;
+                    cachedBufferLo = cachedBufferHi = -1;
+                    int ssz = stitches.size();
+                    for (int i = index - 1; i > -1; i--) {
+                        ByteBuffers.release(buffers.getAndSetQuick(i, null));
+                        if (i < ssz) {
+                            Misc.free(stitches.getAndSetQuick(i, null));
                         }
                     }
-                }
-                break;
-            default:
-                break;
+                    break;
+                default:
+                    break;
+            }
         }
         return buffer;
     }
@@ -205,7 +209,7 @@ public class MemoryFile implements Closeable {
             // it could be too small for the size
             // if that's the case - discard the existing stitch and create a larger one.
             if (bufferWrapper.getOffset() != stitchOffset || bufferWrapper.getByteBuffer().limit() < size) {
-                bufferWrapper.release();
+                bufferWrapper.close();
                 bufferWrapper = null;
             } else {
                 bufferWrapper.getByteBuffer().rewind();
@@ -365,16 +369,10 @@ public class MemoryFile implements Closeable {
 
     private void unmap() {
         for (int i = 0, k = buffers.size(); i < k; i++) {
-            MappedByteBuffer b = buffers.getQuick(i);
-            if (b != null) {
-                ByteBuffers.release(b);
-            }
+            ByteBuffers.release(buffers.getQuick(i));
         }
         for (int i = 0, k = stitches.size(); i < k; i++) {
-            ByteBufferWrapper b = stitches.getQuick(i);
-            if (b != null) {
-                b.release();
-            }
+            Misc.free(stitches.getQuick(i));
         }
         cachedBuffer = null;
         cachedBufferLo = cachedBufferHi = -1;

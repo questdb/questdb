@@ -487,8 +487,10 @@ public class KVIndex implements Closeable {
                 long src = kData.addressOf(srcOffset, 1);
                 int srcLen = kData.pageRemaining(srcOffset);
 
+                kData.lockBuffers();
                 long dst = kData.addressOf(dstOffset, 1);
                 int dstLen = kData.pageRemaining(dstOffset);
+                kData.unlockBuffers();
 
                 int len = size < (srcLen < dstLen ? srcLen : dstLen) ? size : (srcLen < dstLen ? srcLen : dstLen);
 

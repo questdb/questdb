@@ -25,9 +25,10 @@ package com.questdb.store;
 
 import com.questdb.misc.ByteBuffers;
 
+import java.io.Closeable;
 import java.nio.MappedByteBuffer;
 
-class ByteBufferWrapper {
+class ByteBufferWrapper implements Closeable {
     private final long offset;
     private MappedByteBuffer byteBuffer;
 
@@ -36,15 +37,16 @@ class ByteBufferWrapper {
         this.byteBuffer = byteBuffer;
     }
 
+    @Override
+    public void close() {
+        byteBuffer = ByteBuffers.release(byteBuffer);
+    }
+
     public MappedByteBuffer getByteBuffer() {
         return byteBuffer;
     }
 
     public long getOffset() {
         return offset;
-    }
-
-    public void release() {
-        byteBuffer = ByteBuffers.release(byteBuffer);
     }
 }
