@@ -40,7 +40,7 @@ public class IntrinsicModel implements Mutable {
     public ExprNode filter;
     public long millis = Long.MIN_VALUE;
     public IntervalSource intervalSource;
-    public IntrinsicValue intrinsicValue = IntrinsicValue.UNDEFINED;
+    public int intrinsicValue = IntrinsicValue.UNDEFINED;
     public boolean keyValuesIsLambda = false;
 
     private IntrinsicModel() {

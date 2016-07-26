@@ -36,7 +36,7 @@ public class ExprNode implements Mutable, Sinkable {
     public ExprNode rhs;
     public NodeType type;
     public int paramCount;
-    public IntrinsicValue intrinsicValue = IntrinsicValue.UNDEFINED;
+    public int intrinsicValue = IntrinsicValue.UNDEFINED;
 
     private ExprNode() {
     }

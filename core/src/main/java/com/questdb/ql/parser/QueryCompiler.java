@@ -984,26 +984,26 @@ public class QueryCompiler {
 
         IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null);
 
-        switch (im.intrinsicValue) {
-            case FALSE:
-                return new NoOpJournalRecordSource(rs);
-            default:
-                if (im.intervalSource != null) {
-                    rs = new IntervalRecordSource(rs, im.intervalSource);
-                }
-                if (im.filter != null) {
-                    VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, im.filter, m);
-                    if (vc.isConstant()) {
-                        if (vc.getBool(null)) {
-                            return rs;
-                        } else {
-                            return new NoOpJournalRecordSource(rs);
-                        }
-                    }
-                    return new FilteredJournalRecordSource(rs, vc, im.filter);
-                } else {
+        if (im.intrinsicValue == IntrinsicValue.FALSE) {
+            return new NoOpJournalRecordSource(rs);
+        }
+
+        if (im.intervalSource != null) {
+            rs = new IntervalRecordSource(rs, im.intervalSource);
+        }
+
+        if (im.filter != null) {
+            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, im.filter, m);
+            if (vc.isConstant()) {
+                if (vc.getBool(null)) {
                     return rs;
+                } else {
+                    return new NoOpJournalRecordSource(rs);
                 }
+            }
+            return new FilteredJournalRecordSource(rs, vc, im.filter);
+        } else {
+            return rs;
         }
 
     }
