@@ -175,7 +175,7 @@ public class QueryModel implements Mutable {
         }
 
         ExprNode readerNode = getJournalName();
-        if (readerNode.type != ExprNode.NodeType.LITERAL && readerNode.type != ExprNode.NodeType.CONSTANT) {
+        if (readerNode.type != ExprNode.LITERAL && readerNode.type != ExprNode.CONSTANT) {
             throw QueryError.$(readerNode.position, "Journal name must be either literal or string constant");
         }
 
@@ -471,7 +471,7 @@ public class QueryModel implements Mutable {
             for (int i = 0; i < n; i++) {
                 QueryColumn qc = model.getColumns().getQuick(i);
                 switch (qc.getAst().type) {
-                    case LITERAL:
+                    case ExprNode.LITERAL:
                         if (qc.getAlias() != null) {
                             histogram.increment(qc.getAlias());
                         } else {

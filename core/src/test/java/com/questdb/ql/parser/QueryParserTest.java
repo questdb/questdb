@@ -63,7 +63,7 @@ public class QueryParserTest extends AbstractTest {
 
         AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
         Assert.assertEquals("my", col.getAlias());
-        Assert.assertEquals(ExprNode.NodeType.FUNCTION, col.getAst().type);
+        Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
         Assert.assertEquals(1, col.getPartitionBy().size());
         Assert.assertEquals("b", col.getPartitionBy().get(0).token);
 
@@ -79,7 +79,7 @@ public class QueryParserTest extends AbstractTest {
 
         AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
         Assert.assertEquals("my", col.getAlias());
-        Assert.assertEquals(ExprNode.NodeType.FUNCTION, col.getAst().type);
+        Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
         Assert.assertEquals(1, col.getPartitionBy().size());
         Assert.assertEquals("b", col.getPartitionBy().get(0).token);
 
@@ -446,7 +446,7 @@ public class QueryParserTest extends AbstractTest {
 
         AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
 
-        Assert.assertEquals(ExprNode.NodeType.FUNCTION, col.getAst().type);
+        Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
         Assert.assertEquals(1, col.getPartitionBy().size());
         Assert.assertEquals("b", col.getPartitionBy().get(0).token);
 
@@ -511,7 +511,7 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("t", statement.getQueryModel().getJournalName().token);
         Assert.assertEquals(3, statement.getQueryModel().getColumns().size());
         for (int i = 0; i < 3; i++) {
-            Assert.assertEquals(ExprNode.NodeType.LITERAL, statement.getQueryModel().getColumns().get(i).getAst().type);
+            Assert.assertEquals(ExprNode.LITERAL, statement.getQueryModel().getColumns().get(i).getAst().type);
         }
     }
 
@@ -679,7 +679,7 @@ public class QueryParserTest extends AbstractTest {
 
         AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
         Assert.assertEquals("my", col.getAlias());
-        Assert.assertEquals(ExprNode.NodeType.FUNCTION, col.getAst().type);
+        Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
         Assert.assertEquals(1, col.getPartitionBy().size());
         Assert.assertEquals("b", col.getPartitionBy().get(0).token);
         Assert.assertEquals(1, col.getOrderBy().size());

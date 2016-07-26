@@ -41,7 +41,7 @@ class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
 
     @Override
     public void visit(ExprNode node) throws ParserException {
-        if (node.type == ExprNode.NodeType.LITERAL && match) {
+        if (node.type == ExprNode.LITERAL && match) {
             int f = names.get(node.token);
 
             if (f == 0) {

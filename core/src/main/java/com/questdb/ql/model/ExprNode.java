@@ -28,13 +28,21 @@ import com.questdb.std.*;
 public class ExprNode implements Mutable, Sinkable {
 
     public final static ExprNodeFactory FACTORY = new ExprNodeFactory();
+    public static final int OPERATION = 1;
+    public static final int CONSTANT = 2;
+    public static final int LITERAL = 4;
+    public static final int FUNCTION = 8;
+    public static final int CONTROL = 16;
+    public static final int SET_OPERATION = 32;
+    public static final int LAMBDA = 65;
+    public static final int UNKNOWN = 0;
     public final ObjList<ExprNode> args = new ObjList<>(4);
     public String token;
     public int precedence;
     public int position;
     public ExprNode lhs;
     public ExprNode rhs;
-    public NodeType type;
+    public int type;
     public int paramCount;
     public int intrinsicValue = IntrinsicValue.UNDEFINED;
 
@@ -48,12 +56,12 @@ public class ExprNode implements Mutable, Sinkable {
         position = 0;
         lhs = null;
         rhs = null;
-        type = null;
+        type = UNKNOWN;
         paramCount = 0;
         intrinsicValue = IntrinsicValue.UNDEFINED;
     }
 
-    public ExprNode of(NodeType type, String token, int precedence, int position) {
+    public ExprNode of(int type, String token, int precedence, int position) {
         this.type = type;
         this.precedence = precedence;
         this.token = token;
@@ -105,10 +113,6 @@ public class ExprNode implements Mutable, Sinkable {
                 ", args=" + args +
                 ", position=" + position +
                 '}';
-    }
-
-    public enum NodeType {
-        OPERATION, CONSTANT, LITERAL, FUNCTION, CONTROL, SET_OPERATION, LAMBDA
     }
 
     private static final class ExprNodeFactory implements ObjectFactory<ExprNode> {

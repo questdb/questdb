@@ -60,7 +60,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
         int argCount = node.paramCount;
         if (argCount == 0) {
             switch (node.type) {
-                case LITERAL:
+                case ExprNode.LITERAL:
                     if (Chars.startsWith(node.token, ':')) {
                         stack.push(Parameter.getOrCreate(node, parameterMap));
                     } else {
@@ -68,7 +68,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
                         stack.push(lookupColumn(node));
                     }
                     break;
-                case CONSTANT:
+                case ExprNode.CONSTANT:
                     stack.push(parseConstant(node));
                     break;
                 default:
@@ -140,7 +140,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private VirtualColumn lookupFunction(ExprNode node, Signature sig, ObjList<VirtualColumn> args) throws ParserException {
-        if (node.type == ExprNode.NodeType.LAMBDA) {
+        if (node.type == ExprNode.LAMBDA) {
             throw QueryError.$(node.position, "Cannot use lambda in this context");
         }
         ObjectFactory<Function> factory = FunctionFactories.find(sig, args);

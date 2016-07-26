@@ -64,7 +64,7 @@ final class QueryFilterAnalyser {
             throw QueryError.$(node.position, "Argument expected");
         }
 
-        if (a.type == ExprNode.NodeType.LITERAL && b.type == ExprNode.NodeType.CONSTANT) {
+        if (a.type == ExprNode.LITERAL && b.type == ExprNode.CONSTANT) {
             if (isTimestamp(a)) {
                 boolean reversible = parseInterval(model, quoteEraser.ofQuoted(b.token), b.position);
                 node.intrinsicValue = IntrinsicValue.TRUE;
@@ -146,7 +146,7 @@ final class QueryFilterAnalyser {
             return false;
         }
 
-        if (node.lhs.type == ExprNode.NodeType.LITERAL && node.lhs.token.equals(timestamp)) {
+        if (node.lhs.type == ExprNode.LITERAL && node.lhs.token.equals(timestamp)) {
             try {
                 long lo = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + inc;
                 if (lo > model.intervalLo) {
@@ -159,7 +159,7 @@ final class QueryFilterAnalyser {
             }
         }
 
-        if (node.rhs.type == ExprNode.NodeType.LITERAL && node.rhs.token.equals(timestamp)) {
+        if (node.rhs.type == ExprNode.LITERAL && node.rhs.token.equals(timestamp)) {
             try {
                 long hi = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - inc;
                 if (hi < model.intervalHi) {
@@ -182,7 +182,7 @@ final class QueryFilterAnalyser {
 
         ExprNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
 
-        if (col.type != ExprNode.NodeType.LITERAL) {
+        if (col.type != ExprNode.LITERAL) {
             throw QueryError.$(col.position, "Column name expected");
         }
 
@@ -211,7 +211,7 @@ final class QueryFilterAnalyser {
         ExprNode lo = in.args.getQuick(1);
         ExprNode hi = in.args.getQuick(0);
 
-        if (lo.type == ExprNode.NodeType.CONSTANT && hi.type == ExprNode.NodeType.CONSTANT) {
+        if (lo.type == ExprNode.CONSTANT && hi.type == ExprNode.CONSTANT) {
             long loMillis;
             long hiMillis;
 
@@ -242,7 +242,7 @@ final class QueryFilterAnalyser {
                 return false;
             }
 
-            if (node.rhs == null || node.rhs.type != ExprNode.NodeType.LAMBDA) {
+            if (node.rhs == null || node.rhs.type != ExprNode.LAMBDA) {
                 return false;
             }
 
@@ -282,7 +282,7 @@ final class QueryFilterAnalyser {
             return false;
         }
 
-        if (node.lhs.type == ExprNode.NodeType.LITERAL && node.lhs.token.equals(timestamp)) {
+        if (node.lhs.type == ExprNode.LITERAL && node.lhs.token.equals(timestamp)) {
             try {
                 long hi = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) - inc;
                 if (hi < model.intervalHi) {
@@ -297,7 +297,7 @@ final class QueryFilterAnalyser {
             }
         }
 
-        if (node.rhs.type == ExprNode.NodeType.LITERAL && node.rhs.token.equals(timestamp)) {
+        if (node.rhs.type == ExprNode.LITERAL && node.rhs.token.equals(timestamp)) {
             try {
                 long lo = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) + inc;
                 if (lo > model.intervalLo) {
@@ -338,7 +338,7 @@ final class QueryFilterAnalyser {
             // collect and analyze values of indexed field
             // if any of values is not an indexed constant - bail out
             if (i == 1) {
-                if (node.rhs == null || node.rhs.type != ExprNode.NodeType.CONSTANT) {
+                if (node.rhs == null || node.rhs.type != ExprNode.CONSTANT) {
                     return false;
                 }
                 if (tempKeys.add(Chars.stripQuotes(node.rhs.token))) {
@@ -347,7 +347,7 @@ final class QueryFilterAnalyser {
             } else {
                 for (i--; i > -1; i--) {
                     ExprNode c = node.args.getQuick(i);
-                    if (c.type != ExprNode.NodeType.CONSTANT) {
+                    if (c.type != ExprNode.CONSTANT) {
                         return false;
                     }
                     if (tempKeys.add(Chars.stripQuotes(c.token))) {

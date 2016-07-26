@@ -686,7 +686,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
         Assert.assertEquals("xyz", m.keyValues.get(0));
         Assert.assertTrue(m.keyValuesIsLambda);
         Assert.assertNotNull(m.filter);
-        Assert.assertEquals(ExprNode.NodeType.LAMBDA, m.filter.rhs.type);
+        Assert.assertEquals(ExprNode.LAMBDA, m.filter.rhs.type);
     }
 
     @Test

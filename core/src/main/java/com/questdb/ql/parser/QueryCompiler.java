@@ -162,7 +162,7 @@ public class QueryCompiler {
 
         if (ai == bi) {
             // (same journal)
-            ExprNode node = exprNodePool.next().of(ExprNode.NodeType.OPERATION, "=", 0, 0);
+            ExprNode node = exprNodePool.next().of(ExprNode.OPERATION, "=", 0, 0);
             node.paramCount = 2;
             node.lhs = ao;
             node.rhs = bo;
@@ -215,7 +215,7 @@ public class QueryCompiler {
                 for (int k = 0, kn = jc.bNames.size(); k < kn; k++) {
                     CharSequence name = jc.bNames.getQuick(k);
                     if (constNameToIndex.get(name) == jc.bIndexes.getQuick(k)) {
-                        ExprNode node = exprNodePool.next().of(ExprNode.NodeType.OPERATION, constNameToToken.get(name), 0, 0);
+                        ExprNode node = exprNodePool.next().of(ExprNode.OPERATION, constNameToToken.get(name), 0, 0);
                         node.lhs = jc.aNodes.getQuick(k);
                         node.rhs = constNameToNode.get(name);
                         node.paramCount = 2;
@@ -759,7 +759,7 @@ public class QueryCompiler {
 
         if (model.getLatestBy() != null) {
             latestByNode = model.getLatestBy();
-            if (latestByNode.type != ExprNode.NodeType.LITERAL) {
+            if (latestByNode.type != ExprNode.LITERAL) {
                 throw QueryError.$(latestByNode.position, "Column name expected");
             }
 
@@ -1016,7 +1016,7 @@ public class QueryCompiler {
         if (old == null) {
             return filter;
         } else {
-            ExprNode n = exprNodePool.next().of(ExprNode.NodeType.OPERATION, "and", 0, 0);
+            ExprNode n = exprNodePool.next().of(ExprNode.OPERATION, "and", 0, 0);
             n.paramCount = 2;
             n.lhs = old;
             n.rhs = filter;
@@ -1157,7 +1157,7 @@ public class QueryCompiler {
                 for (int i = 0; i < m; i++) {
                     QueryColumn column = columns.getQuick(i);
                     ExprNode node = column.getAst();
-                    if (node.type == ExprNode.NodeType.LITERAL) {
+                    if (node.type == ExprNode.LITERAL) {
                         int direction = thatHash.get(node.token);
                         if (direction != -1) {
                             hash.put(column.getAlias() == null ? node.token : column.getAlias(), direction);
@@ -1191,7 +1191,7 @@ public class QueryCompiler {
     private int getTimestampIndex(QueryModel model, ExprNode node, RecordMetadata m) throws ParserException {
         int pos = model.getJournalName() != null ? model.getJournalName().position : 0;
         if (node != null) {
-            if (node.type != ExprNode.NodeType.LITERAL) {
+            if (node.type != ExprNode.LITERAL) {
                 throw QueryError.position(node.position).$("Literal expression expected").$();
             }
 
@@ -1233,10 +1233,10 @@ public class QueryCompiler {
         while (!this.exprNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 switch (node.type) {
-                    case LITERAL:
+                    case ExprNode.LITERAL:
                         node = null;
                         continue;
-                    case FUNCTION:
+                    case ExprNode.FUNCTION:
                         if (FunctionFactories.isAggregate(node.token)) {
                             return true;
                         }
@@ -1306,12 +1306,12 @@ public class QueryCompiler {
 
     private VirtualColumn limitToVirtualColumn(QueryModel model, ExprNode node) throws ParserException {
         switch (node.type) {
-            case LITERAL:
+            case ExprNode.LITERAL:
                 if (Chars.startsWith(node.token, ':')) {
                     return Parameter.getOrCreate(node, model.getParameterMap());
                 }
                 break;
-            case CONSTANT:
+            case ExprNode.CONSTANT:
                 try {
                     return new LongConstant(Numbers.parseLong(node.token));
                 } catch (NumericException e) {
@@ -1878,7 +1878,7 @@ public class QueryCompiler {
         if (node != null && FunctionFactories.isAggregate(node.token)) {
             QueryColumn c = aggregateColumnPool.next().of(createAlias(aggregateColumnSequence++), node);
             aggregateColumns.add(c);
-            return exprNodePool.next().of(ExprNode.NodeType.LITERAL, c.getAlias(), 0, 0);
+            return exprNodePool.next().of(ExprNode.LITERAL, c.getAlias(), 0, 0);
         }
         return node;
     }
@@ -1974,7 +1974,7 @@ public class QueryCompiler {
                 final ExprNode node = qc.getAst();
                 final boolean analytic = qc instanceof AnalyticColumn;
 
-                if (!analytic && node.type == ExprNode.NodeType.LITERAL) {
+                if (!analytic && node.type == ExprNode.LITERAL) {
                     // check literal column validity
                     if (meta.getColumnIndexQuiet(node.token) == -1) {
                         throw QueryError.invalidColumn(node.position, node.token);
@@ -2001,13 +2001,13 @@ public class QueryCompiler {
                 addAlias(node.position, qc.getAlias());
 
                 // outright aggregate
-                if (!analytic && node.type == ExprNode.NodeType.FUNCTION && FunctionFactories.isAggregate(node.token)) {
+                if (!analytic && node.type == ExprNode.FUNCTION && FunctionFactories.isAggregate(node.token)) {
                     aggregators.add(qc);
                     continue;
                 }
 
                 // check if this expression references aggregate function
-                if (node.type == ExprNode.NodeType.OPERATION || node.type == ExprNode.NodeType.FUNCTION) {
+                if (node.type == ExprNode.OPERATION || node.type == ExprNode.FUNCTION) {
                     int beforeSplit = aggregators.size();
                     splitAggregates(node, aggregators);
                     if (beforeSplit < aggregators.size()) {
@@ -2018,7 +2018,7 @@ public class QueryCompiler {
 
 
                 if (analytic) {
-                    if (qc.getAst().type != ExprNode.NodeType.FUNCTION) {
+                    if (qc.getAst().type != ExprNode.FUNCTION) {
                         throw QueryError.$(qc.getAst().position, "Analytic function expected");
                     }
 
@@ -2230,13 +2230,13 @@ public class QueryCompiler {
         @Override
         public void visit(ExprNode node) throws ParserException {
             switch (node.type) {
-                case LITERAL:
+                case ExprNode.LITERAL:
                     int dot = node.token.indexOf('.');
                     CharSequence name = extractColumnName(node.token, dot);
                     indexes.add(resolveJournalIndex(parent, dot == -1 ? null : csPool.next().of(node.token, 0, dot), name, node.position));
                     names.add(name);
                     break;
-                case CONSTANT:
+                case ExprNode.CONSTANT:
                     if (nullConstants.contains(node.token)) {
                         nullCount++;
                     }

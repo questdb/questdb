@@ -86,14 +86,14 @@ public final class QueryParser {
         if (tok == null) {
             return null;
         }
-        return exprNodePool.next().of(ExprNode.NodeType.LITERAL, Chars.stripQuotes(tok.toString()), 0, lexer.position());
+        return exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(tok.toString()), 0, lexer.position());
     }
 
     private ExprNode makeJoinAlias(int index) {
         StringBuilder b = Misc.getThreadLocalBuilder();
         ExprNode node = exprNodePool.next();
         node.token = b.append("_xQdbA").append(index).toString();
-        node.type = ExprNode.NodeType.LITERAL;
+        node.type = ExprNode.LITERAL;
         return node;
     }
 
@@ -102,7 +102,7 @@ public final class QueryParser {
         ExprNode exprNode = exprNodePool.next();
         b.append(modelAlias).append('.').append(node.token);
         exprNode.token = b.toString();
-        exprNode.type = ExprNode.NodeType.LITERAL;
+        exprNode.type = ExprNode.LITERAL;
         exprNode.position = node.position;
         return exprNode;
     }
@@ -110,7 +110,7 @@ public final class QueryParser {
     private ExprNode makeOperation(String token, ExprNode lhs, ExprNode rhs) {
         ExprNode expr = exprNodePool.next();
         expr.token = token;
-        expr.type = ExprNode.NodeType.OPERATION;
+        expr.type = ExprNode.OPERATION;
         expr.position = 0;
         expr.paramCount = 2;
         expr.lhs = lhs;
@@ -242,7 +242,7 @@ public final class QueryParser {
                         throw QueryError.$(lexer.position(), "Expression expected");
                     case 1:
                         expr = astBuilder.poll();
-                        if (expr.type == ExprNode.NodeType.LITERAL) {
+                        if (expr.type == ExprNode.LITERAL) {
                             do {
                                 joinModel.addJoinColumn(expr);
                             } while ((expr = astBuilder.poll()) != null);
@@ -252,7 +252,7 @@ public final class QueryParser {
                         break;
                     default:
                         while ((expr = astBuilder.poll()) != null) {
-                            if (expr.type != ExprNode.NodeType.LITERAL) {
+                            if (expr.type != ExprNode.LITERAL) {
                                 throw QueryError.$(lexer.position(), "Column name expected");
                             }
                             joinModel.addJoinColumn(expr);
@@ -428,7 +428,7 @@ public final class QueryParser {
                 lexer.unparse();
                 ExprNode n = expectExpr();
 
-                if (n.type != ExprNode.NodeType.LITERAL) {
+                if (n.type != ExprNode.LITERAL) {
                     throw err("Column name expected");
                 }
 
