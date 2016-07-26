@@ -46,14 +46,14 @@ public class ExistenceCheckHandler implements ContextHandler {
         if (journalName == null) {
             context.simpleResponse().send(400);
         } else {
-            JournalConfiguration.JournalExistenceCheck check = configuration.exists(journalName);
+            int check = configuration.exists(journalName);
             if (Chars.equalsNc("json", context.request.getUrlParam("f"))) {
                 ResponseSink r = context.responseSink();
                 r.status(200, "application/json");
-                r.put('{').putQuoted("status").put(':').putQuoted(check.name()).put('}');
+                r.put('{').putQuoted("status").put(':').putQuoted(toResponse(check)).put('}');
                 r.flush();
             } else {
-                context.simpleResponse().send(200, check.name());
+                context.simpleResponse().send(200, toResponse(check));
             }
         }
     }
@@ -65,5 +65,18 @@ public class ExistenceCheckHandler implements ContextHandler {
 
     @Override
     public void setupThread() {
+    }
+
+    private static String toResponse(int existenceCheckResult) {
+        switch (existenceCheckResult) {
+            case JournalConfiguration.EXISTS:
+                return "Exists";
+            case JournalConfiguration.DOES_NOT_EXIST:
+                return "Does not exist";
+            case JournalConfiguration.EXISTS_FOREIGN:
+                return "Reserved name";
+            default:
+                return "Unknown";
+        }
     }
 }

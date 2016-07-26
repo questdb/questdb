@@ -25,6 +25,7 @@ package com.questdb.io;
 
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.io.parser.TextParser;
 import com.questdb.io.parser.listener.InputAnalysisListener;
 import com.questdb.io.parser.listener.JournalImportListener;
@@ -96,7 +97,7 @@ public final class ImportManager {
             String location = file.getName();
 
             switch (factory.getConfiguration().exists(location)) {
-                case EXISTS_FOREIGN:
+                case JournalConfiguration.EXISTS_FOREIGN:
                     throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
                 default:
                     try (JournalImportListener l = new JournalImportListener(factory).of(location, false)) {

@@ -32,18 +32,18 @@ public interface JournalConfiguration {
 
     String FILE_NAME = "_meta2";
 
+    int EXISTS = 1;
+    int DOES_NOT_EXIST = 2;
+    int EXISTS_FOREIGN = 4;
+
     <T> JournalMetadata<T> buildWithRootLocation(MetadataBuilder<T> builder) throws JournalException;
 
     <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
 
     void delete(CharSequence location) throws JournalException;
 
-    JournalExistenceCheck exists(CharSequence location);
+    int exists(CharSequence location);
 
     File getJournalBase();
-
-    enum JournalExistenceCheck {
-        EXISTS, DOES_NOT_EXIST, EXISTS_FOREIGN
-    }
 
 }

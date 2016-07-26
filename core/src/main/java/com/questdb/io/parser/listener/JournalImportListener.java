@@ -47,6 +47,9 @@ import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 
+import static com.questdb.factory.configuration.JournalConfiguration.DOES_NOT_EXIST;
+import static com.questdb.factory.configuration.JournalConfiguration.EXISTS;
+
 public class JournalImportListener implements InputAnalysisListener, Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(JournalImportListener.class);
     private final JournalWriterFactory factory;

@@ -38,8 +38,12 @@ import java.nio.ByteOrder;
 
 public class NonBlockingSecureSocketChannel implements NetworkChannel {
 
+    public static final int READ_CLEAN_CHANNEL = 1;
+    public static final int READ_CHANNEL = 2;
+    public static final int UNWRAP_DIRECT = 4;
+    public static final int UNWRAP_CLEAN_CACHED = 8;
+    public static final int UNWRAP_CACHED = 16;
     private static final Log LOG = LogFactory.getLog(NonBlockingSecureSocketChannel.class);
-
     private final NetworkChannel channel;
     private final SSLEngine engine;
     private final ByteBuffer in;
@@ -48,7 +52,7 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
     private final ByteBuffer unwrapped;
     private boolean inData = false;
     private SSLEngineResult.HandshakeStatus handshakeStatus = SSLEngineResult.HandshakeStatus.NEED_WRAP;
-    private ReadState readState = ReadState.READ_CLEAN_CHANNEL;
+    private int readState = READ_CLEAN_CHANNEL;
 
     public NonBlockingSecureSocketChannel(NetworkChannel channel, SslConfig sslConfig) {
         this.channel = channel;
@@ -121,16 +125,16 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
             switch (readState) {
                 case READ_CLEAN_CHANNEL:
                     in.clear();
-                    readState = ReadState.READ_CHANNEL;
+                    readState = READ_CHANNEL;
                     // fall through
                 case READ_CHANNEL:
                     try {
                         ByteBuffers.copyNonBlocking(channel, in, 1000);
                         in.flip();
                         if (limit < sslDataLimit) {
-                            readState = ReadState.UNWRAP_CLEAN_CACHED;
+                            readState = UNWRAP_CLEAN_CACHED;
                         } else {
-                            readState = ReadState.UNWRAP_DIRECT;
+                            readState = UNWRAP_DIRECT;
                         }
                     } catch (SlowReadableChannelException e) {
                         break OUT;
@@ -139,16 +143,16 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
                 case UNWRAP_DIRECT:
                     switch (engine.unwrap(in, dst).getStatus()) {
                         case BUFFER_OVERFLOW:
-                            readState = ReadState.UNWRAP_CLEAN_CACHED;
+                            readState = UNWRAP_CLEAN_CACHED;
                             break;
                         case OK:
                             if (in.remaining() == 0) {
-                                readState = ReadState.READ_CLEAN_CHANNEL;
+                                readState = READ_CLEAN_CHANNEL;
                             }
                             break;
                         case BUFFER_UNDERFLOW:
                             in.compact();
-                            readState = ReadState.READ_CHANNEL;
+                            readState = READ_CHANNEL;
                             break;
                         case CLOSED:
                             throw DisconnectedChannelException.INSTANCE;
@@ -158,23 +162,23 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
                     break;
                 case UNWRAP_CLEAN_CACHED:
                     unwrapped.clear();
-                    readState = ReadState.UNWRAP_CACHED;
+                    readState = UNWRAP_CACHED;
                     // fall through
                 case UNWRAP_CACHED:
                     switch (engine.unwrap(in, unwrapped).getStatus()) {
                         case BUFFER_OVERFLOW:
-                            readState = ReadState.UNWRAP_CLEAN_CACHED;
+                            readState = UNWRAP_CLEAN_CACHED;
                             break;
                         case OK:
                             if (in.remaining() == 0) {
-                                readState = ReadState.READ_CLEAN_CHANNEL;
+                                readState = READ_CLEAN_CHANNEL;
                             } else {
-                                readState = ReadState.UNWRAP_CLEAN_CACHED;
+                                readState = UNWRAP_CLEAN_CACHED;
                             }
                             break;
                         case BUFFER_UNDERFLOW:
                             in.compact();
-                            readState = ReadState.READ_CHANNEL;
+                            readState = READ_CHANNEL;
                             break;
                         case CLOSED:
                             throw DisconnectedChannelException.INSTANCE;
@@ -304,9 +308,5 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
         in.clear();
         // make sure unwrapped starts by having remaining() == false
         unwrapped.position(unwrapped.limit());
-    }
-
-    private enum ReadState {
-        READ_CLEAN_CHANNEL, READ_CHANNEL, UNWRAP_DIRECT, UNWRAP_CLEAN_CACHED, UNWRAP_CACHED
     }
 }

@@ -182,11 +182,11 @@ public class QueryModel implements Mutable {
         JournalConfiguration configuration = factory.getConfiguration();
 
         String reader = stripMarker(Chars.stripQuotes(readerNode.token));
-        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.DOES_NOT_EXIST) {
+        if (configuration.exists(reader) == JournalConfiguration.DOES_NOT_EXIST) {
             throw QueryError.$(readerNode.position, "Journal does not exist");
         }
 
-        if (configuration.exists(reader) == JournalConfiguration.JournalExistenceCheck.EXISTS_FOREIGN) {
+        if (configuration.exists(reader) == JournalConfiguration.EXISTS_FOREIGN) {
             throw QueryError.$(readerNode.position, "Journal directory is of unknown format");
         }
 

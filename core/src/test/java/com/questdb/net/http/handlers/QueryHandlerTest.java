@@ -82,7 +82,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         File f = temp.newFile();
         String url = "http://localhost:9000/chk?j=tab2";
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        TestUtils.assertEquals("DOES_NOT_EXIST\r\n", Files.readStringFromFile(f));
+        TestUtils.assertEquals("Does not exist\r\n", Files.readStringFromFile(f));
     }
 
     @Test
@@ -90,7 +90,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         File f = temp.newFile();
         String url = "http://localhost:9000/chk?j=tab";
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        TestUtils.assertEquals("EXISTS\r\n", Files.readStringFromFile(f));
+        TestUtils.assertEquals("Exists\r\n", Files.readStringFromFile(f));
     }
 
     @Test
@@ -98,7 +98,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         File f = temp.newFile();
         String url = "http://localhost:9000/chk?j=tab&f=json";
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        TestUtils.assertEquals("{\"status\":\"EXISTS\"}", Files.readStringFromFile(f));
+        TestUtils.assertEquals("{\"status\":\"Exists\"}", Files.readStringFromFile(f));
     }
 
     @Test

@@ -46,7 +46,7 @@ public class DelimitedTextParserTest extends AbstractTest {
         String location = "test-import.csv";
 
 
-        Assert.assertEquals(JournalConfiguration.JournalExistenceCheck.EXISTS, factory.getConfiguration().exists(location));
+        Assert.assertEquals(JournalConfiguration.EXISTS, factory.getConfiguration().exists(location));
 
         try (Journal r = factory.reader(location)) {
             JournalMetadata m = r.getMetadata();
@@ -87,7 +87,7 @@ public class DelimitedTextParserTest extends AbstractTest {
         ImportManager.importFile(factory, file, TextFileFormat.CSV, "IntSym=INT&Fmt2Date=STRING");
         String location = "test-import.csv";
 
-        Assert.assertEquals(JournalConfiguration.JournalExistenceCheck.EXISTS, factory.getConfiguration().exists(location));
+        Assert.assertEquals(JournalConfiguration.EXISTS, factory.getConfiguration().exists(location));
 
         Journal r = factory.reader(location);
         JournalMetadata m = r.getMetadata();
