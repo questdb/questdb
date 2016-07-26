@@ -297,7 +297,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      *
      * @return the Journal's flow model
      */
-    public JournalMode getMode() {
+    public int getMode() {
         return JournalMode.READ;
     }
 

@@ -23,7 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.JournalMode;
 import com.questdb.ex.JournalException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Rnd;
@@ -41,8 +40,8 @@ public class TxLog implements Closeable {
     private long currentAddress = 0;
     private long txn;
 
-    public TxLog(File baseLocation, JournalMode mode, int txCount) throws JournalException {
-        this.hb = new UnstructuredFile(new File(baseLocation, FILE_NAME), ByteBuffers.getBitHint(512, txCount), mode);
+    public TxLog(File baseLocation, int journalMode, int txCount) throws JournalException {
+        this.hb = new UnstructuredFile(new File(baseLocation, FILE_NAME), ByteBuffers.getBitHint(512, txCount), journalMode);
         this.rnd = new Rnd(System.currentTimeMillis(), System.nanoTime());
         this.txn = getCurrentTxn() + 1;
     }

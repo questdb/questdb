@@ -44,7 +44,7 @@ public class MemoryFile implements Closeable {
     // so the actual data begins from "DATA_OFFSET"
     private final static int DATA_OFFSET = 8;
     private final File file;
-    private final JournalMode mode;
+    private final int journalMode;
     private int bitHint;
     private FileChannel channel;
     private MappedByteBuffer offsetBuffer;
@@ -58,9 +58,9 @@ public class MemoryFile implements Closeable {
     private long offsetDirectAddr;
     private boolean unlockedBuffers = true;
 
-    public MemoryFile(File file, int bitHint, JournalMode mode) throws JournalException {
+    public MemoryFile(File file, int bitHint, int journalMode) throws JournalException {
         this.file = file;
-        this.mode = mode;
+        this.journalMode = journalMode;
         if (bitHint < 2) {
             LOG.info().$("BitHint is too small for ").$(file).$();
         }
@@ -127,7 +127,7 @@ public class MemoryFile implements Closeable {
     }
 
     public long getAppendOffset() {
-        if (cachedAppendOffset != -1 && (mode == JournalMode.APPEND || mode == JournalMode.BULK_APPEND)) {
+        if (cachedAppendOffset != -1 && (journalMode == JournalMode.APPEND || journalMode == JournalMode.BULK_APPEND)) {
             return cachedAppendOffset;
         } else {
             if (offsetBuffer != null) {
@@ -180,9 +180,9 @@ public class MemoryFile implements Closeable {
         assert bufferSize > 0;
         buffers.extendAndSet(index, buffer);
         if (unlockedBuffers) {
-            switch (mode) {
-                case BULK_READ:
-                case BULK_APPEND:
+            switch (journalMode) {
+                case JournalMode.BULK_READ:
+                case JournalMode.BULK_APPEND:
                     // for bulk operations unmap all buffers except for current one
                     // this is to prevent OS paging large files.
                     cachedBuffer = null;
@@ -261,9 +261,9 @@ public class MemoryFile implements Closeable {
 
         try {
             MappedByteBuffer buf;
-            switch (mode) {
-                case READ:
-                case BULK_READ:
+            switch (journalMode) {
+                case JournalMode.READ:
+                case JournalMode.BULK_READ:
                     // make sure size does not extend beyond actual file size, otherwise
                     // java would assume we want to write and throw an exception
                     long sz;
@@ -288,9 +288,9 @@ public class MemoryFile implements Closeable {
 
     private long open() throws JournalException {
         String m;
-        switch (mode) {
-            case READ:
-            case BULK_READ:
+        switch (journalMode) {
+            case JournalMode.READ:
+            case JournalMode.BULK_READ:
                 m = "r";
                 break;
             default:

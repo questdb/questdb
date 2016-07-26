@@ -32,7 +32,7 @@ public class JournalBulkReader<T> extends Journal<T> {
     }
 
     @Override
-    public JournalMode getMode() {
+    public int getMode() {
         return JournalMode.BULK_READ;
     }
 }

@@ -56,23 +56,23 @@ public class SymbolTable implements Closeable {
     private KVIndex index;
     private int size;
 
-    public SymbolTable(int keyCount, int avgStringSize, int txCountHint, File directory, String column, JournalMode mode, int size, long indexTxAddress, boolean noCache) throws JournalException {
+    public SymbolTable(int keyCount, int avgStringSize, int txCountHint, File directory, String column, int journalMode, int size, long indexTxAddress, boolean noCache) throws JournalException {
         // number of hash keys stored in index
         // assume it is 20% of stated capacity
         this.hashKeyCount = Numbers.ceilPow2(Math.max(2, (int) (keyCount * CACHE_LOAD_FACTOR))) - 1;
         this.column = column;
         this.noCache = noCache;
-        JournalMode m;
+        int m;
 
-        switch (mode) {
-            case BULK_APPEND:
+        switch (journalMode) {
+            case JournalMode.BULK_APPEND:
                 m = JournalMode.APPEND;
                 break;
-            case BULK_READ:
+            case JournalMode.BULK_READ:
                 m = JournalMode.READ;
                 break;
             default:
-                m = mode;
+                m = journalMode;
                 break;
         }
 
@@ -89,7 +89,7 @@ public class SymbolTable implements Closeable {
         this.size = size;
 
         try {
-            this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, keyCount, txCountHint, mode, indexTxAddress);
+            this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, keyCount, txCountHint, journalMode, indexTxAddress);
         } catch (JournalException e) {
             this.data.close();
             throw e;

@@ -44,7 +44,7 @@ public class PlainFile implements Closeable {
 
     private static final Log LOGGER = LogFactory.getLog(PlainFile.class);
     private final File file;
-    private final JournalMode mode;
+    private final int journalMode;
     private final int bitHint;
     private FileChannel channel;
     private ObjList<MappedByteBuffer> buffers;
@@ -52,9 +52,9 @@ public class PlainFile implements Closeable {
     private long cachedBufferHi = -1;
     private long cachedAddress;
 
-    public PlainFile(File file, int bitHint, JournalMode mode) throws IOException {
+    public PlainFile(File file, int bitHint, int journalMode) throws IOException {
         this.file = file;
-        this.mode = mode;
+        this.journalMode = journalMode;
         if (bitHint < 2) {
             LOGGER.info().$("BitHint is too small for ").$(file).$();
         }
@@ -127,17 +127,14 @@ public class PlainFile implements Closeable {
             buffer = mapBufferInternal(bufferOffset, bufferSize);
             assert bufferSize > 0;
             buffers.extendAndSet(index, buffer);
-            switch (mode) {
-                case BULK_READ:
-                case BULK_APPEND:
+            switch (journalMode) {
+                case JournalMode.BULK_READ:
+                case JournalMode.BULK_APPEND:
                     // for bulk operations unmap all buffers except for current one
                     // this is to prevent OS paging large files.
                     cachedBufferLo = cachedBufferHi = -1;
                     for (int i = index - 1; i > -1; i--) {
-                        MappedByteBuffer b = buffers.getAndSetQuick(i, null);
-                        if (b != null) {
-                            ByteBuffers.release(b);
-                        }
+                        ByteBuffers.release(buffers.getAndSetQuick(i, null));
                     }
                     break;
                 default:
@@ -152,9 +149,9 @@ public class PlainFile implements Closeable {
 
         try {
             MappedByteBuffer buf;
-            switch (mode) {
-                case READ:
-                case BULK_READ:
+            switch (journalMode) {
+                case JournalMode.READ:
+                case JournalMode.BULK_READ:
                     // make sure size does not extend beyond actual file size, otherwise
                     // java would assume we want to write and throw an exception
                     long sz;
@@ -179,9 +176,9 @@ public class PlainFile implements Closeable {
 
     private void open() throws IOException {
         String m;
-        switch (mode) {
-            case READ:
-            case BULK_READ:
+        switch (journalMode) {
+            case JournalMode.READ:
+            case JournalMode.BULK_READ:
                 m = "r";
                 break;
             default:

@@ -23,7 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.JournalMode;
 import com.questdb.ex.JournalException;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
@@ -33,8 +32,8 @@ import java.io.File;
 public class UnstructuredFile extends MemoryFile {
     private long pos = 0;
 
-    public UnstructuredFile(File file, int bitHint, JournalMode mode) throws JournalException {
-        super(file, bitHint, mode);
+    public UnstructuredFile(File file, int bitHint, int journalMode) throws JournalException {
+        super(file, bitHint, journalMode);
     }
 
     public int[] get(int[] container) {

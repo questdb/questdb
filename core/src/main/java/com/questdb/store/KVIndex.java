@@ -68,9 +68,9 @@ public class KVIndex implements Closeable {
     private long maxValue;
     private boolean startTx = true;
 
-    public KVIndex(File baseName, long keyCountHint, long recordCountHint, int txCountHint, JournalMode mode, long txAddress) throws JournalException {
+    public KVIndex(File baseName, long keyCountHint, long recordCountHint, int txCountHint, int journalMode, long txAddress) throws JournalException {
         int keyCount = (int) Math.min(Integer.MAX_VALUE, Math.max(keyCountHint, 1));
-        this.kData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".k"), ByteBuffers.getBitHint(8, keyCount * txCountHint), mode);
+        this.kData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".k"), ByteBuffers.getBitHint(8, keyCount * txCountHint), journalMode);
         this.keyBlockAddressOffset = 8;
 
         if (kData.getAppendOffset() > 0) {
@@ -78,7 +78,7 @@ public class KVIndex implements Closeable {
             this.keyBlockSizeOffset = txAddress == 0 ? getLong(kData, keyBlockAddressOffset) : txAddress;
             this.keyBlockSize = getLong(kData, keyBlockSizeOffset);
             this.maxValue = getLong(kData, keyBlockSizeOffset + 8);
-        } else if (mode == JournalMode.APPEND || mode == JournalMode.BULK_APPEND) {
+        } else if (journalMode == JournalMode.APPEND || journalMode == JournalMode.BULK_APPEND) {
             int l = (int) (recordCountHint / keyCount);
             this.rowBlockLen = l < 1 ? 1 : Numbers.ceilPow2(l);
             this.keyBlockSizeOffset = 16;
@@ -101,7 +101,7 @@ public class KVIndex implements Closeable {
         this.firstEntryOffset = keyBlockSizeOffset + 16;
         this.rowBlockSize = rowBlockLen * 8 + 16;
         try {
-            this.rData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, keyCount), mode);
+            this.rData = new MemoryFile(new File(baseName.getParentFile(), baseName.getName() + ".r"), ByteBuffers.getBitHint(rowBlockSize, keyCount), journalMode);
         } catch (JournalException e) {
             this.kData.close();
             throw e;
