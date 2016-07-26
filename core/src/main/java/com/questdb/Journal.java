@@ -128,13 +128,13 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
 
         Interval interval = null;
-        if (getMetadata().getPartitionType() != PartitionType.NONE) {
+        if (getMetadata().getPartitionBy() != PartitionBy.NONE) {
             Partition<T> p = partitions.getLast();
             if (p != null) {
                 Interval lastPartitionInterval = p.getInterval();
                 interval = new Interval(lastPartitionInterval.getLo(), Dates.addHours(lastPartitionInterval.getHi(), lag));
             } else {
-                interval = new Interval(System.currentTimeMillis(), getMetadata().getPartitionType());
+                interval = new Interval(System.currentTimeMillis(), getMetadata().getPartitionBy());
             }
         }
         return new TempPartition<>(this, interval, nonLagPartitionCount(), name);
@@ -618,7 +618,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 }
 
                 try {
-                    Interval interval = new Interval(f.getName(), getMetadata().getPartitionType());
+                    Interval interval = new Interval(f.getName(), getMetadata().getPartitionBy());
                     if (partitionIndex < partitions.size()) {
                         Partition<T> partition = partitions.getQuick(partitionIndex);
                         Interval that = partition.getInterval();

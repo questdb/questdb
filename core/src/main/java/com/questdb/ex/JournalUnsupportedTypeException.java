@@ -24,7 +24,7 @@
 package com.questdb.ex;
 
 public class JournalUnsupportedTypeException extends JournalRuntimeException {
-    public JournalUnsupportedTypeException(Enum type) {
+    public JournalUnsupportedTypeException(String type) {
         super("Unsupported type: " + type);
     }
 }

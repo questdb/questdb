@@ -26,7 +26,7 @@ package com.questdb.net.ha;
 import com.questdb.Journal;
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
-import com.questdb.PartitionType;
+import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
@@ -57,7 +57,7 @@ public class ScenarioTest extends AbstractTest {
         JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
         TestData.appendQuoteData2(origin);
 
-        final JournalWriter<Quote> randomOrigin = factory.writer(new JournalKey<>(Quote.class, "origin-rnd", PartitionType.NONE, false));
+        final JournalWriter<Quote> randomOrigin = factory.writer(new JournalKey<>(Quote.class, "origin-rnd", PartitionBy.NONE, false));
         randomOrigin.append(origin.query().all().asResultSet().shuffle(new Rnd()));
         origin.close();
 

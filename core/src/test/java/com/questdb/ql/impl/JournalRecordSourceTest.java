@@ -25,7 +25,7 @@ package com.questdb.ql.impl;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
-import com.questdb.PartitionType;
+import com.questdb.PartitionBy;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Rnd;
@@ -48,7 +48,7 @@ public class JournalRecordSourceTest extends AbstractOptimiserTest {
                 .$short("sho")
                 .$date("date")
                 .$ts()
-                .partitionBy(PartitionType.DAY)
+                .partitionBy(PartitionBy.DAY)
                 .$())) {
 
 

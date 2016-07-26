@@ -23,7 +23,7 @@
 
 package com.questdb.misc;
 
-import com.questdb.PartitionType;
+import com.questdb.PartitionBy;
 import com.questdb.ex.JournalUnsupportedTypeException;
 import com.questdb.ex.NumericException;
 import com.questdb.io.sink.StringSink;
@@ -48,17 +48,17 @@ public class Interval implements Sinkable {
         this(Dates.parseDateTime(lo), Dates.parseDateTime(hi));
     }
 
-    public Interval(long millis, PartitionType t) {
-        switch (t) {
-            case YEAR:
+    public Interval(long millis, int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.YEAR:
                 this.lo = Dates.floorYYYY(millis);
                 this.hi = Dates.ceilYYYY(millis);
                 break;
-            case MONTH:
+            case PartitionBy.MONTH:
                 this.lo = Dates.floorMM(millis);
                 this.hi = Dates.ceilMM(millis);
                 break;
-            case DAY:
+            case PartitionBy.DAY:
                 this.lo = Dates.floorDD(millis);
                 this.hi = Dates.ceilDD(millis);
                 break;
@@ -69,27 +69,27 @@ public class Interval implements Sinkable {
         }
     }
 
-    public Interval(String dir, PartitionType t) throws NumericException {
+    public Interval(String dir, int partitionBy) throws NumericException {
         long millis;
-        switch (t) {
-            case YEAR:
+        switch (partitionBy) {
+            case PartitionBy.YEAR:
                 millis = Dates.parseDateTime(dir + "-01-01T00:00:00.000Z");
                 this.lo = Dates.floorYYYY(millis);
                 this.hi = Dates.ceilYYYY(millis);
                 break;
-            case MONTH:
+            case PartitionBy.MONTH:
                 millis = Dates.parseDateTime(dir + "-01T00:00:00.000Z");
                 this.lo = Dates.floorMM(millis);
                 this.hi = Dates.ceilMM(millis);
                 break;
-            case DAY:
+            case PartitionBy.DAY:
                 millis = Dates.parseDateTime(dir + "T00:00:00.000Z");
                 this.lo = Dates.floorDD(millis);
                 this.hi = Dates.ceilDD(millis);
                 break;
             default:
                 if (!"default".equals(dir)) {
-                    throw new JournalUnsupportedTypeException(t);
+                    throw new JournalUnsupportedTypeException(PartitionBy.toString(partitionBy));
                 }
                 this.lo = 0;
                 this.hi = Long.MAX_VALUE;
@@ -100,16 +100,16 @@ public class Interval implements Sinkable {
         return (x >= lo && x < hi);
     }
 
-    public String getDirName(PartitionType t) {
+    public String getDirName(int partitionBy) {
         StringSink sink = new StringSink();
-        switch (t) {
-            case YEAR:
+        switch (partitionBy) {
+            case PartitionBy.YEAR:
                 Dates.formatYYYY(sink, lo);
                 break;
-            case MONTH:
+            case PartitionBy.MONTH:
                 Dates.formatYYYYMM(sink, lo);
                 break;
-            case DAY:
+            case PartitionBy.DAY:
                 Dates.formatDashYYYYMMDD(sink, lo);
                 break;
             default:

@@ -188,12 +188,12 @@ public class JournalTest extends AbstractTest {
 
     @Test
     public void testOpenJournalWithWrongPartitionType() throws Exception {
-        JournalWriter<Quote> w = factory.writer(new JournalKey<>(Quote.class, "quote", PartitionType.NONE));
+        JournalWriter<Quote> w = factory.writer(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE));
         TestUtils.generateQuoteData(w, 1000);
         w.close();
 
         try {
-            factory.writer(new JournalKey<>(Quote.class, "quote", PartitionType.MONTH));
+            factory.writer(new JournalKey<>(Quote.class, "quote", PartitionBy.MONTH));
             Assert.fail("Exception expected");
         } catch (JournalException e) {
             // expect exception

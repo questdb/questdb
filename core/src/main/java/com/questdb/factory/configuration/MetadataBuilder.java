@@ -23,8 +23,6 @@
 
 package com.questdb.factory.configuration;
 
-import com.questdb.PartitionType;
-
 import java.io.File;
 
 public interface MetadataBuilder<T> {
@@ -36,7 +34,7 @@ public interface MetadataBuilder<T> {
 
     MetadataBuilder<T> location(File path);
 
-    MetadataBuilder<T> partitionBy(PartitionType type);
+    MetadataBuilder<T> partitionBy(int partitionBy);
 
     MetadataBuilder<T> recordCountHint(int count);
 }

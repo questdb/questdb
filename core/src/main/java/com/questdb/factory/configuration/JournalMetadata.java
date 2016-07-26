@@ -24,7 +24,7 @@
 package com.questdb.factory.configuration;
 
 import com.questdb.JournalKey;
-import com.questdb.PartitionType;
+import com.questdb.PartitionBy;
 import com.questdb.ex.JournalConfigurationException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.misc.Chars;
@@ -43,7 +43,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     private final String id;
     private final Class<T> modelClass;
     private final String location;
-    private final PartitionType partitionBy;
+    private final int partitionBy;
     private final int columnCount;
     private final ColumnMetadata timestampMetadata;
     private final Constructor<T> constructor;
@@ -64,7 +64,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
             , Constructor<T> constructor
             , String keyColumn
             , String location
-            , PartitionType partitionBy
+            , int partitionBy
             , ColumnMetadata[] columnMetadata
             , int timestampColumnIndex
             , long openFileTTL
@@ -105,7 +105,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         id = buf.getStr();
         modelClass = null;
         location = buf.getStr();
-        partitionBy = PartitionType.valueOf(buf.getStr());
+        partitionBy = buf.getInt();
         columnCount = buf.getInt();
         columnMetadata = new ColumnMetadata[columnCount];
         columnIndexLookup = new CharSequenceIntHashMap();
@@ -214,7 +214,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         return openFileTTL;
     }
 
-    public PartitionType getPartitionType() {
+    public int getPartitionBy() {
         return partitionBy;
     }
 
@@ -232,7 +232,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
 
     public boolean isCompatible(JournalMetadata that, boolean ignorePartitionType) {
         if (that == null
-                || (this.getPartitionType() != that.getPartitionType() && !ignorePartitionType)
+                || (this.getPartitionBy() != that.getPartitionBy() && !ignorePartitionType)
                 || this.getColumnCount() != that.getColumnCount()
                 ) {
             return false;
@@ -284,7 +284,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
 
         b.append('|');
         pad(b, TO_STRING_COL1_PAD, "Partition by");
-        pad(b, TO_STRING_COL2_PAD, partitionBy.name()).append('\n');
+        pad(b, TO_STRING_COL2_PAD, PartitionBy.toString(partitionBy)).append('\n');
         sep(b);
 
 
@@ -304,7 +304,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         buf.setPos(0);
         buf.put(id);
         buf.put(location);
-        buf.put(partitionBy.name());
+        buf.put(partitionBy);
         buf.put(columnCount);
         for (int i = 0; i < columnMetadata.length; i++) {
             columnMetadata[i].write(buf);

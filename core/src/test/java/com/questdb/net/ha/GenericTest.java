@@ -26,7 +26,7 @@ package com.questdb.net.ha;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
-import com.questdb.PartitionType;
+import com.questdb.PartitionBy;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.io.RecordSourcePrinter;
@@ -211,7 +211,7 @@ public class GenericTest extends AbstractTest {
             $int("y");
             $double("z");
             $ts();
-            partitionBy(PartitionType.DAY);
+            partitionBy(PartitionBy.DAY);
         }});
 
         JournalServer server = new JournalServer(new ServerConfig() {{

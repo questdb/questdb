@@ -23,7 +23,7 @@
 
 package com.questdb.ql.parser;
 
-import com.questdb.PartitionType;
+import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.GenericIntBuilder;
@@ -141,7 +141,7 @@ public final class QueryParser {
         if (tok != null) {
             expectTok(tok, "partition");
             expectTok(tok(), "by");
-            structure.partitionBy(PartitionType.valueOf(tok().toString()));
+            structure.partitionBy(PartitionBy.fromString(tok()));
         }
         return new Statement(StatementType.CREATE_JOURNAL, structure);
     }

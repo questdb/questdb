@@ -23,6 +23,7 @@
 
 package com.questdb.ex;
 
+import com.questdb.PartitionBy;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.log.Log;
@@ -48,10 +49,10 @@ public class JournalMetadataException extends JournalException {
         sep(b);
 
         b(b);
-        boolean diff = mo.getPartitionType() != mn.getPartitionType();
+        boolean diff = mo.getPartitionBy() != mn.getPartitionBy();
         pad(b, FIRST_COL_PAD, (diff ? "*" : "") + "Partition by");
-        pad(b, mo.getPartitionType().name());
-        pad(b, mn.getPartitionType().name());
+        pad(b, PartitionBy.toString(mo.getPartitionBy()));
+        pad(b, PartitionBy.toString(mn.getPartitionBy()));
         e(b);
         sep(b);
 

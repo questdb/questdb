@@ -25,7 +25,7 @@ package com.questdb.net.ha;
 
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
-import com.questdb.PartitionType;
+import com.questdb.PartitionBy;
 import com.questdb.ex.IncompatibleJournalException;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
@@ -171,7 +171,7 @@ public class JournalClient {
     }
 
     public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint, TxListener txListener) {
-        subscribe(new JournalKey<>(clazz, remote, PartitionType.DEFAULT, recordHint), new JournalKey<>(clazz, local, PartitionType.DEFAULT, recordHint), txListener);
+        subscribe(new JournalKey<>(clazz, remote, PartitionBy.DEFAULT, recordHint), new JournalKey<>(clazz, local, PartitionBy.DEFAULT, recordHint), txListener);
     }
 
     public <T> void subscribe(JournalKey<T> remoteKey, JournalWriter<T> writer, TxListener txListener) {

@@ -33,7 +33,7 @@ public class JournalKey<T> {
     private final String id;
     private final Class<T> modelClass;
     private String location;
-    private PartitionType partitionType = PartitionType.DEFAULT;
+    private int partitionBy = PartitionBy.DEFAULT;
     private int recordHint = Constants.NULL_RECORD_HINT;
     private boolean ordered = true;
 
@@ -66,43 +66,43 @@ public class JournalKey<T> {
         this.location = location;
     }
 
-    public JournalKey(Class<T> clazz, String location, PartitionType partitionType) {
+    public JournalKey(Class<T> clazz, String location, int partitionBy) {
         this.modelClass = clazz;
         this.id = clazz.getName();
         this.location = location;
-        this.partitionType = partitionType;
+        this.partitionBy = partitionBy;
     }
 
-    public JournalKey(Class<T> clazz, String location, PartitionType partitionType, int recordHint) {
+    public JournalKey(Class<T> clazz, String location, int partitionBy, int recordHint) {
         this.modelClass = clazz;
         this.id = clazz.getName();
         this.location = location;
-        this.partitionType = partitionType;
+        this.partitionBy = partitionBy;
         this.recordHint = recordHint;
     }
 
-    public JournalKey(Class<T> clazz, String location, PartitionType partitionType, int recordHint, boolean ordered) {
+    public JournalKey(Class<T> clazz, String location, int partitionBy, int recordHint, boolean ordered) {
         this.modelClass = clazz;
         this.id = clazz.getName();
         this.location = location;
-        this.partitionType = partitionType;
+        this.partitionBy = partitionBy;
         this.recordHint = recordHint;
         this.ordered = ordered;
     }
 
-    public JournalKey(Class<T> clazz, String location, PartitionType partitionType, boolean ordered) {
+    public JournalKey(Class<T> clazz, String location, int partitionBy, boolean ordered) {
         this.modelClass = clazz;
         this.id = clazz.getName();
         this.location = location;
-        this.partitionType = partitionType;
+        this.partitionBy = partitionBy;
         this.ordered = ordered;
     }
 
-    private JournalKey(String clazz, String location, PartitionType partitionType, int recordHint, boolean ordered) {
+    private JournalKey(String clazz, String location, int partitionBy, int recordHint, boolean ordered) {
         this.modelClass = null;
         this.id = clazz;
         this.location = location;
-        this.partitionType = partitionType;
+        this.partitionBy = partitionBy;
         this.recordHint = recordHint;
         this.ordered = ordered;
     }
@@ -121,14 +121,14 @@ public class JournalKey<T> {
                 location[i] = buffer.getChar();
             }
         }
-        // partitionType
-        PartitionType partitionType = PartitionType.values()[buffer.get()];
+        // partitionBy
+        int partitionBy = buffer.get();
         // recordHint
         int recordHint = buffer.getInt();
         // ordered
         boolean ordered = buffer.get() == 1;
 
-        return new JournalKey<>(new String(clazz, Files.UTF_8), location == null ? null : new String(location), partitionType, recordHint, ordered);
+        return new JournalKey<>(new String(clazz, Files.UTF_8), location == null ? null : new String(location), partitionBy, recordHint, ordered);
     }
 
     public String derivedLocation() {
@@ -151,8 +151,8 @@ public class JournalKey<T> {
         return modelClass;
     }
 
-    public PartitionType getPartitionType() {
-        return partitionType;
+    public int getPartitionBy() {
+        return partitionBy;
     }
 
     public int getRecordHint() {
@@ -163,7 +163,7 @@ public class JournalKey<T> {
     public int hashCode() {
         int result = id != null ? id.hashCode() : 0;
         result = 31 * result + (location != null ? location.hashCode() : 0);
-        result = 31 * result + (partitionType != null ? partitionType.hashCode() : 0);
+        result = 31 * result + partitionBy;
         result = 31 * result + recordHint;
         return 31 * result + (ordered ? 1 : 0);
     }
@@ -175,7 +175,7 @@ public class JournalKey<T> {
         if (this == o) return true;
         if (!(o instanceof JournalKey)) return false;
         JournalKey that = (JournalKey) o;
-        return ordered == that.ordered && recordHint == that.recordHint && !(id != null ? !id.equals(that.id) : that.id != null) && !(location != null ? !location.equals(that.location) : that.location != null) && partitionType == that.partitionType;
+        return ordered == that.ordered && recordHint == that.recordHint && !(id != null ? !id.equals(that.id) : that.id != null) && !(location != null ? !location.equals(that.location) : that.location != null) && partitionBy == that.partitionBy;
 
     }
 
@@ -184,7 +184,7 @@ public class JournalKey<T> {
         return "JournalKey{" +
                 "id=" + id +
                 ", location='" + location + '\'' +
-                ", partitionType=" + partitionType +
+                ", partitionBy=" + PartitionBy.toString(partitionBy) +
                 ", recordHint=" + recordHint +
                 ", ordered=" + ordered +
                 '}';
@@ -204,7 +204,7 @@ public class JournalKey<T> {
         // location
         ByteBuffers.putStringDW(buffer, location);
         // partition type
-        buffer.put((byte) partitionType.ordinal());
+        buffer.put((byte) partitionBy);
         // recordHint
         buffer.putInt(recordHint);
         // ordered

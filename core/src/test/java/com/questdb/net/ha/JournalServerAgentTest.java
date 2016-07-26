@@ -205,6 +205,6 @@ public class JournalServerAgentTest extends AbstractTest {
         setKeyRequestProducer.write(channel, new IndexedJournalKey(0, tradeWriter.getKey()));
         agent.process(channel);
         charSequenceResponseConsumer.read(channel);
-        TestUtils.assertEquals("Requested key not exported: JournalKey{id=com.questdb.model.Trade, location='null', partitionType=DEFAULT, recordHint=0, ordered=true}", charSequenceResponseConsumer.getValue());
+        TestUtils.assertEquals("Requested key not exported: JournalKey{id=com.questdb.model.Trade, location='null', partitionBy=DEFAULT, recordHint=0, ordered=true}", charSequenceResponseConsumer.getValue());
     }
 }

@@ -62,7 +62,7 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     @Override
     public <T> JournalBulkWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException {
-        return bulkWriter(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
+        return bulkWriter(new JournalKey<>(clazz, location, PartitionBy.DEFAULT, recordHint));
     }
 
     @Override
@@ -98,7 +98,7 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     @Override
     public <T> JournalWriter<T> writer(Class<T> clazz, String location, int recordHint) throws JournalException {
-        return writer(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
+        return writer(new JournalKey<>(clazz, location, PartitionBy.DEFAULT, recordHint));
     }
 
     @Override

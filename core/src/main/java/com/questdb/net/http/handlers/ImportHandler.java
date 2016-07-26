@@ -23,6 +23,7 @@
 
 package com.questdb.net.http.handlers;
 
+import com.questdb.PartitionBy;
 import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
@@ -296,7 +297,7 @@ public class ImportHandler extends AbstractMultipartHandler {
 
                 r.put('|');
                 pad(r, TO_STRING_COL1_PAD, "Partition by");
-                pad(r, TO_STRING_COL2_PAD, m.getPartitionType().name());
+                pad(r, TO_STRING_COL2_PAD, PartitionBy.toString(m.getPartitionBy()));
                 pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
                 sep(r);
 

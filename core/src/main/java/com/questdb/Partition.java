@@ -68,7 +68,7 @@ public class Partition<T> implements Closeable {
         this.columnMetadata = new ColumnMetadata[columnCount];
         meta.copyColumnMetadata(columnMetadata);
         if (interval != null) {
-            setPartitionDir(new File(this.journal.getLocation(), interval.getDirName(meta.getPartitionType())), indexTxAddresses);
+            setPartitionDir(new File(this.journal.getLocation(), interval.getDirName(meta.getPartitionBy())), indexTxAddresses);
         }
     }
 
@@ -397,8 +397,8 @@ public class Partition<T> implements Closeable {
     }
 
     Partition<T> access() {
-        switch (journal.getMetadata().getPartitionType()) {
-            case NONE:
+        switch (journal.getMetadata().getPartitionBy()) {
+            case PartitionBy.NONE:
                 return this;
             default:
                 long t = System.currentTimeMillis();

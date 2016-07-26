@@ -343,12 +343,12 @@ public class JournalWriter<T> extends Journal<T> {
             if (interval == null || interval.contains(timestamp)) {
                 return par.open().access();
             } else if (interval.isBefore(timestamp)) {
-                return createPartition(new Interval(timestamp, getMetadata().getPartitionType()), sz);
+                return createPartition(new Interval(timestamp, getMetadata().getPartitionBy()), sz);
             } else {
                 throw new JournalException("%s cannot be appended to %s", Dates.toString(timestamp), this);
             }
         } else {
-            return createPartition(new Interval(timestamp, getMetadata().getPartitionType()), 0);
+            return createPartition(new Interval(timestamp, getMetadata().getPartitionBy()), 0);
         }
     }
 
@@ -675,10 +675,10 @@ public class JournalWriter<T> extends Journal<T> {
         if (count > 0) {
             return appendPartition = getPartition(count - 1, true);
         } else {
-            if (getMetadata().getPartitionType() != PartitionType.NONE) {
+            if (getMetadata().getPartitionBy() != PartitionBy.NONE) {
                 throw new JournalException("getAppendPartition() without timestamp on partitioned journal: %s", this);
             }
-            return appendPartition = createPartition(new Interval((long) 0, getMetadata().getPartitionType()), 0);
+            return appendPartition = createPartition(new Interval((long) 0, getMetadata().getPartitionBy()), 0);
         }
     }
 

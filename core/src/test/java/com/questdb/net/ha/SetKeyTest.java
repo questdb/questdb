@@ -24,7 +24,7 @@
 package com.questdb.net.ha;
 
 import com.questdb.JournalKey;
-import com.questdb.PartitionType;
+import com.questdb.PartitionBy;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.model.IndexedJournalKey;
 import com.questdb.net.ha.protocol.commands.SetKeyRequestConsumer;
@@ -47,19 +47,19 @@ public class SetKeyTest {
         SetKeyRequestProducer producer = new SetKeyRequestProducer();
         SetKeyRequestConsumer consumer = new SetKeyRequestConsumer();
 
-        IndexedJournalKey key = new IndexedJournalKey(0, new JournalKey<>(Quote.class, "loc1", PartitionType.DAY, 100, true));
+        IndexedJournalKey key = new IndexedJournalKey(0, new JournalKey<>(Quote.class, "loc1", PartitionBy.DAY, 100, true));
         producer.setValue(key);
         producer.write(channel);
         consumer.read(channel);
         Assert.assertEquals(key, consumer.getValue());
 
-        IndexedJournalKey key2 = new IndexedJournalKey(1, new JournalKey<>(Quote.class, "longer_location", PartitionType.DAY, 1000, true));
+        IndexedJournalKey key2 = new IndexedJournalKey(1, new JournalKey<>(Quote.class, "longer_location", PartitionBy.DAY, 1000, true));
         producer.setValue(key2);
         producer.write(channel);
         consumer.read(channel);
         Assert.assertEquals(key2, consumer.getValue());
 
-        IndexedJournalKey key3 = new IndexedJournalKey(2, new JournalKey<>(Quote.class, "shorter_loc", PartitionType.DAY, 1000, true));
+        IndexedJournalKey key3 = new IndexedJournalKey(2, new JournalKey<>(Quote.class, "shorter_loc", PartitionBy.DAY, 1000, true));
         producer.setValue(key3);
         producer.write(channel);
         consumer.read(channel);

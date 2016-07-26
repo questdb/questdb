@@ -23,18 +23,56 @@
 
 package com.questdb;
 
+import com.questdb.std.CharSequenceIntHashMap;
+
 /**
  * Setting partition type on JournalKey to override default settings.
  */
-public enum PartitionType {
-    DAY, MONTH, YEAR,
+public final class PartitionBy {
+
+    public static final int DAY = 1;
+    public static final int MONTH = 2;
+    public static final int YEAR = 4;
     /**
      * Data is not partitioned at all,
      * all data is stored in a single directory
      */
-    NONE,
+    public static final int NONE = 8;
     /**
      * Setting partition type to DEFAULT will use whatever partition type is specified in journal configuration.
      */
-    DEFAULT
+    public static final int DEFAULT = 16;
+    private final static CharSequenceIntHashMap nameToIndexMap = new CharSequenceIntHashMap();
+
+    private PartitionBy() {
+    }
+
+    public static int fromString(CharSequence name) {
+        return nameToIndexMap.get(name);
+    }
+
+    public static String toString(int partitionBy) {
+        switch (partitionBy) {
+            case DAY:
+                return "DAY";
+            case MONTH:
+                return "MONTH";
+            case YEAR:
+                return "YEAR";
+            case NONE:
+                return "NONE";
+            case DEFAULT:
+                return "DEFAULT";
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    static {
+        nameToIndexMap.put("DAY", DAY);
+        nameToIndexMap.put("MONTH", MONTH);
+        nameToIndexMap.put("YEAR", YEAR);
+        nameToIndexMap.put("NONE", NONE);
+        nameToIndexMap.put("DEFAULT", DEFAULT);
+    }
 }

@@ -87,7 +87,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @Override
     public <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException {
-        return reader(new JournalKey<>(clazz, location, PartitionType.DEFAULT, recordHint));
+        return reader(new JournalKey<>(clazz, location, PartitionBy.DEFAULT, recordHint));
     }
 
     @SuppressWarnings("unchecked")

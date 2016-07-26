@@ -1,29 +1,30 @@
 /*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (c) 2014-2016 Appsicle
+ *  Copyright (c) 2014-2016 Appsicle
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *  http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
  ******************************************************************************/
 
 package org.nfsdb.examples.append;
 
 import com.questdb.JournalWriter;
-import com.questdb.PartitionType;
+import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
@@ -42,7 +43,7 @@ public class PartitionByDayAppend {
      * Appends 1 million quotes into journal partitioned by day. Journal can only be partitioned on values of timestamp column.
      *
      * @param args factory directory
-     * @throws JournalException
+     * @throws JournalException in case of any problems with the journal.
      */
     public static void main(String[] args) throws JournalException {
 
@@ -55,7 +56,7 @@ public class PartitionByDayAppend {
         try (JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
             $(Quote.class)
                     .location("quote-by-day")
-                    .partitionBy(PartitionType.DAY) // partition by day
+                    .partitionBy(PartitionBy.DAY) // partition by day
                     .$ts() // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
             ;
         }}.build(journalLocation))) {

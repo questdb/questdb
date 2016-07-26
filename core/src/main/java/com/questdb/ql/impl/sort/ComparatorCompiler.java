@@ -267,7 +267,7 @@ public class ComparatorCompiler {
                     comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
                     break;
                 default:
-                    throw new JournalUnsupportedTypeException(m.getColumn(index).getType());
+                    throw new JournalUnsupportedTypeException(m.getColumn(index).getType().name());
             }
 
             int nameIndex;

@@ -23,7 +23,7 @@
 
 package com.questdb.factory.configuration;
 
-import com.questdb.PartitionType;
+import com.questdb.PartitionBy;
 import com.questdb.ex.JournalConfigurationException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Numbers;
@@ -48,7 +48,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
     private CharSequenceIntHashMap nameToIndexMap;
     private String location;
     private int tsColumnIndex = -1;
-    private PartitionType partitionBy = PartitionType.NONE;
+    private int partitionBy = PartitionBy.NONE;
     private int recordCountHint = 100000;
     private int txCountHint = -1;
     private String keyColumn;
@@ -65,7 +65,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         parseClass();
         this.location = model.getLocation();
         this.tsColumnIndex = model.getTimestampIndex();
-        this.partitionBy = model.getPartitionType();
+        this.partitionBy = model.getPartitionBy();
         this.recordCountHint = model.getRecordHint();
         this.txCountHint = model.getTxCountHint();
         this.keyColumn = model.getKeyQuiet();
@@ -190,9 +190,9 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
     }
 
     @Override
-    public JournalMetadataBuilder<T> partitionBy(PartitionType type) {
-        if (type != PartitionType.DEFAULT) {
-            this.partitionBy = type;
+    public JournalMetadataBuilder<T> partitionBy(int partitionBy) {
+        if (partitionBy != PartitionBy.DEFAULT) {
+            this.partitionBy = partitionBy;
         }
         return this;
     }
