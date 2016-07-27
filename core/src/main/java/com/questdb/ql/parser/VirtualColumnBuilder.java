@@ -38,6 +38,7 @@ import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
+import com.questdb.store.ColumnType;
 
 import java.util.ArrayDeque;
 
@@ -109,27 +110,27 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
             }
             int index = metadata.getColumnIndex(node.token);
             switch (metadata.getColumnQuick(index).getType()) {
-                case DOUBLE:
+                case ColumnType.DOUBLE:
                     return new DoubleRecordSourceColumn(index);
-                case INT:
+                case ColumnType.INT:
                     return new IntRecordSourceColumn(index);
-                case LONG:
+                case ColumnType.LONG:
                     return new LongRecordSourceColumn(index);
-                case STRING:
+                case ColumnType.STRING:
                     return new StrRecordSourceColumn(index);
-                case SYMBOL:
+                case ColumnType.SYMBOL:
                     return new SymRecordSourceColumn(index);
-                case BYTE:
+                case ColumnType.BYTE:
                     return new ByteRecordSourceColumn(index);
-                case FLOAT:
+                case ColumnType.FLOAT:
                     return new FloatRecordSourceColumn(index);
-                case BOOLEAN:
+                case ColumnType.BOOLEAN:
                     return new BoolRecordSourceColumn(index);
-                case SHORT:
+                case ColumnType.SHORT:
                     return new ShortRecordSourceColumn(index);
-                case BINARY:
+                case ColumnType.BINARY:
                     return new BinaryRecordSourceColumn(index);
-                case DATE:
+                case ColumnType.DATE:
                     return new DateRecordSourceColumn(index);
                 default:
                     throw QueryError.$(node.position, "Not yet supported type");
@@ -195,11 +196,11 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
 
     private VirtualColumn processConstantExpression(Function f) {
         switch (f.getType()) {
-            case INT:
+            case ColumnType.INT:
                 return new IntConstant(f.getInt(null));
-            case DOUBLE:
+            case ColumnType.DOUBLE:
                 return new DoubleConstant(f.getDouble(null));
-            case BOOLEAN:
+            case ColumnType.BOOLEAN:
                 return new BooleanConstant(f.getBool(null));
             default:
                 return f;

@@ -156,7 +156,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
                 ImportedColumnMetadata _m = _metadata.getQuick(i);
                 ImportedColumnMetadata m = schemaColumns.get(_m.name);
                 if (m != null) {
-                    _m.type = m.type;
+                    _m.importedColumnType = m.importedColumnType;
                 }
             }
         }
@@ -192,7 +192,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
             }
 
             if (setDefault && unprobed) {
-                m.type = ImportedColumnType.STRING;
+                m.importedColumnType = ImportedColumnType.STRING;
             }
         }
 

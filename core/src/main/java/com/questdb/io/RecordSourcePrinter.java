@@ -31,6 +31,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.ImmutableIterator;
+import com.questdb.store.ColumnType;
 
 import java.io.IOException;
 
@@ -79,34 +80,34 @@ public class RecordSourcePrinter {
 
     private void printColumn(Record r, RecordMetadata m, int i) {
         switch (m.getColumnQuick(i).getType()) {
-            case DATE:
+            case ColumnType.DATE:
                 Dates.appendDateTime(sink, r.getDate(i));
                 break;
-            case DOUBLE:
+            case ColumnType.DOUBLE:
                 Numbers.append(sink, r.getDouble(i), 12);
                 break;
-            case FLOAT:
+            case ColumnType.FLOAT:
                 Numbers.append(sink, r.getFloat(i), 4);
                 break;
-            case INT:
+            case ColumnType.INT:
                 Numbers.append(sink, r.getInt(i));
                 break;
-            case STRING:
+            case ColumnType.STRING:
                 r.getStr(i, sink);
                 break;
-            case SYMBOL:
+            case ColumnType.SYMBOL:
                 sink.put(r.getSym(i));
                 break;
-            case SHORT:
+            case ColumnType.SHORT:
                 Numbers.append(sink, r.getShort(i));
                 break;
-            case LONG:
+            case ColumnType.LONG:
                 Numbers.append(sink, r.getLong(i));
                 break;
-            case BYTE:
+            case ColumnType.BYTE:
                 Numbers.append(sink, r.get(i));
                 break;
-            case BOOLEAN:
+            case ColumnType.BOOLEAN:
                 sink.put(r.getBool(i) ? "true" : "false");
                 break;
             default:

@@ -27,6 +27,7 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -53,27 +54,27 @@ public class PrevAnalyticFunction extends AbstractPrevAnalyticFunction implement
         }
 
         switch (valueColumn.getType()) {
-            case BOOLEAN:
+            case ColumnType.BOOLEAN:
                 Unsafe.getUnsafe().putByte(prevPtr, (byte) (valueColumn.getBool(record) ? 1 : 0));
                 break;
-            case BYTE:
+            case ColumnType.BYTE:
                 Unsafe.getUnsafe().putByte(prevPtr, valueColumn.get(record));
                 break;
-            case DOUBLE:
+            case ColumnType.DOUBLE:
                 Unsafe.getUnsafe().putDouble(prevPtr, valueColumn.getDouble(record));
                 break;
-            case FLOAT:
+            case ColumnType.FLOAT:
                 Unsafe.getUnsafe().putFloat(prevPtr, valueColumn.getFloat(record));
                 break;
-            case SYMBOL:
-            case INT:
+            case ColumnType.SYMBOL:
+            case ColumnType.INT:
                 Unsafe.getUnsafe().putInt(prevPtr, valueColumn.getInt(record));
                 break;
-            case LONG:
-            case DATE:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
                 Unsafe.getUnsafe().putLong(prevPtr, valueColumn.getLong(record));
                 break;
-            case SHORT:
+            case ColumnType.SHORT:
                 Unsafe.getUnsafe().putShort(prevPtr, valueColumn.getShort(record));
                 break;
             default:

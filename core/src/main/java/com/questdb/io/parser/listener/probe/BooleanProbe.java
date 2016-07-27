@@ -31,7 +31,7 @@ public class BooleanProbe implements TypeProbe {
 
     @Override
     public void getMetadata(ImportedColumnMetadata m) {
-        m.type = ImportedColumnType.BOOLEAN;
+        m.importedColumnType = ImportedColumnType.BOOLEAN;
     }
 
     @Override

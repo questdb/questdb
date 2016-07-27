@@ -161,8 +161,8 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
 
     private static class TestColumnMetadata extends AbstractVirtualColumn {
 
-        TestColumnMetadata(ColumnType type) {
-            super(type);
+        TestColumnMetadata(int columnType) {
+            super(columnType);
         }
 
         @Override
@@ -218,8 +218,8 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
             return this;
         }
 
-        void asType(ColumnType t) {
-            columns.add(new TestColumnMetadata(t));
+        void asType(int columnType) {
+            columns.add(new TestColumnMetadata(columnType));
         }
     }
 }

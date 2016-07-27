@@ -53,11 +53,12 @@ public class RecordListRecord extends AbstractRecord {
 
         int varColIndex = 0;
         for (int i = 0; i < offsets.length; i++) {
-            ColumnType ct = metadata.getColumnQuick(i).getType();
-            if (ct.size() != 0) {
+            int ct = metadata.getColumnQuick(i).getType();
+            int size = ColumnType.sizeOf(ct);
+            if (size != 0) {
                 // Fixed columns.
                 offsets[i] = fixedSize;
-                fixedSize += ct.size();
+                fixedSize += size;
             } else {
                 offsets[i] = -(varColIndex++);
             }

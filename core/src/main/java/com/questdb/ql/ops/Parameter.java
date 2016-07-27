@@ -33,7 +33,7 @@ import com.questdb.store.ColumnType;
 
 public class Parameter extends AbstractVirtualColumn {
 
-    private ColumnType valueType = ColumnType.PARAMETER;
+    private int valueType = ColumnType.PARAMETER;
     private long longValue;
     private double doubleValue;
     private String stringValue;
@@ -54,10 +54,10 @@ public class Parameter extends AbstractVirtualColumn {
     @Override
     public byte get(Record rec) {
         switch (valueType) {
-            case LONG:
-            case INT:
-            case SHORT:
-            case BYTE:
+            case ColumnType.LONG:
+            case ColumnType.INT:
+            case ColumnType.SHORT:
+            case ColumnType.BYTE:
                 return (byte) longValue;
             default:
                 throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'byte' got " + valueType);
@@ -67,8 +67,8 @@ public class Parameter extends AbstractVirtualColumn {
     @Override
     public double getDouble(Record rec) {
         switch (valueType) {
-            case DOUBLE:
-            case FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.FLOAT:
                 return doubleValue;
             default:
                 throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'double' got " + valueType);
@@ -78,8 +78,8 @@ public class Parameter extends AbstractVirtualColumn {
     @Override
     public float getFloat(Record rec) {
         switch (valueType) {
-            case DOUBLE:
-            case FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.FLOAT:
                 return (float) doubleValue;
             default:
                 throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'float' got " + valueType);
@@ -89,7 +89,7 @@ public class Parameter extends AbstractVirtualColumn {
     @Override
     public CharSequence getFlyweightStr(Record rec) {
         switch (valueType) {
-            case STRING:
+            case ColumnType.STRING:
                 return stringValue;
             default:
                 throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'string' got " + valueType);
@@ -104,10 +104,10 @@ public class Parameter extends AbstractVirtualColumn {
     @Override
     public int getInt(Record rec) {
         switch (valueType) {
-            case LONG:
-            case INT:
-            case SHORT:
-            case BYTE:
+            case ColumnType.LONG:
+            case ColumnType.INT:
+            case ColumnType.SHORT:
+            case ColumnType.BYTE:
                 return (int) longValue;
             default:
                 throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'int' got " + valueType);
@@ -117,10 +117,10 @@ public class Parameter extends AbstractVirtualColumn {
     @Override
     public long getLong(Record rec) {
         switch (valueType) {
-            case LONG:
-            case INT:
-            case SHORT:
-            case BYTE:
+            case ColumnType.LONG:
+            case ColumnType.INT:
+            case ColumnType.SHORT:
+            case ColumnType.BYTE:
                 return longValue;
             default:
                 throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'long' got " + valueType);
@@ -130,10 +130,10 @@ public class Parameter extends AbstractVirtualColumn {
     @Override
     public short getShort(Record rec) {
         switch (valueType) {
-            case LONG:
-            case INT:
-            case SHORT:
-            case BYTE:
+            case ColumnType.LONG:
+            case ColumnType.INT:
+            case ColumnType.SHORT:
+            case ColumnType.BYTE:
                 return (short) longValue;
             default:
                 throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'short' got " + valueType);

@@ -172,12 +172,12 @@ public class JournalStructure implements MetadataBuilder<Object> {
             }
 
             switch (meta.type) {
-                case STRING:
+                case ColumnType.STRING:
                     meta.size = meta.avgSize + 4;
                     meta.bitHint = ByteBuffers.getBitHint(meta.avgSize * 2, recordCountHint);
                     meta.indexBitHint = ByteBuffers.getBitHint(8, recordCountHint);
                     break;
-                case BINARY:
+                case ColumnType.BINARY:
                     meta.size = meta.avgSize;
                     meta.bitHint = ByteBuffers.getBitHint(meta.avgSize, recordCountHint);
                     meta.indexBitHint = ByteBuffers.getBitHint(8, recordCountHint);
@@ -264,11 +264,8 @@ public class JournalStructure implements MetadataBuilder<Object> {
                 continue;
             }
 
-            Class type = f.getType();
             ColumnMetadata meta = metadata.get(index);
-
-            checkTypes(meta.type, toColumnType(type));
-
+            checkTypes(meta.type, ColumnType.columnTypeOf((Class) f.getType()));
             meta.offset = Unsafe.getUnsafe().objectFieldOffset(f);
         }
 
@@ -294,14 +291,14 @@ public class JournalStructure implements MetadataBuilder<Object> {
         return this;
     }
 
-    private JournalStructure $meta(String name, ColumnType type) {
+    private JournalStructure $meta(String name, int type) {
         ColumnMetadata m = newMeta(name);
         m.type = type;
-        m.size = type.size();
+        m.size = ColumnType.sizeOf(type);
         return this;
     }
 
-    private void checkTypes(ColumnType expected, ColumnType actual) {
+    private void checkTypes(int expected, int actual) {
         if (expected == actual) {
             return;
         }
@@ -345,14 +342,5 @@ public class JournalStructure implements MetadataBuilder<Object> {
         } else {
             throw new JournalConfigurationException("Duplicate column: " + name);
         }
-    }
-
-    private ColumnType toColumnType(Class type) {
-        for (ColumnType t : ColumnType.values()) {
-            if (t.matches(type)) {
-                return t;
-            }
-        }
-        return null;
     }
 }

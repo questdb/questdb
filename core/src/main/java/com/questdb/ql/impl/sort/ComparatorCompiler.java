@@ -31,6 +31,7 @@ import com.questdb.ql.parser.QueryParser;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.IntList;
 import com.questdb.std.Transient;
+import com.questdb.store.ColumnType;
 
 public class ComparatorCompiler {
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -218,56 +219,56 @@ public class ComparatorCompiler {
             index--;
 
             switch (m.getColumn(index).getType()) {
-                case BOOLEAN:
+                case ColumnType.BOOLEAN:
                     fieldType = "Z";
                     getterNameA = "getBool";
                     comparatorClass = "java/lang/Boolean";
                     break;
-                case BYTE:
+                case ColumnType.BYTE:
                     fieldType = "B";
                     getterNameA = "get";
                     comparatorClass = "java/lang/Byte";
                     break;
-                case DOUBLE:
+                case ColumnType.DOUBLE:
                     fieldType = "D";
                     getterNameA = "getDouble";
                     comparatorClass = "com/questdb/misc/Numbers";
                     break;
-                case FLOAT:
+                case ColumnType.FLOAT:
                     fieldType = "F";
                     getterNameA = "getFloat";
                     comparatorClass = "com/questdb/misc/Numbers";
                     break;
-                case INT:
+                case ColumnType.INT:
                     fieldType = "I";
                     getterNameA = "getInt";
                     comparatorClass = "java/lang/Integer";
                     break;
-                case LONG:
-                case DATE:
+                case ColumnType.LONG:
+                case ColumnType.DATE:
                     fieldType = "J";
                     getterNameA = "getLong";
                     comparatorClass = "java/lang/Long";
                     break;
-                case SHORT:
+                case ColumnType.SHORT:
                     fieldType = "S";
                     getterNameA = "getShort";
                     comparatorClass = "java/lang/Short";
                     break;
-                case STRING:
+                case ColumnType.STRING:
                     getterNameA = "getFlyweightStr";
                     getterNameB = "getFlyweightStrB";
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = "com/questdb/misc/Chars";
                     break;
-                case SYMBOL:
+                case ColumnType.SYMBOL:
                     getterNameA = "getSym";
                     fieldType = "Ljava/lang/String;";
                     comparatorClass = "com/questdb/misc/Chars";
                     comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
                     break;
                 default:
-                    throw new JournalUnsupportedTypeException(m.getColumn(index).getType().name());
+                    throw new JournalUnsupportedTypeException(ColumnType.nameOf(m.getColumn(index).getType()).toString());
             }
 
             int nameIndex;

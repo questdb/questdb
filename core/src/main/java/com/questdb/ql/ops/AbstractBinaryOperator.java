@@ -26,13 +26,12 @@ package com.questdb.ql.ops;
 import com.questdb.ex.ParserException;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.parser.QueryError;
-import com.questdb.store.ColumnType;
 
 public abstract class AbstractBinaryOperator extends AbstractVirtualColumn implements Function {
     protected VirtualColumn lhs;
     protected VirtualColumn rhs;
 
-    protected AbstractBinaryOperator(ColumnType type) {
+    protected AbstractBinaryOperator(int type) {
         super(type);
     }
 

@@ -44,6 +44,7 @@ import com.questdb.net.http.IOContext;
 import com.questdb.net.http.RequestHeaderBuffer;
 import com.questdb.net.http.ResponseSink;
 import com.questdb.std.*;
+import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -208,8 +209,8 @@ public class ImportHandler extends AbstractMultipartHandler {
                     }
                     r.put('{').
                             putQuoted("name").put(':').putQuoted(cm.getName()).put(',').
-                            putQuoted("type").put(':').putQuoted(cm.getType().name()).put(',').
-                            putQuoted("size").put(':').put(cm.getType().size()).put(',').
+                            putQuoted("type").put(':').putQuoted(ColumnType.nameOf(cm.getType())).put(',').
+                            putQuoted("size").put(':').put(ColumnType.sizeOf(cm.getType())).put(',').
                             putQuoted("errors").put(':').put(errors.getQuick(ctx.columnIndex)).put('}');
                 }
                 ctx.responseState = ResponseState.SUFFIX;
@@ -273,7 +274,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                         + m.name
                         + (m.sameAs != null ? " -> " + m.sameAs : "")
                         + ' '
-                        + m.type.name()
+                        + ColumnType.nameOf(m.type)
                         + '('
                         + m.size
                         + ')'

@@ -31,7 +31,7 @@ import com.questdb.misc.Dates;
 public class DateFmt3Probe implements TypeProbe {
     @Override
     public void getMetadata(ImportedColumnMetadata m) {
-        m.type = ImportedColumnType.DATE_3;
+        m.importedColumnType = ImportedColumnType.DATE_3;
     }
 
     @Override

@@ -27,46 +27,46 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.std.IntHashSet;
-import com.questdb.std.ObjList;
+import com.questdb.std.IntList;
 import com.questdb.store.ColumnType;
 
 final class RecordUtils {
     private RecordUtils() {
     }
 
-    static DirectMap.KeyWriter createKey(DirectMap map, Record record, IntHashSet indices, ObjList<ColumnType> types) {
+    static DirectMap.KeyWriter createKey(DirectMap map, Record record, IntHashSet indices, IntList types) {
         DirectMap.KeyWriter kw = map.keyWriter();
         for (int i = 0, n = indices.size(); i < n; i++) {
             int idx = indices.get(i);
             switch (types.getQuick(i)) {
-                case INT:
+                case ColumnType.INT:
                     kw.putInt(record.getInt(idx));
                     break;
-                case LONG:
+                case ColumnType.LONG:
                     kw.putLong(record.getLong(idx));
                     break;
-                case FLOAT:
+                case ColumnType.FLOAT:
                     kw.putFloat(record.getFloat(idx));
                     break;
-                case DOUBLE:
+                case ColumnType.DOUBLE:
                     kw.putDouble(record.getDouble(idx));
                     break;
-                case BOOLEAN:
+                case ColumnType.BOOLEAN:
                     kw.putBoolean(record.getBool(idx));
                     break;
-                case BYTE:
+                case ColumnType.BYTE:
                     kw.putByte(record.get(idx));
                     break;
-                case SHORT:
+                case ColumnType.SHORT:
                     kw.putShort(record.getShort(idx));
                     break;
-                case DATE:
+                case ColumnType.DATE:
                     kw.putLong(record.getDate(idx));
                     break;
-                case STRING:
+                case ColumnType.STRING:
                     kw.putStr(record.getFlyweightStr(idx));
                     break;
-                case SYMBOL:
+                case ColumnType.SYMBOL:
                     // this is key field
                     // we have to write out string rather than int
                     // because master int values for same strings can be different
@@ -79,31 +79,31 @@ final class RecordUtils {
         return kw;
     }
 
-    static void copyFixed(ColumnType type, Record record, int column, long address) {
-        switch (type) {
-            case INT:
-            case SYMBOL:
+    static void copyFixed(int columnType, Record record, int column, long address) {
+        switch (columnType) {
+            case ColumnType.INT:
+            case ColumnType.SYMBOL:
                 // write out int as symbol value
                 // need symbol facade to resolve back to string
                 Unsafe.getUnsafe().putInt(address, record.getInt(column));
                 break;
-            case LONG:
+            case ColumnType.LONG:
                 Unsafe.getUnsafe().putLong(address, record.getLong(column));
                 break;
-            case FLOAT:
+            case ColumnType.FLOAT:
                 Unsafe.getUnsafe().putFloat(address, record.getFloat(column));
                 break;
-            case DOUBLE:
+            case ColumnType.DOUBLE:
                 Unsafe.getUnsafe().putDouble(address, record.getDouble(column));
                 break;
-            case BOOLEAN:
-            case BYTE:
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
                 Unsafe.getUnsafe().putByte(address, record.get(column));
                 break;
-            case SHORT:
+            case ColumnType.SHORT:
                 Unsafe.getUnsafe().putShort(address, record.getShort(column));
                 break;
-            case DATE:
+            case ColumnType.DATE:
                 Unsafe.getUnsafe().putLong(address, record.getDate(column));
                 break;
             default:

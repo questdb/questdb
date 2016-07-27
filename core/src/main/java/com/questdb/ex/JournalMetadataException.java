@@ -29,6 +29,7 @@ import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.log.LogRecord;
+import com.questdb.store.ColumnType;
 
 public class JournalMetadataException extends JournalException {
     private static final Log LOG = LogFactory.getLog(JournalMetadataException.class);
@@ -99,7 +100,7 @@ public class JournalMetadataException extends JournalException {
     }
 
     private void col(LogRecord r, ColumnMetadata m) {
-        pad(r, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + m.type.name() + '(' + m.size + ')');
+        pad(r, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + ColumnType.nameOf(m.type) + '(' + m.size + ')');
     }
 
     private void e(LogRecord r) {

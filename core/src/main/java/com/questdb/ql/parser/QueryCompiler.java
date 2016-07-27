@@ -143,8 +143,8 @@ public class QueryCompiler {
         return rs;
     }
 
-    private static Signature lbs(ColumnType master, boolean indexed, ColumnType lambda) {
-        return new Signature().setName("").setParamCount(2).paramType(0, master, indexed).paramType(1, lambda, false);
+    private static Signature lbs(int masterType, boolean indexed, int lambdaType) {
+        return new Signature().setName("").setParamCount(2).paramType(0, masterType, indexed).paramType(1, lambdaType, false);
     }
 
     private void addAlias(int position, String alias) throws ParserException {
@@ -770,7 +770,7 @@ public class QueryCompiler {
 
             latestByMetadata = journalMetadata.getColumnQuick(colIndex);
 
-            ColumnType type = latestByMetadata.getType();
+            int type = latestByMetadata.getType();
             if (type != ColumnType.SYMBOL && type != ColumnType.STRING && type != ColumnType.INT) {
                 throw QueryError.position(latestByNode.position).$("Expected symbol or string column, found: ").$(type).$();
             }
@@ -824,13 +824,13 @@ public class QueryCompiler {
                 if (latestByCol == null) {
                     if (im.keyColumn != null) {
                         switch (journalMetadata.getColumn(im.keyColumn).getType()) {
-                            case SYMBOL:
+                            case ColumnType.SYMBOL:
                                 rs = buildRowSourceForSym(im);
                                 break;
-                            case STRING:
+                            case ColumnType.STRING:
                                 rs = buildRowSourceForStr(im);
                                 break;
-                            case INT:
+                            case ColumnType.INT:
                                 rs = buildRowSourceForInt(im);
                                 break;
                             default:
@@ -863,7 +863,7 @@ public class QueryCompiler {
                                 break;
                         }
 
-                        ColumnType lambdaColType = m.getColumn(lambdaColIndex).getType();
+                        int lambdaColType = m.getColumn(lambdaColIndex).getType();
                         mutableSig.setParamCount(2).setName("").paramType(0, latestByMetadata.getType(), true).paramType(1, lambdaColType, false);
                         LatestByLambdaRowSourceFactory fact = LAMBDA_ROW_SOURCE_FACTORIES.get(mutableSig);
                         if (fact != null) {
@@ -874,14 +874,14 @@ public class QueryCompiler {
                         }
                     } else {
                         switch (latestByMetadata.getType()) {
-                            case SYMBOL:
+                            case ColumnType.SYMBOL:
                                 if (im.keyColumn != null) {
                                     rs = new KvIndexSymListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
                                 } else {
                                     rs = new KvIndexSymAllHeadRowSource(latestByCol, filter);
                                 }
                                 break;
-                            case STRING:
+                            case ColumnType.STRING:
                                 if (im.keyColumn != null) {
                                     rs = new KvIndexStrListHeadRowSource(latestByCol, new CharSequenceHashSet(im.keyValues), filter);
                                 } else {
@@ -889,7 +889,7 @@ public class QueryCompiler {
                                     throw QueryError.$(latestByNode.position, "Filter on string column expected");
                                 }
                                 break;
-                            case INT:
+                            case ColumnType.INT:
                                 if (im.keyColumn != null) {
                                     rs = new KvIndexIntListHeadRowSource(latestByCol, toIntHashSet(im), filter);
                                 } else {
@@ -905,7 +905,7 @@ public class QueryCompiler {
             }
         } else if (latestByCol != null) {
             switch (latestByMetadata.getType()) {
-                case SYMBOL:
+                case ColumnType.SYMBOL:
                     rs = new KvIndexSymAllHeadRowSource(latestByCol, null);
                     break;
                 default:

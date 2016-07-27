@@ -26,13 +26,12 @@ package com.questdb.ql.ops;
 import com.questdb.ex.ParserException;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.parser.QueryError;
-import com.questdb.store.ColumnType;
 
 public abstract class AbstractUnaryOperator extends AbstractVirtualColumn implements Function {
     protected VirtualColumn value;
 
-    protected AbstractUnaryOperator(ColumnType type) {
-        super(type);
+    protected AbstractUnaryOperator(int columnType) {
+        super(columnType);
     }
 
     @Override

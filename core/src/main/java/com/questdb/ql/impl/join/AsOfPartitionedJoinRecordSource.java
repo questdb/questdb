@@ -33,6 +33,7 @@ import com.questdb.ql.impl.join.asof.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.CharSink;
+import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 
@@ -74,9 +75,9 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
             OUT:
             for (int i = 0, n = slave.getMetadata().getColumnCount(); i < n; i++) {
                 switch (slave.getMetadata().getColumnQuick(i).getType()) {
-                    case BINARY:
+                    case ColumnType.BINARY:
                         throw new JournalRuntimeException("Binary columns are not supported");
-                    case STRING:
+                    case ColumnType.STRING:
                         if (!masterKeyColumns.contains(slave.getMetadata().getColumnName(i))) {
                             var = true;
                         }

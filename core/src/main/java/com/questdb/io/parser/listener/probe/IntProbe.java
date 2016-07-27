@@ -31,7 +31,7 @@ import com.questdb.misc.Numbers;
 public class IntProbe implements TypeProbe {
     @Override
     public void getMetadata(ImportedColumnMetadata m) {
-        m.type = ImportedColumnType.INT;
+        m.importedColumnType = ImportedColumnType.INT;
     }
 
     @Override

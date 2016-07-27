@@ -29,12 +29,11 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.IntList;
-import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
-    private final ObjList<ColumnType> types;
+    private final IntList types;
     private final IntList offsets;
     private final int size;
     private long address;
@@ -43,31 +42,31 @@ public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
 
     public FixRecordHolder(RecordMetadata metadata) {
         int cc = metadata.getColumnCount();
-        this.types = new ObjList<>(cc);
+        this.types = new IntList(cc);
         this.offsets = new IntList(cc);
 
         int size = 0;
         for (int i = 0; i < cc; i++) {
-            ColumnType type = metadata.getColumnQuick(i).getType();
+            int type = metadata.getColumnQuick(i).getType();
             types.add(type);
             offsets.add(size);
 
             switch (type) {
-                case INT:
-                case FLOAT:
-                case SYMBOL:
+                case ColumnType.INT:
+                case ColumnType.FLOAT:
+                case ColumnType.SYMBOL:
                     size += 4;
                     break;
-                case LONG:
-                case DOUBLE:
-                case DATE:
+                case ColumnType.LONG:
+                case ColumnType.DOUBLE:
+                case ColumnType.DATE:
                     size += 8;
                     break;
-                case BOOLEAN:
-                case BYTE:
+                case ColumnType.BOOLEAN:
+                case ColumnType.BYTE:
                     size++;
                     break;
-                case SHORT:
+                case ColumnType.SHORT:
                     size += 2;
                     break;
                 default:

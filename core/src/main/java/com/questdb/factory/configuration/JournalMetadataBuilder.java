@@ -140,12 +140,12 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
             }
 
             switch (meta.type) {
-                case STRING:
+                case ColumnType.STRING:
                     meta.size = meta.avgSize + 4;
                     meta.bitHint = ByteBuffers.getBitHint(meta.avgSize * 2, recordCountHint);
                     meta.indexBitHint = ByteBuffers.getBitHint(8, recordCountHint);
                     break;
-                case BINARY:
+                case ColumnType.BINARY:
                     meta.size = meta.avgSize;
                     meta.bitHint = ByteBuffers.getBitHint(meta.avgSize, recordCountHint);
                     meta.indexBitHint = ByteBuffers.getBitHint(8, recordCountHint);
@@ -256,20 +256,14 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
             if (Modifier.isStatic(f.getModifiers())) {
                 continue;
             }
-            ColumnMetadata meta = new ColumnMetadata();
-            Class type = f.getType();
-            for (ColumnType t : ColumnType.values()) {
-                if (t.matches(type)) {
-                    meta.type = t;
-                    meta.size = t.size();
-                    break;
-                }
-            }
-
-            if (meta.type == null) {
+            int columnType = ColumnType.columnTypeOf((Class) f.getType());
+            if (columnType == -1) {
                 continue;
             }
 
+            ColumnMetadata meta = new ColumnMetadata();
+            meta.type = columnType;
+            meta.size = ColumnType.sizeOf(columnType);
             meta.offset = Unsafe.getUnsafe().objectFieldOffset(f);
             meta.name = f.getName();
             columnMetadata.put(meta.name, meta);

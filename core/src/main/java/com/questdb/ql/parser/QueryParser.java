@@ -275,35 +275,36 @@ public final class QueryParser {
         while (true) {
             String name = notTermTok();
             CharSequence tok = null;
-            switch (ColumnType.valueOf(notTermTok())) {
-                case INT:
+
+            switch (ColumnType.columnTypeOf(notTermTok())) {
+                case ColumnType.INT:
                     tok = parseIntDefinition(struct.$int(name));
                     break;
-                case DOUBLE:
+                case ColumnType.DOUBLE:
                     struct.$double(name);
                     break;
-                case BOOLEAN:
+                case ColumnType.BOOLEAN:
                     struct.$bool(name);
                     break;
-                case FLOAT:
+                case ColumnType.FLOAT:
                     struct.$float(name);
                     break;
-                case LONG:
+                case ColumnType.LONG:
                     struct.$long(name);
                     break;
-                case SHORT:
+                case ColumnType.SHORT:
                     struct.$short(name);
                     break;
-                case STRING:
+                case ColumnType.STRING:
                     struct.$str(name);
                     break;
-                case SYMBOL:
+                case ColumnType.SYMBOL:
                     struct.$sym(name);
                     break;
-                case BINARY:
+                case ColumnType.BINARY:
                     struct.$bin(name);
                     break;
-                case DATE:
+                case ColumnType.DATE:
                     struct.$date(name);
                     break;
                 default:

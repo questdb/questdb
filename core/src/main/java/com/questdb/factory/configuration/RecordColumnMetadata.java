@@ -23,7 +23,6 @@
 
 package com.questdb.factory.configuration;
 
-import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public interface RecordColumnMetadata {
@@ -33,7 +32,7 @@ public interface RecordColumnMetadata {
 
     SymbolTable getSymbolTable();
 
-    ColumnType getType();
+    int getType();
 
     boolean isIndexed();
 }

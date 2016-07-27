@@ -31,7 +31,7 @@ import com.questdb.misc.Dates;
 public class DateIsoProbe implements TypeProbe {
     @Override
     public void getMetadata(ImportedColumnMetadata m) {
-        m.type = ImportedColumnType.DATE_ISO;
+        m.importedColumnType = ImportedColumnType.DATE_ISO;
     }
 
     @Override

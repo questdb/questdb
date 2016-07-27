@@ -30,12 +30,11 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.IntList;
-import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolder {
-    private final ObjList<ColumnType> types;
+    private final IntList types;
     private final IntList offsets;
     private final IntList strCols;
     private final int varOffset;
@@ -46,33 +45,33 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
 
     public VarRecordHolder(RecordMetadata metadata) {
         int cc = metadata.getColumnCount();
-        this.types = new ObjList<>(cc);
+        this.types = new IntList(cc);
         this.offsets = new IntList(cc);
         this.strCols = new IntList(cc);
 
         int offset = 0;
         for (int i = 0; i < cc; i++) {
 
-            ColumnType type = metadata.getColumnQuick(i).getType();
+            int type = metadata.getColumnQuick(i).getType();
             types.add(type);
             offsets.add(offset);
 
             switch (type) {
-                case INT:
-                case FLOAT:
-                case SYMBOL:
+                case ColumnType.INT:
+                case ColumnType.FLOAT:
+                case ColumnType.SYMBOL:
                     offset += 4;
                     break;
-                case LONG:
-                case DOUBLE:
-                case DATE:
+                case ColumnType.LONG:
+                case ColumnType.DOUBLE:
+                case ColumnType.DATE:
                     offset += 8;
                     break;
-                case BOOLEAN:
-                case BYTE:
+                case ColumnType.BOOLEAN:
+                case ColumnType.BYTE:
                     offset++;
                     break;
-                case SHORT:
+                case ColumnType.SHORT:
                     offset += 2;
                     break;
                 default:
@@ -116,32 +115,32 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
         for (int i = 0, n = types.size(); i < n; i++) {
             long address = this.address + offsets.getQuick(i);
             switch (types.getQuick(i)) {
-                case INT:
-                case SYMBOL:
+                case ColumnType.INT:
+                case ColumnType.SYMBOL:
                     // write out int as symbol value
                     // need symbol facade to resolve back to string
                     Unsafe.getUnsafe().putInt(address, record.getInt(i));
                     break;
-                case LONG:
+                case ColumnType.LONG:
                     Unsafe.getUnsafe().putLong(address, record.getLong(i));
                     break;
-                case FLOAT:
+                case ColumnType.FLOAT:
                     Unsafe.getUnsafe().putFloat(address, record.getFloat(i));
                     break;
-                case DOUBLE:
+                case ColumnType.DOUBLE:
                     Unsafe.getUnsafe().putDouble(address, record.getDouble(i));
                     break;
-                case BOOLEAN:
-                case BYTE:
+                case ColumnType.BOOLEAN:
+                case ColumnType.BYTE:
                     Unsafe.getUnsafe().putByte(address, record.get(i));
                     break;
-                case SHORT:
+                case ColumnType.SHORT:
                     Unsafe.getUnsafe().putShort(address, record.getShort(i));
                     break;
-                case DATE:
+                case ColumnType.DATE:
                     Unsafe.getUnsafe().putLong(address, record.getDate(i));
                     break;
-                case STRING:
+                case ColumnType.STRING:
                     Unsafe.getUnsafe().putInt(address, varOffset);
                     varOffset += Chars.put(this.address + varOffset, record.getFlyweightStr(i));
                     break;

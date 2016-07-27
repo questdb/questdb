@@ -168,61 +168,61 @@ public class CsvHandler implements ContextHandler {
     }
 
 
-    private static void putValue(CharSink sink, ColumnType type, Record rec, int col) {
+    private static void putValue(CharSink sink, int type, Record rec, int col) {
         switch (type) {
-            case BOOLEAN:
+            case ColumnType.BOOLEAN:
                 sink.put(rec.getBool(col));
                 break;
-            case BYTE:
+            case ColumnType.BYTE:
                 sink.put(rec.get(col));
                 break;
-            case DOUBLE:
+            case ColumnType.DOUBLE:
                 double d = rec.getDouble(col);
                 if (d == d) {
                     sink.put(d, 10);
                 }
                 break;
-            case FLOAT:
+            case ColumnType.FLOAT:
                 float f = rec.getFloat(col);
                 if (f == f) {
                     sink.put(f, 10);
                 }
                 break;
-            case INT:
+            case ColumnType.INT:
                 final int i = rec.getInt(col);
                 if (i > Integer.MIN_VALUE) {
                     Numbers.append(sink, i);
                 }
                 break;
-            case LONG:
+            case ColumnType.LONG:
                 final long l = rec.getLong(col);
                 if (l > Long.MIN_VALUE) {
                     sink.put(l);
                 }
                 break;
-            case DATE:
+            case ColumnType.DATE:
                 final long dt = rec.getDate(col);
                 if (dt > Long.MIN_VALUE) {
                     sink.put('"').putISODate(dt).put('"');
                 }
                 break;
-            case SHORT:
+            case ColumnType.SHORT:
                 sink.put(rec.getShort(col));
                 break;
-            case STRING:
+            case ColumnType.STRING:
                 CharSequence cs;
                 cs = rec.getFlyweightStr(col);
                 if (cs != null) {
                     sink.put(cs);
                 }
                 break;
-            case SYMBOL:
+            case ColumnType.SYMBOL:
                 cs = rec.getSym(col);
                 if (cs != null) {
                     sink.put(cs);
                 }
                 break;
-            case BINARY:
+            case ColumnType.BINARY:
                 break;
             default:
                 break;

@@ -34,7 +34,10 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
-import com.questdb.std.*;
+import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.IntHashSet;
+import com.questdb.std.IntList;
+import com.questdb.std.LongList;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
@@ -48,9 +51,9 @@ public class LastVarRecordMap implements LastRecordMap {
     private final IntList slaveValueIndexes;
     private final IntList varColumns = new IntList();
     private final FreeList freeList = new FreeList();
-    private final ObjList<ColumnType> slaveKeyTypes;
-    private final ObjList<ColumnType> masterKeyTypes;
-    private final ObjList<ColumnType> slaveValueTypes;
+    private final IntList slaveKeyTypes;
+    private final IntList masterKeyTypes;
+    private final IntList slaveValueTypes;
     private final IntList fixedOffsets;
     private final int varOffset;
     private final RecordMetadata metadata;
@@ -77,8 +80,8 @@ public class LastVarRecordMap implements LastRecordMap {
 
         assert slaveKeyColumns.size() == ksz;
 
-        this.masterKeyTypes = new ObjList<>(ksz);
-        this.slaveKeyTypes = new ObjList<>(ksz);
+        this.masterKeyTypes = new IntList(ksz);
+        this.slaveKeyTypes = new IntList(ksz);
         this.masterKeyIndexes = new IntHashSet(ksz);
         this.slaveKeyIndexes = new IntHashSet(ksz);
 
@@ -96,16 +99,16 @@ public class LastVarRecordMap implements LastRecordMap {
 
         this.fixedOffsets = new IntList();
         this.slaveValueIndexes = new IntList();
-        this.slaveValueTypes = new ObjList<>();
+        this.slaveValueTypes = new IntList();
 
         int varOffset = 0;
         // collect indexes of non-key fields in slave record
         for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
             fixedOffsets.add(varOffset);
             slaveValueIndexes.add(i);
-            ColumnType type = slaveMetadata.getColumnQuick(i).getType();
+            int type = slaveMetadata.getColumnQuick(i).getType();
             slaveValueTypes.add(type);
-            int size = type.size();
+            int size = ColumnType.sizeOf(type);
             if (size == 0) {
                 // variable size col
                 varColumns.add(i);
@@ -274,32 +277,32 @@ public class LastVarRecordMap implements LastRecordMap {
             int idx = slaveValueIndexes.getQuick(i);
             long address = addr + fixedOffsets.getQuick(i);
             switch (slaveValueTypes.getQuick(i)) {
-                case INT:
-                case SYMBOL:
+                case ColumnType.INT:
+                case ColumnType.SYMBOL:
                     // write out int as symbol value
                     // need symbol facade to resolve back to string
                     Unsafe.getUnsafe().putInt(address, record.getInt(idx));
                     break;
-                case LONG:
+                case ColumnType.LONG:
                     Unsafe.getUnsafe().putLong(address, record.getLong(idx));
                     break;
-                case FLOAT:
+                case ColumnType.FLOAT:
                     Unsafe.getUnsafe().putFloat(address, record.getFloat(idx));
                     break;
-                case DOUBLE:
+                case ColumnType.DOUBLE:
                     Unsafe.getUnsafe().putDouble(address, record.getDouble(idx));
                     break;
-                case BOOLEAN:
-                case BYTE:
+                case ColumnType.BOOLEAN:
+                case ColumnType.BYTE:
                     Unsafe.getUnsafe().putByte(address, record.get(idx));
                     break;
-                case SHORT:
+                case ColumnType.SHORT:
                     Unsafe.getUnsafe().putShort(address, record.getShort(idx));
                     break;
-                case DATE:
+                case ColumnType.DATE:
                     Unsafe.getUnsafe().putLong(address, record.getDate(idx));
                     break;
-                case STRING:
+                case ColumnType.STRING:
                     Unsafe.getUnsafe().putInt(address, varOffset);
                     varOffset += Chars.put(addr + varOffset, record.getFlyweightStr(idx));
                     break;

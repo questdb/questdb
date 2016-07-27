@@ -31,6 +31,7 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.store.ColumnType;
 import com.questdb.store.UnstructuredFile;
 
 import java.lang.StringBuilder;
@@ -346,6 +347,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     }
 
     private void col(StringBuilder b, ColumnMetadata m) {
-        pad(b, TO_STRING_COL2_PAD, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + m.type.name() + '(' + m.size + ')');
+        pad(b, TO_STRING_COL2_PAD, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + ColumnType.nameOf(m.type) + '(' + m.size + ')');
     }
 }

@@ -24,10 +24,10 @@
 package com.questdb.ql.impl.aggregation;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
-import com.questdb.store.ColumnType;
 
 public final class AggregationUtils {
     static final ThreadLocal<ObjList<RecordColumnMetadata>> TL_COLUMNS = new ThreadLocal<>(new ObjectFactory<ObjList<RecordColumnMetadata>>() {
@@ -36,18 +36,18 @@ public final class AggregationUtils {
             return new ObjList<>();
         }
     });
-    private static final ThreadLocal<ObjList<ColumnType>> TL_COLUMN_TYPES = new ThreadLocal<>(new ObjectFactory<ObjList<ColumnType>>() {
+    private static final ThreadLocal<IntList> TL_COLUMN_TYPES = new ThreadLocal<>(new ObjectFactory<IntList>() {
         @Override
-        public ObjList<ColumnType> newInstance() {
-            return new ObjList<>();
+        public IntList newInstance() {
+            return new IntList();
         }
     });
 
     private AggregationUtils() {
     }
 
-    public static ObjList<ColumnType> toThreadLocalTypes(ObjList<? extends RecordColumnMetadata> metadata) {
-        ObjList<ColumnType> types = AggregationUtils.TL_COLUMN_TYPES.get();
+    public static IntList toThreadLocalTypes(ObjList<? extends RecordColumnMetadata> metadata) {
+        IntList types = AggregationUtils.TL_COLUMN_TYPES.get();
         types.clear();
         for (int i = 0, n = metadata.size(); i < n; i++) {
             types.add(metadata.getQuick(i).getType());

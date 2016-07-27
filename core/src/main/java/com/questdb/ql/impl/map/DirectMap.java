@@ -50,15 +50,15 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
     private int size = 0;
     private int mask;
 
-    public DirectMap(int pageSize, int keyCount, @Transient ObjList<ColumnType> valueTypes) {
-        this(64, pageSize, 0.5f, keyCount, valueTypes);
+    public DirectMap(int pageSize, int keyCount, @Transient IntList valueColumnTypes) {
+        this(64, pageSize, 0.5f, keyCount, valueColumnTypes);
     }
 
     private DirectMap(int capacity,
                       int pageSize,
                       float loadFactor,
                       int keyCount,
-                      @Transient ObjList<ColumnType> valueColumns) {
+                      @Transient IntList valueColumnTypes) {
         if (pageSize <= 0) {
             throw new IllegalArgumentException("pageSize must be > 0");
         }
@@ -74,32 +74,32 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         this.offsets = new DirectLongList(keyCapacity);
         this.offsets.setPos(keyCapacity);
         this.offsets.zero(-1);
-        int columnSplit = valueColumns.size();
+        int columnSplit = valueColumnTypes.size();
         int[] valueOffsets = new int[columnSplit];
 
         int offset = 4;
         for (int i = 0; i < valueOffsets.length; i++) {
             valueOffsets[i] = offset;
-            switch (valueColumns.getQuick(i)) {
-                case BYTE:
-                case BOOLEAN:
+            switch (valueColumnTypes.getQuick(i)) {
+                case ColumnType.BYTE:
+                case ColumnType.BOOLEAN:
                     offset++;
                     break;
-                case SHORT:
+                case ColumnType.SHORT:
                     offset += 2;
                     break;
-                case INT:
-                case FLOAT:
-                case SYMBOL:
+                case ColumnType.INT:
+                case ColumnType.FLOAT:
+                case ColumnType.SYMBOL:
                     offset += 4;
                     break;
-                case LONG:
-                case DOUBLE:
-                case DATE:
+                case ColumnType.LONG:
+                case ColumnType.DOUBLE:
+                case ColumnType.DATE:
                     offset += 8;
                     break;
                 default:
-                    throw new JournalRuntimeException("value type is not supported: " + valueColumns.get(i));
+                    throw new JournalRuntimeException("value type is not supported: " + valueColumnTypes.get(i));
             }
 
         }

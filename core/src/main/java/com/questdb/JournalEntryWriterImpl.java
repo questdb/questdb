@@ -133,28 +133,28 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     @Override
     public void putNull(int index) {
         switch (meta[index].type) {
-            case STRING:
+            case ColumnType.STRING:
                 putNullStr(index);
                 break;
-            case SYMBOL:
+            case ColumnType.SYMBOL:
                 putSymbol0(index, null);
                 break;
-            case INT:
+            case ColumnType.INT:
                 putInt0(index, Integer.MIN_VALUE);
                 break;
-            case FLOAT:
+            case ColumnType.FLOAT:
                 putFloat(index, Float.NaN);
                 break;
-            case DOUBLE:
+            case ColumnType.DOUBLE:
                 putDouble(index, Double.NaN);
                 break;
-            case LONG:
+            case ColumnType.LONG:
                 putLong(index, Long.MIN_VALUE);
                 break;
-            case BINARY:
+            case ColumnType.BINARY:
                 putBin0(index, null);
                 break;
-            case DATE:
+            case ColumnType.DATE:
                 putDate(index, Long.MIN_VALUE);
                 break;
             default:
@@ -184,8 +184,8 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         skip(index);
     }
 
-    private void assertType(int index, ColumnType t) {
-        if (meta[index].type != t) {
+    private void assertType(int index, int columnType) {
+        if (meta[index].type != columnType) {
             throw new JournalRuntimeException("Expected type: " + meta[index].type);
         }
     }

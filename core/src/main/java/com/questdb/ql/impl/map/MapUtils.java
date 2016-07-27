@@ -28,16 +28,17 @@ import com.questdb.ql.Record;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.LongMetadata;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 
 public class MapUtils {
-    public static final ObjList<ColumnType> ROWID_MAP_VALUES = new ObjList<>(1);
+    public static final IntList ROWID_MAP_VALUES = new IntList(1);
     public static final CollectionRecordMetadata ROWID_RECORD_METADATA = new CollectionRecordMetadata().add(LongMetadata.INSTANCE);
-    private static final ThreadLocal<ObjList<ColumnType>> tlTypeList = new ThreadLocal<ObjList<ColumnType>>() {
+    private static final ThreadLocal<IntList> tlTypeList = new ThreadLocal<IntList>() {
         @Override
-        protected ObjList<ColumnType> initialValue() {
-            return new ObjList<>(1);
+        protected IntList initialValue() {
+            return new IntList(1);
         }
     };
 
@@ -52,39 +53,39 @@ public class MapUtils {
         return map.getOrCreateValues(kw);
     }
 
-    public static void putRecord(DirectMap.KeyWriter w, Record r, int columnIndex, ColumnType columnType) {
+    public static void putRecord(DirectMap.KeyWriter w, Record r, int columnIndex, int columnType) {
         switch (columnType) {
-            case BOOLEAN:
+            case ColumnType.BOOLEAN:
                 w.putBoolean(r.getBool(columnIndex));
                 break;
-            case BYTE:
+            case ColumnType.BYTE:
                 w.putByte(r.get(columnIndex));
                 break;
-            case DOUBLE:
+            case ColumnType.DOUBLE:
                 w.putDouble(r.getDouble(columnIndex));
                 break;
-            case INT:
+            case ColumnType.INT:
                 w.putInt(r.getInt(columnIndex));
                 break;
-            case LONG:
+            case ColumnType.LONG:
                 w.putLong(r.getLong(columnIndex));
                 break;
-            case SHORT:
+            case ColumnType.SHORT:
                 w.putShort(r.getShort(columnIndex));
                 break;
-            case FLOAT:
+            case ColumnType.FLOAT:
                 w.putFloat(r.getFloat(columnIndex));
                 break;
-            case STRING:
+            case ColumnType.STRING:
                 w.putStr(r.getFlyweightStr(columnIndex));
                 break;
-            case SYMBOL:
+            case ColumnType.SYMBOL:
                 w.putInt(r.getInt(columnIndex));
                 break;
-            case BINARY:
+            case ColumnType.BINARY:
                 w.putBin(r.getBin(columnIndex));
                 break;
-            case DATE:
+            case ColumnType.DATE:
                 w.putLong(r.getDate(columnIndex));
                 break;
             default:
@@ -92,16 +93,16 @@ public class MapUtils {
         }
     }
 
-    public static ObjList<ColumnType> toTypeList(ColumnType type1, ColumnType type2) {
-        ObjList<ColumnType> l = tlTypeList.get();
+    public static IntList toTypeList(int type1, int type2) {
+        IntList l = tlTypeList.get();
         l.clear();
         l.add(type1);
         l.add(type2);
         return l;
     }
 
-    public static ObjList<ColumnType> toTypeList(ColumnType type) {
-        ObjList<ColumnType> l = tlTypeList.get();
+    public static IntList toTypeList(int type) {
+        IntList l = tlTypeList.get();
         l.clear();
         l.add(type);
         return l;
@@ -109,37 +110,37 @@ public class MapUtils {
 
     public static void writeVirtualColumn(DirectMap.KeyWriter w, Record r, VirtualColumn vc) {
         switch (vc.getType()) {
-            case BOOLEAN:
+            case ColumnType.BOOLEAN:
                 w.putBoolean(vc.getBool(r));
                 break;
-            case BYTE:
+            case ColumnType.BYTE:
                 w.putByte(vc.get(r));
                 break;
-            case DOUBLE:
+            case ColumnType.DOUBLE:
                 w.putDouble(vc.getDouble(r));
                 break;
-            case INT:
+            case ColumnType.INT:
                 w.putInt(vc.getInt(r));
                 break;
-            case LONG:
+            case ColumnType.LONG:
                 w.putLong(vc.getLong(r));
                 break;
-            case SHORT:
+            case ColumnType.SHORT:
                 w.putShort(vc.getShort(r));
                 break;
-            case FLOAT:
+            case ColumnType.FLOAT:
                 w.putFloat(vc.getFloat(r));
                 break;
-            case STRING:
+            case ColumnType.STRING:
                 w.putStr(vc.getFlyweightStr(r));
                 break;
-            case SYMBOL:
+            case ColumnType.SYMBOL:
                 w.putInt(vc.getInt(r));
                 break;
-            case BINARY:
+            case ColumnType.BINARY:
                 w.putBin(vc.getBin(r));
                 break;
-            case DATE:
+            case ColumnType.DATE:
                 w.putLong(vc.getDate(r));
                 break;
             default:

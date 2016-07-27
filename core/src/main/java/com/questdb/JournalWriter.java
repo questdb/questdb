@@ -860,34 +860,34 @@ public class JournalWriter<T> extends Journal<T> {
                         // partition columns
                         for (int c = 0, cc = m.getColumnCount(); c < cc; c++) {
                             switch (m.getColumnQuick(c).type) {
-                                case DATE:
+                                case ColumnType.DATE:
                                     Dates.appendDateTime(discardSink, partition.getLong(r, c));
                                     break;
-                                case DOUBLE:
+                                case ColumnType.DOUBLE:
                                     Numbers.append(discardSink, partition.getDouble(r, c), 12);
                                     break;
-                                case FLOAT:
+                                case ColumnType.FLOAT:
                                     Numbers.append(discardSink, partition.getFloat(r, c), 4);
                                     break;
-                                case INT:
+                                case ColumnType.INT:
                                     Numbers.append(discardSink, partition.getInt(r, c));
                                     break;
-                                case STRING:
+                                case ColumnType.STRING:
                                     partition.getStr(r, c, discardSink);
                                     break;
-                                case SYMBOL:
+                                case ColumnType.SYMBOL:
                                     discardSink.put(partition.getSym(r, c));
                                     break;
-                                case SHORT:
+                                case ColumnType.SHORT:
                                     Numbers.append(discardSink, partition.getShort(r, c));
                                     break;
-                                case LONG:
+                                case ColumnType.LONG:
                                     Numbers.append(discardSink, partition.getLong(r, c));
                                     break;
-                                case BYTE:
+                                case ColumnType.BYTE:
                                     Numbers.append(discardSink, partition.getByte(r, c));
                                     break;
-                                case BOOLEAN:
+                                case ColumnType.BOOLEAN:
                                     discardSink.put(partition.getBool(r, c) ? "true" : "false");
                                     break;
                                 default:

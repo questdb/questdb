@@ -44,9 +44,9 @@ public class LastFixRecordMap implements LastRecordMap {
     private final IntHashSet slaveKeyIndexes;
     private final IntHashSet masterKeyIndexes;
     private final IntList slaveValueIndexes;
-    private final ObjList<ColumnType> slaveKeyTypes;
-    private final ObjList<ColumnType> masterKeyTypes;
-    private final ObjList<ColumnType> slaveValueTypes;
+    private final IntList slaveKeyTypes;
+    private final IntList masterKeyTypes;
+    private final IntList slaveValueTypes;
     private final IntList fixedOffsets;
     private final int recordLen;
     private final RecordMetadata metadata;
@@ -68,8 +68,8 @@ public class LastFixRecordMap implements LastRecordMap {
         this.mask = this.pageSize - 1;
 
         final int ksz = masterKeyColumns.size();
-        this.masterKeyTypes = new ObjList<>(ksz);
-        this.slaveKeyTypes = new ObjList<>(ksz);
+        this.masterKeyTypes = new IntList(ksz);
+        this.slaveKeyTypes = new IntList(ksz);
         this.masterKeyIndexes = new IntHashSet(ksz);
         this.slaveKeyIndexes = new IntHashSet(ksz);
 
@@ -86,16 +86,16 @@ public class LastFixRecordMap implements LastRecordMap {
 
         this.fixedOffsets = new IntList();
         this.slaveValueIndexes = new IntList();
-        this.slaveValueTypes = new ObjList<>();
+        this.slaveValueTypes = new IntList();
 
         int varOffset = 0;
         // collect indexes of non-key fields in slave record
         for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
             fixedOffsets.add(varOffset);
             slaveValueIndexes.add(i);
-            ColumnType type = slaveMetadata.getColumnQuick(i).getType();
+            int type = slaveMetadata.getColumnQuick(i).getType();
             slaveValueTypes.add(type);
-            varOffset += type.size();
+            varOffset += ColumnType.sizeOf(type);
         }
 
         if (varOffset > dataPageSize) {

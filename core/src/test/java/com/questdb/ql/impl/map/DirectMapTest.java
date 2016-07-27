@@ -28,7 +28,7 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Rnd;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.ObjList;
+import com.questdb.std.IntList;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -40,16 +40,16 @@ import java.util.Map;
 
 public class DirectMapTest {
 
-    private static final ObjList<ColumnType> types = new ObjList<>();
+    private static final IntList COLUMN_TYPES = new IntList();
 
     @BeforeClass
     public static void setUp() throws Exception {
-        types.add(ColumnType.INT);
-        types.add(ColumnType.LONG);
-        types.add(ColumnType.SHORT);
-        types.add(ColumnType.BYTE);
-        types.add(ColumnType.DOUBLE);
-        types.add(ColumnType.FLOAT);
+        COLUMN_TYPES.add(ColumnType.INT);
+        COLUMN_TYPES.add(ColumnType.LONG);
+        COLUMN_TYPES.add(ColumnType.SHORT);
+        COLUMN_TYPES.add(ColumnType.BYTE);
+        COLUMN_TYPES.add(ColumnType.DOUBLE);
+        COLUMN_TYPES.add(ColumnType.FLOAT);
     }
 
     @Test
@@ -68,7 +68,7 @@ public class DirectMapTest {
         final int tmpSize = 140;
         long tmp = Unsafe.malloc(tmpSize);
 
-        DirectMap map = new DirectMap(1024, 64, types);
+        DirectMap map = new DirectMap(1024, 64, COLUMN_TYPES);
         StringSink sink = new StringSink();
 
         HashMap<String, MapValue> hashMap = new HashMap<>();
@@ -206,7 +206,7 @@ public class DirectMapTest {
 
     @Test
     public void testValuesReadWrite() throws Exception {
-        DirectMap map = new DirectMap(1024, 64, types);
+        DirectMap map = new DirectMap(1024, 64, COLUMN_TYPES);
         HashMap<String, MapValue> hashMap = new HashMap<>();
         Rnd rnd = new Rnd();
         int n = 1000;

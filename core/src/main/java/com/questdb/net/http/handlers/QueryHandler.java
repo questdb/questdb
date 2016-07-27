@@ -108,7 +108,7 @@ public class QueryHandler implements ContextHandler {
                             r.put('{').
                                     putQuoted("name").put(':').putQuoted(column.getName()).
                                     put(',').
-                                    putQuoted("type").put(':').putQuoted(column.getType().name());
+                                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(column.getType()));
                             r.put('}');
                         }
                         ctx.state = QueryHandlerContext.QueryState.META_SUFFIX;
@@ -201,21 +201,21 @@ public class QueryHandler implements ContextHandler {
         AbstractQueryContext.setupThread(configuration);
     }
 
-    private static void putValue(CharSink sink, ColumnType type, Record rec, int col) {
+    private static void putValue(CharSink sink, int type, Record rec, int col) {
         switch (type) {
-            case BOOLEAN:
+            case ColumnType.BOOLEAN:
                 sink.put(rec.getBool(col));
                 break;
-            case BYTE:
+            case ColumnType.BYTE:
                 sink.put(rec.get(col));
                 break;
-            case DOUBLE:
+            case ColumnType.DOUBLE:
                 sink.putJson(rec.getDouble(col), 10);
                 break;
-            case FLOAT:
+            case ColumnType.FLOAT:
                 sink.putJson(rec.getFloat(col), 10);
                 break;
-            case INT:
+            case ColumnType.INT:
                 final int i = rec.getInt(col);
                 if (i == Integer.MIN_VALUE) {
                     sink.put("null");
@@ -223,7 +223,7 @@ public class QueryHandler implements ContextHandler {
                     Numbers.append(sink, i);
                 }
                 break;
-            case LONG:
+            case ColumnType.LONG:
                 final long l = rec.getLong(col);
                 if (l == Long.MIN_VALUE) {
                     sink.put("null");
@@ -231,7 +231,7 @@ public class QueryHandler implements ContextHandler {
                     sink.put(l);
                 }
                 break;
-            case DATE:
+            case ColumnType.DATE:
                 final long d = rec.getDate(col);
                 if (d == Long.MIN_VALUE) {
                     sink.put("null");
@@ -239,16 +239,16 @@ public class QueryHandler implements ContextHandler {
                 }
                 sink.put('"').putISODate(d).put('"');
                 break;
-            case SHORT:
+            case ColumnType.SHORT:
                 sink.put(rec.getShort(col));
                 break;
-            case STRING:
+            case ColumnType.STRING:
                 putStringOrNull(sink, rec.getFlyweightStr(col));
                 break;
-            case SYMBOL:
+            case ColumnType.SYMBOL:
                 putStringOrNull(sink, rec.getSym(col));
                 break;
-            case BINARY:
+            case ColumnType.BINARY:
                 sink.put('[');
                 sink.put(']');
                 break;

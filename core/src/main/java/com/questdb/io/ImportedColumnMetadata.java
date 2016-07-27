@@ -34,7 +34,7 @@ public class ImportedColumnMetadata implements Mutable {
         }
     };
 
-    public ImportedColumnType type;
+    public int importedColumnType;
     public CharSequence name;
 
     @Override

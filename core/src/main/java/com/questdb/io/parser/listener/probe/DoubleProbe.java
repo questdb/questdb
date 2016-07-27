@@ -32,7 +32,7 @@ public class DoubleProbe implements TypeProbe {
 
     @Override
     public void getMetadata(ImportedColumnMetadata m) {
-        m.type = ImportedColumnType.DOUBLE;
+        m.importedColumnType = ImportedColumnType.DOUBLE;
     }
 
     @Override

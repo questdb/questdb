@@ -31,7 +31,7 @@ import com.questdb.misc.Numbers;
 public class LongProbe implements TypeProbe {
     @Override
     public void getMetadata(ImportedColumnMetadata m) {
-        m.type = ImportedColumnType.LONG;
+        m.importedColumnType = ImportedColumnType.LONG;
     }
 
     @Override

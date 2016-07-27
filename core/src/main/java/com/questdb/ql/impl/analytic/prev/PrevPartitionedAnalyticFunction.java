@@ -32,6 +32,7 @@ import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
+import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -55,33 +56,33 @@ public class PrevPartitionedAnalyticFunction extends AbstractPrevAnalyticFunctio
         } else {
             nextNull = false;
             switch (valueColumn.getType()) {
-                case BOOLEAN:
+                case ColumnType.BOOLEAN:
                     Unsafe.getUnsafe().putByte(bufPtr, values.get(0));
                     values.putByte(0, (byte) (valueColumn.getBool(record) ? 1 : 0));
                     break;
-                case BYTE:
+                case ColumnType.BYTE:
                     Unsafe.getUnsafe().putByte(bufPtr, values.get(0));
                     values.putByte(0, valueColumn.get(record));
                     break;
-                case DOUBLE:
+                case ColumnType.DOUBLE:
                     Unsafe.getUnsafe().putDouble(bufPtr, values.getDouble(0));
                     values.putDouble(0, valueColumn.getDouble(record));
                     break;
-                case FLOAT:
+                case ColumnType.FLOAT:
                     Unsafe.getUnsafe().putFloat(bufPtr, values.getFloat(0));
                     values.putFloat(0, valueColumn.getFloat(record));
                     break;
-                case SYMBOL:
-                case INT:
+                case ColumnType.SYMBOL:
+                case ColumnType.INT:
                     Unsafe.getUnsafe().putInt(bufPtr, values.getInt(0));
                     values.putInt(0, valueColumn.getInt(record));
                     break;
-                case LONG:
-                case DATE:
+                case ColumnType.LONG:
+                case ColumnType.DATE:
                     Unsafe.getUnsafe().putLong(bufPtr, values.getLong(0));
                     values.putLong(0, valueColumn.getLong(record));
                     break;
-                case SHORT:
+                case ColumnType.SHORT:
                     Unsafe.getUnsafe().putShort(bufPtr, values.getShort(0));
                     values.putShort(0, valueColumn.getShort(record));
                     break;
@@ -108,27 +109,27 @@ public class PrevPartitionedAnalyticFunction extends AbstractPrevAnalyticFunctio
 
     private void store(Record record, DirectMapValues values) {
         switch (valueColumn.getType()) {
-            case BOOLEAN:
+            case ColumnType.BOOLEAN:
                 values.putByte(0, (byte) (valueColumn.getBool(record) ? 1 : 0));
                 break;
-            case BYTE:
+            case ColumnType.BYTE:
                 values.putByte(0, valueColumn.get(record));
                 break;
-            case DOUBLE:
+            case ColumnType.DOUBLE:
                 values.putDouble(0, valueColumn.getDouble(record));
                 break;
-            case FLOAT:
+            case ColumnType.FLOAT:
                 values.putFloat(0, valueColumn.getFloat(record));
                 break;
-            case SYMBOL:
-            case INT:
+            case ColumnType.SYMBOL:
+            case ColumnType.INT:
                 values.putInt(0, valueColumn.getInt(record));
                 break;
-            case LONG:
-            case DATE:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
                 values.putLong(0, valueColumn.getLong(record));
                 break;
-            case SHORT:
+            case ColumnType.SHORT:
                 values.putShort(0, valueColumn.getShort(record));
                 break;
             default:

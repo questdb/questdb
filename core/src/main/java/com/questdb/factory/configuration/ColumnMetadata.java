@@ -23,13 +23,12 @@
 
 package com.questdb.factory.configuration;
 
-import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 import com.questdb.store.UnstructuredFile;
 
 public class ColumnMetadata implements RecordColumnMetadata {
     public String name;
-    public ColumnType type;
+    public int type;
     public long offset;
     public int size;
     public int avgSize = Constants.DEFAULT_STRING_AVG_SIZE;
@@ -77,11 +76,11 @@ public class ColumnMetadata implements RecordColumnMetadata {
     }
 
     @Override
-    public ColumnType getType() {
+    public int getType() {
         return type;
     }
 
-    public ColumnMetadata setType(ColumnType type) {
+    public ColumnMetadata setType(int type) {
         this.type = type;
         return this;
     }
@@ -94,7 +93,7 @@ public class ColumnMetadata implements RecordColumnMetadata {
     @Override
     public int hashCode() {
         int result = name.hashCode();
-        result = 31 * result + type.hashCode();
+        result = 31 * result + type;
         result = 31 * result + size;
         result = 31 * result + avgSize;
         result = 31 * result + (indexed ? 1 : 0);
@@ -144,7 +143,7 @@ public class ColumnMetadata implements RecordColumnMetadata {
 
     public void read(UnstructuredFile buf) {
         name = buf.getStr();
-        type = ColumnType.valueOf(buf.getStr());
+        type = buf.getInt();
         size = buf.getInt();
         avgSize = buf.getInt();
         indexed = buf.getBool();
@@ -157,7 +156,7 @@ public class ColumnMetadata implements RecordColumnMetadata {
 
     public void write(UnstructuredFile buf) {
         buf.put(name);
-        buf.put(type.name());
+        buf.put(type);
         buf.put(size);
         buf.put(avgSize);
         buf.put(indexed);

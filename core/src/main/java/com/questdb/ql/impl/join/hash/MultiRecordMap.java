@@ -30,15 +30,15 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapValues;
+import com.questdb.std.IntList;
 import com.questdb.std.Mutable;
-import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;
 
 public class MultiRecordMap implements Closeable, Mutable {
-    private static final ObjList<ColumnType> valueCols = new ObjList<>(2);
+    private static final IntList valueCols = new IntList(2);
     private final DirectMap map;
     private final RecordList records;
 

@@ -35,6 +35,7 @@ import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.MemoryPages;
 import com.questdb.std.Mutable;
+import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 
@@ -130,47 +131,47 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
 
         for (int i = 0; i < columnCount; i++) {
             switch (metadata.getColumnQuick(i).getType()) {
-                case BOOLEAN:
+                case ColumnType.BOOLEAN:
                     Unsafe.getUnsafe().putByte(writeAddress, (byte) (record.getBool(i) ? 1 : 0));
                     writeAddress += 1;
                     break;
-                case BYTE:
+                case ColumnType.BYTE:
                     Unsafe.getUnsafe().putByte(writeAddress, record.get(i));
                     writeAddress += 1;
                     break;
-                case DOUBLE:
+                case ColumnType.DOUBLE:
                     Unsafe.getUnsafe().putDouble(writeAddress, record.getDouble(i));
                     writeAddress += 8;
                     break;
-                case INT:
+                case ColumnType.INT:
                     Unsafe.getUnsafe().putInt(writeAddress, record.getInt(i));
                     writeAddress += 4;
                     break;
-                case LONG:
+                case ColumnType.LONG:
                     Unsafe.getUnsafe().putLong(writeAddress, record.getLong(i));
                     writeAddress += 8;
                     break;
-                case SHORT:
+                case ColumnType.SHORT:
                     Unsafe.getUnsafe().putShort(writeAddress, record.getShort(i));
                     writeAddress += 2;
                     break;
-                case SYMBOL:
+                case ColumnType.SYMBOL:
                     Unsafe.getUnsafe().putInt(writeAddress, record.getInt(i));
                     writeAddress += 4;
                     break;
-                case DATE:
+                case ColumnType.DATE:
                     Unsafe.getUnsafe().putLong(writeAddress, record.getDate(i));
                     writeAddress += 8;
                     break;
-                case FLOAT:
+                case ColumnType.FLOAT:
                     Unsafe.getUnsafe().putFloat(writeAddress, record.getFloat(i));
                     writeAddress += 4;
                     break;
-                case STRING:
+                case ColumnType.STRING:
                     writeString(headerAddress, record.getFlyweightStr(i));
                     headerAddress += 8;
                     break;
-                case BINARY:
+                case ColumnType.BINARY:
                     writeBin(headerAddress, record.getBin(i));
                     headerAddress += 8;
                     break;

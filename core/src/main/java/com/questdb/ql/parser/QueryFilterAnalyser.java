@@ -38,6 +38,7 @@ import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.IntrinsicModel;
 import com.questdb.ql.model.IntrinsicValue;
 import com.questdb.std.*;
+import com.questdb.store.ColumnType;
 
 import java.util.ArrayDeque;
 
@@ -81,9 +82,9 @@ final class QueryFilterAnalyser {
                 RecordColumnMetadata meta = m.getColumn(a.token);
 
                 switch (meta.getType()) {
-                    case SYMBOL:
-                    case STRING:
-                    case INT:
+                    case ColumnType.SYMBOL:
+                    case ColumnType.STRING:
+                    case ColumnType.INT:
                         if (meta.isIndexed()) {
 
                             // check if we are limited by preferred column

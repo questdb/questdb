@@ -32,6 +32,7 @@ import com.questdb.misc.Rows;
 import com.questdb.query.iterator.ResultSetBufferedIterator;
 import com.questdb.query.iterator.ResultSetIterator;
 import com.questdb.std.LongList;
+import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 import java.util.Iterator;
@@ -167,7 +168,7 @@ public class ResultSet<T> implements Iterable<T> {
             String rightStr;
 
             switch (meta.type) {
-                case STRING:
+                case ColumnType.STRING:
                     leftStr = leftPart.getStr(leftLocalRowID, column);
                     rightStr = rightPart.getStr(rightLocalRowID, column);
 
@@ -183,20 +184,20 @@ public class ResultSet<T> implements Iterable<T> {
                     break;
                 default:
                     switch (meta.type) {
-                        case INT:
+                        case ColumnType.INT:
                             result = compare(rightPart.getInt(rightLocalRowID, column), leftPart.getInt(leftLocalRowID, column));
                             break;
-                        case LONG:
-                        case DATE:
+                        case ColumnType.LONG:
+                        case ColumnType.DATE:
                             result = compare(rightPart.getLong(rightLocalRowID, column), leftPart.getLong(leftLocalRowID, column));
                             break;
-                        case DOUBLE:
+                        case ColumnType.DOUBLE:
                             result = compare(rightPart.getDouble(rightLocalRowID, column), leftPart.getDouble(leftLocalRowID, column));
                             break;
-                        case FLOAT:
+                        case ColumnType.FLOAT:
                             result = compare(rightPart.getFloat(rightLocalRowID, column), leftPart.getFloat(leftLocalRowID, column));
                             break;
-                        case SYMBOL:
+                        case ColumnType.SYMBOL:
                             int leftSymIndex = leftPart.getInt(leftLocalRowID, column);
                             int rightSymIndex = rightPart.getInt(rightLocalRowID, column);
 

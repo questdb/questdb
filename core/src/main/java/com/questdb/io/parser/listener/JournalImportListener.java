@@ -127,38 +127,38 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                     continue;
                 }
                 try {
-                    switch (metadata.getQuick(i).type) {
-                        case STRING:
+                    switch (metadata.getQuick(i).importedColumnType) {
+                        case ImportedColumnType.STRING:
                             w.putStr(i, values.getQuick(i));
                             break;
-                        case DOUBLE:
+                        case ImportedColumnType.DOUBLE:
                             w.putDouble(i, Numbers.parseDouble(values.getQuick(i)));
                             break;
-                        case INT:
+                        case ImportedColumnType.INT:
                             w.putInt(i, Numbers.parseInt(values.getQuick(i)));
                             break;
-                        case FLOAT:
+                        case ImportedColumnType.FLOAT:
                             w.putFloat(i, Numbers.parseFloat(values.getQuick(i)));
                             break;
-                        case DATE_ISO:
+                        case ImportedColumnType.DATE_ISO:
                             w.putDate(i, Dates.parseDateTime(values.getQuick(i)));
                             break;
-                        case DATE_1:
+                        case ImportedColumnType.DATE_1:
                             w.putDate(i, Dates.parseDateTimeFmt1(values.getQuick(i)));
                             break;
-                        case DATE_2:
+                        case ImportedColumnType.DATE_2:
                             w.putDate(i, Dates.parseDateTimeFmt2(values.getQuick(i)));
                             break;
-                        case DATE_3:
+                        case ImportedColumnType.DATE_3:
                             w.putDate(i, Dates.parseDateTimeFmt3(values.getQuick(i)));
                             break;
-                        case SYMBOL:
+                        case ImportedColumnType.SYMBOL:
                             w.putSym(i, values.getQuick(i));
                             break;
-                        case LONG:
+                        case ImportedColumnType.LONG:
                             w.putLong(i, Numbers.parseLong(values.getQuick(i)));
                             break;
-                        case BOOLEAN:
+                        case ImportedColumnType.BOOLEAN:
                             w.putBool(i, Chars.equalsIgnoreCase(values.getQuick(i), "true"));
                             break;
                         default:
@@ -166,7 +166,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                     }
                 } catch (Exception e) {
                     errors.increment(i);
-                    LOG.debug().$("Error at (").$(line).$(',').$(i).$(") as ").$(metadata.getQuick(i).type).$(": ").$(e.getMessage()).$();
+                    LOG.debug().$("Error at (").$(line).$(',').$(i).$(") as ").$(metadata.getQuick(i).importedColumnType).$(": ").$(e.getMessage()).$();
                     append = false;
                     break;
                 }
@@ -222,14 +222,14 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
             ColumnMetadata cm = new ColumnMetadata();
             ImportedColumnMetadata im = metadata.getQuick(i);
             cm.name = im.name.toString();
-            cm.type = im.type.getColumnType();
+            cm.type = ImportedColumnType.columnTypeOf(im.importedColumnType);
 
             switch (cm.type) {
-                case STRING:
+                case ColumnType.STRING:
                     cm.size = cm.avgSize + 4;
                     break;
                 default:
-                    cm.size = cm.type.size();
+                    cm.size = ColumnType.sizeOf(cm.type);
                     break;
             }
             m.add(cm);
@@ -258,46 +258,48 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
         for (int i = 0, n = metadata.size(); i < n; i++) {
             ImportedColumnMetadata im = metadata.getQuick(i);
             ColumnMetadata cm = jm.getColumnQuick(i);
-            im.type = toImportedType(cm.type, im.type);
+            im.importedColumnType = toImportedType(cm.type, im.importedColumnType);
         }
 
         return factory.bulkWriter(jm);
     }
 
-    private ImportedColumnType toImportedType(ColumnType type, ImportedColumnType importedType) {
-        switch (type) {
-            case STRING:
-                return ImportedColumnType.STRING;
-            case BINARY:
+    private int toImportedType(int columnType, int importedColumnType) {
+
+        switch (columnType) {
+            case ColumnType.BINARY:
                 throw ImportBinaryException.INSTANCE;
-            case BOOLEAN:
-                return ImportedColumnType.BOOLEAN;
-            case BYTE:
-                return ImportedColumnType.BYTE;
-            case DATE:
-                switch (importedType) {
-                    case DATE_1:
-                    case DATE_2:
-                    case DATE_3:
-                    case DATE_ISO:
-                        return importedType;
+            case ColumnType.DATE:
+                switch (importedColumnType) {
+                    case ImportedColumnType.DATE_1:
+                    case ImportedColumnType.DATE_2:
+                    case ImportedColumnType.DATE_3:
+                    case ImportedColumnType.DATE_ISO:
+                        return importedColumnType;
                     default:
                         return ImportedColumnType.DATE_ISO;
                 }
-            case DOUBLE:
+            case ColumnType.STRING:
+                return ImportedColumnType.STRING;
+            case ColumnType.BOOLEAN:
+                return ImportedColumnType.BOOLEAN;
+            case ColumnType.BYTE:
+                return ImportedColumnType.BYTE;
+            case ColumnType.DOUBLE:
                 return ImportedColumnType.DOUBLE;
-            case FLOAT:
+            case ColumnType.FLOAT:
                 return ImportedColumnType.FLOAT;
-            case INT:
+            case ColumnType.INT:
                 return ImportedColumnType.INT;
-            case LONG:
+            case ColumnType.LONG:
                 return ImportedColumnType.LONG;
-            case SHORT:
+            case ColumnType.SHORT:
                 return ImportedColumnType.SHORT;
-            case SYMBOL:
+            case ColumnType.SYMBOL:
                 return ImportedColumnType.SYMBOL;
             default:
-                return importedType;
+                return importedColumnType;
+
         }
     }
 }

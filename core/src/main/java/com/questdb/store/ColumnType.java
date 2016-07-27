@@ -23,35 +23,98 @@
 
 package com.questdb.store;
 
+import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.IntIntHashMap;
+import com.questdb.std.IntObjHashMap;
+import com.questdb.std.ObjIntHashMap;
+
 import java.nio.ByteBuffer;
 
-public enum ColumnType {
-    BOOLEAN(boolean.class, 1),
-    BYTE(byte.class, 1),
-    DOUBLE(double.class, 8),
-    FLOAT(float.class, 4),
-    INT(int.class, 4),
-    LONG(long.class, 8),
-    SHORT(short.class, 2),
-    STRING(String.class, 0),
-    SYMBOL(null, 4),
-    BINARY(ByteBuffer.class, 0),
-    DATE(long.class, 8),
-    PARAMETER(null, 0);
+public final class ColumnType {
+    public static final int BOOLEAN = 1;
+    public static final int BYTE = 2;
+    public static final int DOUBLE = 4;
+    public static final int FLOAT = 8;
+    public static final int INT = 16;
+    public static final int LONG = 32;
+    public static final int SHORT = 64;
+    public static final int STRING = 128;
+    public static final int SYMBOL = 256;
+    public static final int BINARY = 512;
+    public static final int DATE = 1024;
+    public static final int PARAMETER = 2048;
+    private static final ObjIntHashMap<Class> classMap = new ObjIntHashMap<>();
+    private static final IntIntHashMap sizeMap = new IntIntHashMap();
+    private static final IntObjHashMap<CharSequence> typeNameMap = new IntObjHashMap<>();
+    private static final CharSequenceIntHashMap nameTypeMap = new CharSequenceIntHashMap();
 
-    private final Class type;
-    private final int size;
-
-    ColumnType(Class type, int size) {
-        this.type = type;
-        this.size = size;
+    private ColumnType() {
     }
 
-    public boolean matches(Class type) {
-        return this.type == type;
+    public static int columnTypeOf(Class clazz) {
+        return classMap.get(clazz);
     }
 
-    public int size() {
-        return size;
+    public static int columnTypeOf(CharSequence name) {
+        return nameTypeMap.get(name);
+    }
+
+    public static CharSequence nameOf(int columnType) {
+        return typeNameMap.get(columnType);
+    }
+
+    public static int sizeOf(int columnType) {
+        return sizeMap.get(columnType);
+    }
+
+    static {
+        classMap.put(boolean.class, BOOLEAN);
+        classMap.put(byte.class, BYTE);
+        classMap.put(double.class, DOUBLE);
+        classMap.put(float.class, FLOAT);
+        classMap.put(int.class, INT);
+        classMap.put(long.class, LONG);
+        classMap.put(short.class, SHORT);
+        classMap.put(String.class, STRING);
+        classMap.put(ByteBuffer.class, BINARY);
+
+        sizeMap.put(BOOLEAN, 1);
+        sizeMap.put(BYTE, 1);
+        sizeMap.put(DOUBLE, 8);
+        sizeMap.put(FLOAT, 4);
+        sizeMap.put(INT, 4);
+        sizeMap.put(LONG, 8);
+        sizeMap.put(SHORT, 2);
+        sizeMap.put(STRING, 0);
+        sizeMap.put(SYMBOL, 4);
+        sizeMap.put(BINARY, 0);
+        sizeMap.put(DATE, 8);
+        sizeMap.put(PARAMETER, 0);
+
+        typeNameMap.put(BOOLEAN, "BOOLEAN");
+        typeNameMap.put(BYTE, "BYTE");
+        typeNameMap.put(DOUBLE, "DOUBLE");
+        typeNameMap.put(FLOAT, "FLOAT");
+        typeNameMap.put(INT, "INT");
+        typeNameMap.put(LONG, "LONG");
+        typeNameMap.put(SHORT, "SHORT");
+        typeNameMap.put(STRING, "STRING");
+        typeNameMap.put(SYMBOL, "SYMBOL");
+        typeNameMap.put(BINARY, "BINARY");
+        typeNameMap.put(DATE, "DATE");
+        typeNameMap.put(PARAMETER, "PARAMETER");
+
+        nameTypeMap.put("BOOLEAN", BOOLEAN);
+        nameTypeMap.put("BYTE", BYTE);
+        nameTypeMap.put("DOUBLE", DOUBLE);
+        nameTypeMap.put("FLOAT", FLOAT);
+        nameTypeMap.put("INT", INT);
+        nameTypeMap.put("LONG", LONG);
+        nameTypeMap.put("SHORT", SHORT);
+        nameTypeMap.put("STRING", STRING);
+        nameTypeMap.put("SYMBOL", SYMBOL);
+        nameTypeMap.put("BINARY", BINARY);
+        nameTypeMap.put("DATE", DATE);
+        nameTypeMap.put("PARAMETER", PARAMETER);
     }
 }

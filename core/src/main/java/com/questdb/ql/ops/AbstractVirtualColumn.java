@@ -26,17 +26,16 @@ package com.questdb.ql.ops;
 import com.questdb.ql.Record;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
-import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 import java.io.OutputStream;
 
 public abstract class AbstractVirtualColumn implements VirtualColumn {
-    private final ColumnType type;
+    private final int columnType;
     private String name;
 
-    protected AbstractVirtualColumn(ColumnType type) {
-        this.type = type;
+    protected AbstractVirtualColumn(int columnType) {
+        this.columnType = columnType;
     }
 
     @Override
@@ -145,8 +144,8 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     }
 
     @Override
-    public ColumnType getType() {
-        return type;
+    public int getType() {
+        return columnType;
     }
 
     @Override

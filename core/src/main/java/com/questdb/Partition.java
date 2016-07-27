@@ -293,35 +293,35 @@ public class Partition<T> implements Closeable {
             }
 
             switch (m.type) {
-                case BOOLEAN:
+                case ColumnType.BOOLEAN:
                     Unsafe.getUnsafe().putBoolean(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getBool(localRowID));
                     break;
-                case BYTE:
+                case ColumnType.BYTE:
                     Unsafe.getUnsafe().putByte(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getByte(localRowID));
                     break;
-                case DOUBLE:
+                case ColumnType.DOUBLE:
                     Unsafe.getUnsafe().putDouble(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getDouble(localRowID));
                     break;
-                case FLOAT:
+                case ColumnType.FLOAT:
                     Unsafe.getUnsafe().putFloat(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getFloat(localRowID));
                     break;
-                case INT:
+                case ColumnType.INT:
                     Unsafe.getUnsafe().putInt(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getInt(localRowID));
                     break;
-                case LONG:
-                case DATE:
+                case ColumnType.LONG:
+                case ColumnType.DATE:
                     Unsafe.getUnsafe().putLong(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getLong(localRowID));
                     break;
-                case SHORT:
+                case ColumnType.SHORT:
                     Unsafe.getUnsafe().putShort(obj, m.offset, ((FixedColumn) Unsafe.arrayGet(columns, i)).getShort(localRowID));
                     break;
-                case STRING:
+                case ColumnType.STRING:
                     Unsafe.getUnsafe().putObject(obj, m.offset, ((VariableColumn) Unsafe.arrayGet(columns, i)).getStr(localRowID));
                     break;
-                case SYMBOL:
+                case ColumnType.SYMBOL:
                     Unsafe.getUnsafe().putObject(obj, m.offset, m.symbolTable.value(((FixedColumn) Unsafe.arrayGet(columns, i)).getInt(localRowID)));
                     break;
-                case BINARY:
+                case ColumnType.BINARY:
                     readBin(localRowID, obj, i, m);
                     break;
                 default:
@@ -421,7 +421,7 @@ public class Partition<T> implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 ColumnMetadata m = Unsafe.arrayGet(columnMetadata, i);
                 switch (m.type) {
-                    case INT:
+                    case ColumnType.INT:
                         int v = Unsafe.getUnsafe().getInt(obj, m.offset);
                         if (m.indexed) {
                             sparseIndexProxies[i].getIndex().add(v & m.distinctCountHint, ((FixedColumn) Unsafe.arrayGet(columns, i)).putInt(v));
@@ -429,7 +429,7 @@ public class Partition<T> implements Closeable {
                             ((FixedColumn) Unsafe.arrayGet(columns, i)).putInt(v);
                         }
                         break;
-                    case STRING:
+                    case ColumnType.STRING:
                         String s = (String) Unsafe.getUnsafe().getObject(obj, m.offset);
                         long offset = ((VariableColumn) Unsafe.arrayGet(columns, i)).putStr(s);
                         if (m.indexed) {
@@ -439,7 +439,7 @@ public class Partition<T> implements Closeable {
                             );
                         }
                         break;
-                    case SYMBOL:
+                    case ColumnType.SYMBOL:
                         int key;
                         String sym = (String) Unsafe.getUnsafe().getObject(obj, m.offset);
                         if (sym == null) {
@@ -453,7 +453,7 @@ public class Partition<T> implements Closeable {
                             ((FixedColumn) Unsafe.arrayGet(columns, i)).putInt(key);
                         }
                         break;
-                    case BINARY:
+                    case ColumnType.BINARY:
                         appendBin(obj, i, m);
                         break;
                     default:
@@ -546,8 +546,8 @@ public class Partition<T> implements Closeable {
         try {
             for (int i = 0; i < columns.length; i++) {
                 switch (Unsafe.arrayGet(columnMetadata, i).type) {
-                    case STRING:
-                    case BINARY:
+                    case ColumnType.STRING:
+                    case ColumnType.BINARY:
                         Unsafe.arrayPut(columns, i,
                                 new VariableColumn(
                                         new MemoryFile(

@@ -24,14 +24,13 @@
 package com.questdb.ql.impl;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public class RecordColumnMetadataImpl implements RecordColumnMetadata {
     private final String name;
-    private final ColumnType type;
+    private final int type;
 
-    public RecordColumnMetadataImpl(String name, ColumnType type) {
+    public RecordColumnMetadataImpl(String name, int type) {
         this.name = name;
         this.type = type;
     }
@@ -52,7 +51,7 @@ public class RecordColumnMetadataImpl implements RecordColumnMetadata {
     }
 
     @Override
-    public ColumnType getType() {
+    public int getType() {
         return type;
     }
 

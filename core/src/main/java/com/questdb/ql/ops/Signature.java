@@ -26,11 +26,9 @@ package com.questdb.ql.ops;
 import com.questdb.misc.Misc;
 import com.questdb.std.IntList;
 import com.questdb.std.Mutable;
-import com.questdb.std.ObjList;
-import com.questdb.store.ColumnType;
 
 public final class Signature implements Mutable {
-    public final ObjList<ColumnType> paramTypes = new ObjList<>(2);
+    public final IntList paramTypes = new IntList(2);
     private final IntList constParams = new IntList(2);
     public CharSequence name;
     public int paramCount;
@@ -52,8 +50,8 @@ public final class Signature implements Mutable {
         return paramCount == that.paramCount && name.equals(that.name) && typesEqual(that);
     }
 
-    public Signature paramType(int pos, ColumnType type, boolean constant) {
-        paramTypes.setQuick(pos, type);
+    public Signature paramType(int pos, int columnType, boolean constant) {
+        paramTypes.setQuick(pos, columnType);
         constParams.setQuick(pos, constant ? 1 : 0);
         return this;
     }
@@ -107,7 +105,7 @@ public final class Signature implements Mutable {
 
     private int typesHashCode(int h) {
         for (int i = 0, k = paramTypes.size(); i < k; i++) {
-            h = h * 32 + paramTypes.getQuick(i).ordinal();
+            h = h * 32 + paramTypes.getQuick(i);
             h = h * 32 + constParams.getQuick(i);
         }
         return h;

@@ -89,31 +89,31 @@ public final class FunctionFactories {
         if (sig.paramCount == 2 && (vc = args.getQuick(1)).isConstant()) {
 
             switch (sig.paramTypes.getQuick(1)) {
-                case DOUBLE:
+                case ColumnType.DOUBLE:
                     double d = vc.getDouble(null);
 
                     if (d != d) {
-                        ColumnType t = sig.paramTypes.getQuick(0);
+                        int columnType = sig.paramTypes.getQuick(0);
                         if (Chars.equals(sig.name, '=')) {
-                            switch (t) {
-                                case DOUBLE:
+                            switch (columnType) {
+                                case ColumnType.DOUBLE:
                                     return DoubleEqualsNanOperator.FACTORY;
-                                case INT:
+                                case ColumnType.INT:
                                     return IntEqualsNaNOperator.FACTORY;
-                                case LONG:
-                                case DATE:
+                                case ColumnType.LONG:
+                                case ColumnType.DATE:
                                     return LongEqualsNaNOperator.FACTORY;
                                 default:
                                     break;
                             }
                         } else if (Chars.equals("!=", sig.name)) {
-                            switch (t) {
-                                case DOUBLE:
+                            switch (columnType) {
+                                case ColumnType.DOUBLE:
                                     return DoubleNotEqualsNanOperator.FACTORY;
-                                case INT:
+                                case ColumnType.INT:
                                     return IntNotEqualsNaNOperator.FACTORY;
-                                case LONG:
-                                case DATE:
+                                case ColumnType.LONG:
+                                case ColumnType.DATE:
                                     return LongNotEqualsNaNOperator.FACTORY;
                                 default:
                                     break;
@@ -121,33 +121,33 @@ public final class FunctionFactories {
                         }
                     }
                     break;
-                case STRING:
+                case ColumnType.STRING:
                     if (vc.getFlyweightStr(null) == null) {
-                        ColumnType t = sig.paramTypes.getQuick(0);
+                        int columnType = sig.paramTypes.getQuick(0);
                         if (Chars.equals(sig.name, '=')) {
-                            switch (t) {
-                                case DOUBLE:
+                            switch (columnType) {
+                                case ColumnType.DOUBLE:
                                     return DoubleEqualsNanOperator.FACTORY;
-                                case STRING:
+                                case ColumnType.STRING:
                                     return StrEqualsNullOperator.FACTORY;
-                                case INT:
+                                case ColumnType.INT:
                                     return IntEqualsNaNOperator.FACTORY;
-                                case LONG:
-                                case DATE:
+                                case ColumnType.LONG:
+                                case ColumnType.DATE:
                                     return LongEqualsNaNOperator.FACTORY;
                                 default:
                                     break;
                             }
                         } else if (Chars.equals(sig.name, "!=")) {
-                            switch (t) {
-                                case DOUBLE:
+                            switch (columnType) {
+                                case ColumnType.DOUBLE:
                                     return DoubleNotEqualsNanOperator.FACTORY;
-                                case STRING:
+                                case ColumnType.STRING:
                                     return StrNotEqualsNullOperator.FACTORY;
-                                case INT:
+                                case ColumnType.INT:
                                     return IntNotEqualsNaNOperator.FACTORY;
-                                case LONG:
-                                case DATE:
+                                case ColumnType.LONG:
+                                case ColumnType.DATE:
                                     return LongNotEqualsNaNOperator.FACTORY;
                                 default:
                                     break;
@@ -167,9 +167,9 @@ public final class FunctionFactories {
             // special cases/intrinsic factories
             if (Chars.equals("in", sig.name)) {
                 switch (sig.paramTypes.getQuick(0)) {
-                    case STRING:
+                    case ColumnType.STRING:
                         return StrInOperator.FACTORY;
-                    case SYMBOL:
+                    case ColumnType.SYMBOL:
                         return SymInOperator.FACTORY;
                     default:
                         break;
@@ -183,14 +183,14 @@ public final class FunctionFactories {
         return aggregateFunctionNames.contains(name);
     }
 
-    private static void binSig(String name, ColumnType lhst, ColumnType rhst, ObjectFactory<Function> f) {
+    private static void binSig(String name, int lhst, int rhst, ObjectFactory<Function> f) {
         factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, false).paramType(1, rhst, false), f);
         factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, true).paramType(1, rhst, false), f);
         factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, false).paramType(1, rhst, true), f);
         factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, true).paramType(1, rhst, true), f);
     }
 
-    private static void unSig(String name, ColumnType type, ObjectFactory<Function> f) {
+    private static void unSig(String name, int type, ObjectFactory<Function> f) {
         factories.put(new Signature().setName(name).setParamCount(1).paramType(0, type, false), f);
         factories.put(new Signature().setName(name).setParamCount(1).paramType(0, type, true), f);
     }
@@ -204,12 +204,12 @@ public final class FunctionFactories {
         aggregateFunctionNames.add(name);
     }
 
-    private static void unSigAgg(String name, ColumnType type, ObjectFactory<Function> f) {
+    private static void unSigAgg(String name, int type, ObjectFactory<Function> f) {
         unSig(name, type, f);
         aggregateFunctionNames.add(name);
     }
 
-    private static void triSig(String name, ColumnType lhst, ColumnType rhst, ColumnType scale, ObjectFactory<Function> f) {
+    private static void triSig(String name, int lhst, int rhst, int scale, ObjectFactory<Function> f) {
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, false), f);
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, true), f);
         factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, true).paramType(2, scale, false), f);

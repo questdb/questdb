@@ -31,16 +31,16 @@ import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
-import com.questdb.std.ObjList;
+import com.questdb.std.IntList;
 import com.questdb.store.ColumnType;
 
 public class LastRowIdRecordMap implements LastRecordMap {
-    private static final ObjList<ColumnType> valueMetadata = new ObjList<>();
+    private static final IntList valueMetadata = new IntList();
     private final DirectMap map;
     private final IntHashSet slaveKeyIndexes;
     private final IntHashSet masterKeyIndexes;
-    private final ObjList<ColumnType> slaveKeyTypes;
-    private final ObjList<ColumnType> masterKeyTypes;
+    private final IntList slaveKeyTypes;
+    private final IntList masterKeyTypes;
     private final RecordMetadata metadata;
     private RecordCursor slaveCursor;
 
@@ -51,8 +51,8 @@ public class LastRowIdRecordMap implements LastRecordMap {
             CharSequenceHashSet slaveKeyColumns,
             int pageSize) {
         final int ksz = masterKeyColumns.size();
-        this.masterKeyTypes = new ObjList<>(ksz);
-        this.slaveKeyTypes = new ObjList<>(ksz);
+        this.masterKeyTypes = new IntList(ksz);
+        this.slaveKeyTypes = new IntList(ksz);
         this.masterKeyIndexes = new IntHashSet(ksz);
         this.slaveKeyIndexes = new IntHashSet(ksz);
 

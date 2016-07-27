@@ -23,31 +23,62 @@
 
 package com.questdb.io;
 
+import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.store.ColumnType;
 
-public enum ImportedColumnType {
+public final class ImportedColumnType {
 
-    BOOLEAN(ColumnType.BOOLEAN),
-    BYTE(ColumnType.BYTE),
-    DOUBLE(ColumnType.DOUBLE),
-    FLOAT(ColumnType.FLOAT),
-    INT(ColumnType.INT),
-    LONG(ColumnType.LONG),
-    SHORT(ColumnType.SHORT),
-    STRING(ColumnType.STRING),
-    SYMBOL(ColumnType.SYMBOL),
-    DATE_ISO(ColumnType.DATE),
-    DATE_1(ColumnType.DATE),
-    DATE_2(ColumnType.DATE),
-    DATE_3(ColumnType.DATE);
+    public static final int BOOLEAN = ColumnType.BOOLEAN;
+    public static final int BYTE = ColumnType.BYTE;
+    public static final int DOUBLE = ColumnType.DOUBLE;
+    public static final int FLOAT = ColumnType.FLOAT;
+    public static final int INT = ColumnType.INT;
+    public static final int LONG = ColumnType.LONG;
+    public static final int SHORT = ColumnType.SHORT;
+    public static final int STRING = ColumnType.STRING;
+    public static final int SYMBOL = ColumnType.SYMBOL;
+    public static final int BINARY = ColumnType.BINARY;
+    // extra dates
+    public static final int DATE_ISO = 2048;
+    public static final int DATE_1 = 2049;
+    public static final int DATE_2 = 2050;
+    public static final int DATE_3 = 2051;
 
-    private final ColumnType columnType;
+    private static final CharSequenceIntHashMap nameTypeMap = new CharSequenceIntHashMap();
 
-    ImportedColumnType(ColumnType columnType) {
-        this.columnType = columnType;
+    private ImportedColumnType() {
     }
 
-    public ColumnType getColumnType() {
-        return columnType;
+    public static int columnTypeOf(int importedType) {
+        switch (importedType) {
+            case DATE_ISO:
+            case DATE_1:
+            case DATE_2:
+            case DATE_3:
+                return ColumnType.DATE;
+            default:
+                return importedType;
+        }
+    }
+
+    public static int importedColumnTypeOf(CharSequence name) {
+        return nameTypeMap.get(name);
+    }
+
+    static {
+        nameTypeMap.put("BOOLEAN", BOOLEAN);
+        nameTypeMap.put("BYTE", BYTE);
+        nameTypeMap.put("DOUBLE", DOUBLE);
+        nameTypeMap.put("FLOAT", FLOAT);
+        nameTypeMap.put("INT", INT);
+        nameTypeMap.put("LONG", LONG);
+        nameTypeMap.put("SHORT", SHORT);
+        nameTypeMap.put("STRING", STRING);
+        nameTypeMap.put("SYMBOL", SYMBOL);
+        nameTypeMap.put("BINARY", BINARY);
+        nameTypeMap.put("DATE_ISO", DATE_ISO);
+        nameTypeMap.put("DATE_1", DATE_1);
+        nameTypeMap.put("DATE_2", DATE_2);
+        nameTypeMap.put("DATE_3", DATE_3);
     }
 }
