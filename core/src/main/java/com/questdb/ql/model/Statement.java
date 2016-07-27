@@ -26,17 +26,20 @@ package com.questdb.ql.model;
 import com.questdb.factory.configuration.JournalStructure;
 
 public class Statement {
-    private final StatementType type;
+    public static final int CREATE_JOURNAL = 1;
+    public static final int QUERY_JOURNAL = 2;
+
+    private final int type;
     private JournalStructure structure;
     private QueryModel queryModel;
 
-    public Statement(StatementType type, JournalStructure structure) {
+    public Statement(int statementType, JournalStructure structure) {
         this.structure = structure;
-        this.type = type;
+        this.type = statementType;
     }
 
-    public Statement(StatementType type, QueryModel queryModel) {
-        this.type = type;
+    public Statement(int statementType, QueryModel queryModel) {
+        this.type = statementType;
         this.queryModel = queryModel;
     }
 
@@ -48,7 +51,7 @@ public class Statement {
         return structure;
     }
 
-    public StatementType getType() {
+    public int getType() {
         return type;
     }
 }

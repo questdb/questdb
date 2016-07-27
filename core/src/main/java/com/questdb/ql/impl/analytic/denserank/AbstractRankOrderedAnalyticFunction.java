@@ -25,7 +25,7 @@ package com.questdb.ql.impl.analytic.denserank;
 
 import com.questdb.misc.Misc;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.analytic.AnalyticFunctionType;
+import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.MapUtils;
 
@@ -52,8 +52,8 @@ public abstract class AbstractRankOrderedAnalyticFunction extends AbstractRankAn
     }
 
     @Override
-    public AnalyticFunctionType getType() {
-        return AnalyticFunctionType.TWO_PASS;
+    public int getType() {
+        return AnalyticFunction.TWO_PASS;
     }
 
     @Override

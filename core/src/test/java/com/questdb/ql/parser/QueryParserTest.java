@@ -25,7 +25,10 @@ package com.questdb.ql.parser;
 
 import com.questdb.ex.ParserException;
 import com.questdb.misc.Chars;
-import com.questdb.ql.model.*;
+import com.questdb.ql.model.AnalyticColumn;
+import com.questdb.ql.model.ExprNode;
+import com.questdb.ql.model.QueryModel;
+import com.questdb.ql.model.Statement;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -58,7 +61,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testAliasedAnalyticColumn() throws Exception {
         Statement statement = parser.parse("select a,b, f(c) my over (partition by b order by ts) from xyz");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         Assert.assertEquals(3, statement.getQueryModel().getColumns().size());
 
         AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
@@ -74,7 +77,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testAnalyticOrderDirection() throws Exception {
         Statement statement = parser.parse("select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         Assert.assertEquals(3, statement.getQueryModel().getColumns().size());
 
         AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
@@ -319,7 +322,7 @@ public class QueryParserTest extends AbstractTest {
                 "join (select x,y from tab4 latest by z where a > b) x4 on x4.x = t1.y " +
                 "where y > 0");
 
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         Assert.assertEquals("t1", statement.getQueryModel().getAlias().token);
         Assert.assertEquals(4, statement.getQueryModel().getJoinModels().size());
         Assert.assertNotNull(statement.getQueryModel().getNestedModel());
@@ -414,7 +417,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testMostRecentWhereClause() throws Exception {
         Statement statement = parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         // journal name
         Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
         // columns
@@ -430,7 +433,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testMultipleExpressions() throws Exception {
         Statement statement = parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
         Assert.assertEquals(2, statement.getQueryModel().getColumns().size());
@@ -441,7 +444,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testOneAnalyticColumn() throws Exception {
         Statement statement = parser.parse("select a,b, f(c) over (partition by b order by ts) from xyz");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         Assert.assertEquals(3, statement.getQueryModel().getColumns().size());
 
         AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
@@ -506,7 +509,7 @@ public class QueryParserTest extends AbstractTest {
     public void testSelectPlainColumns() throws Exception {
         Statement statement = parser.parse("select a,b,c from t");
 
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("t", statement.getQueryModel().getJournalName().token);
         Assert.assertEquals(3, statement.getQueryModel().getColumns().size());
@@ -518,7 +521,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testSelectSingleExpression() throws Exception {
         Statement statement = parser.parse("select a+b*c x from t");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals(1, statement.getQueryModel().getColumns().size());
         Assert.assertEquals("x", statement.getQueryModel().getColumns().get(0).getAlias());
@@ -536,7 +539,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testSingleJournalLimit() throws Exception {
         Statement statement = parser.parse("select x x, y y from tab where x > z limit 100");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         // journal name
         Assert.assertEquals("tab", statement.getQueryModel().getJournalName().token);
         // columns
@@ -552,7 +555,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testSingleJournalLimitLoHi() throws Exception {
         Statement statement = parser.parse("select x x, y y from tab where x > z limit 100,200");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         // journal name
         Assert.assertEquals("tab", statement.getQueryModel().getJournalName().token);
         // columns
@@ -578,7 +581,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testSingleJournalNoWhereLimit() throws Exception {
         Statement statement = parser.parse("select x x, y y from tab limit 100");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         // journal name
         Assert.assertEquals("tab", statement.getQueryModel().getJournalName().token);
         // columns
@@ -607,7 +610,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testSubqueryLimitLoHi() throws Exception {
         Statement statement = parser.parse("(select x x, y y from tab where x > z limit 100,200) where x = y limit 150");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         // journal name
         Assert.assertEquals("tab", statement.getQueryModel().getNestedModel().getJournalName().token);
         // columns
@@ -674,7 +677,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testTwoAnalyticColumns() throws Exception {
         Statement statement = parser.parse("select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         Assert.assertEquals(4, statement.getQueryModel().getColumns().size());
 
         AnalyticColumn col = (AnalyticColumn) statement.getQueryModel().getColumns().get(2);
@@ -736,7 +739,7 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testWhereClause() throws Exception {
         Statement statement = parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10");
-        Assert.assertEquals(StatementType.QUERY_JOURNAL, statement.getType());
+        Assert.assertEquals(Statement.QUERY_JOURNAL, statement.getType());
         // journal name
         Assert.assertEquals("zyzy", statement.getQueryModel().getJournalName().token);
         // columns

@@ -30,6 +30,10 @@ import com.questdb.std.CharSink;
 import com.questdb.store.SymbolTable;
 
 public interface AnalyticFunction {
+    int STREAM = 1;
+    int TWO_PASS = 2;
+    int THREE_PASS = 3;
+
     void add(Record record);
 
     byte get();
@@ -64,7 +68,7 @@ public interface AnalyticFunction {
 
     SymbolTable getSymbolTable();
 
-    AnalyticFunctionType getType();
+    int getType();
 
     void prepare(RecordCursor cursor);
 

@@ -156,7 +156,7 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
                 // step #2: alternatively run record list through two-pass functions
                 for (int j = 0, n = functions.size(); j < n; j++) {
                     AnalyticFunction f = functions.getQuick(j);
-                    if (f.getType() != AnalyticFunctionType.STREAM) {
+                    if (f.getType() != AnalyticFunction.STREAM) {
                         recordList.toTop();
                         while (recordList.hasNext()) {
                             f.add(recordList.next());

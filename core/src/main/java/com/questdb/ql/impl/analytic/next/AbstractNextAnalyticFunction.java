@@ -30,7 +30,6 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.NullRecord;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.ql.impl.analytic.AnalyticFunctionType;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.MemoryPages;
@@ -139,8 +138,8 @@ public abstract class AbstractNextAnalyticFunction implements AnalyticFunction, 
     }
 
     @Override
-    public AnalyticFunctionType getType() {
-        return AnalyticFunctionType.TWO_PASS;
+    public int getType() {
+        return AnalyticFunction.TWO_PASS;
     }
 
     @Override

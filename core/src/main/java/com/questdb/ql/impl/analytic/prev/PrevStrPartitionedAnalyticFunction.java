@@ -31,7 +31,6 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.ql.impl.analytic.AnalyticFunctionType;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapEntry;
 import com.questdb.ql.impl.map.DirectMapValues;
@@ -152,8 +151,8 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
     }
 
     @Override
-    public AnalyticFunctionType getType() {
-        return AnalyticFunctionType.STREAM;
+    public int getType() {
+        return AnalyticFunction.STREAM;
     }
 
     @Override

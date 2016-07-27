@@ -142,8 +142,8 @@ public abstract class AbstractOrderedAnalyticFunction implements AnalyticFunctio
     }
 
     @Override
-    public AnalyticFunctionType getType() {
-        return AnalyticFunctionType.TWO_PASS;
+    public int getType() {
+        return AnalyticFunction.TWO_PASS;
     }
 
     @Override

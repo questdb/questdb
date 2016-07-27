@@ -627,7 +627,7 @@ public class QueryCompiler {
                 if (naturalOrderFunctions == null) {
                     naturalOrderFunctions = new ObjList<>();
                 }
-                needCache = needCache || f.getType() != AnalyticFunctionType.STREAM;
+                needCache = needCache || f.getType() != AnalyticFunction.STREAM;
                 naturalOrderFunctions.add(f);
             }
         }

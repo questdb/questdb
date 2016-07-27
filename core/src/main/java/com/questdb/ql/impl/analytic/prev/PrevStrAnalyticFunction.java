@@ -29,7 +29,6 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.ql.impl.analytic.AnalyticFunctionType;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
@@ -150,8 +149,8 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     }
 
     @Override
-    public AnalyticFunctionType getType() {
-        return AnalyticFunctionType.STREAM;
+    public int getType() {
+        return AnalyticFunction.STREAM;
     }
 
     @Override

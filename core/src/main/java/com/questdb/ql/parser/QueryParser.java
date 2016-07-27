@@ -143,7 +143,7 @@ public final class QueryParser {
             expectTok(tok(), "by");
             structure.partitionBy(PartitionBy.fromString(tok()));
         }
-        return new Statement(StatementType.CREATE_JOURNAL, structure);
+        return new Statement(Statement.CREATE_JOURNAL, structure);
     }
 
     private Statement parseCreateStatement() throws ParserException {
@@ -188,7 +188,7 @@ public final class QueryParser {
         }
 
         lexer.unparse();
-        return new Statement(StatementType.QUERY_JOURNAL, parseQuery(false));
+        return new Statement(Statement.QUERY_JOURNAL, parseQuery(false));
     }
 
     private QueryModel parseJoin(CharSequence tok, int joinType) throws ParserException {
