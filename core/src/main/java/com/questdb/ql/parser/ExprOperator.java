@@ -28,36 +28,41 @@ import com.questdb.std.ObjList;
 
 final class ExprOperator {
 
+    public static final int UNARY = 1;
+    public static final int BINARY = 2;
+    public static final int SET = 3;
     static final ObjList<ExprOperator> operators = new ObjList<ExprOperator>() {{
-        add(new ExprOperator("^", 2, false, OperatorType.BINARY));
-        add(new ExprOperator("*", 3, true, OperatorType.BINARY));
-        add(new ExprOperator("/", 3, true, OperatorType.BINARY));
-        add(new ExprOperator("+", 4, true, OperatorType.BINARY));
-        add(new ExprOperator("-", 4, true, OperatorType.BINARY));
-        add(new ExprOperator("<", 6, true, OperatorType.BINARY));
-        add(new ExprOperator("<=", 6, true, OperatorType.BINARY));
-        add(new ExprOperator(">", 6, true, OperatorType.BINARY));
-        add(new ExprOperator(">=", 6, true, OperatorType.BINARY));
-        add(new ExprOperator("=", 7, true, OperatorType.BINARY));
-        add(new ExprOperator("~", 7, true, OperatorType.BINARY));
-        add(new ExprOperator("!=", 7, true, OperatorType.BINARY));
-        add(new ExprOperator("in", 7, true, OperatorType.SET, false));
-        add(new ExprOperator("and", 11, true, OperatorType.BINARY, false));
-        add(new ExprOperator("or", 11, true, OperatorType.BINARY, false));
+        add(new ExprOperator("^", 2, false, BINARY));
+        add(new ExprOperator("*", 3, true, BINARY));
+        add(new ExprOperator("/", 3, true, BINARY));
+        add(new ExprOperator("+", 4, true, BINARY));
+        add(new ExprOperator("-", 4, true, BINARY));
+        add(new ExprOperator("<", 6, true, BINARY));
+        add(new ExprOperator("<=", 6, true, BINARY));
+        add(new ExprOperator(">", 6, true, BINARY));
+        add(new ExprOperator(">=", 6, true, BINARY));
+        add(new ExprOperator("=", 7, true, BINARY));
+        add(new ExprOperator("~", 7, true, BINARY));
+        add(new ExprOperator("!=", 7, true, BINARY));
+        add(new ExprOperator("in", 7, true, SET, false));
+        add(new ExprOperator("and", 11, true, BINARY, false));
+        add(new ExprOperator("or", 11, true, BINARY, false));
     }};
+
     static final CharSequenceObjHashMap<ExprOperator> opMap = new CharSequenceObjHashMap<ExprOperator>() {{
         for (int i = 0, k = operators.size(); i < k; i++) {
             ExprOperator op = operators.getQuick(i);
             put(op.token, op);
         }
     }};
+
     final String token;
     final int precedence;
     final boolean leftAssociative;
-    final OperatorType type;
+    final int type;
     final boolean symbol;
 
-    private ExprOperator(String token, int precedence, boolean leftAssociative, OperatorType type, boolean symbol) {
+    private ExprOperator(String token, int precedence, boolean leftAssociative, int type, boolean symbol) {
         this.token = token;
         this.precedence = precedence;
         this.leftAssociative = leftAssociative;
@@ -65,15 +70,11 @@ final class ExprOperator {
         this.symbol = symbol;
     }
 
-    private ExprOperator(String token, int precedence, boolean leftAssociative, OperatorType type) {
+    private ExprOperator(String token, int precedence, boolean leftAssociative, int type) {
         this.token = token;
         this.precedence = precedence;
         this.leftAssociative = leftAssociative;
         this.type = type;
         this.symbol = true;
-    }
-
-    enum OperatorType {
-        UNARY, BINARY, SET
     }
 }

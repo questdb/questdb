@@ -41,6 +41,8 @@ import com.questdb.store.ColumnType;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static com.questdb.net.http.handlers.AbstractQueryContext.*;
+
 public class QueryHandler implements ContextHandler {
 
     private final JournalFactoryPool factoryPool;
@@ -83,20 +85,20 @@ public class QueryHandler implements ContextHandler {
         while (true) {
             try {
                 SWITCH:
-                switch (ctx.state) {
-                    case PREFIX:
+                switch (ctx.queryState) {
+                    case QUERY_PREFIX:
                         if (ctx.noMeta) {
                             r.put("{\"result\":[");
-                            ctx.state = QueryHandlerContext.QueryState.RECORD_START;
+                            ctx.queryState = QUERY_RECORD_START;
                             break;
                         }
                         r.bookmark();
                         r.put('{').putQuoted("query").put(':').putUtf8EscapedAndQuoted(ctx.query);
                         r.put(',').putQuoted("columns").put(':').put('[');
-                        ctx.state = QueryHandlerContext.QueryState.METADATA;
+                        ctx.queryState = QUERY_METADATA;
                         ctx.columnIndex = 0;
                         // fall through
-                    case METADATA:
+                    case QUERY_METADATA:
                         for (; ctx.columnIndex < columnCount; ctx.columnIndex++) {
                             RecordColumnMetadata column = ctx.metadata.getColumnQuick(ctx.columnIndex);
 
@@ -111,14 +113,14 @@ public class QueryHandler implements ContextHandler {
                                     putQuoted("type").put(':').putQuoted(ColumnType.nameOf(column.getType()));
                             r.put('}');
                         }
-                        ctx.state = QueryHandlerContext.QueryState.META_SUFFIX;
+                        ctx.queryState = QUERY_META_SUFFIX;
                         // fall through
-                    case META_SUFFIX:
+                    case QUERY_META_SUFFIX:
                         r.bookmark();
                         r.put("],\"result\":[");
-                        ctx.state = QueryHandlerContext.QueryState.RECORD_START;
+                        ctx.queryState = QUERY_RECORD_START;
                         // fall through
-                    case RECORD_START:
+                    case QUERY_RECORD_START:
 
                         if (ctx.record == null) {
                             // check if cursor has any records
@@ -135,14 +137,14 @@ public class QueryHandler implements ContextHandler {
                                         break;
                                     }
                                 } else {
-                                    ctx.state = QueryHandlerContext.QueryState.DATA_SUFFIX;
+                                    ctx.queryState = QUERY_DATA_SUFFIX;
                                     break SWITCH;
                                 }
                             }
                         }
 
                         if (ctx.count > ctx.stop) {
-                            ctx.state = QueryHandlerContext.QueryState.DATA_SUFFIX;
+                            ctx.queryState = QUERY_DATA_SUFFIX;
                             break;
                         }
 
@@ -152,10 +154,10 @@ public class QueryHandler implements ContextHandler {
                         }
                         r.put('[');
 
-                        ctx.state = QueryHandlerContext.QueryState.RECORD_COLUMNS;
+                        ctx.queryState = QUERY_RECORD_COLUMNS;
                         ctx.columnIndex = 0;
                         // fall through
-                    case RECORD_COLUMNS:
+                    case QUERY_RECORD_COLUMNS:
 
                         for (; ctx.columnIndex < columnCount; ctx.columnIndex++) {
                             RecordColumnMetadata m = ctx.metadata.getColumnQuick(ctx.columnIndex);
@@ -166,16 +168,16 @@ public class QueryHandler implements ContextHandler {
                             putValue(r, m.getType(), ctx.record, ctx.columnIndex);
                         }
 
-                        ctx.state = QueryHandlerContext.QueryState.RECORD_SUFFIX;
+                        ctx.queryState = QUERY_RECORD_SUFFIX;
                         // fall through
 
-                    case RECORD_SUFFIX:
+                    case QUERY_RECORD_SUFFIX:
                         r.bookmark();
                         r.put(']');
                         ctx.record = null;
-                        ctx.state = QueryHandlerContext.QueryState.RECORD_START;
+                        ctx.queryState = QUERY_RECORD_START;
                         break;
-                    case DATA_SUFFIX:
+                    case QUERY_DATA_SUFFIX:
                         sendDone(r, ctx);
                         break OUT;
                     default:
@@ -189,7 +191,7 @@ public class QueryHandler implements ContextHandler {
                     // is larger that response content buffer
                     // all we can do in this scenario is to log appropriately
                     // and disconnect socket
-                    ctx.info().$("Response buffer is too small, state=").$(ctx.state).$();
+                    ctx.info().$("Response buffer is too small, state=").$(ctx.queryState).$();
                     throw DisconnectedChannelException.INSTANCE;
                 }
             }

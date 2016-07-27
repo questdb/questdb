@@ -277,7 +277,7 @@ public class QueryCompiler {
                 if (bSize == 1
                         && literalCollector.nullCount == 0
                         // journal must not be OUTER or ASOF joined
-                        && !joinBarriers.contains(parent.getJoinModels().get(literalCollectorBIndexes.getQuick(0)).getJoinType().ordinal())) {
+                        && !joinBarriers.contains(parent.getJoinModels().get(literalCollectorBIndexes.getQuick(0)).getJoinType())) {
                     // single journal reference + constant
                     jc = contextPool.next();
                     jc.slaveIndex = literalCollectorBIndexes.getQuick(0);
@@ -318,7 +318,7 @@ public class QueryCompiler {
                     addJoinContext(parent, jc);
                 } else if (bSize == 0
                         && literalCollector.nullCount == 0
-                        && !joinBarriers.contains(parent.getJoinModels().get(literalCollectorAIndexes.getQuick(0)).getJoinType().ordinal())) {
+                        && !joinBarriers.contains(parent.getJoinModels().get(literalCollectorAIndexes.getQuick(0)).getJoinType())) {
                     // single journal reference + constant
                     jc.slaveIndex = lhi;
                     addWhereClause(parent, lhi, node);
@@ -407,7 +407,7 @@ public class QueryCompiler {
                 } else if (rs == 1
                         && nullCounts.getQuick(k) == 0
                         // single journal reference and this journal is not joined via OUTER or ASOF
-                        && !joinBarriers.contains(parent.getJoinModels().getQuick(refs.getQuick(0)).getJoinType().ordinal())) {
+                        && !joinBarriers.contains(parent.getJoinModels().getQuick(refs.getQuick(0)).getJoinType())) {
                     // get single journal reference out of the way right away
                     // we don't have to wait until "our" journal comes along
                     addWhereClause(parent, refs.getQuick(0), filterNodes.getQuick(k));
@@ -700,11 +700,11 @@ public class QueryCompiler {
             } else {
                 // not the root, join to "master"
                 switch (m.getJoinType()) {
-                    case CROSS:
+                    case QueryModel.JOIN_CROSS:
                         // there are fields to analyse
                         master = new CrossJoinRecordSource(master, slave);
                         break;
-                    case ASOF:
+                    case QueryModel.JOIN_ASOF:
                         master = createAsOfJoin(model.getTimestamp(), m, master, slave);
                         break;
                     default:
@@ -1106,7 +1106,7 @@ public class QueryCompiler {
                 masterColIndices,
                 slave,
                 slaveColIndices,
-                model.getJoinType() == QueryModel.JoinType.OUTER,
+                model.getJoinType() == QueryModel.JOIN_OUTER,
                 configuration.getDbHashKeyPage(),
                 configuration.getDbHashDataPage(),
                 configuration.getDbHashRowPage()
@@ -1127,7 +1127,7 @@ public class QueryCompiler {
         JoinContext jc;
         for (int i = 0, n = models.size(); i < n; i++) {
             QueryModel m = models.getQuick(i);
-            if (m.getJoinType() == QueryModel.JoinType.ASOF) {
+            if (m.getJoinType() == QueryModel.JOIN_ASOF) {
                 linkDependencies(parent, 0, i);
                 if (m.getContext() == null) {
                     m.setContext(jc = contextPool.next());
@@ -1265,12 +1265,12 @@ public class QueryCompiler {
             QueryModel m = joinModels.getQuick(i);
             JoinContext c = m.getContext();
 
-            if (m.getJoinType() == QueryModel.JoinType.CROSS) {
+            if (m.getJoinType() == QueryModel.JOIN_CROSS) {
                 if (c != null && c.parents.size() > 0) {
-                    m.setJoinType(QueryModel.JoinType.INNER);
+                    m.setJoinType(QueryModel.JOIN_INNER);
                 }
-            } else if (m.getJoinType() != QueryModel.JoinType.ASOF && (c == null || c.parents.size() == 0)) {
-                m.setJoinType(QueryModel.JoinType.CROSS);
+            } else if (m.getJoinType() != QueryModel.JOIN_ASOF && (c == null || c.parents.size() == 0)) {
+                m.setJoinType(QueryModel.JOIN_CROSS);
             }
         }
     }
@@ -1820,7 +1820,7 @@ public class QueryCompiler {
 
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             QueryModel q = joinModels.getQuick(i);
-            if (q.getJoinType() == QueryModel.JoinType.CROSS || q.getContext() == null || q.getContext().parents.size() == 0) {
+            if (q.getJoinType() == QueryModel.JOIN_CROSS || q.getContext() == null || q.getContext().parents.size() == 0) {
                 if (q.getDependencies().size() > 0) {
                     orderingStack.push(i);
                 } else {
@@ -1841,7 +1841,7 @@ public class QueryCompiler {
             QueryModel m = joinModels.getQuick(index);
 
             switch (m.getJoinType()) {
-                case CROSS:
+                case QueryModel.JOIN_CROSS:
                     cost += 10;
                     break;
                 default:
@@ -2125,7 +2125,7 @@ public class QueryCompiler {
     private boolean swapJoinOrder(QueryModel parent, int to, int from, final JoinContext context) {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         QueryModel jm = joinModels.getQuick(from);
-        if (joinBarriers.contains(jm.getJoinType().ordinal())) {
+        if (joinBarriers.contains(jm.getJoinType())) {
             return false;
         }
 
@@ -2149,8 +2149,8 @@ public class QueryCompiler {
                 }
                 jc.slaveIndex = to;
                 jm.setContext(moveClauses(parent, that, jc, clausesToSteal));
-                if (target.getJoinType() == QueryModel.JoinType.CROSS) {
-                    target.setJoinType(QueryModel.JoinType.INNER);
+                if (target.getJoinType() == QueryModel.JOIN_CROSS) {
+                    target.setJoinType(QueryModel.JOIN_INNER);
                 }
             }
         }
@@ -2274,8 +2274,8 @@ public class QueryCompiler {
 
     static {
         joinBarriers = new IntHashSet();
-        joinBarriers.add(QueryModel.JoinType.OUTER.ordinal());
-        joinBarriers.add(QueryModel.JoinType.ASOF.ordinal());
+        joinBarriers.add(QueryModel.JOIN_OUTER);
+        joinBarriers.add(QueryModel.JOIN_ASOF);
     }
 
     static {

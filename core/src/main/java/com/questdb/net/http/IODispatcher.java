@@ -30,5 +30,5 @@ import java.io.Closeable;
 interface IODispatcher extends Closeable, Job {
     int getConnectionCount();
 
-    void registerChannel(IOContext context, ChannelStatus status);
+    void registerChannel(IOContext context, int channelStatus);
 }

@@ -36,6 +36,14 @@ import java.util.Deque;
 public class ExprParser {
 
     private static final IntHashSet nonLiteralBranches = new IntHashSet();
+    private static final int BRANCH_NONE = 0;
+    private static final int BRANCH_COMMA = 1;
+    private static final int BRANCH_LEFT_BRACE = 2;
+    private static final int BRANCH_RIGHT_BRACE = 3;
+    private static final int BRANCH_CONSTANT = 4;
+    private static final int BRANCH_OPERATOR = 5;
+    private static final int BRANCH_LITERAL = 6;
+    private static final int BRANCH_LAMBDA = 7;
     private final Lexer lexer;
     private final Deque<ExprNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
@@ -79,8 +87,8 @@ public class ExprParser {
         ExprNode node;
         CharSequence tok;
         char thisChar = 0, prevChar;
-        Branch prevBranch;
-        Branch thisBranch = Branch.NONE;
+        int prevBranch;
+        int thisBranch = BRANCH_NONE;
 
         OUT:
         while ((tok = lexer.optionTok()) != null) {
@@ -90,7 +98,7 @@ public class ExprParser {
 
             switch (thisChar) {
                 case ',':
-                    thisBranch = Branch.COMMA;
+                    thisBranch = BRANCH_COMMA;
                     if (prevChar == ',') {
                         throw QueryError.$(lexer.position(), "Missing argument");
                     }
@@ -118,7 +126,7 @@ public class ExprParser {
                     break;
 
                 case '(':
-                    thisBranch = Branch.LEFT_BRACE;
+                    thisBranch = BRANCH_LEFT_BRACE;
                     braceCount++;
                     // If the token is a left parenthesis, then push it onto the stack.
                     paramCountStack.push(paramCount);
@@ -135,7 +143,7 @@ public class ExprParser {
                         break OUT;
                     }
 
-                    thisBranch = Branch.RIGHT_BRACE;
+                    thisBranch = BRANCH_RIGHT_BRACE;
                     braceCount--;
                     // If the token is a right parenthesis:
                     // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
@@ -158,7 +166,7 @@ public class ExprParser {
                     }
                     break;
                 case '`':
-                    thisBranch = Branch.LAMBDA;
+                    thisBranch = BRANCH_LAMBDA;
                     // If the token is a number, then add it to the output queue.
                     listener.onNode(exprNodePool.next().of(ExprNode.LAMBDA, tok.toString(), 0, lexer.position()));
                     break;
@@ -177,7 +185,7 @@ public class ExprParser {
                 case 'N':
                 case 'n':
                     if ((thisChar != 'N' && thisChar != 'n') || Chars.equals("NaN", tok) || Chars.equals("null", tok)) {
-                        thisBranch = Branch.CONSTANT;
+                        thisBranch = BRANCH_CONSTANT;
                         // If the token is a number, then add it to the output queue.
                         listener.onNode(exprNodePool.next().of(ExprNode.CONSTANT, tok.toString(), 0, lexer.position()));
                         break;
@@ -186,7 +194,7 @@ public class ExprParser {
                     ExprOperator op;
                     if ((op = ExprOperator.opMap.get(tok)) != null) {
 
-                        thisBranch = Branch.OPERATOR;
+                        thisBranch = BRANCH_OPERATOR;
 
                         // If the token is an operator, o1, then:
                         // while there is an operator token, o2, at the top of the operator stack, and either
@@ -195,17 +203,17 @@ public class ExprParser {
                         //        then pop o2 off the operator stack, onto the output queue;
                         // push o1 onto the operator stack.
 
-                        ExprOperator.OperatorType type = op.type;
+                        int operatorType = op.type;
 
 
                         switch (thisChar) {
                             case '-':
                                 switch (prevBranch) {
-                                    case OPERATOR:
-                                    case COMMA:
-                                    case NONE:
+                                    case BRANCH_OPERATOR:
+                                    case BRANCH_COMMA:
+                                    case BRANCH_NONE:
                                         // we have unary minus
-                                        type = ExprOperator.OperatorType.UNARY;
+                                        operatorType = ExprOperator.UNARY;
                                         break;
                                     default:
                                         break;
@@ -221,7 +229,7 @@ public class ExprParser {
                         while ((other = opStack.peek()) != null) {
                             boolean greaterPrecedence = (op.leftAssociative && op.precedence >= other.precedence) || (!op.leftAssociative && op.precedence > other.precedence);
                             if (greaterPrecedence &&
-                                    (type != ExprOperator.OperatorType.UNARY || (type == ExprOperator.OperatorType.UNARY && other.paramCount == 1))) {
+                                    (operatorType != ExprOperator.UNARY || (operatorType == ExprOperator.UNARY && other.paramCount == 1))) {
                                 listener.onNode(other);
                                 opStack.poll();
                             } else {
@@ -229,13 +237,13 @@ public class ExprParser {
                             }
                         }
                         node = exprNodePool.next().of(
-                                op.type == ExprOperator.OperatorType.SET ? ExprNode.SET_OPERATION : ExprNode.OPERATION,
+                                op.type == ExprOperator.SET ? ExprNode.SET_OPERATION : ExprNode.OPERATION,
                                 op.token,
                                 op.precedence,
                                 lexer.position()
                         );
-                        switch (type) {
-                            case UNARY:
+                        switch (operatorType) {
+                            case ExprOperator.UNARY:
                                 node.paramCount = 1;
                                 break;
                             default:
@@ -243,8 +251,8 @@ public class ExprParser {
                                 break;
                         }
                         opStack.push(node);
-                    } else if (!nonLiteralBranches.contains(thisBranch.ordinal())) {
-                        thisBranch = Branch.LITERAL;
+                    } else if (!nonLiteralBranches.contains(thisBranch)) {
+                        thisBranch = BRANCH_LITERAL;
                         // If the token is a function token, then push it onto the stack.
                         opStack.push(exprNodePool.next().of(ExprNode.LITERAL, Chars.toString(tok), Integer.MIN_VALUE, lexer.position()));
                     } else {
@@ -264,14 +272,10 @@ public class ExprParser {
         }
     }
 
-    private enum Branch {
-        NONE, COMMA, LEFT_BRACE, RIGHT_BRACE, CONSTANT, OPERATOR, LITERAL, LAMBDA
-    }
-
     static {
-        nonLiteralBranches.add(Branch.RIGHT_BRACE.ordinal());
-        nonLiteralBranches.add(Branch.CONSTANT.ordinal());
-        nonLiteralBranches.add(Branch.LITERAL.ordinal());
-        nonLiteralBranches.add(Branch.LAMBDA.ordinal());
+        nonLiteralBranches.add(BRANCH_RIGHT_BRACE);
+        nonLiteralBranches.add(BRANCH_CONSTANT);
+        nonLiteralBranches.add(BRANCH_LITERAL);
+        nonLiteralBranches.add(BRANCH_LAMBDA);
     }
 }

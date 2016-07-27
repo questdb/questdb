@@ -32,6 +32,6 @@ public class IOEvent {
             return new IOEvent();
         }
     };
-    public ChannelStatus status;
+    public int channelStatus;
     public IOContext context;
 }

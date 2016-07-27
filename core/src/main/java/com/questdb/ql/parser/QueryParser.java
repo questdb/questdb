@@ -33,7 +33,7 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.ql.model.*;
 import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectPool;
 import com.questdb.store.ColumnType;
@@ -44,7 +44,7 @@ public final class QueryParser {
     private static final CharSequenceHashSet journalAliasStop = new CharSequenceHashSet();
     private static final CharSequenceHashSet columnAliasStop = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
-    private static final CharSequenceObjHashMap<QueryModel.JoinType> joinStartSet = new CharSequenceObjHashMap<>();
+    private static final CharSequenceIntHashMap joinStartSet = new CharSequenceIntHashMap();
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 128);
     private final Lexer lexer = new Lexer();
     private final ExprParser exprParser = new ExprParser(lexer, exprNodePool);
@@ -191,9 +191,9 @@ public final class QueryParser {
         return new Statement(StatementType.QUERY_JOURNAL, parseQuery(false));
     }
 
-    private QueryModel parseJoin(CharSequence tok, QueryModel.JoinType type) throws ParserException {
+    private QueryModel parseJoin(CharSequence tok, int joinType) throws ParserException {
         QueryModel joinModel = queryModelPool.next();
-        joinModel.setJoinType(type);
+        joinModel.setJoinType(joinType);
 
         if (!Chars.equals(tok, "join")) {
             expectTok(tok(), "join");
@@ -220,19 +220,19 @@ public final class QueryParser {
 
         tok = lexer.optionTok();
 
-        if (type == QueryModel.JoinType.CROSS && tok != null && Chars.equals(tok, "on")) {
+        if (joinType == QueryModel.JOIN_CROSS && tok != null && Chars.equals(tok, "on")) {
             throw QueryError.$(lexer.position(), "Cross joins cannot have join clauses");
         }
 
-        switch (type) {
-            case ASOF:
+        switch (joinType) {
+            case QueryModel.JOIN_ASOF:
                 if (tok == null || !Chars.equals("on", tok)) {
                     lexer.unparse();
                     break;
                 }
                 // intentional fall through
-            case INNER:
-            case OUTER:
+            case QueryModel.JOIN_INNER:
+            case QueryModel.JOIN_OUTER:
                 expectTok(tok, "on");
                 astBuilder.reset();
                 exprParser.parseExpr(astBuilder);
@@ -394,9 +394,9 @@ public final class QueryParser {
 
         // expect multiple [[inner | outer | cross] join]
 
-        QueryModel.JoinType type;
-        while (tok != null && (type = joinStartSet.get(tok)) != null) {
-            model.addJoinModel(parseJoin(tok, type));
+        int joinType;
+        while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
+            model.addJoinModel(parseJoin(tok, joinType));
             tok = lexer.optionTok();
         }
 
@@ -644,10 +644,10 @@ public final class QueryParser {
         groupByStopSet.add(")");
         groupByStopSet.add(",");
 
-        joinStartSet.put("join", QueryModel.JoinType.INNER);
-        joinStartSet.put("inner", QueryModel.JoinType.INNER);
-        joinStartSet.put("outer", QueryModel.JoinType.OUTER);
-        joinStartSet.put("cross", QueryModel.JoinType.CROSS);
-        joinStartSet.put("asof", QueryModel.JoinType.ASOF);
+        joinStartSet.put("join", QueryModel.JOIN_INNER);
+        joinStartSet.put("inner", QueryModel.JOIN_INNER);
+        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
+        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
+        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
     }
 }

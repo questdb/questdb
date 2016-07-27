@@ -109,7 +109,7 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias().token);
         Assert.assertEquals(2, statement.getQueryModel().getJoinModels().size());
-        Assert.assertEquals(QueryModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
+        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
         Assert.assertNull(statement.getQueryModel().getJoinModels().getQuick(1).getJoinCriteria());
     }
 
@@ -121,9 +121,9 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias().token);
         Assert.assertEquals(3, statement.getQueryModel().getJoinModels().size());
-        Assert.assertEquals(QueryModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
+        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
         Assert.assertNull(statement.getQueryModel().getJoinModels().getQuick(1).getJoinCriteria());
-        Assert.assertEquals(QueryModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(2).getJoinType());
+        Assert.assertEquals(QueryModel.JOIN_INNER, statement.getQueryModel().getJoinModels().getQuick(2).getJoinType());
         Assert.assertNotNull(statement.getQueryModel().getJoinModels().getQuick(2).getJoinCriteria());
     }
 
@@ -135,9 +135,9 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias().token);
         Assert.assertEquals(3, statement.getQueryModel().getJoinModels().size());
-        Assert.assertEquals(QueryModel.JoinType.CROSS, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
+        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
         Assert.assertNull(statement.getQueryModel().getJoinModels().getQuick(1).getJoinCriteria());
-        Assert.assertEquals(QueryModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(2).getJoinType());
+        Assert.assertEquals(QueryModel.JOIN_INNER, statement.getQueryModel().getJoinModels().getQuick(2).getJoinType());
         Assert.assertNotNull(statement.getQueryModel().getJoinModels().getQuick(2).getJoinCriteria());
     }
 
@@ -198,7 +198,7 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias().token);
         Assert.assertEquals(2, statement.getQueryModel().getJoinModels().size());
-        Assert.assertEquals(QueryModel.JoinType.INNER, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
+        Assert.assertEquals(QueryModel.JOIN_INNER, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
         Assert.assertEquals("b.xa.x=", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(1).getJoinCriteria()));
     }
 
@@ -491,7 +491,7 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertNotNull(statement.getQueryModel());
         Assert.assertEquals("a", statement.getQueryModel().getAlias().token);
         Assert.assertEquals(2, statement.getQueryModel().getJoinModels().size());
-        Assert.assertEquals(QueryModel.JoinType.OUTER, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
+        Assert.assertEquals(QueryModel.JOIN_OUTER, statement.getQueryModel().getJoinModels().getQuick(1).getJoinType());
         Assert.assertEquals("b.xa.x=", TestUtils.toRpn(statement.getQueryModel().getJoinModels().getQuick(1).getJoinCriteria()));
     }
 

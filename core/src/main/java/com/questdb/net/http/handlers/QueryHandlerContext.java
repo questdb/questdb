@@ -40,7 +40,7 @@ public class QueryHandlerContext extends AbstractQueryContext {
     @Override
     public void clear() {
         super.clear();
-        state = QueryState.PREFIX;
+        queryState = QUERY_PREFIX;
         fetchAll = false;
     }
 

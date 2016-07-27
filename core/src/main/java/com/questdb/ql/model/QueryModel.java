@@ -46,6 +46,10 @@ public class QueryModel implements Mutable {
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;
     public static final String NO_ROWID_MARKER = "*!*";
+    public static final int JOIN_INNER = 1;
+    public static final int JOIN_OUTER = 2;
+    public static final int JOIN_CROSS = 3;
+    public static final int JOIN_ASOF = 4;
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
@@ -79,7 +83,7 @@ public class QueryModel implements Mutable {
     private RecordMetadata metadata;
     private JoinContext context;
     private ExprNode joinCriteria;
-    private JoinType joinType;
+    private int joinType;
     private IntList orderedJoinModels = orderedJoinModels2;
     private ExprNode limitLo;
     private ExprNode limitHi;
@@ -149,7 +153,7 @@ public class QueryModel implements Mutable {
         recordSource = null;
         metadata = null;
         joinCriteria = null;
-        joinType = JoinType.INNER;
+        joinType = JOIN_INNER;
         orderedJoinModels1.clear();
         orderedJoinModels2.clear();
         parsedWhereConsts.clear();
@@ -258,11 +262,11 @@ public class QueryModel implements Mutable {
         return joinModels;
     }
 
-    public JoinType getJoinType() {
+    public int getJoinType() {
         return joinType;
     }
 
-    public void setJoinType(JoinType joinType) {
+    public void setJoinType(int joinType) {
         this.joinType = joinType;
     }
 
@@ -510,16 +514,16 @@ public class QueryModel implements Mutable {
                 // join type
                 sink.put('[').put(' ');
                 switch (m.getJoinType()) {
-                    case CROSS:
+                    case JOIN_CROSS:
                         sink.put("cross");
                         break;
-                    case INNER:
+                    case JOIN_INNER:
                         sink.put("inner");
                         break;
-                    case OUTER:
+                    case JOIN_OUTER:
                         sink.put("outer");
                         break;
-                    case ASOF:
+                    case JOIN_ASOF:
                         sink.put("asof");
                         break;
                     default:
@@ -597,10 +601,6 @@ public class QueryModel implements Mutable {
 
         }
         sink.put('\n');
-    }
-
-    public enum JoinType {
-        INNER, OUTER, CROSS, ASOF
     }
 
     private static final class QueryModelFactory implements ObjectFactory<QueryModel> {

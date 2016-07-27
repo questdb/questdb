@@ -106,11 +106,11 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
     }
 
     @Override
-    public void registerChannel(IOContext context, ChannelStatus status) {
+    public void registerChannel(IOContext context, int channelStatus) {
         long cursor = interestPubSequence.nextBully();
         IOEvent evt = interestQueue.get(cursor);
         evt.context = context;
-        evt.status = status;
+        evt.channelStatus = channelStatus;
         LOG.debug().$("Re-queuing ").$(context.channel.getFd()).$();
         interestPubSequence.done(cursor);
     }
@@ -192,25 +192,25 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
             useful = true;
             IOEvent evt = interestQueue.get(cursor);
             IOContext context = evt.context;
-            ChannelStatus op = evt.status;
+            int channelStatus = evt.channelStatus;
             interestSubSequence.done(cursor);
 
             int fd = (int) context.channel.getFd();
-            LOG.debug().$("Registering ").$(fd).$(" status ").$(op).$();
+            LOG.debug().$("Registering ").$(fd).$(" status ").$(channelStatus).$();
             epoll.setOffset(offset);
             offset += Epoll.SIZEOF_EVENT;
             final long id = fdid++;
-            switch (op) {
-                case READ:
+            switch (channelStatus) {
+                case ChannelStatus.READ:
                     epoll.control(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLIN);
                     break;
-                case WRITE:
+                case ChannelStatus.WRITE:
                     epoll.control(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLOUT);
                     break;
-                case DISCONNECTED:
+                case ChannelStatus.DISCONNECTED:
                     disconnect(context, DisconnectReason.SILLY);
                     continue;
-                case EOF:
+                case ChannelStatus.EOF:
                     disconnect(context, DisconnectReason.PEER);
                     continue;
                 default:
@@ -257,7 +257,7 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
                     long cursor = ioSequence.nextBully();
                     IOEvent evt = ioQueue.get(cursor);
                     evt.context = context;
-                    evt.status = (epoll.getEvent() & Epoll.EPOLLIN) > 0 ? ChannelStatus.READ : ChannelStatus.WRITE;
+                    evt.channelStatus = (epoll.getEvent() & Epoll.EPOLLIN) > 0 ? ChannelStatus.READ : ChannelStatus.WRITE;
                     ioSequence.done(cursor);
                     LOG.debug().$("Queuing ").$(id).$(" on ").$(context.channel.getFd()).$();
                     pending.deleteRow(row);

@@ -51,6 +51,13 @@ import java.util.concurrent.atomic.AtomicLong;
 
 
 public abstract class AbstractQueryContext implements Mutable, Closeable {
+    public static final int QUERY_PREFIX = 1;
+    public static final int QUERY_METADATA = 2;
+    public static final int QUERY_META_SUFFIX = 3;
+    public static final int QUERY_RECORD_START = 4;
+    public static final int QUERY_RECORD_COLUMNS = 5;
+    public static final int QUERY_RECORD_SUFFIX = 6;
+    public static final int QUERY_DATA_SUFFIX = 7;
     static final ThreadLocal<QueryCompiler> COMPILER = new ThreadLocal<>();
     static final ThreadLocal<AssociativeCache<RecordSource>> CACHE = new ThreadLocal<>();
     static final Log LOG = LogFactory.getLog(AbstractQueryContext.class);
@@ -65,7 +72,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     long stop;
     Record record;
     JournalReaderFactory factory;
-    QueryState state = QueryState.PREFIX;
+    int queryState = QUERY_PREFIX;
     int columnIndex;
 
     public AbstractQueryContext(long fd, int cyclesBeforeCancel) {
@@ -89,7 +96,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
             recordSource = null;
         }
         query = null;
-        state = QueryState.PREFIX;
+        queryState = QUERY_PREFIX;
         columnIndex = 0;
     }
 
@@ -198,8 +205,4 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     }
 
     protected abstract void sendException(ChunkedResponse r, int position, CharSequence message, int code) throws DisconnectedChannelException, SlowWritableChannelException;
-
-    enum QueryState {
-        PREFIX, METADATA, META_SUFFIX, RECORD_START, RECORD_COLUMNS, RECORD_SUFFIX, DATA_SUFFIX
-    }
 }

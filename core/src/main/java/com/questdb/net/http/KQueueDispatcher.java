@@ -105,11 +105,11 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     }
 
     @Override
-    public void registerChannel(IOContext context, ChannelStatus status) {
+    public void registerChannel(IOContext context, int channelStatus) {
         long cursor = interestPubSequence.nextBully();
         IOEvent evt = interestQueue.get(cursor);
         evt.context = context;
-        evt.status = status;
+        evt.channelStatus = channelStatus;
         LOG.debug().$("Re-queuing ").$(context.channel.getFd()).$();
         interestPubSequence.done(cursor);
     }
@@ -206,25 +206,25 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
             useful = true;
             IOEvent evt = interestQueue.get(cursor);
             IOContext context = evt.context;
-            ChannelStatus op = evt.status;
+            int channelStatus = evt.channelStatus;
             interestSubSequence.done(cursor);
 
             int fd = (int) context.channel.getFd();
-            LOG.debug().$("Registering ").$(fd).$(" status ").$(op).$();
+            LOG.debug().$("Registering ").$(fd).$(" status ").$(channelStatus).$();
             kqueue.setOffset(offset);
             offset += Kqueue.SIZEOF_KEVENT;
             count++;
-            switch (op) {
-                case READ:
+            switch (channelStatus) {
+                case ChannelStatus.READ:
                     kqueue.readFD(fd, timestamp);
                     break;
-                case WRITE:
+                case ChannelStatus.WRITE:
                     kqueue.writeFD(fd, timestamp);
                     break;
-                case DISCONNECTED:
+                case ChannelStatus.DISCONNECTED:
                     disconnect(context, DisconnectReason.SILLY);
                     continue;
-                case EOF:
+                case ChannelStatus.EOF:
                     disconnect(context, DisconnectReason.PEER);
                     continue;
                 default:
@@ -286,7 +286,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
                         long cursor = ioSequence.nextBully();
                         IOEvent evt = ioQueue.get(cursor);
                         evt.context = pending.get(row);
-                        evt.status = kqueue.getFilter() == Kqueue.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
+                        evt.channelStatus = kqueue.getFilter() == Kqueue.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
                         ioSequence.done(cursor);
                         LOG.debug().$("Queuing ").$(kqueue.getFilter()).$(" on ").$(fd).$();
                     }

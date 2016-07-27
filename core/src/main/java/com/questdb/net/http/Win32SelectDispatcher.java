@@ -117,12 +117,12 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
     }
 
     @Override
-    public void registerChannel(IOContext context, ChannelStatus status) {
+    public void registerChannel(IOContext context, int channelStatus) {
         long cursor = interestPubSequence.nextBully();
         IOEvent evt = interestQueue.get(cursor);
         evt.context = context;
-        evt.status = status;
-        LOG.debug().$("Re-queuing ").$(status).$(" on ").$(context.channel.getFd()).$();
+        evt.channelStatus = channelStatus;
+        LOG.debug().$("Re-queuing ").$(channelStatus).$(" on ").$(context.channel.getFd()).$();
         interestPubSequence.done(cursor);
     }
 
@@ -170,7 +170,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         LOG.debug().$(" Matrix row ").$(r).$(" for ").$(_fd).$();
         pending.set(r, M_TIMESTAMP, timestamp);
         pending.set(r, M_FD, _fd);
-        pending.set(r, M_OPERATION, ChannelStatus.READ.ordinal());
+        pending.set(r, M_OPERATION, ChannelStatus.READ);
         NetworkChannelImpl channel = new NetworkChannelImpl(_fd);
         pending.set(r, new IOContext(channel, configuration, clock));
     }
@@ -181,13 +181,13 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         connectionCount--;
     }
 
-    private void enqueue(IOContext context, ChannelStatus status) {
+    private void enqueue(IOContext context, int channelStatus) {
         long cursor = ioSequence.nextBully();
         IOEvent evt = ioQueue.get(cursor);
         evt.context = context;
-        evt.status = status;
+        evt.channelStatus = channelStatus;
         ioSequence.done(cursor);
-        LOG.debug().$("Queuing ").$(status).$(" on ").$(context.channel.getFd()).$();
+        LOG.debug().$("Queuing ").$(channelStatus).$(" on ").$(context.channel.getFd()).$();
 
     }
 
@@ -198,13 +198,13 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
             useful = true;
             IOEvent evt = interestQueue.get(cursor);
             IOContext context = evt.context;
-            ChannelStatus op = evt.status;
+            int channelStatus = evt.channelStatus;
             interestSubSequence.done(cursor);
 
             int r = pending.addRow();
             pending.set(r, M_TIMESTAMP, timestamp);
             pending.set(r, M_FD, context.channel.getFd());
-            pending.set(r, M_OPERATION, op.ordinal());
+            pending.set(r, M_OPERATION, channelStatus);
             pending.set(r, context);
         }
 
@@ -278,25 +278,24 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                 }
 
                 // not fired, simply re-arm
-                ChannelStatus op = ChannelStatus.VALUES[(int) pending.get(i, M_OPERATION)];
-                switch (op) {
-                    case READ:
+                switch ((int) pending.get(i, M_OPERATION)) {
+                    case ChannelStatus.READ:
                         readFdSet.add(fd);
                         readFdCount++;
                         i++;
                         break;
-                    case WRITE:
+                    case ChannelStatus.WRITE:
                         writeFdSet.add(fd);
                         writeFdCount++;
                         i++;
                         break;
-                    case DISCONNECTED:
+                    case ChannelStatus.DISCONNECTED:
                         disconnect(pending.get(i), DisconnectReason.SILLY);
                         pending.deleteRow(i);
                         n--;
                         useful = true;
                         break;
-                    case EOF:
+                    case ChannelStatus.EOF:
                         disconnect(pending.get(i), DisconnectReason.PEER);
                         pending.deleteRow(i);
                         n--;

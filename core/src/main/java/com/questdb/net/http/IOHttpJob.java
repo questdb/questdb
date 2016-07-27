@@ -60,10 +60,9 @@ public class IOHttpJob implements Job {
         IOEvent evt = ioQueue.get(cursor);
 
         final IOContext ioContext = evt.context;
-        final ChannelStatus op = evt.status;
-
+        final int status = evt.channelStatus;
         ioSequence.done(cursor);
-        process(ioContext, op);
+        process(ioContext, status);
 
         return true;
     }
@@ -88,16 +87,16 @@ public class IOHttpJob implements Job {
                 $();
     }
 
-    private void process(IOContext context, final ChannelStatus status) {
+    private void process(IOContext context, final int channelStatus) {
         final Request r = context.request;
         final SimpleResponse sr = context.simpleResponse();
 
-        ChannelStatus result;
+        int newChannelStatus;
 
         try {
 
             boolean log = r.isIncomplete();
-            if (status == ChannelStatus.READ) {
+            if (channelStatus == ChannelStatus.READ) {
                 r.read();
             }
 
@@ -107,12 +106,12 @@ public class IOHttpJob implements Job {
 
                 ContextHandler handler = urlMatcher.get(r.getUrl());
                 if (handler != null) {
-                    switch (status) {
-                        case WRITE:
+                    switch (channelStatus) {
+                        case ChannelStatus.WRITE:
                             context.resume();
                             handler.resume(context);
                             break;
-                        case READ:
+                        case ChannelStatus.READ:
                             if (r.isMultipart()) {
                                 if (handler instanceof MultipartListener) {
                                     r.parseMultipart(context, (MultipartListener) handler);
@@ -129,7 +128,7 @@ public class IOHttpJob implements Job {
                             }
                             break;
                         default:
-                            LOG.error().$("Unexpected status: ").$(status).$();
+                            LOG.error().$("Unexpected status: ").$(channelStatus).$();
                             break;
                     }
                 } else {
@@ -141,29 +140,29 @@ public class IOHttpJob implements Job {
                 }
             }
             context.clear();
-            result = ChannelStatus.READ;
+            newChannelStatus = ChannelStatus.READ;
         } catch (HeadersTooLargeException ignored) {
             silent(context, 431, null);
             LOG.info().$("Headers too large").$();
             logAccess(context);
-            result = ChannelStatus.READ;
+            newChannelStatus = ChannelStatus.READ;
         } catch (MalformedHeaderException | DisconnectedChannelException | DisconnectedChannelRuntimeException e) {
-            result = ChannelStatus.DISCONNECTED;
+            newChannelStatus = ChannelStatus.DISCONNECTED;
         } catch (EndOfChannelException e) {
-            result = ChannelStatus.EOF;
+            newChannelStatus = ChannelStatus.EOF;
         } catch (SlowReadableChannelException e) {
             LOG.debug().$("Slow read").$();
-            result = ChannelStatus.READ;
+            newChannelStatus = ChannelStatus.READ;
         } catch (SlowWritableChannelException e) {
             LOG.debug().$("Slow write").$();
-            result = ChannelStatus.WRITE;
+            newChannelStatus = ChannelStatus.WRITE;
         } catch (Throwable e) {
             silent(context, 500, e.getMessage());
-            result = ChannelStatus.DISCONNECTED;
+            newChannelStatus = ChannelStatus.DISCONNECTED;
             LOG.error().$("Internal error: ").$(e).$();
             logAccess(context);
         }
-        ioDispatcher.registerChannel(context, result);
+        ioDispatcher.registerChannel(context, newChannelStatus);
     }
 
     private void silent(IOContext context, int code, CharSequence msg) {

@@ -44,6 +44,8 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static com.questdb.net.http.handlers.AbstractQueryContext.*;
+
 public class CsvHandler implements ContextHandler {
     private final JournalFactoryPool factoryPool;
     private final LocalValue<ExportHandlerContext> localContext = new LocalValue<>();
@@ -85,8 +87,8 @@ public class CsvHandler implements ContextHandler {
         while (true) {
             try {
                 SWITCH:
-                switch (ctx.state) {
-                    case METADATA:
+                switch (ctx.queryState) {
+                    case QUERY_METADATA:
                         for (; ctx.columnIndex < columnCount; ctx.columnIndex++) {
                             RecordColumnMetadata column = ctx.metadata.getColumnQuick(ctx.columnIndex);
 
@@ -97,9 +99,9 @@ public class CsvHandler implements ContextHandler {
                             r.putQuoted(column.getName());
                         }
                         r.put(Misc.EOL);
-                        ctx.state = AbstractQueryContext.QueryState.RECORD_START;
+                        ctx.queryState = QUERY_RECORD_START;
                         // fall through
-                    case RECORD_START:
+                    case QUERY_RECORD_START:
                         if (ctx.record == null) {
                             // check if cursor has any records
                             while (true) {
@@ -111,21 +113,21 @@ public class CsvHandler implements ContextHandler {
                                         break;
                                     }
                                 } else {
-                                    ctx.state = AbstractQueryContext.QueryState.DATA_SUFFIX;
+                                    ctx.queryState = QUERY_DATA_SUFFIX;
                                     break SWITCH;
                                 }
                             }
                         }
 
                         if (ctx.count > ctx.stop) {
-                            ctx.state = AbstractQueryContext.QueryState.DATA_SUFFIX;
+                            ctx.queryState = QUERY_DATA_SUFFIX;
                             break;
                         }
 
-                        ctx.state = AbstractQueryContext.QueryState.RECORD_COLUMNS;
+                        ctx.queryState = QUERY_RECORD_COLUMNS;
                         ctx.columnIndex = 0;
                         // fall through
-                    case RECORD_COLUMNS:
+                    case QUERY_RECORD_COLUMNS:
 
                         for (; ctx.columnIndex < columnCount; ctx.columnIndex++) {
                             RecordColumnMetadata m = ctx.metadata.getColumnQuick(ctx.columnIndex);
@@ -139,9 +141,9 @@ public class CsvHandler implements ContextHandler {
                         r.bookmark();
                         r.put(Misc.EOL);
                         ctx.record = null;
-                        ctx.state = AbstractQueryContext.QueryState.RECORD_START;
+                        ctx.queryState = QUERY_RECORD_START;
                         break;
-                    case DATA_SUFFIX:
+                    case QUERY_DATA_SUFFIX:
                         sendDone(r, ctx);
                         break OUT;
                     default:
@@ -155,7 +157,7 @@ public class CsvHandler implements ContextHandler {
                     // is larger that response content buffer
                     // all we can do in this scenario is to log appropriately
                     // and disconnect socket
-                    ctx.info().$("Response buffer is too small, state=").$(ctx.state).$();
+                    ctx.info().$("Response buffer is too small, state=").$(ctx.queryState).$();
                     throw DisconnectedChannelException.INSTANCE;
                 }
             }
@@ -240,13 +242,13 @@ public class CsvHandler implements ContextHandler {
     private static class ExportHandlerContext extends AbstractQueryContext implements Mutable, Closeable {
         public ExportHandlerContext(long fd, int cyclesBeforeCancel) {
             super(fd, cyclesBeforeCancel);
-            state = QueryState.METADATA;
+            queryState = QUERY_METADATA;
         }
 
         @Override
         public void clear() {
             super.clear();
-            state = QueryState.METADATA;
+            queryState = QUERY_METADATA;
         }
 
         @Override
@@ -257,7 +259,7 @@ public class CsvHandler implements ContextHandler {
 
         @Override
         protected void header(ChunkedResponse r, int code) throws DisconnectedChannelException, SlowWritableChannelException {
-            state = QueryState.METADATA;
+            queryState = QUERY_METADATA;
             r.status(code, "text/csv; charset=utf-8");
             r.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(System.currentTimeMillis()).put(".csv\"").put(Misc.EOL);
             r.sendHeader();

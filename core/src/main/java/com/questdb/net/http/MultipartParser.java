@@ -37,16 +37,27 @@ import java.io.IOException;
 
 public class MultipartParser implements Closeable, Mutable {
 
+    private static final int START_PARSING = 1;
+    private static final int START_BOUNDARY = 2;
+    private static final int PARTIAL_START_BOUNDARY = 3;
+    private static final int HEADERS = 4;
+    private static final int PARTIAL_HEADERS = 5;
+    private static final int BODY = 6;
+    private static final int BODY_CONTINUED = 7;
+    private static final int BODY_BROKEN = 8;
+    private static final int POTENTIAL_BOUNDARY = 9;
+    private static final int PRE_HEADERS = 10;
+    private static final int BOUNDARY_MATCH = 1;
+    private static final int BOUNDARY_NO_MATCH = 2;
+    private static final int BOUNDARY_INCOMPLETE = 3;
     private final Log LOG = LogFactory.getLog(MultipartParser.class);
-
     private final RequestHeaderBuffer hb;
     private final DirectByteCharSequence bytes = new DirectByteCharSequence();
     private DirectByteCharSequence boundary;
     private int boundaryLen;
     private int boundaryPtr;
     private int consumedBoundaryLen;
-    private State state;
-
+    private int state;
     public MultipartParser(int headerBufSize, ObjectPool<DirectByteCharSequence> pool) {
         this.hb = new RequestHeaderBuffer(headerBufSize, pool);
         clear();
@@ -54,7 +65,7 @@ public class MultipartParser implements Closeable, Mutable {
 
     @Override
     public final void clear() {
-        this.state = State.START_PARSING;
+        this.state = START_PARSING;
         this.boundaryPtr = 0;
         this.consumedBoundaryLen = 0;
         hb.clear();
@@ -80,22 +91,22 @@ public class MultipartParser implements Closeable, Mutable {
             switch (state) {
                 case BODY_BROKEN:
                     _lo = ptr;
-                    state = State.BODY_CONTINUED;
+                    state = BODY_CONTINUED;
                     break;
                 case START_PARSING:
                     listener.setup(context);
-                    state = State.START_BOUNDARY;
+                    state = START_BOUNDARY;
                     // fall thru
                 case START_BOUNDARY:
                     boundaryPtr = 2;
                     // fall thru
                 case PARTIAL_START_BOUNDARY:
                     switch (matchBoundary(ptr, hi)) {
-                        case INCOMPLETE:
-                            state = State.PARTIAL_START_BOUNDARY;
+                        case BOUNDARY_INCOMPLETE:
+                            state = PARTIAL_START_BOUNDARY;
                             return false;
-                        case MATCH:
-                            state = State.PRE_HEADERS;
+                        case BOUNDARY_MATCH:
+                            state = PRE_HEADERS;
                             ptr += consumedBoundaryLen;
                             break;
                         default:
@@ -106,7 +117,7 @@ public class MultipartParser implements Closeable, Mutable {
                 case PRE_HEADERS:
                     switch (Unsafe.getUnsafe().getByte(ptr)) {
                         case '\n':
-                            state = State.HEADERS;
+                            state = HEADERS;
                             // fall thru
                         case '\r':
                             ptr++;
@@ -115,7 +126,7 @@ public class MultipartParser implements Closeable, Mutable {
                             return true;
                         default:
                             _lo = ptr;
-                            state = State.BODY_CONTINUED;
+                            state = BODY_CONTINUED;
                             break;
                     }
                     break;
@@ -125,11 +136,11 @@ public class MultipartParser implements Closeable, Mutable {
                 case PARTIAL_HEADERS:
                     ptr = hb.write(ptr, (int) (hi - ptr), false);
                     if (hb.isIncomplete()) {
-                        state = State.PARTIAL_HEADERS;
+                        state = PARTIAL_HEADERS;
                         return false;
                     }
                     _lo = ptr;
-                    state = State.BODY;
+                    state = BODY;
                     break;
                 case BODY_CONTINUED:
                 case BODY:
@@ -137,13 +148,13 @@ public class MultipartParser implements Closeable, Mutable {
                     if (b == boundary.charAt(0)) {
                         boundaryPtr = 1;
                         switch (matchBoundary(ptr, hi)) {
-                            case INCOMPLETE:
-                                listener.onChunk(context, hb, bytes.of(_lo, ptr - 1), state == State.BODY_CONTINUED);
-                                state = State.POTENTIAL_BOUNDARY;
+                            case BOUNDARY_INCOMPLETE:
+                                listener.onChunk(context, hb, bytes.of(_lo, ptr - 1), state == BODY_CONTINUED);
+                                state = POTENTIAL_BOUNDARY;
                                 return false;
-                            case MATCH:
-                                listener.onChunk(context, hb, bytes.of(_lo, ptr - 1), state == State.BODY_CONTINUED);
-                                state = State.PRE_HEADERS;
+                            case BOUNDARY_MATCH:
+                                listener.onChunk(context, hb, bytes.of(_lo, ptr - 1), state == BODY_CONTINUED);
+                                state = PRE_HEADERS;
                                 ptr += consumedBoundaryLen;
                                 break;
                             default:
@@ -154,15 +165,15 @@ public class MultipartParser implements Closeable, Mutable {
                 case POTENTIAL_BOUNDARY:
                     int p = boundaryPtr;
                     switch (matchBoundary(ptr, hi)) {
-                        case INCOMPLETE:
+                        case BOUNDARY_INCOMPLETE:
                             return false;
-                        case MATCH:
+                        case BOUNDARY_MATCH:
                             ptr += consumedBoundaryLen;
-                            state = State.PRE_HEADERS;
+                            state = PRE_HEADERS;
                             break;
-                        case NO_MATCH:
+                        case BOUNDARY_NO_MATCH:
                             listener.onChunk(context, hb, bytes.of(boundary.getLo(), boundary.getLo() + p), true);
-                            state = State.BODY_BROKEN;
+                            state = BODY_BROKEN;
                             break;
                         default:
                             break;
@@ -173,48 +184,31 @@ public class MultipartParser implements Closeable, Mutable {
             }
         }
 
-        if (state == State.BODY || state == State.BODY_CONTINUED) {
-            listener.onChunk(context, hb, bytes.of(_lo, ptr), state == State.BODY_CONTINUED);
-            state = State.BODY_BROKEN;
+        if (state == BODY || state == BODY_CONTINUED) {
+            listener.onChunk(context, hb, bytes.of(_lo, ptr), state == BODY_CONTINUED);
+            state = BODY_BROKEN;
         }
 
         return false;
     }
 
-    private BoundaryStatus matchBoundary(long lo, long hi) {
+    private int matchBoundary(long lo, long hi) {
         long start = lo;
         int ptr = boundaryPtr;
 
         while (lo < hi && ptr < boundaryLen) {
             if (Unsafe.getUnsafe().getByte(lo++) != boundary.byteAt(ptr++)) {
-                return BoundaryStatus.NO_MATCH;
+                return BOUNDARY_NO_MATCH;
             }
         }
 
         this.boundaryPtr = ptr;
 
         if (boundaryPtr < boundaryLen) {
-            return BoundaryStatus.INCOMPLETE;
+            return BOUNDARY_INCOMPLETE;
         }
 
         this.consumedBoundaryLen = (int) (lo - start);
-        return BoundaryStatus.MATCH;
-    }
-
-    private enum State {
-        START_PARSING,
-        START_BOUNDARY,
-        PARTIAL_START_BOUNDARY,
-        HEADERS,
-        PARTIAL_HEADERS,
-        BODY,
-        BODY_CONTINUED,
-        BODY_BROKEN,
-        POTENTIAL_BOUNDARY,
-        PRE_HEADERS
-    }
-
-    private enum BoundaryStatus {
-        MATCH, NO_MATCH, INCOMPLETE
+        return BOUNDARY_MATCH;
     }
 }
