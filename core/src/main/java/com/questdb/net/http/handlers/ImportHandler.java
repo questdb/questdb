@@ -51,6 +51,12 @@ import java.io.IOException;
 import java.lang.ThreadLocal;
 
 public class ImportHandler extends AbstractMultipartHandler {
+    private static final int RESPONSE_PREFIX = 1;
+    private static final int RESPONSE_COLUMN = 2;
+    private static final int RESPONSE_SUFFIX = 3;
+    private static final int MESSAGE_SCHEMA = 1;
+    private static final int MESSAGE_DATA = 2;
+    private static final int MESSAGE_UNKNOWN = 3;
     private static final int TO_STRING_COL1_PAD = 15;
     private static final int TO_STRING_COL2_PAD = 50;
     private static final int TO_STRING_COL3_PAD = 10;
@@ -104,8 +110,8 @@ public class ImportHandler extends AbstractMultipartHandler {
             return;
         }
 
-        switch (h.part) {
-            case DATA:
+        switch (h.messagePart) {
+            case MESSAGE_DATA:
                 long lo = ((DirectByteCharSequence) data).getLo();
                 if (!h.analysed) {
                     analyseFormat(h, lo, len);
@@ -125,7 +131,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                     sendError(context, "Unsupported data format");
                 }
                 break;
-            case SCHEMA:
+            case MESSAGE_SCHEMA:
                 h.textParser.putSchema((DirectByteCharSequence) data);
                 break;
             default:
@@ -146,11 +152,11 @@ public class ImportHandler extends AbstractMultipartHandler {
             h.analysed = false;
             h.importer.of(FileNameExtractorCharSequence.get(hb.getContentDispositionFilename()).toString(),
                     Chars.equalsNc("true", context.request.getUrlParam("o")));
-            h.part = MessagePart.DATA;
+            h.messagePart = MESSAGE_DATA;
         } else if (Chars.equals("schema", hb.getContentDispositionName())) {
-            h.part = MessagePart.SCHEMA;
+            h.messagePart = MESSAGE_SCHEMA;
         } else {
-            h.part = MessagePart.UNKNOWN;
+            h.messagePart = MESSAGE_UNKNOWN;
         }
     }
 
@@ -158,8 +164,8 @@ public class ImportHandler extends AbstractMultipartHandler {
     protected void onPartEnd(IOContext context) throws IOException {
         ImportHandlerContext h = lvContext.get(context);
         if (h != null) {
-            switch (h.part) {
-                case DATA:
+            switch (h.messagePart) {
+                case MESSAGE_DATA:
                     h.textParser.parseLast();
                     h.importer.commit();
                     sendResponse(context);
@@ -189,7 +195,7 @@ public class ImportHandler extends AbstractMultipartHandler {
         final LongList errors = ctx.importer.getErrors();
 
         switch (ctx.responseState) {
-            case PREFIX:
+            case RESPONSE_PREFIX:
                 long totalRows = ctx.textParser.getLineCount();
                 long importedRows = ctx.importer.getImportedRowCount();
                 r.put('{')
@@ -198,9 +204,9 @@ public class ImportHandler extends AbstractMultipartHandler {
                         .putQuoted("rowsRejected").put(':').put(totalRows - importedRows).put(',')
                         .putQuoted("rowsImported").put(':').put(importedRows).put(',')
                         .putQuoted("columns").put(':').put('[');
-                ctx.responseState = ResponseState.COLUMN;
+                ctx.responseState = RESPONSE_COLUMN;
                 // fall through
-            case COLUMN:
+            case RESPONSE_COLUMN:
                 for (; ctx.columnIndex < columnCount; ctx.columnIndex++) {
                     RecordColumnMetadata cm = m.getColumnQuick(ctx.columnIndex);
                     r.bookmark();
@@ -213,9 +219,9 @@ public class ImportHandler extends AbstractMultipartHandler {
                             putQuoted("size").put(':').put(ColumnType.sizeOf(cm.getType())).put(',').
                             putQuoted("errors").put(':').put(errors.getQuick(ctx.columnIndex)).put('}');
                 }
-                ctx.responseState = ResponseState.SUFFIX;
+                ctx.responseState = RESPONSE_SUFFIX;
                 // fall through
-            case SUFFIX:
+            case RESPONSE_SUFFIX:
                 r.bookmark();
                 r.put(']').put('}');
                 r.sendChunk();
@@ -288,7 +294,7 @@ public class ImportHandler extends AbstractMultipartHandler {
         final int columnCount = m.getColumnCount();
 
         switch (h.responseState) {
-            case PREFIX:
+            case RESPONSE_PREFIX:
                 sep(r);
                 r.put('|');
                 pad(r, TO_STRING_COL1_PAD, "Location:");
@@ -313,9 +319,9 @@ public class ImportHandler extends AbstractMultipartHandler {
                 pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
                 sep(r);
 
-                h.responseState = ResponseState.COLUMN;
+                h.responseState = RESPONSE_COLUMN;
                 // fall through
-            case COLUMN:
+            case RESPONSE_COLUMN:
                 for (; h.columnIndex < columnCount; h.columnIndex++) {
                     r.bookmark();
                     r.put('|');
@@ -324,9 +330,9 @@ public class ImportHandler extends AbstractMultipartHandler {
                     pad(r, TO_STRING_COL3_PAD, errors.getQuick(h.columnIndex));
                     r.put(Misc.EOL);
                 }
-                h.responseState = ResponseState.SUFFIX;
+                h.responseState = RESPONSE_SUFFIX;
                 // fall through
-            case SUFFIX:
+            case RESPONSE_SUFFIX:
                 r.bookmark();
                 sep(r);
                 r.sendChunk();
@@ -375,22 +381,14 @@ public class ImportHandler extends AbstractMultipartHandler {
         resume(context);
     }
 
-    private enum MessagePart {
-        SCHEMA, DATA, UNKNOWN
-    }
-
-    private enum ResponseState {
-        PREFIX, COLUMN, SUFFIX
-    }
-
     private static class ImportHandlerContext implements Mutable, Closeable {
         public int columnIndex = 0;
         private boolean analysed = false;
         private boolean dataFormatValid = false;
         private TextParser textParser = new DelimitedTextParser();
         private JournalImportListener importer;
-        private MessagePart part = MessagePart.UNKNOWN;
-        private ResponseState responseState = ResponseState.PREFIX;
+        private int messagePart = MESSAGE_UNKNOWN;
+        private int responseState = RESPONSE_PREFIX;
         private boolean json = false;
 
         private ImportHandlerContext(JournalWriterFactory factory) {
@@ -399,9 +397,9 @@ public class ImportHandler extends AbstractMultipartHandler {
 
         @Override
         public void clear() {
-            responseState = ResponseState.PREFIX;
+            responseState = RESPONSE_PREFIX;
             columnIndex = 0;
-            part = MessagePart.UNKNOWN;
+            messagePart = MESSAGE_UNKNOWN;
             analysed = false;
             dataFormatValid = false;
             textParser.clear();

@@ -67,6 +67,9 @@ public class QueryCompiler {
     private final static ObjObjHashMap<Signature, LatestByLambdaRowSourceFactory> LAMBDA_ROW_SOURCE_FACTORIES = new ObjObjHashMap<>();
     private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L);
     private final static IntHashSet joinBarriers;
+    private static final int ORDER_BY_UNKNOWN = 0;
+    private static final int ORDER_BY_REQUIRED = 1;
+    private static final int ORDER_BY_INVARIANT = 2;
     private final QueryParser parser = new QueryParser();
     private final QueryFilterAnalyser queryFilterAnalyser = new QueryFilterAnalyser();
     private final StringSink columnNameAssembly = new StringSink();
@@ -501,7 +504,7 @@ public class QueryCompiler {
     }
 
     private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws ParserException {
-        optimiseOrderBy(model, OrderByState.UNKNOWN);
+        optimiseOrderBy(model, ORDER_BY_UNKNOWN);
         optimiseSubQueries(model, factory);
         createOrderHash(model);
         return compileNoOptimise(model, factory);
@@ -1518,42 +1521,42 @@ public class QueryCompiler {
         }
     }
 
-    private void optimiseOrderBy(QueryModel model, OrderByState state) {
+    private void optimiseOrderBy(QueryModel model, int orderByState) {
         ObjList<QueryColumn> columns = model.getColumns();
-        OrderByState subQueryState;
+        int subQueryOrderByState;
 
         int n = columns.size();
         // determine if ordering is required
-        switch (state) {
-            case UNKNOWN:
+        switch (orderByState) {
+            case ORDER_BY_UNKNOWN:
                 // we have sample by, so expect sub-query has to be ordered
-                subQueryState = OrderByState.NEED_ORDERED;
+                subQueryOrderByState = ORDER_BY_REQUIRED;
                 if (model.getSampleBy() == null) {
                     for (int i = 0; i < n; i++) {
                         QueryColumn col = columns.getQuick(i);
                         if (hasAggregates(col.getAst())) {
-                            subQueryState = OrderByState.ORDER_INVARIANT;
+                            subQueryOrderByState = ORDER_BY_INVARIANT;
                             break;
                         }
                     }
                 }
                 break;
-            case NEED_ORDERED:
+            case ORDER_BY_REQUIRED:
                 // parent requires order
                 // if this model forces ordering - sub-query ordering is not needed
                 if (model.getOrderBy().size() > 0) {
-                    subQueryState = OrderByState.ORDER_INVARIANT;
+                    subQueryOrderByState = ORDER_BY_INVARIANT;
                 } else {
-                    subQueryState = OrderByState.NEED_ORDERED;
+                    subQueryOrderByState = ORDER_BY_REQUIRED;
                 }
                 break;
             default:
                 // sub-query ordering is not needed
                 model.getOrderBy().clear();
                 if (model.getSampleBy() != null) {
-                    subQueryState = OrderByState.NEED_ORDERED;
+                    subQueryOrderByState = ORDER_BY_REQUIRED;
                 } else {
-                    subQueryState = OrderByState.ORDER_INVARIANT;
+                    subQueryOrderByState = ORDER_BY_INVARIANT;
                 }
                 break;
         }
@@ -1562,7 +1565,7 @@ public class QueryCompiler {
         for (int i = 0, k = jm.size(); i < k; i++) {
             QueryModel qm = jm.getQuick(i).getNestedModel();
             if (qm != null) {
-                optimiseOrderBy(qm, subQueryState);
+                optimiseOrderBy(qm, subQueryOrderByState);
             }
         }
     }
@@ -2215,10 +2218,6 @@ public class QueryCompiler {
 
     private void unlinkDependencies(QueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).removeDependency(child);
-    }
-
-    private enum OrderByState {
-        UNKNOWN, NEED_ORDERED, ORDER_INVARIANT
     }
 
     private class LiteralCollector implements PostOrderTreeTraversalAlgo.Visitor {

@@ -45,6 +45,17 @@ import java.nio.channels.WritableByteChannel;
 
 public class Response implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(Response.class);
+    private static final int CHUNK_HEAD = 1;
+    private static final int CHUNK_DATA = 2;
+    private static final int FIN = 3;
+    private static final int MULTI_CHUNK = 4;
+    private static final int DEFLATE = 5;
+    private static final int MULTI_BUF_CHUNK = 6;
+    private static final int END_CHUNK = 7;
+    private static final int DONE = 8;
+    private static final int FLUSH = 9;
+    private static final int SEND_DEFLATED_CONT = 10;
+    private static final int SEND_DEFLATED_END = 11;
     private final ByteBuffer out;
     private final long outPtr;
     private final long limit;
@@ -60,7 +71,7 @@ public class Response implements Closeable, Mutable {
     private long _wPtr;
     private ByteBuffer zout;
     private ByteBuffer _flushBuf;
-    private ResponseState state;
+    private int state;
     private long z_streamp = 0;
     private boolean compressed = false;
     private long pzout;
@@ -136,7 +147,7 @@ public class Response implements Closeable, Mutable {
         return sink;
     }
 
-    private ResponseState deflate(boolean flush) throws DisconnectedChannelException {
+    private int deflate(boolean flush) throws DisconnectedChannelException {
 
         final int sz = this.sz - 8;
         long p = pzout + Zip.gzipHeaderLen;
@@ -160,7 +171,7 @@ public class Response implements Closeable, Mutable {
         // we assume that input was too small and needs flushing
 
         if (len == 0) {
-            return ResponseState.DONE;
+            return DONE;
         }
 
         // this is ZLib error, can't continue
@@ -191,7 +202,7 @@ public class Response implements Closeable, Mutable {
         _flushBuf = prepareChunk(zout.remaining());
 
         // if there is input remaining, don't change
-        return flush && ret == 1 ? ResponseState.SEND_DEFLATED_END : ResponseState.SEND_DEFLATED_CONT;
+        return flush && ret == 1 ? SEND_DEFLATED_END : SEND_DEFLATED_CONT;
     }
 
     private void flush(ByteBuffer buf) throws DisconnectedChannelException, SlowWritableChannelException {
@@ -202,13 +213,13 @@ public class Response implements Closeable, Mutable {
     }
 
     private void flushSingle(ByteBuffer buf) throws DisconnectedChannelException, SlowWritableChannelException {
-        state = ResponseState.DONE;
+        state = DONE;
         flush(buf);
     }
 
-    private void machine(ByteBuffer buf, ResponseState next) throws DisconnectedChannelException, SlowWritableChannelException {
+    private void machine(ByteBuffer buf, int nextState) throws DisconnectedChannelException, SlowWritableChannelException {
         _flushBuf = buf;
-        state = next;
+        state = nextState;
         machine0();
     }
 
@@ -223,10 +234,10 @@ public class Response implements Closeable, Mutable {
                 case MULTI_CHUNK:
                     if (compressed) {
                         prepareCompressedBody();
-                        state = ResponseState.DEFLATE;
+                        state = DEFLATE;
                     } else {
                         _flushBuf = prepareBody();
-                        state = ResponseState.DONE;
+                        state = DONE;
                     }
                     break;
                 case DEFLATE:
@@ -234,32 +245,32 @@ public class Response implements Closeable, Mutable {
                     break;
                 case SEND_DEFLATED_END:
                     _flushBuf = zout;
-                    state = ResponseState.END_CHUNK;
+                    state = END_CHUNK;
                     break;
                 case SEND_DEFLATED_CONT:
                     _flushBuf = zout;
-                    state = ResponseState.DONE;
+                    state = DONE;
                     break;
                 case MULTI_BUF_CHUNK:
                     _flushBuf = out;
-                    state = ResponseState.DONE;
+                    state = DONE;
                     break;
                 case CHUNK_HEAD:
                     _flushBuf = prepareChunk((int) (_wPtr - outPtr));
-                    state = ResponseState.CHUNK_DATA;
+                    state = CHUNK_DATA;
                     break;
                 case CHUNK_DATA:
                     _flushBuf = prepareBody();
-                    state = ResponseState.END_CHUNK;
+                    state = END_CHUNK;
                     break;
                 case END_CHUNK:
                     _flushBuf = prepareChunk(0);
-                    state = ResponseState.FIN;
+                    state = FIN;
                     break;
                 case FIN:
                     sink.put(Misc.EOL);
                     _flushBuf = prepareBody();
-                    state = ResponseState.DONE;
+                    state = DONE;
                     break;
                 case FLUSH:
                     state = deflate(true);
@@ -308,19 +319,6 @@ public class Response implements Closeable, Mutable {
         this.total = 0;
     }
 
-    private enum ResponseState {
-        CHUNK_HEAD,
-        CHUNK_DATA,
-        FIN, MULTI_CHUNK,
-        DEFLATE,
-        MULTI_BUF_CHUNK,
-        END_CHUNK,
-        DONE,
-        FLUSH,
-        SEND_DEFLATED_CONT,
-        SEND_DEFLATED_END
-    }
-
     private class SimpleResponseImpl implements SimpleResponse {
 
         public void send(int code) throws DisconnectedChannelException, SlowWritableChannelException {
@@ -338,7 +336,7 @@ public class Response implements Closeable, Mutable {
 
             final String std = hb.status(code, "text/html; charset=utf-8", -1L);
             sink.put(message == null ? std : message).put(Misc.EOL);
-            machine(hb.prepareBuffer(), ResponseState.CHUNK_HEAD);
+            machine(hb.prepareBuffer(), CHUNK_HEAD);
         }
 
         @Override
@@ -352,7 +350,7 @@ public class Response implements Closeable, Mutable {
 
         @Override
         public void flush() throws IOException {
-            machine(hb.prepareBuffer(), ResponseState.CHUNK_HEAD);
+            machine(hb.prepareBuffer(), CHUNK_HEAD);
         }
 
         @Override
@@ -459,9 +457,9 @@ public class Response implements Closeable, Mutable {
         @Override
         public void done() throws DisconnectedChannelException, SlowWritableChannelException {
             if (compressed) {
-                machine(null, ResponseState.FLUSH);
+                machine(null, FLUSH);
             } else {
-                machine(null, ResponseState.END_CHUNK);
+                machine(null, END_CHUNK);
             }
         }
 
@@ -474,9 +472,9 @@ public class Response implements Closeable, Mutable {
         public void sendChunk() throws DisconnectedChannelException, SlowWritableChannelException {
             if (outPtr != _wPtr) {
                 if (compressed) {
-                    machine(null, ResponseState.MULTI_CHUNK);
+                    machine(null, MULTI_CHUNK);
                 } else {
-                    machine(prepareChunk((int) (_wPtr - outPtr)), ResponseState.MULTI_CHUNK);
+                    machine(prepareChunk((int) (_wPtr - outPtr)), MULTI_CHUNK);
                 }
             }
         }
