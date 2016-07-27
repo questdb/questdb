@@ -23,7 +23,7 @@
 
 package com.questdb.io.parser;
 
-import com.questdb.io.TextFileFormat;
+import com.questdb.io.TextFileDelimiter;
 import com.questdb.misc.ByteBuffers;
 import org.junit.After;
 import org.junit.Assert;
@@ -52,7 +52,7 @@ public class FormatParserTest {
     public void testCsv() throws Exception {
         open("/csv/test-import.csv");
         p.of(this.address, this.len);
-        Assert.assertEquals(TextFileFormat.CSV, p.getFormat());
+        Assert.assertEquals(TextFileDelimiter.CSV, p.getDelimiter());
         Assert.assertEquals(0d, p.getStdDev(), 0.0000001d);
         Assert.assertEquals(105, p.getAvgRecLen());
     }

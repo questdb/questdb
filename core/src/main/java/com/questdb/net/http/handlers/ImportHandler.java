@@ -347,10 +347,10 @@ public class ImportHandler extends AbstractMultipartHandler {
         final FormatParser fmtParser = PARSER.get();
 
         fmtParser.of(address, len);
-        context.dataFormatValid = fmtParser.getFormat() != null && fmtParser.getStdDev() < 0.5;
+        context.dataFormatValid = fmtParser.getDelimiter() != 0 && fmtParser.getStdDev() < 0.5;
 
         if (context.dataFormatValid) {
-            context.textParser.of(fmtParser.getFormat().getDelimiter());
+            context.textParser.of(fmtParser.getDelimiter());
         }
     }
 

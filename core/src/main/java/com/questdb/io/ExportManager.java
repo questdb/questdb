@@ -36,12 +36,12 @@ public final class ExportManager {
     private ExportManager() {
     }
 
-    public static void export(RecordSource from, JournalReaderFactory factory, File to, TextFileFormat format) throws JournalException, IOException {
+    public static void export(RecordSource from, JournalReaderFactory factory, File to, char delimiter) throws JournalException, IOException {
         if (to.isDirectory()) {
             throw new JournalException(to + "cannot be a directory");
         }
         try (FileSink sink = new FileSink(to)) {
-            RecordSourcePrinter printer = new RecordSourcePrinter(sink, format.getDelimiter());
+            RecordSourcePrinter printer = new RecordSourcePrinter(sink, delimiter);
             printer.print(from, factory);
         }
     }

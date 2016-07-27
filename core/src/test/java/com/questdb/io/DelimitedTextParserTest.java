@@ -41,7 +41,7 @@ public class DelimitedTextParserTest extends AbstractTest {
     @Test
     public void testImport() throws Exception {
         String file = this.getClass().getResource("/csv/test-import.csv").getFile();
-        ImportManager.importFile(factory, file, TextFileFormat.CSV, null);
+        ImportManager.importFile(factory, file, TextFileDelimiter.CSV, null);
 
         String location = "test-import.csv";
 
@@ -67,7 +67,7 @@ public class DelimitedTextParserTest extends AbstractTest {
         File expected = new File(this.getClass().getResource("/csv/test-export-expected.csv").getFile());
 
         try (RecordSource rs = compile("'" + location + "'")) {
-            ExportManager.export(rs, factory, actual, TextFileFormat.CSV);
+            ExportManager.export(rs, factory, actual, TextFileDelimiter.CSV);
             TestUtils.assertEquals(expected, actual);
         }
     }
@@ -84,7 +84,7 @@ public class DelimitedTextParserTest extends AbstractTest {
     @Test
     public void testImportSchema() throws Exception {
         String file = this.getClass().getResource("/csv/test-import.csv").getFile();
-        ImportManager.importFile(factory, file, TextFileFormat.CSV, "IntSym=INT&Fmt2Date=STRING");
+        ImportManager.importFile(factory, file, TextFileDelimiter.CSV, "IntSym=INT&Fmt2Date=STRING");
         String location = "test-import.csv";
 
         Assert.assertEquals(JournalConfiguration.EXISTS, factory.getConfiguration().exists(location));
@@ -98,6 +98,6 @@ public class DelimitedTextParserTest extends AbstractTest {
 
     private void imp(String resource) throws IOException {
         String file = this.getClass().getResource(resource).getFile();
-        ImportManager.importFile(factory, file, TextFileFormat.CSV, null, 20);
+        ImportManager.importFile(factory, file, TextFileDelimiter.CSV, null, 20);
     }
 }

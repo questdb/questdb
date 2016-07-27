@@ -23,24 +23,8 @@
 
 package com.questdb.io;
 
-import com.questdb.io.parser.DelimitedTextParser;
-import com.questdb.io.parser.TextParser;
-
-public enum TextFileFormat {
-    CSV(','), TAB('\t'), PIPE('|');
-
-    private final char delimiter;
-
-
-    TextFileFormat(char delimiter) {
-        this.delimiter = delimiter;
-    }
-
-    public char getDelimiter() {
-        return delimiter;
-    }
-
-    public TextParser newParser() {
-        return new DelimitedTextParser().of(delimiter);
-    }
+public final class TextFileDelimiter {
+    public static final char CSV = ',';
+    public static final char TAB = '\t';
+    public static final char PIPE = '|';
 }

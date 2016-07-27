@@ -141,7 +141,7 @@ public class HashJoinRecordSourceTest {
 
         long t = System.currentTimeMillis();
         int count = 0;
-//        ExportManager.export(j, new File("c:/temp/join.csv"), TextFileFormat.TAB);
+//        ExportManager.export(j, new File("c:/temp/join.csv"), TextFileDelimiter.TAB);
         RecordCursor c = j.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
         while (c.hasNext()) {
             c.next();
@@ -151,9 +151,9 @@ public class HashJoinRecordSourceTest {
         System.out.println(count);
 
 
-//        ExportManager.export(factory, "q1", new File("d:/q1.csv"), TextFileFormat.TAB);
-//        ExportManager.export(factory, "q2", new File("d:/q2.csv"), TextFileFormat.TAB);
-//        ExportManager.export(j, new File("d:/join.csv"), TextFileFormat.TAB);
+//        ExportManager.export(factory, "q1", new File("d:/q1.csv"), TextFileDelimiter.TAB);
+//        ExportManager.export(factory, "q2", new File("d:/q2.csv"), TextFileDelimiter.TAB);
+//        ExportManager.export(j, new File("d:/join.csv"), TextFileDelimiter.TAB);
     }
 
     @Test

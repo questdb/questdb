@@ -26,6 +26,7 @@ package com.questdb.io;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.JournalWriterFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
+import com.questdb.io.parser.DelimitedTextParser;
 import com.questdb.io.parser.TextParser;
 import com.questdb.io.parser.listener.InputAnalysisListener;
 import com.questdb.io.parser.listener.JournalImportListener;
@@ -62,13 +63,13 @@ public final class ImportManager {
      * Once types are auto-detected it is possible to override them by supplying Import Schema. Import Schema is a
      * CSV file with required three columns:
      * <pre>
-     *     column#,type,format
+     *     column#,type,delimiter
      * </pre>
      * Where:
      * <ul>
      * <li>column# - is column number between 0 and count-1, where count is number of columns in input
      * <li>type - is a value of ColumnType enum
-     * <li>format - is mainly to disambiguate dates. Format selects date parser for column. There are only three
+     * <li>delimiter - is mainly to disambiguate dates. Format selects date parser for column. There are only three
      * possible values that are currently supported: YYYY-MM-DDThh:mm:ss, YYYY-MM-DD hh:mm:ss and MM/DD/YYYY
      * </ul>
      * Import Schema does not have to describe all columns in input. It is there only to correct auto-detection mistakes.
@@ -80,19 +81,19 @@ public final class ImportManager {
      * Parser will always attempt to infer journal structure from input, even of journal already exists. If input
      * structure does not match structure of journal - an exception is thrown.
      *
-     * @param factory  journal factory
-     * @param fileName name of input file
-     * @param format   inout format
-     * @param schema   optional instance of ImportSchema
+     * @param factory   journal factory
+     * @param fileName  name of input file
+     * @param delimiter inout delimiter
+     * @param schema    optional instance of ImportSchema
      * @throws IOException in case imported file cannot be read
      */
-    public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, @Nullable CharSequence schema) throws IOException {
-        importFile(factory, fileName, format, schema, SAMPLE_SIZE);
+    public static void importFile(JournalWriterFactory factory, String fileName, char delimiter, @Nullable CharSequence schema) throws IOException {
+        importFile(factory, fileName, delimiter, schema, SAMPLE_SIZE);
     }
 
-    public static void importFile(JournalWriterFactory factory, String fileName, TextFileFormat format, CharSequence schema, int sampleSize) throws IOException {
+    public static void importFile(JournalWriterFactory factory, String fileName, char delimiter, CharSequence schema, int sampleSize) throws IOException {
 
-        try (TextParser parser = format.newParser()) {
+        try (TextParser parser = new DelimitedTextParser().of(delimiter)) {
             File file = new File(fileName);
             String location = file.getName();
 

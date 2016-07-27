@@ -23,11 +23,12 @@
 
 package com.questdb.io.parser;
 
-import com.questdb.io.TextFileFormat;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.IntList;
 import com.questdb.std.IntLongPriorityQueue;
 import com.questdb.std.ObjectFactory;
+
+import static com.questdb.io.TextFileDelimiter.*;
 
 public class FormatParser {
     public static final ObjectFactory<FormatParser> FACTORY = new ObjectFactory<FormatParser>() {
@@ -43,13 +44,13 @@ public class FormatParser {
     private final IntLongPriorityQueue heap = new IntLongPriorityQueue(3);
     private double stdDev;
     private int avgRecLen;
-    private TextFileFormat format;
+    private char delimiter;
 
     private FormatParser() {
     }
 
-    public TextFileFormat getFormat() {
-        return format;
+    public char getDelimiter() {
+        return delimiter;
     }
 
     public double getStdDev() {
@@ -78,7 +79,7 @@ public class FormatParser {
 
         this.avgRecLen = 0;
         this.stdDev = Double.POSITIVE_INFINITY;
-        this.format = null;
+        this.delimiter = 0;
 
         boolean eol = false;
         while (p < lim && line < maxLines) {
@@ -144,14 +145,14 @@ public class FormatParser {
         this.avgRecLen = len / line;
 
         heap.clear();
-        heap.add(TextFileFormat.CSV.ordinal(), comma);
-        heap.add(TextFileFormat.PIPE.ordinal(), pipe);
-        heap.add(TextFileFormat.TAB.ordinal(), tab);
+        heap.add(CSV, comma);
+        heap.add(PIPE, pipe);
+        heap.add(TAB, tab);
 
-        this.format = TextFileFormat.values()[heap.peekBottom()];
+        this.delimiter = (char) heap.peekBottom();
         IntList test;
 
-        switch (format) {
+        switch (delimiter) {
             case CSV:
                 test = commas;
                 break;
@@ -162,7 +163,7 @@ public class FormatParser {
                 test = tabs;
                 break;
             default:
-                throw new IllegalArgumentException("Unsupported format: " + format);
+                throw new IllegalArgumentException("Unsupported delimiter: " + delimiter);
         }
 
         // compute variance on test delimiter
@@ -171,7 +172,7 @@ public class FormatParser {
         int n = test.size();
 
         if (n == 0) {
-            format = null;
+            delimiter = 0;
             return;
         }
 
