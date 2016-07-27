@@ -59,7 +59,7 @@ public abstract class AbstractObjectConsumer extends AbstractChannelConsumer {
         ByteBuffers.copy(channel, valueBuffer, bufSz);
     }
 
-    final ByteBuffer getValueBuffer() {
+    final protected ByteBuffer getValueBuffer() {
         return valueBuffer;
     }
 }

@@ -118,14 +118,14 @@ public class JournalServerAgentTest extends AbstractTest {
         agent.process(channel);
 
         commandConsumer.read(channel);
-        Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getValue());
+        Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getCommand());
 
         Assert.assertEquals(0, intResponseConsumer.getValue(channel));
         quoteDeltaConsumer.read(channel);
         Assert.assertEquals(100, quoteClientWriter.size());
 
         commandConsumer.read(channel);
-        Assert.assertEquals(Command.SERVER_READY_CMD, commandConsumer.getValue());
+        Assert.assertEquals(Command.SERVER_READY_CMD, commandConsumer.getCommand());
 
         quoteWriter.append(origin.query().all().asResultSet().subset(100, 200));
         quoteWriter.commit();
@@ -141,14 +141,14 @@ public class JournalServerAgentTest extends AbstractTest {
         agent.process(channel);
 
         commandConsumer.read(channel);
-        Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getValue());
+        Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getCommand());
 
         Assert.assertEquals(0, intResponseConsumer.getValue(channel));
         quoteDeltaConsumer.read(channel);
         Assert.assertEquals(200, quoteClientWriter.size());
 
         commandConsumer.read(channel);
-        Assert.assertEquals(Command.SERVER_READY_CMD, commandConsumer.getValue());
+        Assert.assertEquals(Command.SERVER_READY_CMD, commandConsumer.getCommand());
 
         server.halt();
     }

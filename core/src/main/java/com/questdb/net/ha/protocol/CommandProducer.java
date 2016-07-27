@@ -23,20 +23,51 @@
 
 package com.questdb.net.ha.protocol;
 
-import com.questdb.net.ha.AbstractObjectProducer;
+import com.questdb.ex.JournalNetworkException;
+import com.questdb.misc.ByteBuffers;
+import com.questdb.net.ha.ChannelProducer;
 import com.questdb.net.ha.model.Command;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.channels.WritableByteChannel;
 
-public class CommandProducer extends AbstractObjectProducer<Command> {
+public class CommandProducer implements ChannelProducer {
+
+    private ByteBuffer buffer;
+
     @Override
-    protected int getBufferSize(Command value) {
-        return Command.BUFFER_SIZE;
+    public void free() {
+        buffer = ByteBuffers.release(buffer);
     }
 
     @Override
-    protected void write(Command value, ByteBuffer buffer) {
+    public final boolean hasContent() {
+        return buffer != null && buffer.hasRemaining();
+    }
+
+    @Override
+    public final void write(WritableByteChannel channel) throws JournalNetworkException {
+        ByteBuffers.copy(buffer, channel);
+    }
+
+    public void setCommand(byte command) {
+        int sz = Command.BUFFER_SIZE;
+        int bufSz = sz + 4;
+        if (buffer == null || buffer.capacity() < bufSz) {
+            ByteBuffers.release(buffer);
+            buffer = ByteBuffer.allocateDirect(bufSz).order(ByteOrder.LITTLE_ENDIAN);
+        }
+        buffer.limit(bufSz);
+        buffer.rewind();
+        buffer.putInt(sz);
         buffer.putChar(Command.AUTHENTICITY_KEY);
-        buffer.put(value.getCmd());
+        buffer.put(command);
+        buffer.flip();
+    }
+
+    public final void write(WritableByteChannel channel, byte command) throws JournalNetworkException {
+        setCommand(command);
+        write(channel);
     }
 }

@@ -107,42 +107,42 @@ public class JournalServerAgent {
 
     public void process(ByteChannel channel) throws JournalNetworkException {
         commandConsumer.read(channel);
-        switch (commandConsumer.getValue()) {
-            case SET_KEY_CMD:
+        switch (commandConsumer.getCommand()) {
+            case Command.SET_KEY_CMD:
                 setClientKey(channel);
                 break;
-            case DELTA_REQUEST_CMD:
+            case Command.DELTA_REQUEST_CMD:
                 checkAuthorized(channel);
                 LOG.debug().$(socketAddress).$(" DeltaRequest command received").$();
                 journalClientStateConsumer.read(channel);
                 storeDeltaRequest(channel, journalClientStateConsumer.getValue());
                 break;
-            case CLIENT_READY_CMD:
+            case Command.CLIENT_READY_CMD:
                 checkAuthorized(channel);
                 statsChannel.setDelegate(channel);
                 dispatch(statsChannel);
                 statsChannel.logStats();
                 break;
-            case CLIENT_DISCONNECT:
+            case Command.CLIENT_DISCONNECT:
                 throw new JournalDisconnectedChannelException();
-            case PROTOCOL_VERSION:
+            case Command.PROTOCOL_VERSION:
                 checkProtocolVersion(channel, intResponseConsumer.getValue(channel));
                 break;
-            case HANDSHAKE_COMPLETE:
+            case Command.HANDSHAKE_COMPLETE:
                 if (authorized) {
                     ok(channel);
                 } else {
                     stringResponseProducer.write(channel, "AUTH");
                 }
                 break;
-            case AUTHORIZATION:
+            case Command.AUTHORIZATION:
                 byteArrayResponseConsumer.read(channel);
                 authorize(channel, byteArrayResponseConsumer.getValue());
                 break;
-            case ELECTION:
+            case Command.ELECTION:
                 server.handleElectionMessage(channel);
                 break;
-            case ELECTED:
+            case Command.ELECTED:
                 server.handleElectedMessage(channel);
                 break;
             default:

@@ -239,7 +239,7 @@ public class JournalServer {
         channels.clear();
     }
 
-    private synchronized void fwdElectionMessage(ElectionMessageReason reason, int uid, Command command, int count) {
+    private synchronized void fwdElectionMessage(ElectionMessageReason reason, int uid, byte command, int count) {
         this.participant = true;
         service.submit(new ElectionForwarder(reason, uid, command, count));
     }
@@ -368,12 +368,12 @@ public class JournalServer {
         private final CommandProducer commandProducer = new CommandProducer();
         private final IntResponseProducer intResponseProducer = new IntResponseProducer();
         private final IntResponseConsumer intResponseConsumer = new IntResponseConsumer();
-        private final Command command;
+        private final byte command;
         private final int uid;
         private final int count;
         private final ElectionMessageReason reason;
 
-        public ElectionForwarder(ElectionMessageReason reason, int uid, Command command, int count) {
+        public ElectionForwarder(ElectionMessageReason reason, int uid, byte command, int count) {
             this.reason = reason;
             this.command = command;
             this.uid = uid;

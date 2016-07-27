@@ -23,26 +23,30 @@
 
 package com.questdb.net.ha.protocol;
 
-import com.questdb.net.ha.AbstractImmutableObjectConsumer;
+import com.questdb.net.ha.AbstractObjectConsumer;
 import com.questdb.net.ha.model.Command;
 
 import java.nio.ByteBuffer;
 
-public class CommandConsumer extends AbstractImmutableObjectConsumer<Command> {
+public class CommandConsumer extends AbstractObjectConsumer {
 
-    @Override
-    protected Command read(ByteBuffer buffer) {
-        Command command;
+    private byte command;
 
-        char authKey = buffer.getChar();
-        byte cmd = buffer.get();
-
-        if (authKey != Command.AUTHENTICITY_KEY) {
-            command = Command.UNAUTHENTIC;
-        } else {
-            command = Command.fromByte(cmd);
-        }
+    public final byte getCommand() {
         return command;
     }
 
+    @Override
+    protected final void commit() {
+        ByteBuffer valueBuffer = getValueBuffer();
+        valueBuffer.flip();
+        char authKey = valueBuffer.getChar();
+        byte cmd = valueBuffer.get();
+
+        if (authKey != Command.AUTHENTICITY_KEY) {
+            this.command = Command.UNAUTHENTIC;
+        } else {
+            this.command = cmd;
+        }
+    }
 }

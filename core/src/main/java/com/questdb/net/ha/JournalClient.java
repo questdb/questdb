@@ -446,15 +446,15 @@ public class JournalClient {
                 while (true) {
                     assert channel != null;
                     commandConsumer.read(channel);
-                    switch (commandConsumer.getValue()) {
-                        case JOURNAL_DELTA_CMD:
+                    switch (commandConsumer.getCommand()) {
+                        case Command.JOURNAL_DELTA_CMD:
                             statsChannel.setDelegate(channel);
                             int index = intResponseConsumer.getValue(statsChannel);
                             deltaConsumers.getQuick(index).read(statsChannel);
                             statusSentList.set(index, 0);
                             statsChannel.logStats();
                             break;
-                        case SERVER_READY_CMD:
+                        case Command.SERVER_READY_CMD:
                             if (isRunning()) {
                                 sendState();
                             } else {
@@ -463,7 +463,7 @@ public class JournalClient {
                                 break OUT;
                             }
                             break;
-                        case SERVER_HEARTBEAT:
+                        case Command.SERVER_HEARTBEAT:
                             if (isRunning()) {
                                 sendReady();
                             } else {
@@ -472,11 +472,11 @@ public class JournalClient {
                                 break OUT;
                             }
                             break;
-                        case SERVER_SHUTDOWN:
+                        case Command.SERVER_SHUTDOWN:
                             reason = DisconnectReason.BROKEN_CHANNEL;
                             break OUT;
                         default:
-                            LOG.info().$("Unknown command: ").$(commandConsumer.getValue()).$();
+                            LOG.info().$("Unknown command: ").$(commandConsumer.getCommand()).$();
                             break;
                     }
                 }

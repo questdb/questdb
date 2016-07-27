@@ -23,45 +23,23 @@
 
 package com.questdb.net.ha.model;
 
-public enum Command {
-
-    SET_KEY_CMD(0x01),
-    DELTA_REQUEST_CMD(0x02),
-    CLIENT_READY_CMD(0x03),
-    JOURNAL_DELTA_CMD(0x04),
-    SERVER_READY_CMD(0x05),
-    SERVER_HEARTBEAT(0x06),
-    CLIENT_DISCONNECT(0x07),
-    PROTOCOL_VERSION(0x08),
-    HANDSHAKE_COMPLETE(0x09),
-    AUTHORIZATION(0x0a),
-    CLUSTER_VOTE(0x0b),
-    SERVER_SHUTDOWN(0x0c),
-    ELECTION(0x0d),
-    ELECTED(0x0e),
-    UNAUTHENTIC(0xFC),
-    UNKNOWN_CMD(0xFE);
-
+public final class Command {
+    public static final byte SET_KEY_CMD = 0x01;
+    public static final byte DELTA_REQUEST_CMD = 0x02;
+    public static final byte CLIENT_READY_CMD = 0x03;
+    public static final byte JOURNAL_DELTA_CMD = 0x04;
+    public static final byte SERVER_READY_CMD = 0x05;
+    public static final byte SERVER_HEARTBEAT = 0x06;
+    public static final byte CLIENT_DISCONNECT = 0x07;
+    public static final byte PROTOCOL_VERSION = 0x08;
+    public static final byte HANDSHAKE_COMPLETE = 0x09;
+    public static final byte AUTHORIZATION = 0x0a;
+    public static final byte CLUSTER_VOTE = 0x0b;
+    public static final byte SERVER_SHUTDOWN = 0x0c;
+    public static final byte ELECTION = 0x0d;
+    public static final byte ELECTED = 0x0e;
+    public static final byte UNAUTHENTIC = (byte) 0xFC;
+    public static final byte UNKNOWN_CMD = (byte) 0xFE;
     public static final int BUFFER_SIZE = 3;
     public static final char AUTHENTICITY_KEY = 0xFAFB;
-
-    private final int cmd;
-
-    Command(int cmd) {
-        this.cmd = cmd;
-    }
-
-    public static Command fromByte(byte b) {
-        for (int i = 0, l = Command.values().length; i < l; i++) {
-            Command c = Command.values()[i];
-            if (c.cmd == b) {
-                return c;
-            }
-        }
-        return UNKNOWN_CMD;
-    }
-
-    public byte getCmd() {
-        return (byte) cmd;
-    }
 }
