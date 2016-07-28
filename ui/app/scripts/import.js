@@ -282,15 +282,15 @@ function nopropagation(e) {
 
         function existenceCheckFork(e) {
             switch (e.status) {
-                case 'EXISTS':
+                case 'Exists':
                     current.importState = 1; // exists
                     status(current, '<span class="label label-danger">exists</span>', true);
                     break;
-                case 'DOES_NOT_EXIST':
+                case 'Does not exist':
                     current.importState = 0; // ok
                     importFile();
                     break;
-                case 'EXISTS_FOREIGN':
+                case 'Reserved name':
                     current.importState = 2; // exists foreign (reserved)
                     status(current, '<span class="label label-danger">reserved</span>', true);
                     break;
