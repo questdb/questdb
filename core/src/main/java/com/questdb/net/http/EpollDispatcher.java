@@ -159,8 +159,8 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
         pending.set(r, new IOContext(channel, configuration, clock));
     }
 
-    private void disconnect(IOContext context, DisconnectReason reason) {
-        LOG.info().$("Disconnected ").$(context.channel.getFd()).$(": ").$(reason).$();
+    private void disconnect(IOContext context, int disconnectReason) {
+        LOG.info().$("Disconnected ").$(context.channel.getFd()).$(": ").$(DisconnectReason.nameOf(disconnectReason)).$();
         context.close();
         connectionCount--;
     }

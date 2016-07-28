@@ -69,6 +69,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class JournalClient {
+    public static final int DISCONNECT_UNKNOWN = 1;
+    public static final int DISCONNECT_CLIENT_HALT = 2;
+    public static final int DISCONNECT_CLIENT_EXCEPTION = 3;
+    public static final int DISCONNECT_BROKEN_CHANNEL = 4;
+    public static final int DISCONNECT_CLIENT_ERROR = 5;
+    public static final int DISCONNECT_INCOMPATIBLE_JOURNAL = 6;
     private static final AtomicInteger counter = new AtomicInteger(0);
     private static final Log LOG = LogFactory.getLog(JournalClient.class);
     private final static ThreadFactory CLIENT_THREAD_FACTORY = new NamedDaemonThreadFactory("journal-client", false);
@@ -87,7 +93,6 @@ public class JournalClient {
     private final IntResponseConsumer intResponseConsumer = new IntResponseConsumer();
     private final IntResponseProducer intResponseProducer = new IntResponseProducer();
     private final ByteArrayResponseProducer byteArrayResponseProducer = new ByteArrayResponseProducer();
-
     private final ClientConfig config;
     private final ExecutorService service;
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -379,21 +384,17 @@ public class JournalClient {
         subscribe(new JournalKey<>(clazz, location), new JournalKey<>(clazz, location), txListener);
     }
 
-    public enum DisconnectReason {
-        UNKNOWN, CLIENT_HALT, CLIENT_EXCEPTION, BROKEN_CHANNEL, CLIENT_ERROR, INCOMPATIBLE_JOURNAL
-    }
-
     public interface DisconnectCallback {
-        void onDisconnect(DisconnectReason reason);
+        void onDisconnect(int disconnectReason);
     }
 
     private final class DisconnectCallbackImpl implements DisconnectCallback {
         private DisconnectCallback next;
 
-        public void onDisconnect(DisconnectReason reason) {
-            switch (reason) {
-                case BROKEN_CHANNEL:
-                case UNKNOWN:
+        public void onDisconnect(int disconnectReason) {
+            switch (disconnectReason) {
+                case DISCONNECT_BROKEN_CHANNEL:
+                case DISCONNECT_UNKNOWN:
                     int retryCount = config.getReconnectPolicy().getRetryCount();
                     int loginRetryCount = config.getReconnectPolicy().getLoginRetryCount();
                     boolean connected = false;
@@ -414,16 +415,16 @@ public class JournalClient {
                     if (connected) {
                         handlerFuture = service.submit(new Handler());
                     } else {
-                        disconnect(reason);
+                        disconnect(disconnectReason);
                     }
                     break;
                 default:
-                    disconnect(reason);
+                    disconnect(disconnectReason);
                     break;
             }
         }
 
-        private void disconnect(DisconnectReason reason) {
+        private void disconnect(int disconnectReason) {
             LOG.info().$("Client disconnecting").$();
             counter.decrementAndGet();
             running.set(false);
@@ -432,7 +433,7 @@ public class JournalClient {
             service.shutdown();
 
             if (next != null) {
-                next.onDisconnect(reason);
+                next.onDisconnect(disconnectReason);
             }
         }
     }
@@ -440,7 +441,7 @@ public class JournalClient {
     private final class Handler implements Runnable {
         @Override
         public void run() {
-            DisconnectReason reason = DisconnectReason.UNKNOWN;
+            int disconnectReason = DISCONNECT_UNKNOWN;
             try {
                 OUT:
                 while (true) {
@@ -459,7 +460,7 @@ public class JournalClient {
                                 sendState();
                             } else {
                                 sendDisconnect();
-                                reason = DisconnectReason.CLIENT_HALT;
+                                disconnectReason = DISCONNECT_CLIENT_HALT;
                                 break OUT;
                             }
                             break;
@@ -468,12 +469,12 @@ public class JournalClient {
                                 sendReady();
                             } else {
                                 sendDisconnect();
-                                reason = DisconnectReason.CLIENT_HALT;
+                                disconnectReason = DISCONNECT_CLIENT_HALT;
                                 break OUT;
                             }
                             break;
                         case Command.SERVER_SHUTDOWN:
-                            reason = DisconnectReason.BROKEN_CHANNEL;
+                            disconnectReason = DISCONNECT_BROKEN_CHANNEL;
                             break OUT;
                         default:
                             LOG.info().$("Unknown command: ").$(commandConsumer.getCommand()).$();
@@ -482,20 +483,20 @@ public class JournalClient {
                 }
             } catch (IncompatibleJournalException e) {
                 LOG.error().$(e.getMessage()).$();
-                reason = DisconnectReason.INCOMPATIBLE_JOURNAL;
+                disconnectReason = DISCONNECT_INCOMPATIBLE_JOURNAL;
             } catch (JournalNetworkException e) {
                 LOG.error().$("Network error. Server died?").$();
                 LOG.debug().$("Network error details: ").$(e).$();
-                reason = DisconnectReason.BROKEN_CHANNEL;
+                disconnectReason = DISCONNECT_BROKEN_CHANNEL;
             } catch (Error e) {
                 LOG.error().$("Unhandled exception in client").$(e).$();
-                reason = DisconnectReason.CLIENT_ERROR;
+                disconnectReason = DISCONNECT_CLIENT_ERROR;
                 throw e;
             } catch (Throwable e) {
                 LOG.error().$("Unhandled exception in client").$(e).$();
-                reason = DisconnectReason.CLIENT_EXCEPTION;
+                disconnectReason = DISCONNECT_CLIENT_EXCEPTION;
             } finally {
-                disconnectCallback.onDisconnect(reason);
+                disconnectCallback.onDisconnect(disconnectReason);
             }
         }
     }

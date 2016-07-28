@@ -141,10 +141,10 @@ public class ClusterController {
                     client.start();
                     client.setDisconnectCallback(new JournalClient.DisconnectCallback() {
                         @Override
-                        public void onDisconnect(JournalClient.DisconnectReason reason) {
-                            switch (reason) {
-                                case INCOMPATIBLE_JOURNAL:
-                                case CLIENT_HALT:
+                        public void onDisconnect(int disconnectReason) {
+                            switch (disconnectReason) {
+                                case JournalClient.DISCONNECT_INCOMPATIBLE_JOURNAL:
+                                case JournalClient.DISCONNECT_CLIENT_HALT:
                                     halt();
                                     break;
                                 default:

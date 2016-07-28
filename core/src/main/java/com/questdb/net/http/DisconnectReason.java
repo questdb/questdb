@@ -23,6 +23,24 @@
 
 package com.questdb.net.http;
 
-public enum DisconnectReason {
-    PEER, IDLE, SILLY
+public final class DisconnectReason {
+    public static final int PEER = 1;
+    public static final int IDLE = 2;
+    public static final int SILLY = 3;
+
+    private DisconnectReason() {
+    }
+
+    public static CharSequence nameOf(int disconnectReason) {
+        switch (disconnectReason) {
+            case PEER:
+                return "PEER";
+            case IDLE:
+                return "IDLE";
+            case SILLY:
+                return "SILLY";
+            default:
+                return "UNKNOWN";
+        }
+    }
 }

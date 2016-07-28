@@ -59,6 +59,14 @@ import java.util.concurrent.locks.LockSupport;
 public class JournalServer {
 
     private static final Log LOG = LogFactory.getLog(JournalServer.class);
+    private static final int ER_NEW_SERVER_JOINED = 1;
+    private static final int ER_FORWARD_ELECTED_THEIRS = 2;
+    private static final int ER_FORWARD_ELECTED_OURS = 3;
+    private static final int ER_INSISTING = 4;
+    private static final int ER_FORWARD_ELECTION_THEIRS = 5;
+    private static final int ER_FORWARD_ELECTION_OURS = 6;
+    private static final int ER_CHANGING_ELECTION_TO_OURS = 7;
+    private static final int ER_ANNOUNCE_LEADER = 8;
     private final AtomicInteger writerIdGenerator = new AtomicInteger(0);
     private final ObjIntHashMap<JournalWriter> writers = new ObjIntHashMap<>();
     private final JournalReaderFactory factory;
@@ -188,7 +196,7 @@ public class JournalServer {
         if (isRunning()) {
             this.passiveNotified = false;
             this.clusterStatusListener = clusterStatusListener;
-            fwdElectionMessage(ElectionMessageReason.R1, uid, Command.ELECTION, 0);
+            fwdElectionMessage(ER_NEW_SERVER_JOINED, uid, Command.ELECTION, 0);
         }
     }
 
@@ -239,7 +247,7 @@ public class JournalServer {
         channels.clear();
     }
 
-    private synchronized void fwdElectionMessage(ElectionMessageReason reason, int uid, byte command, int count) {
+    private synchronized void fwdElectionMessage(int reason, int uid, byte command, int count) {
         this.participant = true;
         service.submit(new ElectionForwarder(reason, uid, command, count));
     }
@@ -269,13 +277,13 @@ public class JournalServer {
                         leader = false;
                     }
 
-                    fwdElectionMessage(ElectionMessageReason.R2, theirUuid, Command.ELECTED, hops + 1);
+                    fwdElectionMessage(ER_FORWARD_ELECTED_THEIRS, theirUuid, Command.ELECTED, hops + 1);
                     if (!passiveNotified && clusterStatusListener != null) {
                         clusterStatusListener.goPassive(config.getNodeByUID(theirUuid));
                         passiveNotified = true;
                     }
                 } else {
-                    fwdElectionMessage(ElectionMessageReason.R3, ourUuid, Command.ELECTION, 0);
+                    fwdElectionMessage(ER_FORWARD_ELECTED_OURS, ourUuid, Command.ELECTION, 0);
                 }
             } else if (leader && !activeNotified && clusterStatusListener != null) {
                 LOG.info().$(ourUuid).$(" is THE LEADER").$();
@@ -298,26 +306,26 @@ public class JournalServer {
                 // if it is ELECTION message and we are the leader
                 // cry foul and attempt to curb the thread by sending ELECTED message wit our uid
                 LOG.info().$(ourUid).$(" is insisting on leadership").$();
-                fwdElectionMessage(ElectionMessageReason.R4, ourUid, Command.ELECTED, 0);
+                fwdElectionMessage(ER_INSISTING, ourUid, Command.ELECTED, 0);
             } else if (theirUid > ourUid) {
                 // if theirUid is greater than ours - forward message on
                 // with exception where hop count is greater than node count
                 // this can happen when max uid node send election message and disappears from network
                 // before this message is stopped.
                 if (hops < config.getNodeCount() + 2) {
-                    fwdElectionMessage(ElectionMessageReason.R5, theirUid, Command.ELECTION, hops + 1);
+                    fwdElectionMessage(ER_FORWARD_ELECTION_THEIRS, theirUid, Command.ELECTION, hops + 1);
                 } else {
                     // when infinite loop is detected, start voting exisitng node - "us"
-                    fwdElectionMessage(ElectionMessageReason.R6, ourUid, Command.ELECTION, 0);
+                    fwdElectionMessage(ER_FORWARD_ELECTION_OURS, ourUid, Command.ELECTION, 0);
                 }
             } else if (theirUid < ourUid && !participant) {
                 // if thier Uid is smaller than ours - send ours and become participant
-                fwdElectionMessage(ElectionMessageReason.R7, ourUid, Command.ELECTION, 0);
+                fwdElectionMessage(ER_CHANGING_ELECTION_TO_OURS, ourUid, Command.ELECTION, 0);
             } else if (!leader && theirUid == ourUid) {
                 // our message came back to us, announce our uid as the LEADER
                 leader = true;
                 participant = false;
-                fwdElectionMessage(ElectionMessageReason.R8, ourUid, Command.ELECTED, 0);
+                fwdElectionMessage(ER_ANNOUNCE_LEADER, ourUid, Command.ELECTED, 0);
             }
             intResponseProducer.write(channel, 0xfc);
         } else {
@@ -360,10 +368,6 @@ public class JournalServer {
         }
     }
 
-    private enum ElectionMessageReason {
-        R1, R2, R3, R4, R5, R6, R7, R8
-    }
-
     private class ElectionForwarder implements Runnable {
         private final CommandProducer commandProducer = new CommandProducer();
         private final IntResponseProducer intResponseProducer = new IntResponseProducer();
@@ -371,10 +375,10 @@ public class JournalServer {
         private final byte command;
         private final int uid;
         private final int count;
-        private final ElectionMessageReason reason;
+        private final int electionReason;
 
-        public ElectionForwarder(ElectionMessageReason reason, int uid, byte command, int count) {
-            this.reason = reason;
+        public ElectionForwarder(int electionReason, int uid, byte command, int count) {
+            this.electionReason = electionReason;
             this.command = command;
             this.uid = uid;
             this.count = count;
@@ -393,7 +397,7 @@ public class JournalServer {
                     commandProducer.write(channel, command);
                     intResponseProducer.write(channel, uid);
                     intResponseProducer.write(channel, count);
-                    LOG.info().$(reason).$("> ").$(command).$(" [").$(uid).$("]{").$(count).$("} ").$(JournalServer.this.uid).$(" -> ").$(node.getId()).$();
+                    LOG.info().$(electionReason).$("> ").$(command).$(" [").$(uid).$("]{").$(count).$("} ").$(JournalServer.this.uid).$(" -> ").$(node.getId()).$();
                     if (intResponseConsumer.getValue(channel) == 0xfc) {
                         break;
                     } else {
@@ -425,7 +429,6 @@ public class JournalServer {
                             service.submit(new Handler(holder));
                             LOG.info().$("Server node ").$(uid).$(": Connected ").$(holder.socketAddress).$();
                         } catch (RejectedExecutionException e) {
-//                            LOG.info("Node %d ignoring connection from %s. Server is shutting down.", uid, holder.socketAddress);
                             LOG.info().$("Node ").$(uid).$(" ignoring connection from ").$(holder.socketAddress).$(". Server is shutting down.").$();
                         }
                     }
