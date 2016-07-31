@@ -90,6 +90,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
             int r = pending.addRow();
             pending.set(r, M_TIMESTAMP, System.currentTimeMillis());
             pending.set(r, M_FD, socketFd);
+            pending.set(r, M_OPERATION, ChannelStatus.READ);
             readFdSet.add(socketFd);
             readFdSet.setCount(1);
             writeFdSet.setCount(0);
