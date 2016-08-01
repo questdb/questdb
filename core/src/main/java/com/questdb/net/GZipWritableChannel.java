@@ -26,7 +26,6 @@ package com.questdb.net;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Unsafe;
 import com.questdb.misc.Zip;
-import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -98,7 +97,7 @@ public class GZipWritableChannel<T extends WritableByteChannel> implements Writa
 
     @Override
     public int write(ByteBuffer src) throws IOException {
-        if (!(src instanceof DirectBuffer)) {
+        if (!ByteBuffers.isDirect(src)) {
             throw new IllegalArgumentException("Heap buffers are not supported");
         }
 

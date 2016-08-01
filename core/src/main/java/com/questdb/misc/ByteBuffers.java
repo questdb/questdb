@@ -222,7 +222,6 @@ public final class ByteBuffers {
         b.position(p);
     }
 
-
     public static long getAddress(ByteBuffer buffer) {
         return ((DirectBuffer) buffer).address();
     }
@@ -260,6 +259,10 @@ public final class ByteBuffers {
         long max = Os.getSystemMemory() / 4;
         max = max > Integer.MAX_VALUE ? Integer.MAX_VALUE : max;
         return channelSize > max ? max : channelSize;
+    }
+
+    public static boolean isDirect(ByteBuffer buf) {
+        return buf instanceof DirectBuffer;
     }
 
     public static void putStr(ByteBuffer buffer, CharSequence value) {

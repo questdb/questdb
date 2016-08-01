@@ -89,7 +89,7 @@ public class HttpServer {
         this.clock = clock;
     }
 
-    public void start(ObjHashSet<? extends Job> extraJobs, int queueDepth) {
+    public boolean start(ObjHashSet<? extends Job> extraJobs, int queueDepth) {
         this.running = true;
         ioQueue = new RingQueue<>(IOEvent.FACTORY, queueDepth);
         SPSequence ioPubSequence = new SPSequence(ioQueue.getCapacity());
@@ -102,7 +102,7 @@ public class HttpServer {
         } catch (NetworkError e) {
             LOG.error().$("Server failed to start: ").$(e.getMessage()).$();
             running = false;
-            return;
+            return false;
         }
 
         IOHttpJob ioHttp = new IOHttpJob(ioQueue, ioSubSequence, this.dispatcher, urlMatcher);
@@ -121,6 +121,7 @@ public class HttpServer {
         }
 
         startComplete.countDown();
+        return true;
     }
 
     public void start() {

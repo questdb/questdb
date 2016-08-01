@@ -33,11 +33,11 @@ import com.questdb.std.ObjList;
 
 import java.io.IOException;
 
-public class DenseRankOrderedPartitionedAnalyticFunction extends AbstractRankOrderedAnalyticFunction {
+public class DenseRankOPAnalyticFunction extends AbstractRankOrderedAnalyticFunction {
     private final DirectMap partitionMap;
     private final ObjList<VirtualColumn> partitionBy;
 
-    public DenseRankOrderedPartitionedAnalyticFunction(int pageSize, String name, ObjList<VirtualColumn> partitionBy) {
+    public DenseRankOPAnalyticFunction(int pageSize, String name, ObjList<VirtualColumn> partitionBy) {
         super(pageSize, name);
         this.partitionMap = new DirectMap(pageSize, 1, MapUtils.ROWID_MAP_VALUES);
         this.partitionBy = partitionBy;

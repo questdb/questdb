@@ -49,7 +49,7 @@ public class DenseRankAnalyticFunctionFactory implements AnalyticFunctionFactory
         }
 
         if (ordered) {
-            return new DenseRankOrderedPartitionedAnalyticFunction(configuration.getDbAnalyticFuncPage(), valueColumnAlias, partitionBy);
+            return new DenseRankOPAnalyticFunction(configuration.getDbAnalyticFuncPage(), valueColumnAlias, partitionBy);
         }
 
         if (partitionBy != null) {

@@ -22,26 +22,24 @@
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
 <assembly>
-    <id>all</id>
+    <id>bin</id>
     <formats>
         <format>tar.gz</format>
     </formats>
     <includeBaseDirectory>false</includeBaseDirectory>
-    <fileSets>
-        <fileSet>
-            <directory>${project.basedir}/src</directory>
-            <outputDirectory>src</outputDirectory>
-        </fileSet>
-        <fileSet>
-            <directory>${project.build.directory}/site</directory>
-            <outputDirectory>docs</outputDirectory>
-        </fileSet>
-    </fileSets>
     <dependencySets>
         <dependencySet>
-            <outputDirectory>/</outputDirectory>
+            <outputDirectory>questdb-${artifact.version}</outputDirectory>
+            <outputFileNameMapping>questdb.jar</outputFileNameMapping>
             <useProjectArtifact>true</useProjectArtifact>
             <scope>runtime</scope>
         </dependencySet>
     </dependencySets>
+    <fileSets>
+        <fileSet>
+            <directory>src/main/bin</directory>
+            <outputDirectory>questdb-${artifact.version}</outputDirectory>
+            <fileMode>755</fileMode>
+        </fileSet>
+    </fileSets>
 </assembly>

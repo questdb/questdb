@@ -35,14 +35,19 @@ import com.questdb.net.http.MimeTypes;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.net.http.handlers.*;
+import sun.misc.Signal;
+import sun.misc.SignalHandler;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Date;
 import java.util.EnumSet;
+import java.util.HashMap;
 
 import static java.nio.file.StandardCopyOption.COPY_ATTRIBUTES;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
@@ -50,14 +55,14 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 class BootstrapMain {
 
     public static void main(String[] args) throws Exception {
-        System.out.printf("QDB HTTP Server 3.0%nCopyright (C) Appsicle 2014-2016, all rights reserved.%n%n");
+        System.err.printf("QuestDB HTTP Server 3.0%nCopyright (C) Appsicle 2014-2016, all rights reserved.%n%n");
         if (args.length < 1) {
-            System.out.println("Root directory name expected");
+            System.err.println("Root directory name expected");
             return;
         }
 
         if (Os.type == Os._32Bit) {
-            System.out.println("QDB requires 64-bit JVM");
+            System.err.println("QDB requires 64-bit JVM");
             return;
         }
 
@@ -68,7 +73,7 @@ class BootstrapMain {
         File conf = new File(dir, "conf/questdb.conf");
 
         if (!conf.exists()) {
-            System.out.println("Configuration file does not exist: " + conf);
+            System.err.println("Configuration file does not exist: " + conf);
             return;
         }
 
@@ -84,18 +89,36 @@ class BootstrapMain {
         matcher.put("/chk", new ExistenceCheckHandler(factory));
         matcher.setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
 
-        HttpServer server = new HttpServer(configuration, matcher);
-        server.start(LogFactory.INSTANCE.getJobs(), configuration.getHttpQueueDepth());
-
         StringBuilder welcome = Misc.getThreadLocalBuilder();
-        welcome.append("Listening on ").append(configuration.getHttpIP()).append(':').append(configuration.getHttpPort());
-        if (configuration.getSslConfig().isSecure()) {
-            welcome.append(" [HTTPS]");
+        HttpServer server = new HttpServer(configuration, matcher);
+        if (!server.start(LogFactory.INSTANCE.getJobs(), configuration.getHttpQueueDepth())) {
+            welcome.append("Could not bind socket ").append(configuration.getHttpIP()).append(':').append(configuration.getHttpPort());
+            welcome.append(". Already running?");
+            System.err.println(welcome);
+            System.out.println(new Date() + " QuestDB failed to start");
         } else {
-            welcome.append(" [HTTP plain]");
-        }
+            welcome.append("Listening on ").append(configuration.getHttpIP()).append(':').append(configuration.getHttpPort());
+            if (configuration.getSslConfig().isSecure()) {
+                welcome.append(" [HTTPS]");
+            } else {
+                welcome.append(" [HTTP plain]");
+            }
 
-        System.out.println(welcome);
+            System.err.println(welcome);
+            System.out.println(new Date() + " QuestDB is running");
+
+            // suppress HUP signal
+            Signal.handle(new Signal("HUP"), new SignalHandler() {
+                public void handle(Signal signal) {
+                }
+            });
+
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                public void run() {
+                    System.out.println(new Date() + " QuestDB is shutting down");
+                }
+            }));
+        }
     }
 
     private static void configureLoggers(final ServerConfiguration configuration) {
@@ -123,55 +146,80 @@ class BootstrapMain {
     }
 
     private static void extractSite(String dir, boolean force) throws URISyntaxException, IOException {
+        System.out.println("Preparing content...");
         URL url = HttpServer.class.getResource("/site/");
-        final Path source = Paths.get(url.toURI());
-        final Path target = Paths.get(dir);
-        final EnumSet<FileVisitOption> walkOptions = EnumSet.of(FileVisitOption.FOLLOW_LINKS);
-        final CopyOption[] copyOptions = new CopyOption[]{COPY_ATTRIBUTES, REPLACE_EXISTING};
-
-        if (force) {
-            File pub = new File(dir, "public");
-            if (pub.exists()) {
-                com.questdb.misc.Files.delete(pub);
-            }
+        String[] components = url.toURI().toString().split("!");
+        FileSystem fs = null;
+        final Path source;
+        final int sourceLen;
+        if (components.length > 1) {
+            fs = FileSystems.newFileSystem(URI.create(components[0]), new HashMap<String, Object>());
+            source = fs.getPath(components[1]);
+            sourceLen = source.toAbsolutePath().toString().length();
+        } else {
+            source = Paths.get(url.toURI());
+            sourceLen = source.toAbsolutePath().toString().length() + 1;
         }
 
-        Files.walkFileTree(source, walkOptions, Integer.MAX_VALUE, new FileVisitor<Path>() {
+        try {
+            final Path target = Paths.get(dir);
+            final EnumSet<FileVisitOption> walkOptions = EnumSet.of(FileVisitOption.FOLLOW_LINKS);
+            final CopyOption[] copyOptions = new CopyOption[]{COPY_ATTRIBUTES, REPLACE_EXISTING};
 
-            private boolean skip = true;
-
-            @Override
-            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                if (skip) {
-                    skip = false;
-                } else {
-                    Path newDirectory = target.resolve(source.relativize(dir));
-                    try {
-                        Files.copy(dir, newDirectory, copyOptions);
-                    } catch (FileAlreadyExistsException ignore) {
-                    } catch (IOException x) {
-                        return FileVisitResult.SKIP_SUBTREE;
-                    }
+            if (force) {
+                File pub = new File(dir, "public");
+                if (pub.exists()) {
+                    com.questdb.misc.Files.delete(pub);
                 }
-                return FileVisitResult.CONTINUE;
             }
 
-            @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                Files.copy(file, target.resolve(source.relativize(file)), copyOptions);
-                return FileVisitResult.CONTINUE;
-            }
+            Files.walkFileTree(source, walkOptions, Integer.MAX_VALUE, new FileVisitor<Path>() {
 
-            @Override
-            public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                return FileVisitResult.CONTINUE;
-            }
+                private boolean skip = true;
 
-            @Override
-            public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
-                return FileVisitResult.CONTINUE;
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    if (skip) {
+                        skip = false;
+                    } else {
+                        try {
+                            Files.copy(dir, toDestination(dir), copyOptions);
+                            System.out.println("Extracted " + dir);
+                        } catch (FileAlreadyExistsException ignore) {
+                        } catch (IOException x) {
+                            return FileVisitResult.SKIP_SUBTREE;
+                        }
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    Files.copy(file, toDestination(file), copyOptions);
+                    System.out.println("Extracted " + file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
+                    return FileVisitResult.CONTINUE;
+                }
+
+                private Path toDestination(final Path path) {
+                    final Path tmp = path.toAbsolutePath();
+                    return target.resolve(tmp.toString().substring(sourceLen));
+                }
+            });
+        } finally {
+            if (fs != null) {
+                fs.close();
             }
-        });
+        }
     }
 
 }
