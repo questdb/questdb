@@ -1,8 +1,19 @@
-#!/bin/sh
+#!/bin/bash
 
 export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
 export QDB_MAX_STOP_ATTEMPTS=5;
 export QDB_DEFAULT_ROOT="qdbroot"
+export QDB_OS=`uname`
+
+case `uname` in
+   Darwin)
+       export PID_FIELD=3
+       ;;
+   *)
+       export PID_FIELD=2
+       ;;
+esac
+
 
 function usage {
     echo "$0 start|status|stop [-f] [-d path]"
@@ -10,7 +21,7 @@ function usage {
 }
 
 function export_pid {
-    export QDB_PID=`ps -ef | grep ${QDB_PROCESS_LABEL} | grep -v grep | tr -s " " | cut -d " " -f 3`
+    export QDB_PID=`ps -ef | grep ${QDB_PROCESS_LABEL} | grep -v grep | tr -s " " | cut -d " " -f ${PID_FIELD}`
 }
 
 function export_java {
