@@ -297,7 +297,7 @@ public class JournalServerAgent {
             if (dataSent) {
                 commandProducer.write(channel, Command.SERVER_READY_CMD);
             } else if (blocking) {
-                LOG.info().$(socketAddress).$(" Client appears to be refusing new data from server, corrupt client").$();
+                commandProducer.write(channel, Command.SERVER_HEARTBEAT);
             }
         } else {
             if (server.isRunning()) {

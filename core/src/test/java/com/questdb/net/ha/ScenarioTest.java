@@ -81,10 +81,11 @@ public class ScenarioTest extends AbstractTest {
         client.subscribe(Quote.class, "remote", "local");
         client.start();
 
-        lagIteration(randomOrigin, remote, 0, 100);
-        lagIteration(randomOrigin, remote, 100, 200);
-        lagIteration(randomOrigin, remote, 200, 300);
-        lagIteration(randomOrigin, remote, 300, 400);
+        int n = 0;
+        while (n < 400) {
+            lagIteration(randomOrigin, remote, n, n + 10);
+            n += 10;
+        }
 
         Thread.sleep(200);
 
