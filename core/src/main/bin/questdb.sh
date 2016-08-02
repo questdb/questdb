@@ -2,8 +2,18 @@
 
 export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
 export QDB_MAX_STOP_ATTEMPTS=5;
+export QDB_DEFAULT_ROOT="qdbroot"
 
-function start {
+function usage {
+    echo "$0 start|status|stop [-f] [-d path]"
+    exit 55
+}
+
+function export_pid {
+    export QDB_PID=`ps -ef | grep ${QDB_PROCESS_LABEL} | grep -v grep | tr -s " " | cut -d " " -f 3`
+}
+
+function export_java {
     # check that JAVA_HOME is defined
     if [ "$JAVA_HOME" = "" ]; then
         echo "JAVA_HOME is undefined"
@@ -11,18 +21,60 @@ function start {
     fi
 
     # check that Java binary is executable
-    JAVA=${JAVA_HOME}/bin/java
+    export JAVA=${JAVA_HOME}/bin/java
     if [ ! -x "$JAVA" ]; then
         echo "$JAVA is not executable"
         exit 55;
     fi
+}
 
-    # check the state of root directory
-    if [ "$1" = "" ]; then
-        QDB_ROOT="qdbroot"
-    else
-        QDB_ROOT="$1"
+function export_args {
+
+    export QDB_OVERWRITE_PUBLIC=""
+    export QDB_ROOT=${QDB_DEFAULT_ROOT}
+
+    while [[ $# -gt 0 ]]; do
+        key="$1"
+
+        case ${key} in
+            -f)
+                export QDB_OVERWRITE_PUBLIC="-f"
+                ;;
+            -d)
+                if [[ $# -eq 1 ]]; then
+                    echo "Expected: -d <path>"
+                    exit 55
+                fi
+                export QDB_ROOT="$2"
+                shift
+                ;;
+            -t)
+                if [[ $# -eq 1 ]]; then
+                    echo "Expected: -t <label>"
+                    exit 55
+                fi
+                export QDB_PROCESS_LABEL="QuestDB-Runtime-$2"
+                shift
+                ;;
+            *)
+                echo "Unexpected option: $key"
+                usage
+                ;;
+        esac
+        shift
+    done
+}
+
+function start {
+
+    export_pid
+
+    if [[ "${QDB_PID}" != "" ]]; then
+        echo "Already running. PID: ${QDB_PID}"
+        exit 55
     fi
+
+    export_java
 
     # create root directory if it does not exist
     if [ ! -d "$QDB_ROOT" ]; then
@@ -52,13 +104,10 @@ function start {
     -XX:BiasedLockingStartupDelay=0"
 
     JAVA_MAIN="com.questdb.BootstrapMain"
+    DATE=`date +%Y-%m-%d:%H:%M:%S`
 
-    ${JAVA} ${JAVA_OPTS} -cp ${JAVA_LIB} ${JAVA_MAIN} ${QDB_ROOT} -f > ${QDB_LOG}/stdout.txt &
+    ${JAVA} ${JAVA_OPTS} -cp ${JAVA_LIB} ${JAVA_MAIN} ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt &
     sleep 0.5
-}
-
-function export_pid {
-    export QDB_PID=`ps -ef | grep ${QDB_PROCESS_LABEL} | grep -v grep | tr -s " " | cut -d " " -f 3`
 }
 
 function query {
@@ -111,22 +160,19 @@ function banner {
     echo
 }
 
-function usage {
-    echo "$0 start|stop|query [-f]"
-    exit 55
-}
-
 banner
 
 if [[ $# -gt 0 ]]; then
     command=$1
     shift
 
+    export_args $@
+
     case ${command} in
        start)
         start
         ;;
-       query)
+       status)
         query
         ;;
        stop)
@@ -136,4 +182,6 @@ if [[ $# -gt 0 ]]; then
         usage
         ;;
     esac
+else
+    usage
 fi
