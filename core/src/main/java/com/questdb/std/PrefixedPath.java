@@ -30,7 +30,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public final class PrefixedPath extends AbstractCharSequence implements Closeable, LPSZ {
+public final class PrefixedPath extends AbstractCharSequence implements Closeable, LPSZ, Sinkable {
     private final int prefixLen;
     private long ptr = 0;
     private int capacity = 0;
@@ -97,6 +97,15 @@ public final class PrefixedPath extends AbstractCharSequence implements Closeabl
         Unsafe.getUnsafe().putByte(p + l, (byte) 0);
         this.len = this.prefixLen + l;
         return this;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        long p = this.ptr;
+        byte b;
+        while ((b = Unsafe.getUnsafe().getByte(p++)) != 0) {
+            sink.put((char) b);
+        }
     }
 
     @Override

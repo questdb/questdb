@@ -107,11 +107,13 @@ class BootstrapMain {
             System.err.println(welcome);
             System.out.println(new Date() + " QuestDB is running");
 
-            // suppress HUP signal
-            Signal.handle(new Signal("HUP"), new SignalHandler() {
-                public void handle(Signal signal) {
-                }
-            });
+            if (Os.type != Os.WINDOWS) {
+                // suppress HUP signal
+                Signal.handle(new Signal("HUP"), new SignalHandler() {
+                    public void handle(Signal signal) {
+                    }
+                });
+            }
 
             Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
                 public void run() {

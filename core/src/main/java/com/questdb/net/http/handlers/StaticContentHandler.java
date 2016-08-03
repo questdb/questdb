@@ -24,6 +24,8 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.ex.NumericException;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
 import com.questdb.net.http.*;
 import com.questdb.std.*;
@@ -35,6 +37,8 @@ import java.lang.ThreadLocal;
 import java.nio.ByteBuffer;
 
 public class StaticContentHandler implements ContextHandler {
+
+    private static final Log LOG = LogFactory.getLog(StaticContentHandler.class);
 
     private final MimeTypes mimeTypes;
     private final ThreadLocal<PrefixedPath> tlPrefixedPath = new ThreadLocal<>();
@@ -51,14 +55,18 @@ public class StaticContentHandler implements ContextHandler {
 
     @Override
     public void handle(IOContext context) throws IOException {
+
         CharSequence url = context.request.getUrl();
+        LOG.info().$("handling static: ").$(url).$();
         if (Chars.contains(url, "..")) {
+            LOG.info().$("URL abuse: ").$(url).$();
             context.simpleResponse().send(404);
         } else {
             PrefixedPath path = tlPrefixedPath.get();
             if (Files.exists(path.of(url))) {
                 send(context, path, false);
             } else {
+                LOG.info().$("Not found: ").$(path).$();
                 context.simpleResponse().send(404);
             }
         }
@@ -100,6 +108,7 @@ public class StaticContentHandler implements ContextHandler {
     private void send(IOContext context, LPSZ path, boolean asAttachment) throws IOException {
         int n = Chars.lastIndexOf(path, '.');
         if (n == -1) {
+            LOG.info().$("Missing extension: ").$(path).$();
             context.simpleResponse().send(404);
             return;
         }
@@ -123,6 +132,7 @@ public class StaticContentHandler implements ContextHandler {
                     return;
                 }
             } catch (NumericException e) {
+                LOG.info().$("Received wrong tag [").$(val).$("] for ").$(path).$();
                 context.simpleResponse().send(400);
                 return;
             }
@@ -142,6 +152,7 @@ public class StaticContentHandler implements ContextHandler {
 
             h.fd = Files.openRO(path);
             if (h.fd == -1) {
+                LOG.info().$("Cannot open file: ").$(path).$();
                 context.simpleResponse().send(404);
                 return;
             }
@@ -181,6 +192,7 @@ public class StaticContentHandler implements ContextHandler {
     private void sendVanilla(IOContext context, LPSZ path, CharSequence contentType, boolean asAttachment) throws IOException {
         long fd = Files.openRO(path);
         if (fd == -1) {
+            LOG.info().$("Cannot open file: ").$(path).$('(').$(Os.errno()).$(')').$();
             context.simpleResponse().send(404);
         } else {
             FileDescriptorHolder h = lvFd.get(context);

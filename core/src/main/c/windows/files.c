@@ -124,8 +124,16 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRO
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    OFSTRUCT st;
-    return OpenFile((LPCSTR) lpszName, &st, OF_READ);
+    printf("hello: %s\n", (char *) lpszName);
+    return (jlong) CreateFile(
+            (LPCSTR) lpszName,
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            NULL,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL
+    );
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close
