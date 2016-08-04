@@ -33,7 +33,6 @@ import com.questdb.misc.Files;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
@@ -54,13 +53,13 @@ public abstract class AbstractOptimiserTest {
     public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
     protected static final StringSink sink = new StringSink();
     protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-    private static final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
+    private static final QueryCompiler compiler = new QueryCompiler();
     private static final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 16);
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private static final JsonParser jp = new JsonParser();
 
     protected static void assertRowId(String query, String longColumn) throws ParserException {
-        RecordSource src = compiler.compileSource(factory, query);
+        RecordSource src = compiler.compile(factory, query);
         try {
             RecordCursor cursor = src.prepareCursor(factory);
 
@@ -88,7 +87,7 @@ public abstract class AbstractOptimiserTest {
     }
 
     protected void assertEmpty(String query) throws ParserException {
-        try (RecordSource src = compiler.compileSource(factory, query)) {
+        try (RecordSource src = compiler.compile(factory, query)) {
             Assert.assertFalse(src.prepareCursor(factory).hasNext());
         }
     }
@@ -99,7 +98,7 @@ public abstract class AbstractOptimiserTest {
 
     protected void assertPlan2(CharSequence expected, CharSequence query) throws ParserException {
         sink.clear();
-        try (RecordSource recordSource = compiler.compileSource(factory, query)) {
+        try (RecordSource recordSource = compiler.compile(factory, query)) {
             recordSource.toSink(sink);
             String s = gson.toJson(jp.parse(sink.toString()));
             TestUtils.assertEquals(expected, s);
@@ -107,28 +106,30 @@ public abstract class AbstractOptimiserTest {
     }
 
     protected void assertString(String query, int columnIndex) throws ParserException {
-        RecordCursor cursor = compiler.compile(factory, query);
-        while (cursor.hasNext()) {
-            Record r = cursor.next();
-            int len = r.getStrLen(columnIndex);
-            CharSequence s = r.getStr(columnIndex);
-            if (s != null) {
-                CharSequence csA = r.getFlyweightStr(columnIndex);
-                CharSequence csB = r.getFlyweightStrB(columnIndex);
-                TestUtils.assertEquals(s, csA);
-                TestUtils.assertEquals(s, csB);
-                Assert.assertEquals(len, s.length());
-                Assert.assertFalse(csA == csB);
-            } else {
-                Assert.assertEquals(-1, len);
-                Assert.assertNull(r.getFlyweightStr(columnIndex));
-                Assert.assertNull(r.getFlyweightStrB(columnIndex));
+        try (RecordSource rs = compiler.compile(factory, query)) {
+            RecordCursor cursor = rs.prepareCursor(factory);
+            while (cursor.hasNext()) {
+                Record r = cursor.next();
+                int len = r.getStrLen(columnIndex);
+                CharSequence s = r.getStr(columnIndex);
+                if (s != null) {
+                    CharSequence csA = r.getFlyweightStr(columnIndex);
+                    CharSequence csB = r.getFlyweightStrB(columnIndex);
+                    TestUtils.assertEquals(s, csA);
+                    TestUtils.assertEquals(s, csB);
+                    Assert.assertEquals(len, s.length());
+                    Assert.assertFalse(csA == csB);
+                } else {
+                    Assert.assertEquals(-1, len);
+                    Assert.assertNull(r.getFlyweightStr(columnIndex));
+                    Assert.assertNull(r.getFlyweightStrB(columnIndex));
+                }
             }
         }
     }
 
     protected void assertSymbol(String query, int columnIndex) throws ParserException {
-        try (RecordSource src = compiler.compileSource(factory, query)) {
+        try (RecordSource src = compiler.compile(factory, query)) {
             RecordCursor cursor = src.prepareCursor(factory);
             SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
             Assert.assertNotNull(cursor.getStorageFacade().getFactory());
@@ -155,7 +156,7 @@ public abstract class AbstractOptimiserTest {
         sink.clear();
         RecordSource rs = cache.peek(query);
         if (rs == null) {
-            cache.put(query, rs = compiler.compileSource(factory, query));
+            cache.put(query, rs = compiler.compile(factory, query));
         } else {
             rs.reset();
         }
@@ -167,7 +168,7 @@ public abstract class AbstractOptimiserTest {
     }
 
     protected RecordSource compileSource(CharSequence query) throws ParserException {
-        return compiler.compileSource(factory, query);
+        return compiler.compile(factory, query);
     }
 
     protected void expectFailure(CharSequence query) throws ParserException {

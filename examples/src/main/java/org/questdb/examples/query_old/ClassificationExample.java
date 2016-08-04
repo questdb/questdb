@@ -21,14 +21,15 @@
  *
  ******************************************************************************/
 
-package org.questdb.examples.query;
+package org.questdb.examples.query_old;
 
 import com.questdb.Journal;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalFactory;
 import com.questdb.misc.Files;
-import com.questdb.query.api.QueryHeadBuilder;
+import com.questdb.store.KVIndex;
+import com.questdb.store.SymbolTable;
 import org.questdb.examples.model.ModelConfiguration;
 import org.questdb.examples.model.Quote;
 import org.questdb.examples.support.QuoteGenerator;
@@ -36,43 +37,52 @@ import org.questdb.examples.support.QuoteGenerator;
 import java.io.File;
 import java.util.concurrent.TimeUnit;
 
-public class HeadQueryBuilderExample {
+/**
+ * This example is SQL equivalent of:
+ * <p/>
+ * select sym, count(*) from quote group by sym
+ */
+public class ClassificationExample {
 
     public static void main(String[] args) throws JournalException {
         if (args.length != 1) {
-            System.out.println("Usage: " + HeadQueryBuilderExample.class.getName() + " <path>");
+            System.out.println("Usage: " + ClassificationExample.class.getName() + " <path>");
             System.exit(1);
         }
         String journalLocation = args[0];
+
         try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build(journalLocation))) {
 
             // delete existing quote journal
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote"));
 
-            int count = 10000000;
+            int count = 1000000;
             long t = System.nanoTime();
 
             // get some data in :)
             try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
-                QuoteGenerator.generateQuoteData(w, count, 90);
+                QuoteGenerator.generateQuoteData(w, count, 1, QuoteGenerator.randomSymbols(1400));
             }
 
             System.out.println("Created " + count + " records in " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t) + "ms");
 
             try (Journal<Quote> journal = factory.reader(Quote.class)) {
-                count = 0;
                 t = System.nanoTime();
-                //
-                // search head version of each record for all distinct values of "sym" column
-                //
-                QueryHeadBuilder<Quote> builder = journal.query().head().withKeys();
+                // symbol table is a Map<int, String> equivalent
+                // it contains (key,value) pairs for all values of column "sym"
+                // key is a 0-based dense sequence of INTs
+                SymbolTable tab = journal.getSymbolTable("sym");
 
-                // execute query and consume result set
-                for (Quote q : builder.asResultSet().bufferedIterator()) {
-                    System.out.println(q);
-                    count++;
+                // index is a sparse matrix (key x value) where key is "sym" key and values are localRowIDs
+                KVIndex index = journal.getLastPartition().getIndexForColumn("sym");
+
+                long total = 0;
+                for (int i = 0, sz = tab.size(); i < sz; i++) {
+                    int cnt = index.getValueCount(i);
+                    System.out.println(tab.value(i) + ": " + cnt);
+                    total += cnt;
                 }
-                System.out.println("Read " + count + " records in " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t) + "ms");
+                System.out.println("total: " + total + " in " + TimeUnit.NANOSECONDS.toMicros(System.nanoTime() - t) + "μs");
             }
         }
     }

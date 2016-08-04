@@ -32,7 +32,10 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.io.sink.StringSink;
 import com.questdb.misc.*;
 import com.questdb.net.http.ServerConfiguration;
-import com.questdb.ql.*;
+import com.questdb.ql.AggregatorFunction;
+import com.questdb.ql.PartitionSource;
+import com.questdb.ql.RecordSource;
+import com.questdb.ql.RowSource;
 import com.questdb.ql.impl.*;
 import com.questdb.ql.impl.aggregation.*;
 import com.questdb.ql.impl.analytic.*;
@@ -121,6 +124,10 @@ public class QueryCompiler {
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
 
+    public QueryCompiler() {
+        this(new ServerConfiguration());
+    }
+
     public QueryCompiler(ServerConfiguration configuration) {
         // seed column name assembly with default column prefix, which we will reuse
         this.configuration = configuration;
@@ -128,15 +135,7 @@ public class QueryCompiler {
         columnNamePrefixLen = 3;
     }
 
-    public <T> RecordCursor compile(JournalReaderFactory factory, Class<T> clazz) throws ParserException {
-        return compile(factory, clazz.getName());
-    }
-
-    public RecordCursor compile(JournalReaderFactory factory, CharSequence query) throws ParserException {
-        return compileSource(factory, query).prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
-    }
-
-    public RecordSource compileSource(JournalReaderFactory factory, CharSequence query) throws ParserException {
+    public RecordSource compile(JournalReaderFactory factory, CharSequence query) throws ParserException {
         clearState();
         final QueryModel model = parser.parse(query).getQueryModel();
         final CharSequenceObjHashMap<Parameter> map = new CharSequenceObjHashMap<>();

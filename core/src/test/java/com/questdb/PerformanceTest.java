@@ -32,7 +32,6 @@ import com.questdb.log.LogFactory;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Interval;
 import com.questdb.model.Quote;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
@@ -95,9 +94,9 @@ public class PerformanceTest extends AbstractTest {
         }
 
         JournalCachingFactory cf = new JournalCachingFactory(factory.getConfiguration());
-        QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
+        QueryCompiler compiler = new QueryCompiler();
 
-        try (RecordSource src = compiler.compileSource(cf, "quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
+        try (RecordSource src = compiler.compile(cf, "quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
             int count = 1000;
             long t = 0;
             for (int i = -count; i < count; i++) {

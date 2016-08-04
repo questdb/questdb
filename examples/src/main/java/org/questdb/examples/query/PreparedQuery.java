@@ -23,28 +23,37 @@
 
 package org.questdb.examples.query;
 
-import com.questdb.Journal;
 import com.questdb.ex.JournalException;
+import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalFactory;
-import org.questdb.examples.model.Price;
+import com.questdb.ql.RecordSource;
+import com.questdb.ql.parser.QueryCompiler;
 
-import java.util.concurrent.TimeUnit;
+import static org.questdb.examples.query.GenericAppend.*;
 
-public class SimplestIterate {
-    public static void main(String[] args) throws JournalException {
-        try (JournalFactory factory = new JournalFactory(args[0])) {
+public class PreparedQuery {
+    public static void main(String[] args) throws JournalException, ParserException {
 
-            try (Journal<Price> journal = factory.reader(Price.class)) {
-                long tZero = System.nanoTime();
-                int count = 0;
+        if (args.length < 1) {
+            System.out.println("Usage: GenericAppend <path>");
+            System.exit(1);
+        }
 
-                for (Price p : journal) {
-                    assert p != null;
-                    count++;
-                }
+        final String location = args[0];
 
-                System.out.println("Read " + count + " objects in " +
-                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tZero) + "ms.");
+        deleteCustomers(location);
+
+        // factory can be reused in application and must be explicitly closed when no longer needed.
+        try (JournalFactory factory = new JournalFactory(location)) {
+            createCustomers(factory);
+
+            QueryCompiler compiler = new QueryCompiler();
+
+            // compile record source
+            try (RecordSource rs = compiler.compile(factory, "customers")) {
+                int count = fetchCursor(rs.prepareCursor(factory));
+                count += fetchCursor(rs.prepareCursor(factory));
+                System.out.println(count);
             }
         }
     }

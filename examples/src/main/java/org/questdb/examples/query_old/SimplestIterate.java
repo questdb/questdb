@@ -21,26 +21,24 @@
  *
  ******************************************************************************/
 
-package org.questdb.examples.query;
+package org.questdb.examples.query_old;
 
 import com.questdb.Journal;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalFactory;
-import com.questdb.query.api.QueryAllBuilder;
-import org.questdb.examples.model.ModelConfiguration;
 import org.questdb.examples.model.Price;
 
 import java.util.concurrent.TimeUnit;
 
-public class SimplestSymbolQuery {
+public class SimplestIterate {
     public static void main(String[] args) throws JournalException {
-        try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build(args[0]))) {
+        try (JournalFactory factory = new JournalFactory(args[0])) {
+
             try (Journal<Price> journal = factory.reader(Price.class)) {
                 long tZero = System.nanoTime();
                 int count = 0;
-                QueryAllBuilder<Price> builder = journal.query().all().withSymValues("sym", "17");
 
-                for (Price p : builder.asResultSet().bufferedIterator()) {
+                for (Price p : journal) {
                     assert p != null;
                     count++;
                 }

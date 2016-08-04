@@ -21,35 +21,35 @@
  *
  ******************************************************************************/
 
-package org.questdb.examples.query;
+package org.questdb.examples.query_old;
 
 import com.questdb.Journal;
+import com.questdb.JournalIterators;
 import com.questdb.JournalWriter;
-import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
-import com.questdb.misc.Dates;
 import com.questdb.misc.Files;
-import com.questdb.misc.Interval;
 import org.questdb.examples.model.Quote;
 import org.questdb.examples.support.QuoteGenerator;
 
 import java.io.File;
 import java.util.concurrent.TimeUnit;
 
-public class IntervalExample {
+public class SelectColumnsExample {
     public static void main(String[] args) throws JournalException {
+
         if (args.length != 1) {
-            System.out.println("Usage: " + IntervalExample.class.getName() + " <path>");
+            System.out.println("Usage: " + SelectColumnsExample.class.getName() + " <path>");
             System.exit(1);
         }
         String journalLocation = args[0];
+
         try (JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
             $(Quote.class)
-                    .recordCountHint(5000000) // hint that journal is going to be big
-                    .partitionBy(PartitionBy.MONTH) // partition by MONTH
-                    .$ts() // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
+                    .recordCountHint(10000000)
+                    .$sym("sym").valueCountHint(15) // declare "sym" as symbol, it will improve storage efficiency
+                    .$ts()
             ;
         }}.build(journalLocation))) {
 
@@ -57,27 +57,20 @@ public class IntervalExample {
             Files.delete(new File(factory.getConfiguration().getJournalBase(), Quote.class.getName()));
 
             // get some data in :)
-            try (JournalWriter<Quote> w = factory.bulkWriter(Quote.class)) {
-                QuoteGenerator.generateQuoteData(w, 10000000, 90);
+            try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
+                QuoteGenerator.generateQuoteData(w, 10000000);
             }
 
-            // basic iteration
-            try (Journal<Quote> journal = factory.reader(Quote.class)) {
+            // read only sym and askSize columns
+            try (Journal<Quote> journal = factory.reader(Quote.class).select("sym", "askSize")) {
                 int count = 0;
                 long t = System.nanoTime();
-
-                long lo = Dates.addDays(System.currentTimeMillis(), 10);
-                long hi = Dates.addDays(lo, 10);
-
-                // iterate the interval between lo and hi millis.
-                for (Quote q : journal.query().all().iterator(new Interval(hi, lo))) {
+                for (Quote q : JournalIterators.incrementBufferedIterator(journal)) {
                     assert q != null;
                     count++;
                 }
-                System.out.println("Iterator read " + count + " quotes in " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t) + "ms.");
+                System.out.println("Two columns of " + count + " quotes read in " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t) + "ms.");
             }
         }
-
     }
-
 }

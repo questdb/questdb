@@ -27,8 +27,8 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.misc.Unsafe;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
+import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.LongList;
@@ -41,7 +41,7 @@ import java.nio.ByteBuffer;
 
 
 public class RecordListTest extends AbstractTest {
-    private final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
+    private final QueryCompiler compiler = new QueryCompiler();
 
     @Test
     public void testAllFieldTypesField() throws JournalException, IOException, ParserException {
@@ -226,9 +226,11 @@ public class RecordListTest extends AbstractTest {
         try (RecordList records = new RecordList(journal.getMetadata(), pageSize)) {
             LongList offsets = new LongList();
 
-            long o = -1;
-            for (Record rec : compiler.compile(factory, journal.getLocation().getName())) {
-                offsets.add(o = records.append(rec, o));
+            try (RecordSource rs = compiler.compile(factory, journal.getLocation().getName())) {
+                long o = -1;
+                for (Record rec : rs.prepareCursor(factory)) {
+                    offsets.add(o = records.append(rec, o));
+                }
             }
 
             int i = 0;

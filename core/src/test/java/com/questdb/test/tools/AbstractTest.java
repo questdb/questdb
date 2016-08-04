@@ -29,7 +29,6 @@ import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Files;
 import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import org.junit.Assert;
@@ -43,10 +42,10 @@ public abstract class AbstractTest {
 
     protected final StringSink sink = new StringSink();
     protected final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-    private final QueryCompiler compiler = new QueryCompiler(new ServerConfiguration());
+    private final QueryCompiler compiler = new QueryCompiler();
 
     protected void assertEmpty(String query) throws ParserException {
-        try (RecordSource src = compiler.compileSource(factory, query)) {
+        try (RecordSource src = compiler.compile(factory, query)) {
             Assert.assertFalse(src.prepareCursor(factory).hasNext());
         }
     }
@@ -64,7 +63,7 @@ public abstract class AbstractTest {
     protected void assertThat(String expected, String query, boolean header) throws ParserException, IOException {
         sink.clear();
         long memUsed = Unsafe.getMemUsed();
-        try (RecordSource src = compiler.compileSource(factory, query)) {
+        try (RecordSource src = compiler.compile(factory, query)) {
             printer.print(src, factory, header);
             TestUtils.assertEquals(expected, sink);
             src.reset();
@@ -79,7 +78,7 @@ public abstract class AbstractTest {
     }
 
     protected RecordSource compile(CharSequence query) throws ParserException {
-        return compiler.compileSource(factory, query);
+        return compiler.compile(factory, query);
     }
 
     protected void expectFailure(CharSequence query) throws ParserException {

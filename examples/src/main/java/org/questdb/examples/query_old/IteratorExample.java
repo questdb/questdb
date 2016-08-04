@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package org.questdb.examples.query;
+package org.questdb.examples.query_old;
 
 import com.questdb.Journal;
 import com.questdb.JournalIterators;

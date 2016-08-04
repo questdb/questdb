@@ -112,7 +112,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
             this.factory = pool.get();
             recordSource = CACHE.get().poll(query);
             if (recordSource == null) {
-                recordSource = COMPILER.get().compileSource(factory, query);
+                recordSource = COMPILER.get().compile(factory, query);
                 misses.incrementAndGet();
             } else {
                 hits.incrementAndGet();

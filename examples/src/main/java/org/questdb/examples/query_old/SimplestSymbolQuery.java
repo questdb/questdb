@@ -21,32 +21,33 @@
  *
  ******************************************************************************/
 
-package org.questdb.examples.io;
+package org.questdb.examples.query_old;
 
+import com.questdb.Journal;
 import com.questdb.ex.JournalException;
-import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalFactory;
-import com.questdb.io.ExportManager;
-import com.questdb.ql.parser.QueryCompiler;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import com.questdb.query.api.QueryAllBuilder;
+import org.questdb.examples.model.ModelConfiguration;
+import org.questdb.examples.model.Price;
 
-import java.io.File;
-import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
-public class ExportCsvMain {
-    @SuppressFBWarnings({"PATH_TRAVERSAL_IN"})
-    public static void main(String[] args) throws JournalException, IOException, ParserException {
+public class SimplestSymbolQuery {
+    public static void main(String[] args) throws JournalException {
+        try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build(args[0]))) {
+            try (Journal<Price> journal = factory.reader(Price.class)) {
+                long tZero = System.nanoTime();
+                int count = 0;
+                QueryAllBuilder<Price> builder = journal.query().all().withSymValues("sym", "17");
 
-        JournalFactory factory = new JournalFactory(args[0]);
-        QueryCompiler compiler = new QueryCompiler();
-        String from = args[1];
-        String toDir = args[2];
-        char delimiter = args[3].charAt(0);
+                for (Price p : builder.asResultSet().bufferedIterator()) {
+                    assert p != null;
+                    count++;
+                }
 
-        // exports "from" journal to a delimited delimiter file written to "toDir" directory. Name of the file is
-        // the same as name of exported journal.
-        // Delimiter is selected via TextFormatEnum
-
-        ExportManager.export(compiler.compile(factory, from), factory, new File(toDir, from), delimiter);
+                System.out.println("Read " + count + " objects in " +
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - tZero) + "ms.");
+            }
+        }
     }
 }

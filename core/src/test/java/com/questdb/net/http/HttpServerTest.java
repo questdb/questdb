@@ -333,7 +333,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 StringSink sink = new StringSink();
                 RecordSourcePrinter printer = new RecordSourcePrinter(sink);
                 QueryCompiler qc = new QueryCompiler(configuration);
-                printer.print(qc.compileSource(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'"), f);
+                printer.print(qc.compile(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'"), f);
                 TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
             } finally {
                 server.halt();
@@ -423,7 +423,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 StringSink sink = new StringSink();
                 RecordSourcePrinter printer = new RecordSourcePrinter(sink);
                 QueryCompiler qc = new QueryCompiler(configuration);
-                RecordSource src1 = qc.compileSource(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'");
+                RecordSource src1 = qc.compile(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'");
                 try {
                     printer.print(src1, factory);
                     TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
@@ -431,7 +431,7 @@ public class HttpServerTest extends AbstractJournalTest {
                     Misc.free(src1);
                 }
 
-                RecordSource src2 = qc.compileSource(factory, "'test-import.csv'");
+                RecordSource src2 = qc.compile(factory, "'test-import.csv'");
                 try {
                     Assert.assertEquals(ColumnType.DOUBLE, src2.getMetadata().getColumn("IntCol").getType());
                 } finally {
