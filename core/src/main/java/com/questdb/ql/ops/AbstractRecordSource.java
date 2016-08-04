@@ -43,7 +43,7 @@ public abstract class AbstractRecordSource implements RecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) {
+    public final RecordCursor prepareCursor(JournalReaderFactory factory) {
         return prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
     }
 

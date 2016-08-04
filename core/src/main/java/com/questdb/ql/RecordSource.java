@@ -44,8 +44,6 @@ public interface RecordSource extends Sinkable, Closeable {
 
     RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler);
 
-    void reset();
-
     void setParameterMap(CharSequenceObjHashMap<Parameter> map);
 
     boolean supportsRowIdAccess();

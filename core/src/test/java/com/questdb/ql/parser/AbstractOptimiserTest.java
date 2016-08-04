@@ -157,14 +157,10 @@ public abstract class AbstractOptimiserTest {
         RecordSource rs = cache.peek(query);
         if (rs == null) {
             cache.put(query, rs = compiler.compile(factory, query));
-        } else {
-            rs.reset();
         }
         printer.print(rs, factory, header);
         TestUtils.assertEquals(expected, sink);
-        rs.reset();
         TestUtils.assertStrings(rs, factory);
-        rs.reset();
     }
 
     protected RecordSource compileSource(CharSequence query) throws ParserException {

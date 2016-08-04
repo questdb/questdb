@@ -65,13 +65,6 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public void reset() {
-        recordSource.reset();
-        this._top = lo.getLong(null);
-        this._count = hi.getLong(null) - this._top;
-    }
-
-    @Override
     public StorageFacade getStorageFacade() {
         return recordCursor.getStorageFacade();
     }

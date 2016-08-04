@@ -58,19 +58,17 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        this.partitionCursor = partitionSource.prepareCursor(factory);
-        this.rowSource.prepare(partitionCursor.getStorageFacade(), cancellationHandler);
-        return this;
-    }
-
-    @Override
-    public void reset() {
         // cursor type reset
+        //todo: combine reset and prepareCursor
         if (partitionCursor != null) {
             partitionCursor.reset();
         }
         rowSource.reset();
         cursor = null;
+
+        this.partitionCursor = partitionSource.prepareCursor(factory);
+        this.rowSource.prepare(partitionCursor.getStorageFacade(), cancellationHandler);
+        return this;
     }
 
     @Override

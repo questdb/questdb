@@ -90,6 +90,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+        clear();
         setSourceCursor(recordSource.prepareCursor(factory, cancellationHandler));
         if (byRowId) {
             buildMapByRowId(sourceCursor, cancellationHandler);
@@ -97,12 +98,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             buildMap(sourceCursor, cancellationHandler);
         }
         return setupCursor();
-    }
-
-    @Override
-    public void reset() {
-        recordSource.reset();
-        clear();
     }
 
     @Override

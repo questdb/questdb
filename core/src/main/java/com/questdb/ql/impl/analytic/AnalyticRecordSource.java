@@ -79,17 +79,11 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
         this.cursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(factory, cursor.getStorageFacade());
         for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).prepare(cursor);
+            AnalyticFunction f = functions.getQuick(i);
+            f.reset();
+            f.prepare(cursor);
         }
         return this;
-    }
-
-    @Override
-    public void reset() {
-        recordSource.reset();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).reset();
-        }
     }
 
     @Override

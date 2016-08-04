@@ -29,11 +29,12 @@ import com.questdb.misc.Misc;
 import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
+import com.questdb.ql.ops.AbstractRecordSource;
 import com.questdb.ql.ops.Parameter;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.CharSink;
 
-public class NoRowIdRecordSource implements RecordSource {
+public class NoRowIdRecordSource extends AbstractRecordSource {
     private RecordSource delegate;
 
     @Override
@@ -47,34 +48,23 @@ public class NoRowIdRecordSource implements RecordSource {
     }
 
     @Override
-    public Parameter getParam(CharSequence name) {
-        return delegate.getParam(name);
-    }
-
-    @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory) {
-        return delegate.prepareCursor(factory);
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         return delegate.prepareCursor(factory, cancellationHandler);
     }
 
     @Override
-    public void reset() {
-        delegate.reset();
+    public boolean supportsRowIdAccess() {
+        return false;
+    }
+
+    @Override
+    public Parameter getParam(CharSequence name) {
+        return delegate.getParam(name);
     }
 
     @Override
     public void setParameterMap(CharSequenceObjHashMap<Parameter> map) {
         delegate.setParameterMap(map);
-    }
-
-    @Override
-    public boolean supportsRowIdAccess() {
-        return false;
     }
 
     public NoRowIdRecordSource of(RecordSource delegate) {

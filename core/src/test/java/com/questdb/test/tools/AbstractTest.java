@@ -66,7 +66,6 @@ public abstract class AbstractTest {
         try (RecordSource src = compiler.compile(factory, query)) {
             printer.print(src, factory, header);
             TestUtils.assertEquals(expected, sink);
-            src.reset();
             TestUtils.assertStrings(src, factory);
         }
         Assert.assertEquals(memUsed, Unsafe.getMemUsed());

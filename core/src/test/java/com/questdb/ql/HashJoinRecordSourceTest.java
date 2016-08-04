@@ -36,7 +36,6 @@ import com.questdb.model.Quote;
 import com.questdb.ql.impl.AllRowSource;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalRecordSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.join.HashJoinRecordSource;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.std.IntList;
@@ -142,7 +141,7 @@ public class HashJoinRecordSourceTest {
         long t = System.currentTimeMillis();
         int count = 0;
 //        ExportManager.export(j, new File("c:/temp/join.csv"), TextFileDelimiter.TAB);
-        RecordCursor c = j.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
+        RecordCursor c = j.prepareCursor(factory);
         while (c.hasNext()) {
             c.next();
             count++;

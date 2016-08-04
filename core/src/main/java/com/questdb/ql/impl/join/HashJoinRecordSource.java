@@ -95,19 +95,14 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+        this.hashTableCursor = null;
+        this.recordMap.clear();
         this.slaveCursor = slave.prepareCursor(factory, cancellationHandler);
         this.masterCursor = master.prepareCursor(factory, cancellationHandler);
         buildHashTable(cancellationHandler);
         recordMap.setStorageFacade(slaveCursor.getStorageFacade());
         storageFacade.prepare(factory, masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
         return this;
-    }
-
-    @Override
-    public void reset() {
-        hashTableCursor = null;
-        master.reset();
-        recordMap.clear();
     }
 
     @Override

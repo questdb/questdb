@@ -107,7 +107,6 @@ public class PerformanceTest extends AbstractTest {
                 for (; c.hasNext(); ) {
                     c.next();
                 }
-                src.reset();
             }
             LOG.info().$("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: ").$((System.nanoTime() - t) / count / 1000).$("μs").$();
         }

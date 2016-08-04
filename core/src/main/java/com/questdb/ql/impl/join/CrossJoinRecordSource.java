@@ -37,6 +37,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     private final SplitRecordMetadata metadata;
     private final SplitRecord record;
     private final SplitRecordStorageFacade storageFacade;
+    private JournalReaderFactory factory;
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
     private boolean nextSlave = false;
@@ -63,17 +64,12 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+        nextSlave = false;
+        this.factory = factory;
         masterCursor = masterSource.prepareCursor(factory, cancellationHandler);
         slaveCursor = slaveSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(factory, masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
         return this;
-    }
-
-    @Override
-    public void reset() {
-        masterSource.reset();
-        slaveSource.reset();
-        nextSlave = false;
     }
 
     @Override
@@ -90,7 +86,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     public Record next() {
         if (!nextSlave) {
             record.setA(masterCursor.next());
-            slaveSource.reset();
+            slaveCursor = slaveSource.prepareCursor(factory);
         }
 
         if (nextSlave || slaveCursor.hasNext()) {

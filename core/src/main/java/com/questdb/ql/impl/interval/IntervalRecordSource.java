@@ -61,16 +61,11 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        this.cursor = delegate.prepareCursor(factory, cancellationHandler);
-        return this;
-    }
-
-    @Override
-    public void reset() {
-        delegate.reset();
         intervalSource.reset();
         needInterval = true;
         needRecord = true;
+        this.cursor = delegate.prepareCursor(factory, cancellationHandler);
+        return this;
     }
 
     @Override

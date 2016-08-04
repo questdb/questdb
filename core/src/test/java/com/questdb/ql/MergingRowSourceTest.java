@@ -30,7 +30,6 @@ import com.questdb.misc.Dates;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalRecordSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.latest.HeapMergingRowSource;
 import com.questdb.ql.impl.latest.KvIndexSymLookupRowSource;
 import com.questdb.ql.impl.latest.MergingRowSource;
@@ -51,7 +50,7 @@ public class MergingRowSourceTest extends AbstractTest {
         RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new HeapMergingRowSource(srcA, srcB));
 
         long last = 0;
-        RecordCursor c = rs.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
+        RecordCursor c = rs.prepareCursor(factory);
         int ts = rs.getMetadata().getColumnIndex("timestamp");
         while (c.hasNext()) {
             long r = c.next().getDate(ts);
@@ -71,7 +70,7 @@ public class MergingRowSourceTest extends AbstractTest {
         RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new MergingRowSource(srcA, srcB));
 
         long last = 0;
-        RecordCursor c = rs.prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
+        RecordCursor c = rs.prepareCursor(factory);
         int ts = rs.getMetadata().getColumnIndex("timestamp");
         while (c.hasNext()) {
             long r = c.next().getDate(ts);

@@ -104,16 +104,11 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+        map.clear();
         this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(this.recordCursor);
         buildMap(cancellationHandler);
         return this;
-    }
-
-    @Override
-    public void reset() {
-        recordSource.reset();
-        map.clear();
     }
 
     @Override

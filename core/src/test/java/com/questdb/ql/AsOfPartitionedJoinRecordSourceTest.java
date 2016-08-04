@@ -32,7 +32,6 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.impl.NoRowIdRecordSource;
 import com.questdb.ql.impl.join.AsOfJoinRecordSource;
 import com.questdb.ql.impl.join.AsOfPartitionedJoinRecordSource;
@@ -287,7 +286,6 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         )) {
             printer.print(source, factory);
             TestUtils.assertEquals(expected, sink);
-            source.reset();
             sink.clear();
             printer.print(source, factory);
             TestUtils.assertEquals(expected, sink);
@@ -317,7 +315,6 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         )) {
             printer.print(source, factory);
             TestUtils.assertEquals(expected, sink);
-            source.reset();
             sink.clear();
             printer.print(source, factory);
             TestUtils.assertEquals(expected, sink);
@@ -399,7 +396,6 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
             printer.print(source, factory, true);
             TestUtils.assertEquals(expected, sink);
             sink.clear();
-            source.reset();
             printer.print(source, factory, true);
             TestUtils.assertEquals(expected, sink);
         }
@@ -427,7 +423,6 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\tVTJWCP\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
         printer.print(source, factory);
         TestUtils.assertEquals(expected, sink);
-        source.reset();
         sink.clear();
         printer.print(source, factory);
         TestUtils.assertEquals(expected, sink);
@@ -448,7 +443,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         )) {
             StringSink testSink = new StringSink();
             int idx = source.getMetadata().getColumnIndex("trader");
-            for (Record r : source.prepareCursor(factory, NoOpCancellationHandler.INSTANCE)) {
+            for (Record r : source.prepareCursor(factory)) {
                 testSink.clear();
                 r.getStr(idx, testSink);
 
@@ -489,7 +484,6 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         )) {
             printer.print(source, factory, true);
             TestUtils.assertEquals(expected, sink);
-            source.reset();
             sink.clear();
             printer.print(source, factory, true);
             TestUtils.assertEquals(expected, sink);

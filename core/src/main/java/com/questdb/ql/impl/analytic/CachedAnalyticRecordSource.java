@@ -116,7 +116,19 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
+        recordList.clear();
+        for (int i = 0; i < orderGroupCount; i++) {
+            RedBlackTree tree = orderedSources.getQuick(i);
+            if (tree != null) {
+                tree.clear();
+            }
+        }
+
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).reset();
+        }
+
+        final RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(factory, cursor.getStorageFacade());
         // step #1: store source cursor in record list
         // - add record list' row ids to all trees, which will put these row ids in necessary order
@@ -169,22 +181,6 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
         recordList.toTop();
         setCursorAndPrepareFunctions(recordList);
         return this;
-    }
-
-    @Override
-    public void reset() {
-        recordSource.reset();
-        recordList.clear();
-        for (int i = 0; i < orderGroupCount; i++) {
-            RedBlackTree tree = orderedSources.getQuick(i);
-            if (tree != null) {
-                tree.clear();
-            }
-        }
-
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).reset();
-        }
     }
 
     @Override

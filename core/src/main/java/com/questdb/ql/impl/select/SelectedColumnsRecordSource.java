@@ -74,11 +74,6 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public void reset() {
-        recordSource.reset();
-    }
-
-    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
     }

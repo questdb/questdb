@@ -60,6 +60,9 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
 
     @Override
     public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) {
+        intervalSource.reset();
+        needInterval = true;
+        needPartition = true;
         partitionCursor = partitionSource.prepareCursor(readerFactory);
         return this;
     }
@@ -76,9 +79,6 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
 
     @Override
     public void reset() {
-        intervalSource.reset();
-        needInterval = true;
-        needPartition = true;
     }
 
     @Override

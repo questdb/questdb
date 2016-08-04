@@ -117,16 +117,11 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+        map.clear();
+        nextRecord = null;
         this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(this.recordCursor);
         return this;
-    }
-
-    @Override
-    public void reset() {
-        recordSource.reset();
-        map.clear();
-        nextRecord = null;
     }
 
     @Override

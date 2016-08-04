@@ -91,7 +91,6 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
         }
         factory = Misc.free(factory);
         if (recordSource != null) {
-            recordSource.reset();
             CACHE.get().put(query.toString(), recordSource);
             recordSource = null;
         }

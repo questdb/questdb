@@ -56,11 +56,6 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public void reset() {
-        delegate.reset();
-    }
-
-    @Override
     public StorageFacade getStorageFacade() {
         return cursor.getStorageFacade();
     }

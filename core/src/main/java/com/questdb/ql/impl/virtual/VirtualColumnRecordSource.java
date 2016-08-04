@@ -63,11 +63,6 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public void reset() {
-        recordSource.reset();
-    }
-
-    @Override
     public StorageFacade getStorageFacade() {
         return recordCursor.getStorageFacade();
     }

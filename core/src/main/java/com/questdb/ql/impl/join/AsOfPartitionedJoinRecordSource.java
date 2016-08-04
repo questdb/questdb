@@ -117,20 +117,14 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+        this.map.reset();
+        this.holder.clear();
         this.masterCursor = master.prepareCursor(factory, cancellationHandler);
         this.slaveCursor = slave.prepareCursor(factory, cancellationHandler);
         map.setSlaveCursor(slaveCursor);
         holder.setCursor(slaveCursor);
         storageFacade.prepare(factory, masterCursor.getStorageFacade(), map.getStorageFacade());
         return this;
-    }
-
-    @Override
-    public void reset() {
-        this.master.reset();
-        this.slave.reset();
-        this.map.reset();
-        this.holder.clear();
     }
 
     @Override

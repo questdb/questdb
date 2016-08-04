@@ -115,7 +115,20 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
+        recordList.clear();
+
+        for (int i = 0; i < orderGroupCount; i++) {
+            RedBlackTree tree = orderedSources.getQuick(i);
+            if (tree != null) {
+                tree.clear();
+            }
+        }
+
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).reset();
+        }
+
+        final RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.parentCursor = cursor;
         this.storageFacade.prepare(factory, cursor.getStorageFacade());
 
@@ -181,22 +194,6 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
             functions.getQuick(i).prepare(cursor);
         }
         return this;
-    }
-
-    @Override
-    public void reset() {
-        recordSource.reset();
-        recordList.clear();
-
-        for (int i = 0; i < orderGroupCount; i++) {
-            RedBlackTree tree = orderedSources.getQuick(i);
-            if (tree != null) {
-                tree.clear();
-            }
-        }
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).reset();
-        }
     }
 
     @Override

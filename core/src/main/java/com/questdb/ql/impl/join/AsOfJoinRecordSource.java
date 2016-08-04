@@ -109,20 +109,14 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+        this.recordHolder.clear();
+        this.delayedHolder.clear();
         this.masterCursor = master.prepareCursor(factory, cancellationHandler);
         this.slaveCursor = slave.prepareCursor(factory, cancellationHandler);
         this.recordHolder.setCursor(slaveCursor);
         this.delayedHolder.setCursor(slaveCursor);
         this.storageFacade.prepare(factory, masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
         return this;
-    }
-
-    @Override
-    public void reset() {
-        this.master.reset();
-        this.slave.reset();
-        recordHolder.clear();
-        delayedHolder.clear();
     }
 
     @Override
