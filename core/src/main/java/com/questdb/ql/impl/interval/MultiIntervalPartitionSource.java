@@ -78,10 +78,6 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     }
 
     @Override
-    public void reset() {
-    }
-
-    @Override
     public boolean hasNext() {
         long sliceRowLo;
         long sliceRowHi;

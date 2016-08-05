@@ -86,13 +86,6 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     }
 
     @Override
-    public final void reset() {
-        journal.refresh();
-        partitionCount = journal.getPartitionCount();
-        partitionIndex = 0;
-    }
-
-    @Override
     public boolean hasNext() {
         return partitionIndex < partitionCount;
     }

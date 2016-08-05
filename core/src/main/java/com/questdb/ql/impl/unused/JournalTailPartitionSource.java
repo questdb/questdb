@@ -73,7 +73,9 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
             }
             this.symFacade.setJournal(journal);
         }
-        reset();
+        partitionCount = journal.getPartitionCount();
+        partitionIndex = Rows.toPartitionIndex(rowid);
+        lo = Rows.toLocalRowID(rowid);
         return this;
     }
 
@@ -89,13 +91,6 @@ public class JournalTailPartitionSource extends AbstractImmutableIterator<Partit
     @Override
     public StorageFacade getStorageFacade() {
         return symFacade;
-    }
-
-    @Override
-    public final void reset() {
-        partitionCount = journal.getPartitionCount();
-        partitionIndex = Rows.toPartitionIndex(rowid);
-        lo = Rows.toLocalRowID(rowid);
     }
 
     @Override

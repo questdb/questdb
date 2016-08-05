@@ -30,6 +30,4 @@ public interface PartitionCursor extends ImmutableIterator<PartitionSlice> {
     Partition getPartition(int index);
 
     StorageFacade getStorageFacade();
-
-    void reset();
 }

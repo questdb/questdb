@@ -59,11 +59,6 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-
-        if (partitionCursor != null) {
-            partitionCursor.reset();
-        }
-
         done = false;
         partitionCursor = partitionSource.prepareCursor(factory);
         computeCount();

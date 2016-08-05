@@ -40,7 +40,6 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
 
     public NoOpJournalPartitionSource(JournalMetadata metadata) {
         this.metadata = metadata;
-        reset();
     }
 
     @Override
@@ -61,10 +60,6 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     @Override
     public StorageFacade getStorageFacade() {
         return null;
-    }
-
-    @Override
-    public final void reset() {
     }
 
     @Override
