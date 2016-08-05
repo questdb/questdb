@@ -65,9 +65,4 @@ public class SymRegexOperator extends AbstractBinaryOperator {
             }
         }
     }
-
-    @Override
-    public void setRhs(VirtualColumn rhs) {
-        super.setRhs(rhs);
-    }
 }

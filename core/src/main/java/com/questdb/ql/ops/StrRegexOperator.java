@@ -57,9 +57,4 @@ public class StrRegexOperator extends AbstractBinaryOperator {
         super.prepare(facade);
         matcher = Pattern.compile(rhs.getStr(null).toString()).matcher("");
     }
-
-    @Override
-    public void setRhs(VirtualColumn rhs) {
-        super.setRhs(rhs);
-    }
 }
