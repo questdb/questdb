@@ -270,6 +270,8 @@ public final class FunctionFactories {
 
         if (strFactory != null) {
             binSig(name, ColumnType.STRING, ColumnType.STRING, strFactory);
+            binSig(name, ColumnType.PARAMETER, ColumnType.STRING, strFactory);
+            binSig(name, ColumnType.STRING, ColumnType.PARAMETER, strFactory);
         }
     }
 
@@ -300,6 +302,20 @@ public final class FunctionFactories {
         triSig("eq", ColumnType.DOUBLE, ColumnType.LONG, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
         triSig("eq", ColumnType.LONG, ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
 
+        triSig("eq", ColumnType.DOUBLE, ColumnType.PARAMETER, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
+        triSig("eq", ColumnType.INT, ColumnType.PARAMETER, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
+        triSig("eq", ColumnType.LONG, ColumnType.PARAMETER, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
+
+        triSig("eq", ColumnType.DOUBLE, ColumnType.PARAMETER, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
+        triSig("eq", ColumnType.INT, ColumnType.PARAMETER, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
+        triSig("eq", ColumnType.LONG, ColumnType.PARAMETER, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
+
+        triSig("eq", ColumnType.DOUBLE, ColumnType.DOUBLE, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
+        triSig("eq", ColumnType.DOUBLE, ColumnType.INT, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
+        triSig("eq", ColumnType.INT, ColumnType.DOUBLE, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
+        triSig("eq", ColumnType.DOUBLE, ColumnType.LONG, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
+        triSig("eq", ColumnType.LONG, ColumnType.DOUBLE, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
+
         unSig("-", ColumnType.INT, IntNegativeOperator.FACTORY);
         unSig("-", ColumnType.DOUBLE, DoubleNegativeOperator.FACTORY);
         unSig("-", ColumnType.LONG, LongNegativeOperator.FACTORY);
@@ -313,7 +329,9 @@ public final class FunctionFactories {
         unSig("round", ColumnType.DOUBLE, RoundFunction.FACTORY);
 
         factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.STRING, true), StrRegexOperator.FACTORY);
+        factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.PARAMETER, true), StrRegexOperator.FACTORY);
         factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymRegexOperator.FACTORY);
+        factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.PARAMETER, true), SymRegexOperator.FACTORY);
         binSig("and", ColumnType.BOOLEAN, ColumnType.BOOLEAN, AndOperator.FACTORY);
         binSig("or", ColumnType.BOOLEAN, ColumnType.BOOLEAN, OrOperator.FACTORY);
 

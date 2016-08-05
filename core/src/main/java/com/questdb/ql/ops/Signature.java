@@ -26,6 +26,7 @@ package com.questdb.ql.ops;
 import com.questdb.misc.Misc;
 import com.questdb.std.IntList;
 import com.questdb.std.Mutable;
+import com.questdb.store.ColumnType;
 
 public final class Signature implements Mutable {
     public final IntList paramTypes = new IntList(2);
@@ -82,7 +83,7 @@ public final class Signature implements Mutable {
             if (constParams.getQuick(i) == 1) {
                 b.append("const ");
             }
-            b.append(paramTypes.getQuick(i));
+            b.append(ColumnType.nameOf(paramTypes.getQuick(i)));
 
         }
         b.append(')');

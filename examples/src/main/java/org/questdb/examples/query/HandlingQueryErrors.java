@@ -26,14 +26,14 @@ package org.questdb.examples.query;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalFactory;
-import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
+import com.questdb.ql.parser.QueryError;
 
-import static org.questdb.examples.query.GenericAppend.*;
+import static org.questdb.examples.query.GenericAppend.createCustomers;
+import static org.questdb.examples.query.GenericAppend.deleteCustomers;
 
-public class PreparedQuery {
-    public static void main(String[] args) throws JournalException, ParserException {
-
+public class HandlingQueryErrors {
+    public static void main(String[] args) throws JournalException {
         if (args.length < 1) {
             System.out.println("Usage: GenericAppend <path>");
             System.exit(1);
@@ -49,11 +49,14 @@ public class PreparedQuery {
 
             QueryCompiler compiler = new QueryCompiler();
 
-            // compile record source
-            try (RecordSource rs = compiler.compile(factory, "customers")) {
-                int count = fetchCursor(rs.prepareCursor(factory));
-                count += fetchCursor(rs.prepareCursor(factory));
-                System.out.println(count);
+            // compiler throws marker exception if it encounters syntax error
+            // marker exception is singleton and doesn't have exception details
+            // instead, exception details can be retrieved using QueryError static methods.
+            try {
+                compiler.compile(factory, "customers where x = 10");
+            } catch (ParserException e) {
+                System.out.println("Position: " + QueryError.getPosition());
+                System.out.println("Message: " + QueryError.getMessage());
             }
         }
     }

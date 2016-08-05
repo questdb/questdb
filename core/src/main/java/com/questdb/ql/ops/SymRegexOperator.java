@@ -43,7 +43,6 @@ public class SymRegexOperator extends AbstractBinaryOperator {
     };
 
     private final IntHashSet set = new IntHashSet();
-    private Matcher matcher;
 
     private SymRegexOperator() {
         super(ColumnType.BOOLEAN);
@@ -57,6 +56,7 @@ public class SymRegexOperator extends AbstractBinaryOperator {
     @Override
     public void prepare(StorageFacade facade) {
         super.prepare(facade);
+        final Matcher matcher = Pattern.compile(rhs.getStr(null).toString()).matcher("");
         set.clear();
         SymbolTable tab = lhs.getSymbolTable();
         for (SymbolTable.Entry e : tab.values()) {
@@ -69,6 +69,5 @@ public class SymRegexOperator extends AbstractBinaryOperator {
     @Override
     public void setRhs(VirtualColumn rhs) {
         super.setRhs(rhs);
-        matcher = Pattern.compile(rhs.getStr(null).toString()).matcher("");
     }
 }

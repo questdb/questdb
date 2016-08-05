@@ -25,10 +25,7 @@ package com.questdb.ql.parser;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.ex.NumericException;
-import com.questdb.ex.ParserException;
+import com.questdb.ex.*;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Chars;
@@ -2118,7 +2115,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         }
     }
 
-    @Test(expected = JournalRuntimeException.class)
+    @Test(expected = UndefinedParameterException.class)
     public void testParamNotSet() throws Exception {
         createTabWithNaNs2();
         sink.clear();

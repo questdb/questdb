@@ -23,7 +23,8 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.ex.UndefinedParameterException;
+import com.questdb.ex.WrongParameterTypeException;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.model.ExprNode;
@@ -60,7 +61,7 @@ public class Parameter extends AbstractVirtualColumn {
             case ColumnType.BYTE:
                 return (byte) longValue;
             default:
-                throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'byte' got " + valueType);
+                throw wrongType(ColumnType.BYTE);
         }
     }
 
@@ -71,7 +72,7 @@ public class Parameter extends AbstractVirtualColumn {
             case ColumnType.FLOAT:
                 return doubleValue;
             default:
-                throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'double' got " + valueType);
+                throw wrongType(ColumnType.DOUBLE);
         }
     }
 
@@ -82,7 +83,7 @@ public class Parameter extends AbstractVirtualColumn {
             case ColumnType.FLOAT:
                 return (float) doubleValue;
             default:
-                throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'float' got " + valueType);
+                throw wrongType(ColumnType.DOUBLE);
         }
     }
 
@@ -92,7 +93,7 @@ public class Parameter extends AbstractVirtualColumn {
             case ColumnType.STRING:
                 return stringValue;
             default:
-                throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'string' got " + valueType);
+                throw wrongType(ColumnType.STRING);
         }
     }
 
@@ -110,7 +111,7 @@ public class Parameter extends AbstractVirtualColumn {
             case ColumnType.BYTE:
                 return (int) longValue;
             default:
-                throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'int' got " + valueType);
+                throw wrongType(ColumnType.INT);
         }
     }
 
@@ -123,7 +124,7 @@ public class Parameter extends AbstractVirtualColumn {
             case ColumnType.BYTE:
                 return longValue;
             default:
-                throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'long' got " + valueType);
+                throw wrongType(ColumnType.LONG);
         }
     }
 
@@ -136,7 +137,7 @@ public class Parameter extends AbstractVirtualColumn {
             case ColumnType.BYTE:
                 return (short) longValue;
             default:
-                throw new JournalRuntimeException("Parameter " + getName() + " is of incorrect type. Expected 'short' got " + valueType);
+                throw wrongType(ColumnType.SHORT);
         }
     }
 
@@ -197,5 +198,13 @@ public class Parameter extends AbstractVirtualColumn {
     public void setDate(long value) {
         valueType = ColumnType.DATE;
         longValue = value;
+    }
+
+    private RuntimeException wrongType(int expected) {
+        if (valueType == ColumnType.PARAMETER) {
+            return new UndefinedParameterException(getName());
+        } else {
+            return new WrongParameterTypeException(getName(), expected, valueType);
+        }
     }
 }

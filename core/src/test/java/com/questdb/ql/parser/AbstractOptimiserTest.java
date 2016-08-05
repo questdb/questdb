@@ -152,15 +152,19 @@ public abstract class AbstractOptimiserTest {
         Assert.assertEquals(allocated, Unsafe.getMemUsed());
     }
 
-    private void assertThat0(String expected, String query, boolean header) throws ParserException, IOException {
+    protected void assertThat(String expected, RecordSource rs, boolean header) throws IOException {
         sink.clear();
+        printer.print(rs, factory, header);
+        TestUtils.assertEquals(expected, sink);
+        TestUtils.assertStrings(rs, factory);
+    }
+
+    private void assertThat0(String expected, String query, boolean header) throws ParserException, IOException {
         RecordSource rs = cache.peek(query);
         if (rs == null) {
             cache.put(query, rs = compiler.compile(factory, query));
         }
-        printer.print(rs, factory, header);
-        TestUtils.assertEquals(expected, sink);
-        TestUtils.assertStrings(rs, factory);
+        assertThat(expected, rs, header);
     }
 
     protected RecordSource compileSource(CharSequence query) throws ParserException {

@@ -21,45 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops;
+package com.questdb.ex;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
-import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-public class StrRegexOperator extends AbstractBinaryOperator {
-
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
-        @Override
-        public Function newInstance() {
-            return new StrRegexOperator();
-        }
-    };
-
-    private Matcher matcher;
-
-    private StrRegexOperator() {
-        super(ColumnType.BOOLEAN);
-    }
-
-    @Override
-    public boolean getBool(Record rec) {
-        CharSequence cs = lhs.getFlyweightStr(rec);
-        return cs != null && matcher.reset(cs).find();
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
-        super.prepare(facade);
-        matcher = Pattern.compile(rhs.getStr(null).toString()).matcher("");
-    }
-
-    @Override
-    public void setRhs(VirtualColumn rhs) {
-        super.setRhs(rhs);
+public class WrongParameterTypeException extends RuntimeException {
+    public WrongParameterTypeException(String name, int expected, int actual) {
+        super("Parameter " + name + " is of wrong type. Expected " + ColumnType.nameOf(expected) + ", actual " + ColumnType.nameOf(actual));
     }
 }
