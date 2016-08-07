@@ -61,7 +61,7 @@ function export_args {
                 ;;
             -t)
                 if [[ $# -eq 1 ]]; then
-                    echo "Expected: -t <label>"
+                    echo "Expected: -t <tag>"
                     exit 55
                 fi
                 export QDB_PROCESS_LABEL="QuestDB-Runtime-$2"
@@ -168,6 +168,7 @@ function banner {
     echo '| | | | | | |/ _ \/ __| __| | | |  _ \'
     echo '| |_| | |_| |  __/\__ \ |_| |_| | |_) |'
     echo ' \__\_\\\__,_|\___||___/\__|____/|____/'
+    echo '                       www.questdb.org'
     echo
 }
 
