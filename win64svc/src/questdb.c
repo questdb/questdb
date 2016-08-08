@@ -352,5 +352,10 @@ int qdbRun(int argc, char **argv) {
     }
 
     freeConfig(&config);
+
+    if (rtn == E_ACCESS_DENIED) {
+        eprintf("ACCESS DENIED\n\nPlease try again as Administrator.");
+    }
+
     return rtn;
 }

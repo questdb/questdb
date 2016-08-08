@@ -16,6 +16,7 @@
 #define E_SERVICE_MANAGER 103
 #define E_OPEN_SERVICE 104
 #define E_DELETE_SERVICE 105
+#define E_CONTROL_SERVICE 106
 
 #define eprintf(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
 #define SVC_NAME_PREFIX "QuestDB"

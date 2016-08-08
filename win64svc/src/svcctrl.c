@@ -16,8 +16,11 @@ int svcInstall(CONFIG *config) {
 
     if (NULL == hSCM) {
         long err = GetLastError();
-        eprintf("OpenSCManager failed (%lu)\n", err);
-        return err == ERROR_ACCESS_DENIED ? E_ACCESS_DENIED : E_SERVICE_MANAGER;
+        if (err != ERROR_ACCESS_DENIED) {
+            eprintf("OpenSCManager failed (%lu)\n", err);
+            return E_SERVICE_MANAGER;
+        }
+        return E_ACCESS_DENIED;
     }
 
     // put together service name
@@ -76,52 +79,55 @@ int svcInstall(CONFIG *config) {
 
 int svcRemove(CONFIG *config) {
 
-    SC_HANDLE schSCManager;
-    SC_HANDLE schService;
+    SC_HANDLE hSCM;
+    SC_HANDLE hService;
 
     // Get a handle to the SCM database.
 
-    schSCManager = OpenSCManager(
+    hSCM = OpenSCManager(
             NULL,                    // local computer
             NULL,                    // ServicesActive database
             SC_MANAGER_ALL_ACCESS);  // full access rights
 
-    if (NULL == schSCManager) {
+    if (NULL == hSCM) {
         long err = GetLastError();
-        eprintf("OpenSCManager failed (%lu)\n", err);
-        return err == ERROR_ACCESS_DENIED ? E_ACCESS_DENIED : E_SERVICE_MANAGER;
+        if (err != ERROR_ACCESS_DENIED) {
+            eprintf("OpenSCManager failed (%lu)\n", err);
+            return E_SERVICE_MANAGER;
+        }
+        return E_ACCESS_DENIED;
     }
 
     // Get a handle to the service.
 
-    schService = OpenService(
-            schSCManager,             // SCM database
+    hService = OpenService(
+            hSCM,             // SCM database
             config->serviceName,      // name of service
             DELETE);                  // need delete access
 
-    if (schService == NULL) {
+    if (hService == NULL) {
         long err = GetLastError();
         if (err == ERROR_SERVICE_DOES_NOT_EXIST) {
             eprintf("Service does not exist: %s", config->serviceName);
         } else {
             eprintf("Failed to open service %s (%lu)\n", config->serviceName, err);
         }
-        CloseServiceHandle(schSCManager);
+        CloseServiceHandle(hSCM);
         return E_OPEN_SERVICE;
     }
 
     // Delete the service.
 
     int rtn = 0;
-    if (DeleteService(schService)) {
+    if (DeleteService(hService)) {
         eprintf("Service removed: %s\n", config->serviceName);
     } else {
         eprintf("Failed to remove service %s (%lu)\n", config->serviceName, GetLastError());
         rtn = E_DELETE_SERVICE;
     }
 
-    CloseServiceHandle(schService);
-    CloseServiceHandle(schSCManager);
+    CloseServiceHandle(hService);
+    CloseServiceHandle(hSCM);
 
     return rtn;
 }
@@ -141,8 +147,11 @@ int svcStatus(CONFIG *config) {
 
     if (NULL == hSCM) {
         long err = GetLastError();
-        eprintf("OpenSCManager failed (%lu)\n", err);
-        return err == ERROR_ACCESS_DENIED ? E_ACCESS_DENIED : E_SERVICE_MANAGER;
+        if (err != ERROR_ACCESS_DENIED) {
+            eprintf("OpenSCManager failed (%lu)\n", err);
+            return E_SERVICE_MANAGER;
+        }
+        return E_ACCESS_DENIED;
     }
 
     // Get a handle to the service.
@@ -172,7 +181,7 @@ int svcStatus(CONFIG *config) {
         }
         CloseServiceHandle(hService);
         CloseServiceHandle(hSCM);
-        return 55;
+        return E_CONTROL_SERVICE;
     }
 
     const char *text;
@@ -231,8 +240,11 @@ int svcStop(CONFIG *config) {
 
     if (NULL == hSCM) {
         long err = GetLastError();
-        eprintf("OpenSCManager failed (%lu)\n", err);
-        return err == ERROR_ACCESS_DENIED ? E_ACCESS_DENIED : E_SERVICE_MANAGER;
+        if (err != ERROR_ACCESS_DENIED) {
+            eprintf("OpenSCManager failed (%lu)\n", err);
+            return E_SERVICE_MANAGER;
+        }
+        return E_ACCESS_DENIED;
     }
 
     // Get a handle to the service.
@@ -305,8 +317,11 @@ int svcStart(CONFIG *config) {
 
     if (NULL == hSCM) {
         long err = GetLastError();
-        eprintf("OpenSCManager failed (%lu)\n", err);
-        return err == ERROR_ACCESS_DENIED ? E_ACCESS_DENIED : E_SERVICE_MANAGER;
+        if (err != ERROR_ACCESS_DENIED) {
+            eprintf("OpenSCManager failed (%lu)\n", err);
+            return E_SERVICE_MANAGER;
+        }
+        return E_ACCESS_DENIED;
     }
 
     // Get a handle to the service.
