@@ -14,6 +14,7 @@
 #define CMD_REMOVE  4
 #define CMD_STATUS  5
 #define CMD_SERVICE 6
+#define CMD_CONSOLE -1
 
 void freeConfig(CONFIG *config) {
     if (config->javaExec != NULL) {
@@ -95,7 +96,7 @@ void buildJavaArgs(CONFIG *config) {
 
 void initAndParseConfig(int argc, char **argv, CONFIG *config) {
     int c;
-    config->command = -1;
+    config->command = CMD_CONSOLE;
     config->dir = "qdbroot";
     config->forceCopy = FALSE;
     config->exeName = argv[0];
@@ -114,7 +115,7 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
         switch (c) {
             case -1:
                 if (optind < argc) {
-                    if (config->command != -1) {
+                    if (config->command != CMD_CONSOLE) {
                         fprintf(stderr, "Unexpected command: %s\n", argv[optind]);
                         config->errorCode = ECONFIG_TOO_MANY_COMMANDS;
                         parsing = FALSE;
@@ -184,12 +185,11 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
         config->javaExec = javaExec;
     }
 
-    if (config->command == -1) {
-        config->command = CMD_START;
-    }
+    size_t tagSize = tag == NULL ? 0 : strlen(tag);
+
+    // Service name
 
     LPCSTR serviceNamePrefix = SVC_NAME_PREFIX;
-    size_t tagSize = tag == NULL ? 0 : strlen(tag);
 
     char *lpServiceName = malloc(strlen(serviceNamePrefix) + tagSize + 1);
     strcpy(lpServiceName, serviceNamePrefix);
@@ -199,6 +199,21 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
     }
 
     config->serviceName = lpServiceName;
+
+    // Service display name
+
+    LPCSTR serviceDisplayNamePrefix = SVC_DISPLAY_NAME;
+
+    char *lpServiceDisplayName = malloc(strlen(serviceDisplayNamePrefix) + tagSize + 6);
+    strcpy(lpServiceDisplayName, serviceDisplayNamePrefix);
+
+    if (tag != NULL) {
+        strcat(lpServiceDisplayName, " [");
+        strcat(lpServiceDisplayName, tag);
+        strcat(lpServiceDisplayName, "]");
+    }
+
+    config->serviceDisplayName = lpServiceDisplayName;
 
     buildJavaArgs(config);
 }
@@ -223,7 +238,7 @@ FILE *redirectStdout(CONFIG *config) {
     return stream;
 }
 
-int qdbStart(CONFIG *config) {
+int qdbConsole(CONFIG *config) {
     if (!makeDir(config->dir)) {
         return 55;
     }
@@ -255,7 +270,38 @@ int qdbStart(CONFIG *config) {
     return 0;
 }
 
-int qdbRun(int mode, int argc, char **argv) {
+void logConfigError(CONFIG *config) {
+    const char *text;
+
+    switch (config->errorCode) {
+        case ECONFIG_JAVA_HOME:
+            text = "JAVA_HOME is not defined";
+            break;
+
+        case ECONFIG_UNKNOWN_COMMAND:
+            text = "Unknown command.";
+            break;
+
+        case ECONFIG_UNKNOWN_OPTION:
+            text = "Unknown option";
+            break;
+
+        case ECONFIG_TOO_MANY_COMMANDS:
+            text = "Too many commands. Only one command is allowed.";
+            break;
+
+        default:
+            text = NULL;
+    }
+
+    if (text != NULL) {
+        char buf[128];
+        sprintf(buf, "Failed to start service: %s\n", text);
+        log_event(EVENTLOG_ERROR_TYPE, SVC_NAME_PREFIX, buf);
+    }
+}
+
+int qdbRun(int argc, char **argv) {
 
     eprintf("\n");
     eprintf("  ___                  _   ____  ____\n");
@@ -271,45 +317,38 @@ int qdbRun(int mode, int argc, char **argv) {
     int rtn = 55;
 
     if (config.errorCode == ECONFIG_OK) {
-        if (mode == MODE_SERVICE || config.command == CMD_START) {
-            rtn = qdbStart(&config);
-        } else {
-            switch (config.command) {
-                case CMD_STOP:
-                    eprintf("do stop");
-                    break;
+        switch (config.command) {
+            case CMD_START:
+                rtn = svcStart(&config);
+                break;
 
-                case CMD_STATUS:
-                    eprintf("do status");
-                    break;
+            case CMD_STOP:
+                rtn = svcStop(&config);
+                break;
 
-                case CMD_INSTALL:
-                    rtn = svcInstall(&config);
-                    break;
+            case CMD_STATUS:
+                rtn = svcStatus(&config);
+                break;
 
-                case CMD_REMOVE:
-                    rtn = svcRemove(&config);
-                    break;
+            case CMD_INSTALL:
+                rtn = svcInstall(&config);
+                break;
 
-                case CMD_SERVICE:
-                    qdbDispatchService(&config);
-                    rtn = 0;
-                    break;
+            case CMD_REMOVE:
+                rtn = svcRemove(&config);
+                break;
 
-                default:
-                    rtn = qdbStart(&config);
-            }
-        }
-    } else {
-        switch (mode) {
-            case MODE_SERVICE:
-                eprintf("Usage: %s  [-d dir] [-f] [-j JAVA_HOME]", argv[0]);
+            case CMD_SERVICE:
+                qdbDispatchService(&config);
+                rtn = 0;
                 break;
 
             default:
-                eprintf("Usage: %s [start|stop|status|install|remove] [-d dir] [-f]", argv[0]);
-                break;
+                rtn = qdbConsole(&config);
         }
+    } else {
+        logConfigError(&config);
+        eprintf("Usage: %s [start|stop|status|install|remove] [-d dir] [-f] [-j JAVA_HOME] [-t tag]", argv[0]);
     }
 
     freeConfig(&config);

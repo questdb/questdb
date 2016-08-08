@@ -12,19 +12,19 @@ VOID WINAPI SvcCtrlHandler(DWORD);
 
 VOID ReportSvcStatus(DWORD, DWORD, DWORD);
 
-VOID WINAPI qdbService();
+VOID WINAPI qdbService(DWORD argc, LPSTR *argv);
 
-void logEvent(CONFIG *config, char *message) {
+void log_event(WORD logType, char *serviceName, char *message) {
     HANDLE hEventSource;
     LPCTSTR lpszStrings[1];
 
-    hEventSource = RegisterEventSource(NULL, config->serviceName);
+    hEventSource = RegisterEventSource(NULL, serviceName);
 
     if (NULL != hEventSource) {
         lpszStrings[0] = message;
 
         ReportEvent(hEventSource,        // event log handle
-                    EVENTLOG_ERROR_TYPE, // event type
+                    logType, // event type
                     0,                   // event category
                     0b11000000000000000000000000000000,                   // event identifier
                     NULL,                // no security identifier
@@ -47,21 +47,31 @@ void qdbDispatchService(CONFIG *config) {
                     {NULL, NULL}
             };
 
-    logEvent(config, "About to call dispatcher");
-
     if (!StartServiceCtrlDispatcher(DispatchTable)) {
-        logEvent(config, "StartServiceCtrlDispatcher");
+        log_event(EVENTLOG_ERROR_TYPE, config->serviceName, "StartServiceCtrlDispatcher");
     }
 }
 
-VOID WINAPI qdbService() {
+VOID WINAPI qdbService(DWORD argc, LPSTR *argv) {
+
+    // Get service name from first command line arg
+
+    if (argc > 0) {
+        if (gConfig->serviceName != NULL) {
+            free(gConfig->serviceName);
+        }
+
+        char *svcName = malloc(strlen(argv[0]) + 2);
+        strcpy(svcName, argv[0]);
+        gConfig->serviceName = svcName;
+    }
 
     // Register the handler function for the service
 
     gSvcStatusHandle = RegisterServiceCtrlHandler(gConfig->serviceName, SvcCtrlHandler);
 
     if (!gSvcStatusHandle) {
-        logEvent(gConfig, "RegisterServiceCtrlHandler failed");
+        log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName, "RegisterServiceCtrlHandler failed");
         return;
     }
 
@@ -83,21 +93,16 @@ VOID WINAPI qdbService() {
             NULL);   // no name
 
     if (ghSvcStopEvent == NULL) {
-        logEvent(gConfig, "Could not create stop event");
+        log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName, "Could not create stop event");
         ReportSvcStatus(SERVICE_STOPPED, NO_ERROR, 0);
         return;
     }
 
     if (!makeDir(gConfig->dir)) {
-        logEvent(gConfig, "Could not create root directory. Make sure it exists before starting service");
+        log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName,
+                  "Could not create root directory. Make sure it exists before starting service");
         ReportSvcStatus(SERVICE_STOPPED, NO_ERROR, 0);
         return;
-    }
-
-    FILE *stream = redirectStdout(gConfig);
-    if (stream == NULL) {
-        logEvent(gConfig, "Could not setup STDOUT redirect");
-        ReportSvcStatus(SERVICE_STOPPED, NO_ERROR, 0);
     }
 
     STARTUPINFO si;
@@ -108,15 +113,14 @@ VOID WINAPI qdbService() {
 
     // Start the child process.
     if (!CreateProcess(gConfig->javaExec, gConfig->javaArgs, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-        logEvent(gConfig, "Could not start java");
-        fclose(stream);
+        log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName, "Could not start java");
         ReportSvcStatus(SERVICE_STOPPED, NO_ERROR, 0);
         return;
     }
 
     char buf[2048];
     sprintf(buf, "Started %s %s", gConfig->javaExec, gConfig->javaArgs);
-    logEvent(gConfig, buf);
+    log_event(EVENTLOG_INFORMATION_TYPE, gConfig->serviceName, buf);
 
 
     // Report running status when initialization is complete.
@@ -126,14 +130,18 @@ VOID WINAPI qdbService() {
     WaitForSingleObject(ghSvcStopEvent, INFINITE);
 
     if (!TerminateProcess(pi.hProcess, 0)) {
-        logEvent(gConfig, "Failed to terminate java process");
+        log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName, "Failed to terminate java process");
     }
+
+    log_event(EVENTLOG_INFORMATION_TYPE, gConfig->serviceName, "Shutdown Java process");
 
     // Close process and thread handles.
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
 
     ReportSvcStatus(SERVICE_STOPPED, NO_ERROR, 0);
+
+    log_event(EVENTLOG_INFORMATION_TYPE, gConfig->serviceName, "QuestDB is shutdown");
 }
 
 VOID ReportSvcStatus(DWORD dwCurrentState, DWORD dwWin32ExitCode, DWORD dwWaitHint) {

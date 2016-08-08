@@ -21,9 +21,6 @@
 #define SVC_NAME_PREFIX "QuestDB"
 #define SVC_DISPLAY_NAME "QuestDB Server"
 
-#define MODE_SERVICE 1
-#define MODE_CMDLINE 2
-
 // configuration error codes
 
 #define ECONFIG_OK                0
@@ -42,9 +39,10 @@ typedef struct {
     LPSTR javaArgs;
     LPSTR exeName;
     LPSTR serviceName;
+    LPSTR serviceDisplayName;
 } CONFIG;
 
-int qdbRun(int mode, int argc, char **argv);
+int qdbRun(int argc, char **argv);
 
 void qdbDispatchService(CONFIG *config);
 
@@ -58,4 +56,10 @@ BOOL svcInstall(CONFIG *config);
 
 int svcRemove(CONFIG *config);
 
-void logEvent(CONFIG *config, char *message);
+int svcStatus(CONFIG *config);
+
+int svcStart(CONFIG *config);
+
+int svcStop(CONFIG *config);
+
+void log_event(WORD logType, char* serviceName, char *message);
