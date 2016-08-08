@@ -13,6 +13,7 @@
 #define CMD_INSTALL 3
 #define CMD_REMOVE  4
 #define CMD_STATUS  5
+#define CMD_SERVICE 6
 
 void freeConfig(CONFIG *config) {
     if (config->javaExec != NULL) {
@@ -21,6 +22,10 @@ void freeConfig(CONFIG *config) {
 
     if (config->javaArgs != NULL) {
         free(config->javaArgs);
+    }
+
+    if (config->serviceName != NULL) {
+        free(config->serviceName);
     }
 }
 
@@ -92,12 +97,12 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
     int c;
     config->command = -1;
     config->dir = "qdbroot";
-    config->valid = TRUE;
     config->forceCopy = FALSE;
     config->exeName = argv[0];
     config->javaArgs = NULL;
-    config->tag = NULL;
+    config->errorCode = ECONFIG_OK;
 
+    char *tag = NULL;
     char *javaHome = NULL;
 
     BOOL parsing = TRUE;
@@ -111,7 +116,7 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
                 if (optind < argc) {
                     if (config->command != -1) {
                         fprintf(stderr, "Unexpected command: %s\n", argv[optind]);
-                        config->valid = FALSE;
+                        config->errorCode = ECONFIG_TOO_MANY_COMMANDS;
                         parsing = FALSE;
                         break;
                     }
@@ -127,9 +132,11 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
                         config->command = CMD_STATUS;
                     } else if (strcmp("remove", cmd) == 0) {
                         config->command = CMD_REMOVE;
+                    } else if (strcmp("service", cmd) == 0) {
+                        config->command = CMD_SERVICE;
                     } else {
                         eprintf("Unknown command: %s\n", cmd);
-                        config->valid = FALSE;
+                        config->errorCode = ECONFIG_UNKNOWN_COMMAND;
                         parsing = FALSE;
                         break;
                     }
@@ -152,11 +159,11 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
                 break;
 
             case 't':
-                config->tag = optarg;
+                tag = optarg;
                 break;
 
             default:
-                config->valid = FALSE;
+                config->errorCode = ECONFIG_UNKNOWN_OPTION;
                 break;
         }
     }
@@ -166,7 +173,7 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
         javaHome = getenv("JAVA_HOME");
         if (javaHome == NULL) {
             eprintf("JAVA_HOME is not defined");
-            config->valid = FALSE;
+            config->errorCode = ECONFIG_JAVA_HOME;
         }
     }
 
@@ -180,6 +187,18 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
     if (config->command == -1) {
         config->command = CMD_START;
     }
+
+    LPCSTR serviceNamePrefix = SVC_NAME_PREFIX;
+    size_t tagSize = tag == NULL ? 0 : strlen(tag);
+
+    char *lpServiceName = malloc(strlen(serviceNamePrefix) + tagSize + 1);
+    strcpy(lpServiceName, serviceNamePrefix);
+    if (tag != NULL) {
+        strcat(lpServiceName, ":");
+        strcat(lpServiceName, tag);
+    }
+
+    config->serviceName = lpServiceName;
 
     buildJavaArgs(config);
 }
@@ -251,7 +270,7 @@ int qdbRun(int mode, int argc, char **argv) {
 
     int rtn = 55;
 
-    if (config.valid) {
+    if (config.errorCode == ECONFIG_OK) {
         if (mode == MODE_SERVICE || config.command == CMD_START) {
             rtn = qdbStart(&config);
         } else {
@@ -270,6 +289,11 @@ int qdbRun(int mode, int argc, char **argv) {
 
                 case CMD_REMOVE:
                     rtn = svcRemove(&config);
+                    break;
+
+                case CMD_SERVICE:
+                    qdbDispatchService(&config);
+                    rtn = 0;
                     break;
 
                 default:

@@ -22,24 +22,14 @@ int svcInstall(CONFIG *config) {
 
     // put together service name
 
-    LPCSTR serviceNamePrefix = SVC_NAME_PREFIX;
-    size_t tagSize = config->tag == NULL ? 0 : strlen(config->tag);
-
-    char lpServiceName[strlen(serviceNamePrefix) + tagSize + 1];
-    strcpy(lpServiceName, serviceNamePrefix);
-    if (config->tag != NULL) {
-        strcat(lpServiceName, ":");
-        strcat(lpServiceName, config->tag);
-    }
-
-    size_t size = strlen(config->exeName);
+    size_t size = strlen(config->exeName) + 64;
     if (config->forceCopy) {
         size += 3;
     }
     size += strlen(config->dir) + 1;
     char szPath[size];
     strcpy(szPath, config->exeName);
-    strcat(szPath, " ");
+    strcat(szPath, " service -d ");
     strcat(szPath, config->dir);
     if (config->forceCopy) {
         strcat(szPath, " -f");
@@ -49,7 +39,7 @@ int svcInstall(CONFIG *config) {
 
     schService = CreateService(
             schSCManager,              // SCM database
-            lpServiceName,             // name of service
+            config->serviceName,       // name of service
             SVC_DISPLAY_NAME,          // service name to display
             SERVICE_ALL_ACCESS,        // desired access
             SERVICE_WIN32_OWN_PROCESS, // service type
@@ -63,12 +53,12 @@ int svcInstall(CONFIG *config) {
             NULL);                     // no password
 
     if (schService == NULL) {
-        eprintf("Failed to create service %s (%lu)\n", lpServiceName, GetLastError());
+        eprintf("Failed to create service %s (%lu)\n", config->serviceName, GetLastError());
         CloseServiceHandle(schSCManager);
         return E_CREATE_SERVICE;
+    } else {
+        eprintf("Service installed: %s\n", config->serviceName);
     }
-    else
-        eprintf("Service installed: %s\n", lpServiceName);
 
     CloseServiceHandle(schService);
     CloseServiceHandle(schSCManager);
@@ -80,19 +70,6 @@ int svcRemove(CONFIG *config) {
 
     SC_HANDLE schSCManager;
     SC_HANDLE schService;
-
-    // put together service name
-
-    LPCSTR serviceNamePrefix = "QuestDB";
-    size_t tagSize = config->tag == NULL ? 0 : strlen(config->tag);
-
-    char lpServiceName[strlen(serviceNamePrefix) + tagSize + 1];
-    strcpy(lpServiceName, serviceNamePrefix);
-    if (config->tag != NULL) {
-        strcat(lpServiceName, ":");
-        strcat(lpServiceName, config->tag);
-    }
-
 
     // Get a handle to the SCM database.
 
@@ -110,12 +87,12 @@ int svcRemove(CONFIG *config) {
     // Get a handle to the service.
 
     schService = OpenService(
-            schSCManager,       // SCM database
-            lpServiceName,      // name of service
-            DELETE);            // need delete access
+            schSCManager,             // SCM database
+            config->serviceName,      // name of service
+            DELETE);                  // need delete access
 
     if (schService == NULL) {
-        eprintf("Failed to open service %s (%lu)\n", lpServiceName, GetLastError());
+        eprintf("Failed to open service %s (%lu)\n", config->serviceName, GetLastError());
         CloseServiceHandle(schSCManager);
         return E_OPEN_SERVICE;
     }
@@ -124,9 +101,9 @@ int svcRemove(CONFIG *config) {
 
     int rtn = 0;
     if (DeleteService(schService)) {
-        eprintf("Service removed: %s\n", lpServiceName);
+        eprintf("Service removed: %s\n", config->serviceName);
     } else {
-        eprintf("Failed to remove service %s (%lu)\n", lpServiceName, GetLastError());
+        eprintf("Failed to remove service %s (%lu)\n", config->serviceName, GetLastError());
         rtn = E_DELETE_SERVICE;
     }
 
