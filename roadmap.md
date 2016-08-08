@@ -45,6 +45,8 @@ __misc__
 - [ ] collectd protocol support and console administration
 - [ ] circular memory buffer for "bottom x rows"
 - [x] error handling (releasing resources allocated to partially constructed query plans)
+- [x] Linux/OSX start script
+- [x] Windows service
 
 __clients__
 
