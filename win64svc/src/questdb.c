@@ -17,6 +17,10 @@
 #define CMD_CONSOLE -1
 
 void freeConfig(CONFIG *config) {
+    if (config->exeName != NULL) {
+        free(config->exeName);
+    }
+
     if (config->javaExec != NULL) {
         free(config->javaExec);
     }
@@ -99,9 +103,13 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config) {
     config->command = CMD_CONSOLE;
     config->dir = "qdbroot";
     config->forceCopy = FALSE;
-    config->exeName = argv[0];
     config->javaArgs = NULL;
     config->errorCode = ECONFIG_OK;
+    DWORD n = GetFullPathName(argv[0], 0, NULL, NULL);
+    char *exe = malloc(n * sizeof(TCHAR));
+    GetFullPathName(argv[0], n, exe, NULL);
+    config->exeName = exe;
+
 
     char *tag = NULL;
     char *javaHome = NULL;

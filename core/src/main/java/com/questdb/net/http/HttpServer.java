@@ -121,6 +121,7 @@ public class HttpServer {
         }
 
         startComplete.countDown();
+        LOG.info().$("Server is running").$();
         return true;
     }
 
