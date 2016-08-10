@@ -27,6 +27,12 @@
         <format>tar.gz</format>
     </formats>
     <includeBaseDirectory>false</includeBaseDirectory>
+    <files>
+        <file>
+            <source>../LICENSE.txt</source>
+            <outputDirectory>questdb-${artifact.version}</outputDirectory>
+        </file>
+    </files>
     <dependencySets>
         <dependencySet>
             <outputDirectory>questdb-${artifact.version}</outputDirectory>
