@@ -41,4 +41,13 @@ Not yet. SQL language is well known and WebUI is simple. I'm relying on that for
 
 ## Releases
 
-QuestDB is a massive re-write of what use to be NFSdb. This is a Beta software and so far there are no releases.
+Beta version can download from our web site https://www.questdb.org. Snapthot of embedded database is available on maven central
+
+```xml
+        <dependency>
+            <groupId>org.questdb</groupId>
+            <artifactId>questdb-core</artifactId>
+            <version>1.0.0-SNAPSHOT</version>
+        </dependency>
+
+```
