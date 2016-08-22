@@ -37,7 +37,7 @@ QuestDB is licensed under GNU Affero General Public License (AGPLv3).
 
 ## Documentation
 
-Not yet. SQL language is well known and WebUI is simple. I'm relying on that for now. Of course documentation is on my to-do list. 
+Work in progress. Please stay tuned.
 
 ## Releases
 
