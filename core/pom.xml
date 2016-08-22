@@ -29,7 +29,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
-    <version>3.0.0-SNAPSHOT</version>
+    <version>1.0.0-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb-core</artifactId>
     <packaging>jar</packaging>
@@ -111,7 +111,7 @@
                             <descriptors>
                                 <descriptor>src/main/assembly/binaries.xml</descriptor>
                             </descriptors>
-                            <finalName>questdb-${project.version}</finalName>
+                            <finalName>questdb-${project.version}-${maven.build.timestamp}</finalName>
                         </configuration>
                     </execution>
                 </executions>
