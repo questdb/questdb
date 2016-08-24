@@ -21,6 +21,7 @@ __lang__
 - [x] analytic functions
 - [x] subquery optimiser
 - [x] order by optimiser
+- [ ] NEW distributed queries
 
 __server__
 
@@ -37,8 +38,16 @@ __server__
 - [x] C layer for windows
 - [x] C layer for linux (epoll)
 - [x] C layer for mac/bsd (kqueue)
+- [ ] __authentication and authorization__
 - [ ] MySQL wire protocol implementation
 - [x] sql result export to delimited format
+
+__monitoring__
+
+- [ ] session details
+- [ ] active queries
+- [ ] memory usage
+- [ ] open files
 
 __misc__
 
@@ -47,6 +56,14 @@ __misc__
 - [x] error handling (releasing resources allocated to partially constructed query plans)
 - [x] Linux/OSX start script
 - [x] Windows service
+
+__community__
+
+- [x] __project web site__
+- [ ] __example data set__
+- [ ] __video tutorial__
+- [ ] __demo server__
+- [ ] documentation template
 
 __clients__
 
@@ -60,14 +77,9 @@ __Web UI__
 - [x] grid virtualisation
 - [x] file import UI
 - [x] copy SQL export url to clipboard for use in other applications
-- [ ] charting UI
+- [ ] data visualisation
 
 __core__
 
 - [ ] ORM for query results
 - [x] cache for compiled queries
-
-__project web site__
-
-- [ ] __create project presence online__ (in-progress)
-- [ ] documentation template
