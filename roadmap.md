@@ -22,6 +22,7 @@ __lang__
 - [x] subquery optimiser
 - [x] order by optimiser
 - [ ] NEW distributed queries
+- [ ] NEW pivot tables
 
 __server__
 
