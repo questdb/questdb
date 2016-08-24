@@ -60,7 +60,7 @@ __misc__
 __community__
 
 - [x] __project web site__
-- [ ] __example data set__
+- [ ] __example data set (in progress)__
 - [ ] __video tutorial__
 - [ ] __demo server__
 - [ ] documentation template
