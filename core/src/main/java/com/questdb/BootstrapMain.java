@@ -55,14 +55,14 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 class BootstrapMain {
 
     public static void main(String[] args) throws Exception {
-        System.err.printf("QuestDB HTTP Server 3.0%nCopyright (C) Appsicle 2014-2016, all rights reserved.%n%n");
+        System.err.printf("QuestDB HTTP Server 1.0%nCopyright (C) Appsicle 2014-2016, all rights reserved.%n%n");
         if (args.length < 1) {
             System.err.println("Root directory name expected");
             return;
         }
 
         if (Os.type == Os._32Bit) {
-            System.err.println("QDB requires 64-bit JVM");
+            System.err.println("QuestDB requires 64-bit JVM");
             return;
         }
 

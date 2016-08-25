@@ -16,7 +16,8 @@ esac
 
 
 function usage {
-    echo "$0 start|status|stop [-f] [-d path]"
+    echo "Usage: $0 start|status|stop [-f] [-d path]"
+    echo
     exit 55
 }
 
