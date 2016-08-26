@@ -43,10 +43,7 @@ public class WorkerPoolOneToThreePerformanceTest {
         // consumer thread sequence, which is shared between worker threads
         MCSequence subSeq = new MCSequence(cycle, null);
 
-        // prevent producer sequence overtaking consumer sequence
-        pubSeq.setBarrier(subSeq);
-        // and likewise prevent consumer sequence overtaking producer
-        subSeq.setBarrier(pubSeq);
+        pubSeq.followedBy(subSeq).followedBy(pubSeq);
 
         // test furniture
         int workerCount = 3;

@@ -30,5 +30,7 @@ public interface Barrier {
 
     WaitStrategy getWaitStrategy();
 
+    Barrier root();
+
     void setBarrier(Barrier barrier);
 }

@@ -45,6 +45,11 @@ final class OpenBarrier implements Barrier {
     }
 
     @Override
+    public Barrier root() {
+        return this;
+    }
+
+    @Override
     public void setBarrier(Barrier barrier) {
     }
 }

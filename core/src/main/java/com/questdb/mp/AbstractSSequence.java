@@ -45,6 +45,11 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence {
     }
 
     @Override
+    public Barrier root() {
+        return barrier != OpenBarrier.INSTANCE ? barrier.root() : this;
+    }
+
+    @Override
     public long nextBully() {
         long cursor;
 

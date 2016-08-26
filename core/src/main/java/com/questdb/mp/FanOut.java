@@ -32,11 +32,11 @@ public class FanOut implements Barrier {
     private Holder holder;
     private Barrier barrier;
 
-    public FanOut(Sequence... sequences) {
+    public FanOut(Barrier... barriers) {
         Holder h = new Holder();
-        for (int i = 0; i < sequences.length; i++) {
-            Sequence sq = sequences[i];
-            h.sequences.add(sq);
+        for (int i = 0; i < barriers.length; i++) {
+            Barrier sq = barriers[i];
+            h.barriers.add(sq);
             if (sq.getWaitStrategy().acceptSignal()) {
                 h.waitStrategies.add(sq.getWaitStrategy());
             }
@@ -45,32 +45,34 @@ public class FanOut implements Barrier {
         holder = h;
     }
 
-    public void add(Sequence sequence) {
+    public FanOut add(Barrier barrier) {
         Holder _new;
         do {
             Holder h = this.holder;
             // read barrier to make sure "holder" read doesn't fall below this
 
-            if (h.sequences.indexOf(sequence) > -1) {
-                return;
+            if (h.barriers.indexOf(barrier) > -1) {
+                return this;
             }
-            if (barrier != null) {
-                sequence.setBarrier(barrier);
+            if (this.barrier != null) {
+                barrier.root().setBarrier(this.barrier);
             }
             _new = new Holder();
-            _new.sequences.addAll(h.sequences);
-            _new.sequences.add(sequence);
+            _new.barriers.addAll(h.barriers);
+            _new.barriers.add(barrier);
             _new.waitStrategies.addAll(h.waitStrategies);
 
-            if (sequence.getWaitStrategy().acceptSignal()) {
-                _new.waitStrategies.add(sequence.getWaitStrategy());
+            if (barrier.getWaitStrategy().acceptSignal()) {
+                _new.waitStrategies.add(barrier.getWaitStrategy());
             }
             _new.setupWaitStrategy();
 
         } while (!Unsafe.getUnsafe().compareAndSwapObject(this, HOLDER, holder, _new));
+
+        return this;
     }
 
-    public Sequence addAndGet(Sequence sequence) {
+    public <T extends Barrier> T addAndGet(T sequence) {
         add(sequence);
         return sequence;
     }
@@ -81,7 +83,7 @@ public class FanOut implements Barrier {
     @Override
     public long availableIndex(final long lo) {
         long l = Long.MAX_VALUE;
-        ObjList<Sequence> sequences = holder.sequences;
+        ObjList<Barrier> sequences = holder.barriers;
         for (int i = 0, n = sequences.size(); i < n; i++) {
             l = Math.min(l, sequences.getQuick(i).availableIndex(lo));
         }
@@ -99,32 +101,37 @@ public class FanOut implements Barrier {
         return holder.waitStrategy;
     }
 
+    @Override
+    public Barrier root() {
+        return barrier != null ? barrier.root() : this;
+    }
+
     public void setBarrier(Barrier barrier) {
         this.barrier = barrier;
-        ObjList<Sequence> sequences = holder.sequences;
-        for (int i = 0, n = sequences.size(); i < n; i++) {
-            sequences.getQuick(i).setBarrier(barrier);
+        ObjList<Barrier> barriers = holder.barriers;
+        for (int i = 0, n = barriers.size(); i < n; i++) {
+            barriers.getQuick(i).root().setBarrier(barrier);
         }
     }
 
-    public void remove(Sequence sequence) {
+    public void remove(Barrier barrier) {
         Holder _new;
         do {
             Holder h = this.holder;
             // read barrier to make sure "holder" read doesn't fall below this
 
-            if (h.sequences.indexOf(sequence) == -1) {
+            if (h.barriers.indexOf(barrier) == -1) {
                 return;
             }
             _new = new Holder();
-            for (int i = 0, n = h.sequences.size(); i < n; i++) {
-                Sequence sq = h.sequences.getQuick(i);
-                if (sq != sequence) {
-                    _new.sequences.add(sq);
+            for (int i = 0, n = h.barriers.size(); i < n; i++) {
+                Barrier sq = h.barriers.getQuick(i);
+                if (sq != barrier) {
+                    _new.barriers.add(sq);
                 }
             }
 
-            WaitStrategy that = sequence.getWaitStrategy();
+            WaitStrategy that = barrier.getWaitStrategy();
             if (that.acceptSignal()) {
                 for (int i = 0, n = h.waitStrategies.size(); i < n; i++) {
                     WaitStrategy ws = h.waitStrategies.getQuick(i);
@@ -142,7 +149,7 @@ public class FanOut implements Barrier {
 
     private static class Holder {
 
-        private final ObjList<Sequence> sequences = new ObjList<>();
+        private final ObjList<Barrier> barriers = new ObjList<>();
         private final ObjList<WaitStrategy> waitStrategies = new ObjList<>();
         private final FanOutWaitStrategy fanOutWaitStrategy = new FanOutWaitStrategy();
         private WaitStrategy waitStrategy;

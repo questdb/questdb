@@ -40,15 +40,13 @@ public class JournalEventBridge {
         this.queue = new RingQueue<>(JournalEvent.EVENT_FACTORY, BUFFER_SIZE);
         this.publisher = new MPSequence(BUFFER_SIZE);
         this.fanOut = new FanOut();
-        this.publisher.setBarrier(fanOut);
+        this.publisher.followedBy(fanOut).followedBy(publisher);
         this.time = time;
         this.unit = unit;
     }
 
     public Sequence createAgentSequence() {
-        Sequence sequence = new SCSequence(publisher.current(), new TimeoutBlockingWaitStrategy(time, unit));
-        publisher.followedBy(sequence);
-        return fanOut.addAndGet(sequence);
+        return fanOut.addAndGet(new SCSequence(publisher.current(), new TimeoutBlockingWaitStrategy(time, unit)));
     }
 
     public RingQueue<JournalEvent> getQueue() {

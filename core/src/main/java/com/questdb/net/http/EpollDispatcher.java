@@ -71,8 +71,7 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
         this.ioSequence = ioSequence;
         this.interestQueue = new RingQueue<>(IOEvent.FACTORY, ioQueue.getCapacity());
         this.interestPubSequence = new MPSequence(interestQueue.getCapacity());
-        this.interestPubSequence.setBarrier(this.interestSubSequence);
-        this.interestSubSequence.setBarrier(this.interestPubSequence);
+        this.interestPubSequence.followedBy(this.interestSubSequence).followedBy(this.interestPubSequence);
         this.clock = clock;
         this.configuration = configuration;
         this.maxConnections = configuration.getHttpMaxConnections();

@@ -94,8 +94,7 @@ public class HttpServer {
         ioQueue = new RingQueue<>(IOEvent.FACTORY, queueDepth);
         SPSequence ioPubSequence = new SPSequence(ioQueue.getCapacity());
         MCSequence ioSubSequence = new MCSequence(ioQueue.getCapacity(), null);
-        ioPubSequence.setBarrier(ioSubSequence);
-        ioSubSequence.setBarrier(ioPubSequence);
+        ioPubSequence.followedBy(ioSubSequence).followedBy(ioPubSequence);
 
         try {
             this.dispatcher = createDispatcher("0.0.0.0", address.getPort(), ioQueue, ioPubSequence, clock, configuration, queueDepth);

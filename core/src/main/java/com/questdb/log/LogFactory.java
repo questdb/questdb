@@ -438,11 +438,9 @@ public class LogFactory implements Closeable {
             for (int i = 0, n = holderList.size(); i < n; i++) {
                 Holder h = holderList.getQuick(i);
                 if (h.fanOut != null) {
-                    h.lSeq.setBarrier(h.fanOut);
-                    h.fanOut.setBarrier(h.lSeq);
+                    h.lSeq.followedBy(h.fanOut).followedBy(h.lSeq);
                 } else {
-                    h.lSeq.setBarrier(h.wSeq);
-                    h.wSeq.setBarrier(h.lSeq);
+                    h.lSeq.followedBy(h.wSeq).followedBy(h.lSeq);
                 }
             }
         }
