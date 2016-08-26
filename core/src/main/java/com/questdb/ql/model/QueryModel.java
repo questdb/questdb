@@ -413,7 +413,7 @@ public class QueryModel implements Mutable {
         return ordered;
     }
 
-    /**
+    /*
      * Splits "where" clauses into "and" chunks
      */
     public ObjList<ExprNode> parseWhereClause() {

@@ -31,7 +31,6 @@ import sun.security.action.GetPropertyAction;
  * regular-expression pattern.
  *
  * @author unascribed
- * @spec JSR-51
  * @since 1.4
  */
 
@@ -86,7 +85,7 @@ public class PatternSyntaxException
      * @return The full detail message
      */
     public String getMessage() {
-        StringBuffer sb = new StringBuffer();
+        StringBuilder sb = new StringBuilder();
         sb.append(desc);
         if (index >= 0) {
             sb.append(" near index ");

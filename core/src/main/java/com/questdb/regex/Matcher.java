@@ -30,28 +30,20 @@ import java.util.Objects;
 /**
  * An engine that performs match operations on a {@linkplain java.lang.CharSequence
  * character sequence} by interpreting a {@link Pattern}.
- * <p>
  * <p> A matcher is created from a pattern by invoking the pattern's {@link
  * Pattern#matcher matcher} method.  Once created, a matcher can be used to
  * perform three different kinds of match operations:
- * <p>
  * <ul>
- * <p>
  * <li><p> The {@link #matches matches} method attempts to match the entire
  * input sequence against the pattern.  </p></li>
- * <p>
  * <li><p> The {@link #lookingAt lookingAt} method attempts to match the
  * input sequence, starting at the beginning, against the pattern.  </p></li>
- * <p>
  * <li><p> The {@link #find find} method scans the input sequence looking for
  * the next subsequence that matches the pattern.  </p></li>
- * <p>
  * </ul>
- * <p>
  * <p> Each of these methods returns a boolean indicating success or failure.
  * More information about a successful match can be obtained by querying the
  * state of the matcher.
- * <p>
  * <p> A matcher finds matches in a subset of its input called the
  * <i>region</i>. By default, the region contains all of the matcher's input.
  * The region can be modified via the{@link #region region} method and queried
@@ -60,7 +52,6 @@ import java.util.Objects;
  * constructs can be changed. See {@link #useAnchoringBounds
  * useAnchoringBounds} and {@link #useTransparentBounds useTransparentBounds}
  * for more details.
- * <p>
  * <p> This class also defines methods for replacing matched subsequences with
  * new strings whose contents can, if desired, be computed from the match
  * result.  The {@link #appendReplacement appendReplacement} and {@link
@@ -68,36 +59,30 @@ import java.util.Objects;
  * the result into an existing string buffer, or the more convenient {@link
  * #replaceAll replaceAll} method can be used to create a string in which every
  * matching subsequence in the input sequence is replaced.
- * <p>
  * <p> The explicit state of a matcher includes the start and end indices of
  * the most recent successful match.  It also includes the start and end
  * indices of the input subsequence captured by each <a
  * href="Pattern.html#cg">capturing group</a> in the pattern as well as a total
  * count of such subsequences.  As a convenience, methods are also provided for
  * returning these captured subsequences in string form.
- * <p>
  * <p> The explicit state of a matcher is initially undefined; attempting to
  * query any part of it before a successful match will cause an {@link
  * IllegalStateException} to be thrown.  The explicit state of a matcher is
  * recomputed by every match operation.
- * <p>
  * <p> The implicit state of a matcher includes the input character sequence as
  * well as the <i>append position</i>, which is initially zero and is updated
  * by the {@link #appendReplacement appendReplacement} method.
- * <p>
  * <p> A matcher may be reset explicitly by invoking its {@link #reset()}
  * method or, if a new input sequence is desired, its {@link
  * #reset(java.lang.CharSequence) reset(CharSequence)} method.  Resetting a
  * matcher discards its explicit state information and sets the append position
  * to zero.
- * <p>
  * <p> Instances of this class are not safe for use by multiple concurrent
  * threads. </p>
  *
  * @author Mike McCloskey
  * @author Mark Reinhold
  * @author JSR-51 Expert Group
- * @spec JSR-51
  * @since 1.4
  */
 
@@ -164,8 +149,7 @@ public final class Matcher implements MatchResult {
     /**
      * Boolean indicating whether or not more input could change
      * the results of the last match.
-     * <p>
-     * If hitEnd is true, and a match was found, then more input
+     * * If hitEnd is true, and a match was found, then more input
      * might cause a different match to be found.
      * If hitEnd is true and a match was not found, then more
      * input could cause a match to be found.
@@ -179,8 +163,7 @@ public final class Matcher implements MatchResult {
     /**
      * Boolean indicating whether or not more input could change
      * a positive match into a negative one.
-     * <p>
-     * If requireEnd is true, and a match was found, then more
+     * * If requireEnd is true, and a match was found, then more
      * input could cause the match to be lost.
      * If requireEnd is false and a match was found, then more
      * input might change the match but the match won't be lost.
@@ -226,8 +209,7 @@ public final class Matcher implements MatchResult {
     /**
      * Returns a literal replacement <code>String</code> for the specified
      * <code>String</code>.
-     * <p>
-     * This method produces a <code>String</code> that will work
+     * * This method produces a <code>String</code> that will work
      * as a literal replacement <code>s</code> in the
      * <code>appendReplacement</code> method of the {@link Matcher} class.
      * The <code>String</code> produced will match the sequence of characters
@@ -254,26 +236,19 @@ public final class Matcher implements MatchResult {
 
     /**
      * Implements a non-terminal append-and-replace step.
-     * <p>
      * <p> This method performs the following actions: </p>
-     * <p>
-     * <ol>
-     * <p>
+     * <ul>
      * <li><p> It reads characters from the input sequence, starting at the
      * append position, and appends them to the given string buffer.  It
      * stops after reading the last character preceding the previous match,
      * that is, the character at index {@link
      * #start()}&nbsp;<tt>-</tt>&nbsp;<tt>1</tt>.  </p></li>
-     * <p>
      * <li><p> It appends the given replacement string to the string buffer.
      * </p></li>
-     * <p>
      * <li><p> It sets the append position of this matcher to the index of
      * the last character matched, plus one, that is, to {@link #end()}.
      * </p></li>
-     * <p>
-     * </ol>
-     * <p>
+     * </ul>
      * <p> The replacement string may contain references to subsequences
      * captured during the previous match: Each occurrence of
      * <tt>${</tt><i>name</i><tt>}</tt> or <tt>$</tt><i>g</i>
@@ -289,20 +264,17 @@ public final class Matcher implements MatchResult {
      * cause <tt>"foobar"</tt> to be appended to the string buffer. A dollar
      * sign (<tt>$</tt>) may be included as a literal in the replacement
      * string by preceding it with a backslash (<tt>\$</tt>).
-     * <p>
-     * <p> Note that backslashes (<tt>\</tt>) and dollar signs (<tt>$</tt>) in
+     * * <p> Note that backslashes (<tt>\</tt>) and dollar signs (<tt>$</tt>) in
      * the replacement string may cause the results to be different than if it
      * were being treated as a literal replacement string. Dollar signs may be
      * treated as references to captured subsequences as described above, and
      * backslashes are used to escape literal characters in the replacement
      * string.
-     * <p>
-     * <p> This method is intended to be used in a loop together with the
+     * * <p> This method is intended to be used in a loop together with the
      * {@link #appendTail appendTail} and {@link #find find} methods.  The
      * following code, for example, writes <tt>one dog two dogs in the
      * yard</tt> to the standard-output stream: </p>
-     * <p>
-     * <blockquote><pre>
+     * * <blockquote><pre>
      * Pattern p = Pattern.compile("cat");
      * Matcher m = p.matcher("one cat two cats in the yard");
      * StringBuffer sb = new StringBuffer();
@@ -426,8 +398,7 @@ public final class Matcher implements MatchResult {
 
     /**
      * Implements a terminal append-and-replace step.
-     * <p>
-     * <p> This method reads characters from the input sequence, starting at
+     * * <p> This method reads characters from the input sequence, starting at
      * the append position, and appends them to the given string buffer.  It is
      * intended to be invoked after one or more invocations of the {@link
      * #appendReplacement appendReplacement} method in order to copy the
@@ -476,8 +447,7 @@ public final class Matcher implements MatchResult {
     /**
      * Returns the offset after the last character of the subsequence
      * captured by the given group during the previous match operation.
-     * <p>
-     * <p> <a href="Pattern.html#cg">Capturing groups</a> are indexed from left
+     * * <p> <a href="Pattern.html#cg">Capturing groups</a> are indexed from left
      * to right, starting at one.  Group zero denotes the entire pattern, so
      * the expression <i>m.</i><tt>end(0)</tt> is equivalent to
      * <i>m.</i><tt>end()</tt>.  </p>
@@ -501,13 +471,11 @@ public final class Matcher implements MatchResult {
 
     /**
      * Returns the input subsequence matched by the previous match.
-     * <p>
-     * <p> For a matcher <i>m</i> with input sequence <i>s</i>,
+     * * <p> For a matcher <i>m</i> with input sequence <i>s</i>,
      * the expressions <i>m.</i><tt>group()</tt> and
      * <i>s.</i><tt>substring(</tt><i>m.</i><tt>start(),</tt>&nbsp;<i>m.</i><tt>end())</tt>
      * are equivalent.  </p>
-     * <p>
-     * <p> Note that some patterns, for example <tt>a*</tt>, match the empty
+     * * <p> Note that some patterns, for example <tt>a*</tt>, match the empty
      * string.  This method will return the empty string when the pattern
      * successfully matches the empty string in the input.  </p>
      *
@@ -523,18 +491,15 @@ public final class Matcher implements MatchResult {
     /**
      * Returns the input subsequence captured by the given group during the
      * previous match operation.
-     * <p>
-     * <p> For a matcher <i>m</i>, input sequence <i>s</i>, and group index
+     * * <p> For a matcher <i>m</i>, input sequence <i>s</i>, and group index
      * <i>g</i>, the expressions <i>m.</i><tt>group(</tt><i>g</i><tt>)</tt> and
      * <i>s.</i><tt>substring(</tt><i>m.</i><tt>start(</tt><i>g</i><tt>),</tt>&nbsp;<i>m.</i><tt>end(</tt><i>g</i><tt>))</tt>
      * are equivalent.  </p>
-     * <p>
-     * <p> <a href="Pattern.html#cg">Capturing groups</a> are indexed from left
+     * * <p> <a href="Pattern.html#cg">Capturing groups</a> are indexed from left
      * to right, starting at one.  Group zero denotes the entire pattern, so
      * the expression <tt>m.group(0)</tt> is equivalent to <tt>m.group()</tt>.
      * </p>
-     * <p>
-     * <p> If the match was successful but the group specified failed to match
+     * * <p> If the match was successful but the group specified failed to match
      * any part of the input sequence, then <tt>null</tt> is returned. Note
      * that some groups, for example <tt>(a*)</tt>, match the empty string.
      * This method will return the empty string when such a group successfully
@@ -561,11 +526,9 @@ public final class Matcher implements MatchResult {
 
     /**
      * Returns the number of capturing groups in this matcher's pattern.
-     * <p>
-     * <p> Group zero denotes the entire pattern by convention. It is not
+     * * <p> Group zero denotes the entire pattern by convention. It is not
      * included in this count.
-     * <p>
-     * <p> Any non-negative integer smaller than or equal to the value
+     * * <p> Any non-negative integer smaller than or equal to the value
      * returned by this method is guaranteed to be a valid group index for
      * this matcher.  </p>
      *
@@ -578,8 +541,7 @@ public final class Matcher implements MatchResult {
     /**
      * Returns the start index of the subsequence captured by the given group
      * during the previous match operation.
-     * <p>
-     * <p> <a href="Pattern.html#cg">Capturing groups</a> are indexed from left
+     * * <p> <a href="Pattern.html#cg">Capturing groups</a> are indexed from left
      * to right, starting at one.  Group zero denotes the entire pattern, so
      * the expression <i>m.</i><tt>start(0)</tt> is equivalent to
      * <i>m.</i><tt>start()</tt>.  </p>
@@ -617,13 +579,11 @@ public final class Matcher implements MatchResult {
     /**
      * Attempts to find the next subsequence of the input sequence that matches
      * the pattern.
-     * <p>
-     * <p> This method starts at the beginning of this matcher's region, or, if
+     * * <p> This method starts at the beginning of this matcher's region, or, if
      * a previous invocation of the method was successful and the matcher has
      * not since been reset, at the first character not matched by the previous
      * match.
-     * <p>
-     * <p> If the match succeeds then more information can be obtained via the
+     * * <p> If the match succeeds then more information can be obtained via the
      * <tt>start</tt>, <tt>end</tt>, and <tt>group</tt> methods.  </p>
      *
      * @return <tt>true</tt> if, and only if, a subsequence of the input
@@ -646,8 +606,7 @@ public final class Matcher implements MatchResult {
      * Resets this matcher and then attempts to find the next subsequence of
      * the input sequence that matches the pattern, starting at the specified
      * index.
-     * <p>
-     * <p> If the match succeeds then more information can be obtained via the
+     * * <p> If the match succeeds then more information can be obtained via the
      * <tt>start</tt>, <tt>end</tt>, and <tt>group</tt> methods, and subsequent
      * invocations of the {@link #find()} method will start at the first
      * character not matched by this match.  </p>
@@ -671,8 +630,7 @@ public final class Matcher implements MatchResult {
      * Returns the input subsequence captured by the given
      * <a href="Pattern.html#groupname">named-capturing group</a> during the previous
      * match operation.
-     * <p>
-     * <p> If the match was successful but the group specified failed to match
+     * * <p> If the match was successful but the group specified failed to match
      * any part of the input sequence, then <tt>null</tt> is returned. Note
      * that some groups, for example <tt>(a*)</tt>, match the empty string.
      * This method will return the empty string when such a group successfully
@@ -697,14 +655,11 @@ public final class Matcher implements MatchResult {
 
     /**
      * Queries the anchoring of region bounds for this matcher.
-     * <p>
-     * <p> This method returns <tt>true</tt> if this matcher uses
+     * * <p> This method returns <tt>true</tt> if this matcher uses
      * <i>anchoring</i> bounds, <tt>false</tt> otherwise.
-     * <p>
-     * <p> See {@link #useAnchoringBounds useAnchoringBounds} for a
+     * * <p> See {@link #useAnchoringBounds useAnchoringBounds} for a
      * description of anchoring bounds.
-     * <p>
-     * <p> By default, a matcher uses anchoring region boundaries.
+     * * <p> By default, a matcher uses anchoring region boundaries.
      *
      * @return <tt>true</tt> iff this matcher is using anchoring bounds,
      * <tt>false</tt> otherwise.
@@ -717,15 +672,12 @@ public final class Matcher implements MatchResult {
 
     /**
      * Queries the transparency of region bounds for this matcher.
-     * <p>
-     * <p> This method returns <tt>true</tt> if this matcher uses
+     * * <p> This method returns <tt>true</tt> if this matcher uses
      * <i>transparent</i> bounds, <tt>false</tt> if it uses <i>opaque</i>
      * bounds.
-     * <p>
-     * <p> See {@link #useTransparentBounds useTransparentBounds} for a
+     * * <p> See {@link #useTransparentBounds useTransparentBounds} for a
      * description of transparent and opaque bounds.
-     * <p>
-     * <p> By default, a matcher uses opaque region boundaries.
+     * * <p> By default, a matcher uses opaque region boundaries.
      *
      * @return <tt>true</tt> iff this matcher is using transparent bounds,
      * <tt>false</tt> otherwise.
@@ -739,8 +691,7 @@ public final class Matcher implements MatchResult {
     /**
      * <p>Returns true if the end of input was hit by the search engine in
      * the last match operation performed by this matcher.
-     * <p>
-     * <p>When this method returns true, then it is possible that more input
+     * * <p>When this method returns true, then it is possible that more input
      * would have changed the result of the last search.
      *
      * @return true iff the end of input was hit in the last match; false
@@ -754,12 +705,10 @@ public final class Matcher implements MatchResult {
     /**
      * Attempts to match the input sequence, starting at the beginning of the
      * region, against the pattern.
-     * <p>
-     * <p> Like the {@link #matches matches} method, this method always starts
+     * * <p> Like the {@link #matches matches} method, this method always starts
      * at the beginning of the region; unlike that method, it does not
      * require that the entire region be matched.
-     * <p>
-     * <p> If the match succeeds then more information can be obtained via the
+     * * <p> If the match succeeds then more information can be obtained via the
      * <tt>start</tt>, <tt>end</tt>, and <tt>group</tt> methods.  </p>
      *
      * @return <tt>true</tt> if, and only if, a prefix of the input
@@ -771,8 +720,7 @@ public final class Matcher implements MatchResult {
 
     /**
      * Attempts to match the entire region against the pattern.
-     * <p>
-     * <p> If the match succeeds then more information can be obtained via the
+     * * <p> If the match succeeds then more information can be obtained via the
      * <tt>start</tt>, <tt>end</tt>, and <tt>group</tt> methods.  </p>
      *
      * @return <tt>true</tt> if, and only if, the entire region sequence
@@ -797,8 +745,7 @@ public final class Matcher implements MatchResult {
      * method resets the matcher, and then sets the region to start at the
      * index specified by the <code>start</code> parameter and end at the
      * index specified by the <code>end</code> parameter.
-     * <p>
-     * <p>Depending on the transparency and anchoring being used (see
+     * * <p>Depending on the transparency and anchoring being used (see
      * {@link #useTransparentBounds useTransparentBounds} and
      * {@link #useAnchoringBounds useAnchoringBounds}), certain constructs such
      * as anchors may behave differently at or around the boundaries of the
@@ -855,27 +802,23 @@ public final class Matcher implements MatchResult {
     /**
      * Replaces every subsequence of the input sequence that matches the
      * pattern with the given replacement string.
-     * <p>
-     * <p> This method first resets this matcher.  It then scans the input
+     * * <p> This method first resets this matcher.  It then scans the input
      * sequence looking for matches of the pattern.  Characters that are not
      * part of any match are appended directly to the result string; each match
      * is replaced in the result by the replacement string.  The replacement
      * string may contain references to captured subsequences as in the {@link
      * #appendReplacement appendReplacement} method.
-     * <p>
-     * <p> Note that backslashes (<tt>\</tt>) and dollar signs (<tt>$</tt>) in
+     * * <p> Note that backslashes (<tt>\</tt>) and dollar signs (<tt>$</tt>) in
      * the replacement string may cause the results to be different than if it
      * were being treated as a literal replacement string. Dollar signs may be
      * treated as references to captured subsequences as described above, and
      * backslashes are used to escape literal characters in the replacement
      * string.
-     * <p>
-     * <p> Given the regular expression <tt>a*b</tt>, the input
+     * * <p> Given the regular expression <tt>a*b</tt>, the input
      * <tt>"aabfooaabfooabfoob"</tt>, and the replacement string
      * <tt>"-"</tt>, an invocation of this method on a matcher for that
      * expression would yield the string <tt>"-foo-foo-foo-"</tt>.
-     * <p>
-     * <p> Invoking this method changes this matcher's state.  If the matcher
+     * * <p> Invoking this method changes this matcher's state.  If the matcher
      * is to be used in further matching operations then it should first be
      * reset.  </p>
      *
@@ -902,27 +845,23 @@ public final class Matcher implements MatchResult {
     /**
      * Replaces the first subsequence of the input sequence that matches the
      * pattern with the given replacement string.
-     * <p>
-     * <p> This method first resets this matcher.  It then scans the input
+     * * <p> This method first resets this matcher.  It then scans the input
      * sequence looking for a match of the pattern.  Characters that are not
      * part of the match are appended directly to the result string; the match
      * is replaced in the result by the replacement string.  The replacement
      * string may contain references to captured subsequences as in the {@link
      * #appendReplacement appendReplacement} method.
-     * <p>
-     * <p>Note that backslashes (<tt>\</tt>) and dollar signs (<tt>$</tt>) in
+     * * <p>Note that backslashes (<tt>\</tt>) and dollar signs (<tt>$</tt>) in
      * the replacement string may cause the results to be different than if it
      * were being treated as a literal replacement string. Dollar signs may be
      * treated as references to captured subsequences as described above, and
      * backslashes are used to escape literal characters in the replacement
      * string.
-     * <p>
-     * <p> Given the regular expression <tt>dog</tt>, the input
+     * * <p> Given the regular expression <tt>dog</tt>, the input
      * <tt>"zzzdogzzzdogzzz"</tt>, and the replacement string
      * <tt>"cat"</tt>, an invocation of this method on a matcher for that
      * expression would yield the string <tt>"zzzcatzzzdogzzz"</tt>.  </p>
-     * <p>
-     * <p> Invoking this method changes this matcher's state.  If the matcher
+     * * <p> Invoking this method changes this matcher's state.  If the matcher
      * is to be used in further matching operations then it should first be
      * reset.  </p>
      *
@@ -946,8 +885,7 @@ public final class Matcher implements MatchResult {
     /**
      * <p>Returns true if more input could change a positive match into a
      * negative one.
-     * <p>
-     * <p>If this method returns true, and a match was found, then more
+     * * <p>If this method returns true, and a match was found, then more
      * input could cause the match to be lost. If this method returns false
      * and a match was found, then more input might change the match but the
      * match won't be lost. If a match was not found, then requireEnd has no
@@ -963,8 +901,7 @@ public final class Matcher implements MatchResult {
 
     /**
      * Resets this matcher.
-     * <p>
-     * <p> Resetting a matcher discards all of its explicit state information
+     * * <p> Resetting a matcher discards all of its explicit state information
      * and sets its append position to zero. The matcher's region is set to the
      * default region, which is its entire character sequence. The anchoring
      * and transparency of this matcher's region boundaries are unaffected.
@@ -985,8 +922,7 @@ public final class Matcher implements MatchResult {
 
     /**
      * Resets this matcher with a new input sequence.
-     * <p>
-     * <p> Resetting a matcher discards all of its explicit state information
+     * * <p> Resetting a matcher discards all of its explicit state information
      * and sets its append position to zero.  The matcher's region is set to
      * the default region, which is its entire character sequence.  The
      * anchoring and transparency of this matcher's region boundaries are
@@ -1059,19 +995,15 @@ public final class Matcher implements MatchResult {
 
     /**
      * Sets the anchoring of region bounds for this matcher.
-     * <p>
-     * <p> Invoking this method with an argument of <tt>true</tt> will set this
+     * * <p> Invoking this method with an argument of <tt>true</tt> will set this
      * matcher to use <i>anchoring</i> bounds. If the boolean
      * argument is <tt>false</tt>, then <i>non-anchoring</i> bounds will be
      * used.
-     * <p>
-     * <p> Using anchoring bounds, the boundaries of this
+     * * <p> Using anchoring bounds, the boundaries of this
      * matcher's region match anchors such as ^ and $.
-     * <p>
-     * <p> Without anchoring bounds, the boundaries of this
+     * * <p> Without anchoring bounds, the boundaries of this
      * matcher's region will not match anchors such as ^ and $.
-     * <p>
-     * <p> By default, a matcher uses anchoring region boundaries.
+     * * <p> By default, a matcher uses anchoring region boundaries.
      *
      * @param b a boolean indicating whether or not to use anchoring bounds.
      * @return this matcher
@@ -1086,8 +1018,7 @@ public final class Matcher implements MatchResult {
     /**
      * Changes the <tt>Pattern</tt> that this <tt>Matcher</tt> uses to
      * find matches with.
-     * <p>
-     * <p> This method causes this matcher to lose information
+     * * <p> This method causes this matcher to lose information
      * about the groups of the last match that occurred. The
      * matcher's position in the input is maintained and its
      * last append position is unaffected.</p>
@@ -1115,23 +1046,19 @@ public final class Matcher implements MatchResult {
 
     /**
      * Sets the transparency of region bounds for this matcher.
-     * <p>
-     * <p> Invoking this method with an argument of <tt>true</tt> will set this
+     * * <p> Invoking this method with an argument of <tt>true</tt> will set this
      * matcher to use <i>transparent</i> bounds. If the boolean
      * argument is <tt>false</tt>, then <i>opaque</i> bounds will be used.
-     * <p>
-     * <p> Using transparent bounds, the boundaries of this
+     * * <p> Using transparent bounds, the boundaries of this
      * matcher's region are transparent to lookahead, lookbehind,
      * and boundary matching constructs. Those constructs can see beyond the
      * boundaries of the region to see if a match is appropriate.
-     * <p>
-     * <p> Using opaque bounds, the boundaries of this matcher's
+     * * <p> Using opaque bounds, the boundaries of this matcher's
      * region are opaque to lookahead, lookbehind, and boundary matching
      * constructs that may try to see beyond them. Those constructs cannot
      * look past the boundaries so they will fail to match anything outside
      * of the region.
-     * <p>
-     * <p> By default, a matcher uses opaque bounds.
+     * * <p> By default, a matcher uses opaque bounds.
      *
      * @param b a boolean indicating whether to use opaque or transparent
      *          regions
@@ -1212,8 +1139,7 @@ public final class Matcher implements MatchResult {
      * The groups are filled with default values and the match of the root
      * of the state machine is called. The state machine will hold the state
      * of the match as it proceeds in this matcher.
-     * <p>
-     * Matcher.from is not set here, because it is the "hard" boundary
+     * * Matcher.from is not set here, because it is the "hard" boundary
      * of the start of the search which anchors will set to. The from param
      * is the "soft" boundary of the start of the search, meaning that the
      * regex tries to match at that index but ^ won't match there. Subsequent
