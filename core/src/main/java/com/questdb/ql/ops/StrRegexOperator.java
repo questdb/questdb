@@ -25,11 +25,11 @@ package com.questdb.ql.ops;
 
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
+import com.questdb.regex.Matcher;
+import com.questdb.regex.Pattern;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class StrRegexOperator extends AbstractBinaryOperator {
 
