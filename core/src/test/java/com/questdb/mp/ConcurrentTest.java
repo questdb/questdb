@@ -40,26 +40,21 @@ public class ConcurrentTest {
     public void testFanOutChain() throws Exception {
         LOG.info().$("testFanOutChain").$();
         int cycle = 1024;
-        int size = 1024 * cycle;
-        RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         Sequence a = new SPSequence(cycle);
         Sequence b = new SCSequence();
         Sequence c = new SCSequence();
         Sequence d = new SCSequence();
         Sequence e = new SCSequence();
 
-        FanOut fanOut1 = new FanOut();
-        FanOut fanOut2 = new FanOut();
-
-        a.followedBy(
-                fanOut1
-                        .add(
-                                fanOut2.add(d).add(e)
+        a.then(
+                FanOut
+                        .to(
+                                FanOut.to(d).and(e)
                         )
-                        .add(
-                                b.followedBy(c)
+                        .and(
+                                b.then(c)
                         )
-        ).followedBy(a);
+        ).then(a);
     }
 
     /**
@@ -81,7 +76,7 @@ public class ConcurrentTest {
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         SPSequence pubSeq = new SPSequence(cycle);
         MCSequence subSeq = new MCSequence(cycle, null);
-        pubSeq.followedBy(subSeq).followedBy(pubSeq);
+        pubSeq.then(subSeq).then(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(3);
         CountDownLatch latch = new CountDownLatch(2);
@@ -130,7 +125,7 @@ public class ConcurrentTest {
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         SPSequence pubSeq = new SPSequence(cycle);
         MCSequence subSeq = new MCSequence(cycle, new BlockingWaitStrategy());
-        pubSeq.followedBy(subSeq).followedBy(pubSeq);
+        pubSeq.then(subSeq).then(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(3);
         CountDownLatch latch = new CountDownLatch(2);
@@ -175,7 +170,7 @@ public class ConcurrentTest {
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         Sequence pubSeq = new SPSequence(cycle);
         Sequence subSeq = new SCSequence(new BlockingWaitStrategy());
-        pubSeq.followedBy(subSeq).followedBy(pubSeq);
+        pubSeq.then(subSeq).then(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(2);
         CountDownLatch latch = new CountDownLatch(1);
@@ -215,7 +210,7 @@ public class ConcurrentTest {
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         Sequence pubSeq = new SPSequence(cycle);
         Sequence subSeq = new SCSequence(new BlockingWaitStrategy());
-        pubSeq.followedBy(subSeq).followedBy(pubSeq);
+        pubSeq.then(subSeq).then(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(2);
         CountDownLatch latch = new CountDownLatch(1);
@@ -253,7 +248,7 @@ public class ConcurrentTest {
         SPSequence pubSeq = new SPSequence(cycle);
         Sequence sub1 = new SCSequence();
         Sequence sub2 = new SCSequence();
-        pubSeq.followedBy(new FanOut(sub1, sub2)).followedBy(pubSeq);
+        pubSeq.then(FanOut.to(sub1).and(sub2)).then(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(3);
         CountDownLatch latch = new CountDownLatch(2);
@@ -302,8 +297,8 @@ public class ConcurrentTest {
         SPSequence pubSeq = new SPSequence(cycle);
         Sequence sub1 = new SCSequence();
         Sequence sub2 = new SCSequence();
-        FanOut fanOut = new FanOut(sub1, sub2);
-        pubSeq.followedBy(fanOut).followedBy(pubSeq);
+        FanOut fanOut = FanOut.to(sub1).and(sub2);
+        pubSeq.then(fanOut).then(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(4);
         CountDownLatch latch = new CountDownLatch(3);
@@ -424,7 +419,7 @@ public class ConcurrentTest {
 
                 // subscribe
                 Sequence sequence = new SCSequence(publisher.current());
-                fanOut.add(sequence);
+                fanOut.and(sequence);
                 int p = 0;
                 while (p < buf.length) {
                     long cursor = sequence.next();

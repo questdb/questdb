@@ -35,11 +35,6 @@ final class OpenBarrier implements Barrier {
     }
 
     @Override
-    public Barrier followedBy(Barrier barrier) {
-        return null;
-    }
-
-    @Override
     public WaitStrategy getWaitStrategy() {
         return NullWaitStrategy.INSTANCE;
     }
@@ -51,5 +46,10 @@ final class OpenBarrier implements Barrier {
 
     @Override
     public void setBarrier(Barrier barrier) {
+    }
+
+    @Override
+    public Barrier then(Barrier barrier) {
+        return null;
     }
 }

@@ -45,7 +45,16 @@ public class FanOut implements Barrier {
         holder = h;
     }
 
-    public FanOut add(Barrier barrier) {
+    public static FanOut to(Barrier barrier) {
+        return new FanOut().and(barrier);
+    }
+
+    public <T extends Barrier> T addAndGet(T sequence) {
+        and(sequence);
+        return sequence;
+    }
+
+    public FanOut and(Barrier barrier) {
         Holder _new;
         do {
             Holder h = this.holder;
@@ -72,11 +81,6 @@ public class FanOut implements Barrier {
         return this;
     }
 
-    public <T extends Barrier> T addAndGet(T sequence) {
-        add(sequence);
-        return sequence;
-    }
-
     // this is firebug bug, the code does not write to array elements
     // it has to take a copy of this.barriers as this reference can change while
     // loop is in flight
@@ -88,12 +92,6 @@ public class FanOut implements Barrier {
             l = Math.min(l, sequences.getQuick(i).availableIndex(lo));
         }
         return l;
-    }
-
-    @Override
-    public Barrier followedBy(Barrier barrier) {
-        barrier.setBarrier(this);
-        return barrier;
     }
 
     @Override
@@ -112,6 +110,12 @@ public class FanOut implements Barrier {
         for (int i = 0, n = barriers.size(); i < n; i++) {
             barriers.getQuick(i).root().setBarrier(barrier);
         }
+    }
+
+    @Override
+    public Barrier then(Barrier barrier) {
+        barrier.setBarrier(this);
+        return barrier;
     }
 
     public void remove(Barrier barrier) {

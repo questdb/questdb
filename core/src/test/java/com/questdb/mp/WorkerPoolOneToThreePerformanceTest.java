@@ -43,7 +43,7 @@ public class WorkerPoolOneToThreePerformanceTest {
         // consumer thread sequence, which is shared between worker threads
         MCSequence subSeq = new MCSequence(cycle, null);
 
-        pubSeq.followedBy(subSeq).followedBy(pubSeq);
+        pubSeq.then(subSeq).then(pubSeq);
 
         // test furniture
         int workerCount = 3;

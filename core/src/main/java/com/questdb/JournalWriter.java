@@ -922,7 +922,7 @@ public class JournalWriter<T> extends Journal<T> {
             this.writer = writer;
             this.pubSeq = new SPSequence(32);
             this.subSeq = new SCSequence(new BlockingWaitStrategy());
-            this.pubSeq.followedBy(subSeq).followedBy(pubSeq);
+            this.pubSeq.then(subSeq).then(pubSeq);
             this.txLog = new TxLog(writer.getLocation(), JournalMode.READ, writer.getMetadata().getTxCountHint());
         }
 

@@ -43,7 +43,7 @@ public class OneToOnePerformanceTest {
         // consumer thread sequence, which is shared between worker threads
         SCSequence subSeq = new SCSequence(cycle, null);
 
-        pubSeq.followedBy(subSeq).followedBy(pubSeq);
+        pubSeq.then(subSeq).then(pubSeq);
 
         // test furniture
         int workerCount = 1;

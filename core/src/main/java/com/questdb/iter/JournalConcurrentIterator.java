@@ -155,7 +155,7 @@ public class JournalConcurrentIterator<T> extends com.questdb.std.AbstractImmuta
         this.buffer = new RingQueue<>(this, bufferSize);
         this.pubSeq = new SPSequence(bufferSize);
         this.subSeq = new SCSequence();
-        this.pubSeq.followedBy(subSeq).followedBy(pubSeq);
+        this.pubSeq.then(subSeq).then(pubSeq);
         service.submit(getRunnable());
     }
 

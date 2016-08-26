@@ -76,7 +76,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         this.ioSequence = ioSequence;
         this.interestQueue = new RingQueue<>(IOEvent.FACTORY, ioQueue.getCapacity());
         this.interestPubSequence = new MPSequence(interestQueue.getCapacity());
-        this.interestPubSequence.followedBy(this.interestSubSequence).followedBy(this.interestPubSequence);
+        this.interestPubSequence.then(this.interestSubSequence).then(this.interestPubSequence);
         this.clock = clock;
         this.configuration = configuration;
         this.maxConnections = configuration.getHttpMaxConnections();

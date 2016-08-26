@@ -422,9 +422,9 @@ public class LogFactory implements Closeable {
                 if (h.wSeq != null) {
                     // yes, it was
                     if (h.fanOut == null) {
-                        h.fanOut = new FanOut(h.wSeq, h.wSeq = new SCSequence());
+                        h.fanOut = FanOut.to(h.wSeq).and(h.wSeq = new SCSequence());
                     } else {
-                        h.fanOut.add(h.wSeq = new SCSequence());
+                        h.fanOut.and(h.wSeq = new SCSequence());
                     }
                 } else {
                     // we are here first!
@@ -438,9 +438,9 @@ public class LogFactory implements Closeable {
             for (int i = 0, n = holderList.size(); i < n; i++) {
                 Holder h = holderList.getQuick(i);
                 if (h.fanOut != null) {
-                    h.lSeq.followedBy(h.fanOut).followedBy(h.lSeq);
+                    h.lSeq.then(h.fanOut).then(h.lSeq);
                 } else {
-                    h.lSeq.followedBy(h.wSeq).followedBy(h.lSeq);
+                    h.lSeq.then(h.wSeq).then(h.lSeq);
                 }
             }
         }

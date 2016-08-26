@@ -40,7 +40,7 @@ public class JournalEventBridge {
         this.queue = new RingQueue<>(JournalEvent.EVENT_FACTORY, BUFFER_SIZE);
         this.publisher = new MPSequence(BUFFER_SIZE);
         this.fanOut = new FanOut();
-        this.publisher.followedBy(fanOut).followedBy(publisher);
+        this.publisher.then(fanOut).then(publisher);
         this.time = time;
         this.unit = unit;
     }

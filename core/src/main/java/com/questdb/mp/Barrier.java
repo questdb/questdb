@@ -26,11 +26,11 @@ package com.questdb.mp;
 public interface Barrier {
     long availableIndex(long lo);
 
-    Barrier followedBy(Barrier barrier);
-
     WaitStrategy getWaitStrategy();
 
     Barrier root();
 
     void setBarrier(Barrier barrier);
+
+    Barrier then(Barrier barrier);
 }
