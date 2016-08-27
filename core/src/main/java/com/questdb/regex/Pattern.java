@@ -1,25 +1,25 @@
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
+/*
+ * Copyright (c) 1999, 2015, Oracle and/or its affiliates. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
- * Copyright (C) 2014-2016 Appsicle
+ * This code is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 only, as
+ * published by the Free Software Foundation.
  *
- * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
- * as published by the Free Software Foundation.
+ * This code is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * version 2 for more details (a copy is included in the LICENSE file that
+ * accompanied this code).
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
+ * You should have received a copy of the GNU General Public License version
+ * 2 along with this work; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- ******************************************************************************/
+ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+ * or visit www.oracle.com if you need additional information or have any
+ * questions.
+ */
 
 package com.questdb.regex;
 
@@ -993,18 +993,6 @@ public final class Pattern
     }
 
     /**
-     * <p>Returns the string representation of this pattern. This
-     * is the regular expression from which this pattern was
-     * compiled.</p>
-     *
-     * @return The string representation of this pattern
-     * @since 1.5
-     */
-    public String toString() {
-        return pattern;
-    }
-
-    /**
      * Creates a matcher that will match the given input against this pattern.
      *
      * @param input The character sequence to be matched
@@ -1018,6 +1006,18 @@ public final class Pattern
             }
         }
         return new Matcher(this, input);
+    }
+
+    /**
+     * <p>Returns the string representation of this pattern. This
+     * is the regular expression from which this pattern was
+     * compiled.</p>
+     *
+     * @return The string representation of this pattern
+     * @since 1.5
+     */
+    public String toString() {
+        return pattern;
     }
 
     /**
@@ -1502,12 +1502,6 @@ public final class Pattern
         }
     }
 
-    /*
-     * The following private methods are mainly used to improve the
-     * readability of the code. In order to let the Java compiler easily
-     * inline them, we should not put many assertions or error checks in them.
-     */
-
     private CharProperty bitsOrSingle(BitClass bits, int ch) {
         /* Bits can only handle codepoints in [u+0000-u+00ff] range.
            Use "single" node instead of bits when dealing with unicode
@@ -1536,6 +1530,12 @@ public final class Pattern
             return bits.add(ch, flags());
         return newSingle(ch);
     }
+
+    /*
+     * The following private methods are mainly used to improve the
+     * readability of the code. In order to let the Java compiler easily
+     * inline them, we should not put many assertions or error checks in them.
+     */
 
     /**
      * Utility method for parsing control escape sequences.
@@ -3158,10 +3158,6 @@ public final class Pattern
         cursor--;
     }
 
-    //
-    // Utility methods for code point support
-    //
-
     private int uxxxx() {
         int n = 0;
         for (int i = 0; i < 4; i++) {
@@ -3173,6 +3169,10 @@ public final class Pattern
         }
         return n;
     }
+
+    //
+    // Utility methods for code point support
+    //
 
     /**
      * Utility method for parsing hexadecimal escape sequences.
