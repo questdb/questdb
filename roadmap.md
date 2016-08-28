@@ -1,4 +1,4 @@
-__lang__
+__SQL implementation__
 
 - [x] subqueries
 - [x] support for NULL and NaN values in filters
@@ -23,6 +23,10 @@ __lang__
 - [x] order by optimiser
 - [ ] NEW distributed queries
 - [ ] NEW pivot tables
+- [ ] __DDL - create journal (in progress)__
+- [ ] __DDL - copy journal (in progress)__
+- [ ] DDL - add/remove column
+- [ ] DDL - delete journal
 
 __server__
 
@@ -61,8 +65,8 @@ __misc__
 __community__
 
 - [x] __project web site__
-- [ ] __example data set (in progress)__
-- [ ] __video tutorial__
+- [x] example data set
+- [ ] __video tutorial (in progress)__
 - [ ] __demo server__
 - [ ] documentation template
 

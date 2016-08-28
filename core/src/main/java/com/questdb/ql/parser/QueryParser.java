@@ -27,6 +27,8 @@ import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.GenericIntBuilder;
+import com.questdb.factory.configuration.GenericStringBuilder;
+import com.questdb.factory.configuration.GenericSymbolBuilder;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
@@ -52,6 +54,14 @@ public final class QueryParser {
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
     private final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
     private final ObjectPool<AnalyticColumn> analyticColumnPool = new ObjectPool<>(AnalyticColumn.FACTORY, 8);
+
+    public Statement parse(CharSequence query) throws ParserException {
+        queryModelPool.clear();
+        queryColumnPool.clear();
+        exprNodePool.clear();
+        analyticColumnPool.clear();
+        return parseInternal(query);
+    }
 
     private ParserException err(String msg) {
         return QueryError.$(lexer.position(), msg);
@@ -118,20 +128,12 @@ public final class QueryParser {
         return expr;
     }
 
-    private String notTermTok() throws ParserException {
+    private CharSequence notTermTok() throws ParserException {
         CharSequence tok = tok();
         if (isFieldTerm(tok)) {
             throw err("Invalid column definition");
         }
-        return tok.toString();
-    }
-
-    Statement parse(CharSequence query) throws ParserException {
-        queryModelPool.clear();
-        queryColumnPool.clear();
-        exprNodePool.clear();
-        analyticColumnPool.clear();
-        return parseInternal(query);
+        return tok;
     }
 
     private Statement parseCreateJournal() throws ParserException {
@@ -142,6 +144,12 @@ public final class QueryParser {
             expectTok(tok, "partition");
             expectTok(tok(), "by");
             structure.partitionBy(PartitionBy.fromString(tok()));
+
+            tok = lexer.optionTok();
+        }
+
+        if (tok != null) {
+            throw QueryError.$(lexer.position(), "Unexpected token");
         }
         return new Statement(Statement.CREATE_JOURNAL, structure);
     }
@@ -273,10 +281,13 @@ public final class QueryParser {
         }
 
         while (true) {
-            String name = notTermTok();
+            String name = notTermTok().toString();
             CharSequence tok = null;
 
             switch (ColumnType.columnTypeOf(notTermTok())) {
+                case ColumnType.BYTE:
+                    struct.$byte(name);
+                    break;
                 case ColumnType.INT:
                     tok = parseIntDefinition(struct.$int(name));
                     break;
@@ -296,16 +307,19 @@ public final class QueryParser {
                     struct.$short(name);
                     break;
                 case ColumnType.STRING:
-                    struct.$str(name);
+                    tok = parseStrDefinition(struct.$str(name));
                     break;
                 case ColumnType.SYMBOL:
-                    struct.$sym(name);
+                    tok = parseSymDefinition(struct.$sym(name));
                     break;
                 case ColumnType.BINARY:
                     struct.$bin(name);
                     break;
                 case ColumnType.DATE:
                     struct.$date(name);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    struct.$ts(name);
                     break;
                 default:
                     throw err("Unsupported type");
@@ -550,6 +564,44 @@ public final class QueryParser {
                 throw err(",|from expected");
             }
         }
+    }
+
+    private CharSequence parseStrDefinition(GenericStringBuilder builder) throws ParserException {
+        CharSequence tok = tok();
+
+        if (isFieldTerm(tok)) {
+            return tok;
+        }
+
+        expectTok(tok, "index");
+        builder.index();
+
+        if (isFieldTerm(tok = tok())) {
+            return tok;
+        }
+
+        expectTok(tok, "buckets");
+
+        try {
+            builder.buckets(Numbers.parseInt(tok()));
+        } catch (NumericException e) {
+            throw err("expected number of buckets (string)");
+        }
+
+        return null;
+    }
+
+    private CharSequence parseSymDefinition(GenericSymbolBuilder builder) throws ParserException {
+        CharSequence tok = tok();
+
+        if (isFieldTerm(tok)) {
+            return tok;
+        }
+
+        expectTok(tok, "index");
+        builder.index();
+
+        return null;
     }
 
     private CharSequence parseTimestamp(CharSequence tok, QueryModel model) throws ParserException {

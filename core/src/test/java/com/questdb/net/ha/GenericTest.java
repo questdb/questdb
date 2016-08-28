@@ -27,6 +27,7 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
+import com.questdb.ex.JournalConfigurationException;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.io.RecordSourcePrinter;
@@ -200,6 +201,23 @@ public class GenericTest extends AbstractTest {
 
             client.halt();
             server.halt();
+        }
+    }
+
+    @Test
+    public void testDuplicateTimestamp() throws Exception {
+        try {
+            factory.writer(new JournalStructure("xyz") {{
+                $sym("x").index();
+                $int("y");
+                $double("z");
+                $ts("a");
+                $ts("b");
+                partitionBy(PartitionBy.DAY);
+            }}).close();
+            Assert.fail();
+        } catch (JournalConfigurationException ignore) {
+            // pass
         }
     }
 

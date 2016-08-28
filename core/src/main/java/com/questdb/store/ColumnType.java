@@ -43,6 +43,7 @@ public final class ColumnType {
     public static final int BINARY = 512;
     public static final int DATE = 1024;
     public static final int PARAMETER = 2048;
+    public static final int TIMESTAMP = 4096;
     private static final ObjIntHashMap<Class> classMap = new ObjIntHashMap<>();
     private static final IntIntHashMap sizeMap = new IntIntHashMap();
     private static final IntObjHashMap<CharSequence> typeNameMap = new IntObjHashMap<>();
@@ -116,5 +117,6 @@ public final class ColumnType {
         nameTypeMap.put("BINARY", BINARY);
         nameTypeMap.put("DATE", DATE);
         nameTypeMap.put("PARAMETER", PARAMETER);
+        nameTypeMap.put("TIMESTAMP", TIMESTAMP);
     }
 }

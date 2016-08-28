@@ -142,6 +142,11 @@ public class JournalStructure implements MetadataBuilder<Object> {
     }
 
     public JournalStructure $ts(String name) {
+
+        if (tsColumnIndex != -1) {
+            throw new JournalConfigurationException("Journal can have only one timestamp columns. Use DATE for other columns.");
+        }
+
         $meta(name, ColumnType.DATE);
         tsColumnIndex = nameToIndexMap.get(name);
         return this;

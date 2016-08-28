@@ -23,8 +23,10 @@
 
 package com.questdb.ql.parser;
 
+import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
+import com.questdb.factory.JournalFactory;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
@@ -143,6 +145,23 @@ public class QueryCompiler {
         RecordSource rs = compile(model, factory);
         rs.setParameterMap(map);
         return rs;
+    }
+
+    public void execute(JournalFactory factory, CharSequence statement) throws ParserException, JournalException {
+
+        clearState();
+        Statement stmt = parser.parse(statement);
+
+        switch (stmt.getType()) {
+            case Statement.QUERY_JOURNAL:
+                throw QueryError.$(0, "use compile() method to execute query");
+            case Statement.CREATE_JOURNAL:
+                factory.writer(stmt.getStructure()).close();
+                break;
+            default:
+                throw QueryError.$(0, "unknow statement type");
+        }
+
     }
 
     private static Signature lbs(int masterType, boolean indexed, int lambdaType) {
