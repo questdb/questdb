@@ -23,12 +23,14 @@
 
 package com.questdb.ql.parser;
 
+import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalFactory;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
+import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.io.sink.StringSink;
@@ -139,7 +141,7 @@ public class QueryCompiler {
 
     public RecordSource compile(JournalReaderFactory factory, CharSequence query) throws ParserException {
         clearState();
-        final QueryModel model = parser.parse(query).getQueryModel();
+        final QueryModel model = parser.parse(query).as(QueryModel.class);
         final CharSequenceObjHashMap<Parameter> map = new CharSequenceObjHashMap<>();
         model.setParameterMap(map);
         RecordSource rs = compile(model, factory);
@@ -147,21 +149,31 @@ public class QueryCompiler {
         return rs;
     }
 
-    public void execute(JournalFactory factory, CharSequence statement) throws ParserException, JournalException {
-
+    public JournalWriter createWriter(JournalFactory factory, CharSequence statement) throws ParserException, JournalException {
         clearState();
         Statement stmt = parser.parse(statement);
 
         switch (stmt.getType()) {
-            case Statement.QUERY_JOURNAL:
+            case Statement.QUERY:
                 throw QueryError.$(0, "use compile() method to execute query");
-            case Statement.CREATE_JOURNAL:
-                factory.writer(stmt.getStructure()).close();
-                break;
+            case Statement.CREATE:
+                return factory.writer(stmt.as(JournalStructure.class));
+            case Statement.CREATE_AS:
+                CreateAsSelectModel model = stmt.as(CreateAsSelectModel.class);
+                return JournalUtils.createJournal(
+                        factory,
+                        model.getName(),
+                        compile(model.getQueryModel(), factory),
+                        model.getPartitionBy(),
+                        model.getTimestamp()
+                );
             default:
-                throw QueryError.$(0, "unknow statement type");
+                throw QueryError.$(0, "unknown statement type");
         }
+    }
 
+    public void execute(JournalFactory factory, CharSequence statement) throws ParserException, JournalException {
+        createWriter(factory, statement).close();
     }
 
     private static Signature lbs(int masterType, boolean indexed, int lambdaType) {
@@ -986,7 +998,7 @@ public class QueryCompiler {
     }
 
     private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException {
-        return compile(parser.parseInternal(query).getQueryModel(), factory);
+        return compile(parser.parseInternal(query).as(QueryModel.class), factory);
     }
 
     private RecordSource compileSubQuery(QueryModel model, JournalReaderFactory factory) throws ParserException {
@@ -1672,7 +1684,7 @@ public class QueryCompiler {
 
     // todo: remove
     CharSequence plan(JournalReaderFactory factory, CharSequence query) throws ParserException {
-        QueryModel model = parser.parse(query).getQueryModel();
+        QueryModel model = parser.parse(query).as(QueryModel.class);
         resetAndOptimise(model, factory);
         return model.plan();
     }

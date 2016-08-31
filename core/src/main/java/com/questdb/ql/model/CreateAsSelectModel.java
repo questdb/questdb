@@ -23,30 +23,38 @@
 
 package com.questdb.ql.model;
 
-public class Statement {
-    public static final int CREATE = 1;
-    public static final int QUERY = 2;
-    public static final int CREATE_AS = 3;
+public class CreateAsSelectModel {
+    private final String name;
+    private final QueryModel queryModel;
+    private ExprNode timestamp;
+    private ExprNode partitionBy;
 
-    private final int type;
-    private final Object model;
-
-    public Statement(int statementType, Object model) {
-        this.type = statementType;
-        this.model = model;
+    public CreateAsSelectModel(String name, QueryModel queryModel) {
+        this.name = name;
+        this.queryModel = queryModel;
     }
 
-
-    @SuppressWarnings("unchecked")
-    public <T> T as(Class<T> clazz) {
-        if (clazz.isAssignableFrom(model.getClass())) {
-            return (T) model;
-        } else {
-            throw new IllegalArgumentException();
-        }
+    public String getName() {
+        return name;
     }
 
-    public int getType() {
-        return type;
+    public ExprNode getPartitionBy() {
+        return partitionBy;
+    }
+
+    public void setPartitionBy(ExprNode partitionBy) {
+        this.partitionBy = partitionBy;
+    }
+
+    public QueryModel getQueryModel() {
+        return queryModel;
+    }
+
+    public ExprNode getTimestamp() {
+        return timestamp;
+    }
+
+    public void setTimestamp(ExprNode timestamp) {
+        this.timestamp = timestamp;
     }
 }

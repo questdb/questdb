@@ -46,7 +46,7 @@ import java.util.concurrent.TimeUnit;
 
 public class JournalStructure implements MetadataBuilder<Object> {
     private static final Log LOG = LogFactory.getLog(JournalStructure.class);
-    private final List<ColumnMetadata> metadata = new ArrayList<>();
+    private final ObjList<ColumnMetadata> metadata = new ObjList<>();
     private final CharSequenceIntHashMap nameToIndexMap = new CharSequenceIntHashMap();
     private String location;
     private int tsColumnIndex = -1;
@@ -141,6 +141,11 @@ public class JournalStructure implements MetadataBuilder<Object> {
         return $ts("timestamp");
     }
 
+    public JournalStructure $ts(int index) {
+        tsColumnIndex = index;
+        return this;
+    }
+
     public JournalStructure $ts(String name) {
 
         if (tsColumnIndex != -1) {
@@ -162,7 +167,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
         ColumnMetadata m[] = new ColumnMetadata[metadata.size()];
 
         for (int i = 0, sz = metadata.size(); i < sz; i++) {
-            ColumnMetadata meta = metadata.get(i);
+            ColumnMetadata meta = metadata.getQuick(i);
             if (meta.indexed && meta.distinctCountHint < 2) {
                 meta.distinctCountHint = Numbers.ceilPow2(Math.max(2, (int) (recordCountHint * 0.01))) - 1;
             }
@@ -242,6 +247,22 @@ public class JournalStructure implements MetadataBuilder<Object> {
         return this;
     }
 
+    public int getColumnIndex(CharSequence name) {
+        return nameToIndexMap.get(name);
+    }
+
+    public ColumnMetadata getColumnMetadata(CharSequence name) {
+        return getColumnMetadata(getColumnIndex(name));
+    }
+
+    public ColumnMetadata getColumnMetadata(int index) {
+        return index == -1 ? null : metadata.getQuick(index);
+    }
+
+    public boolean hasTimestamp() {
+        return tsColumnIndex != -1;
+    }
+
     public JournalStructure key(String key) {
         this.key = key;
         return this;
@@ -269,7 +290,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
                 continue;
             }
 
-            ColumnMetadata meta = metadata.get(index);
+            ColumnMetadata meta = metadata.getQuick(index);
             checkTypes(meta.type, ColumnType.columnTypeOf((Class) f.getType()));
             meta.offset = Unsafe.getUnsafe().objectFieldOffset(f);
         }
@@ -327,7 +348,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
     private boolean missingMappings() {
         boolean mappingMissing = false;
         for (int i = 0, metadataSize = metadata.size(); i < metadataSize; i++) {
-            ColumnMetadata m = metadata.get(i);
+            ColumnMetadata m = metadata.getQuick(i);
             if (m.offset == 0) {
                 mappingMissing = true;
                 LOG.info().$("Unmapped data column: ").$(m.name).$();

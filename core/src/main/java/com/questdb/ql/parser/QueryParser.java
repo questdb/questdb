@@ -23,22 +23,21 @@
 
 package com.questdb.ql.parser;
 
-import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.configuration.GenericIntBuilder;
-import com.questdb.factory.configuration.GenericStringBuilder;
-import com.questdb.factory.configuration.GenericSymbolBuilder;
-import com.questdb.factory.configuration.JournalStructure;
+import com.questdb.factory.configuration.*;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
+import com.questdb.ql.impl.JournalUtils;
 import com.questdb.ql.model.*;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectPool;
 import com.questdb.store.ColumnType;
+
+import java.lang.StringBuilder;
 
 public final class QueryParser {
 
@@ -76,6 +75,12 @@ public final class QueryParser {
     }
 
     private void expectTok(CharSequence tok, CharSequence expected) throws ParserException {
+        if (tok == null || !Chars.equals(tok, expected)) {
+            throw QueryError.position(lexer.position()).$('\'').$(expected).$("' expected").$();
+        }
+    }
+
+    private void expectTok(CharSequence tok, char expected) throws ParserException {
         if (tok == null || !Chars.equals(tok, expected)) {
             throw QueryError.position(lexer.position()).$('\'').$(expected).$("' expected").$();
         }
@@ -137,30 +142,115 @@ public final class QueryParser {
     }
 
     private Statement parseCreateJournal() throws ParserException {
-        JournalStructure structure = new JournalStructure(tok().toString());
+        String name = tok().toString();
+        CharSequence tok = tok();
+
+        if (Chars.equals(tok, '(')) {
+            lexer.unparse();
+            return parseCreateJournalFromDefinition(new JournalStructure(name));
+        } else if (Chars.equals(tok, "as")) {
+            return parseCreateJournalFromQuery(name);
+        }
+
+        throw QueryError.position(lexer.position()).$("Unexpected token").$();
+    }
+
+    private Statement parseCreateJournalFromDefinition(JournalStructure structure) throws ParserException {
         parseJournalFields(structure);
         CharSequence tok = lexer.optionTok();
-        if (tok != null) {
-            expectTok(tok, "partition");
-            expectTok(tok(), "by");
-            structure.partitionBy(PartitionBy.fromString(tok()));
+        while (tok != null && Chars.equals(tok, ',')) {
+            expectTok(tok(), "index");
+            expectTok(tok(), '(');
 
+            CharSequence column = tok();
+            ColumnMetadata m = structure.getColumnMetadata(column);
+            if (m == null) {
+                throw QueryError.invalidColumn(lexer.position(), column);
+            }
+
+            switch (m.type) {
+                case ColumnType.INT:
+                case ColumnType.STRING:
+                case ColumnType.SYMBOL:
+                    m.indexed = true;
+                    break;
+                default:
+                    throw QueryError.position(lexer.position()).$("column ").$(column).$(" cannot be indexed. Unsupported type ").$(ColumnType.nameOf(m.type)).$();
+            }
+
+            tok = tok();
+
+            if (Chars.equals(tok, "buckets")) {
+                int buckets;
+                try {
+                    buckets = Numbers.parseInt(tok());
+                } catch (NumericException e) {
+                    throw err("expected number of buckets");
+                }
+                m.distinctCountHint = Numbers.ceilPow2(buckets) - 1;
+                tok = tok();
+            }
+            expectTok(tok, ')');
+            tok = lexer.optionTok();
+        }
+
+        ExprNode timestamp = parseTimestamp(tok);
+        if (timestamp != null) {
+            tok = lexer.optionTok();
+            JournalUtils.validateAndSetTimestamp(structure, timestamp);
+        }
+
+        ExprNode partitionBy = parsePartitionBy(tok);
+        if (partitionBy != null) {
+            JournalUtils.validateAndSetPartitionBy(structure, partitionBy);
+            tok = lexer.optionTok();
+        }
+
+        if (Chars.equalsNc("record", tok)) {
+            expectTok(tok(), "hint");
+            try {
+                structure.recordCountHint(Numbers.parseInt(tok()));
+            } catch (NumericException e) {
+                throw QueryError.$(lexer.position(), "Invalid record hint");
+            }
             tok = lexer.optionTok();
         }
 
         if (tok != null) {
             throw QueryError.$(lexer.position(), "Unexpected token");
         }
-        return new Statement(Statement.CREATE_JOURNAL, structure);
+        return new Statement(Statement.CREATE, structure);
+    }
+
+    private Statement parseCreateJournalFromQuery(String name) throws ParserException {
+        expectTok(tok(), '(');
+        QueryModel queryModel = parseQuery(true);
+        expectTok(tok(), ')');
+
+        CreateAsSelectModel model = new CreateAsSelectModel(name, queryModel);
+
+        CharSequence tok = lexer.optionTok();
+        ExprNode timestamp = parseTimestamp(tok);
+        if (timestamp != null) {
+            model.setTimestamp(timestamp);
+            tok = lexer.optionTok();
+        }
+
+        ExprNode partitionBy = parsePartitionBy(tok);
+        if (partitionBy != null) {
+            model.setPartitionBy(partitionBy);
+        }
+
+        return new Statement(Statement.CREATE_AS, model);
     }
 
     private Statement parseCreateStatement() throws ParserException {
         CharSequence tok = tok();
-        if (Chars.equals(tok, "journal")) {
+        if (Chars.equals(tok, "table")) {
             return parseCreateJournal();
         }
 
-        throw err("journal expected");
+        throw err("table expected");
     }
 
     private CharSequence parseIntDefinition(GenericIntBuilder genericIntBuilder) throws ParserException {
@@ -196,7 +286,7 @@ public final class QueryParser {
         }
 
         lexer.unparse();
-        return new Statement(Statement.QUERY_JOURNAL, parseQuery(false));
+        return new Statement(Statement.QUERY, parseQuery(false));
     }
 
     private QueryModel parseJoin(CharSequence tok, int joinType) throws ParserException {
@@ -211,7 +301,7 @@ public final class QueryParser {
 
         if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseQuery(true));
-            expectTok(tok(), ")");
+            expectTok(tok(), ')');
         } else {
             lexer.unparse();
             joinModel.setJournalName(expr());
@@ -318,9 +408,6 @@ public final class QueryParser {
                 case ColumnType.DATE:
                     struct.$date(name);
                     break;
-                case ColumnType.TIMESTAMP:
-                    struct.$ts(name);
-                    break;
                 default:
                     throw err("Unsupported type");
             }
@@ -344,6 +431,19 @@ public final class QueryParser {
         model.setLatestBy(expr());
     }
 
+    private ExprNode parsePartitionBy(CharSequence tok) throws ParserException {
+        if (Chars.equalsNc("partition", tok)) {
+            expectTok(tok(), "by");
+            ExprNode expr = expectExpr();
+            if (expr.type != ExprNode.LITERAL) {
+                throw QueryError.$(expr.position, "Literal expected");
+            }
+
+            return expr;
+        }
+        return null;
+    }
+
     private QueryModel parseQuery(boolean subQuery) throws ParserException {
 
         CharSequence tok;
@@ -363,7 +463,7 @@ public final class QueryParser {
             model.setNestedModel(parseQuery(true));
 
             // expect closing bracket
-            expectTok(tok(), ")");
+            expectTok(tok(), ')');
 
             tok = lexer.optionTok();
 
@@ -377,7 +477,11 @@ public final class QueryParser {
 
             // expect [timestamp(column)]
 
-            tok = parseTimestamp(tok, model);
+            ExprNode timestamp = parseTimestamp(tok);
+            if (timestamp != null) {
+                model.setTimestamp(timestamp);
+                tok = lexer.optionTok();
+            }
         } else {
 
             lexer.unparse();
@@ -396,11 +500,15 @@ public final class QueryParser {
 
             // expect [timestamp(column)]
 
-            tok = parseTimestamp(tok, model);
+            ExprNode timestamp = parseTimestamp(tok);
+            if (timestamp != null) {
+                model.setTimestamp(timestamp);
+                tok = lexer.optionTok();
+            }
 
             // expect [latest by]
 
-            if (tok != null && Chars.equals(tok, "latest")) {
+            if (Chars.equalsNc("latest", tok)) {
                 parseLatestBy(model);
                 tok = lexer.optionTok();
             }
@@ -510,7 +618,7 @@ public final class QueryParser {
 
             if (Chars.equals(tok, "over")) {
                 // analytic
-                expectTok(tok(), "(");
+                expectTok(tok(), '(');
 
                 AnalyticColumn col = analyticColumnPool.next().of(alias, expr);
                 tok = tok();
@@ -604,14 +712,17 @@ public final class QueryParser {
         return null;
     }
 
-    private CharSequence parseTimestamp(CharSequence tok, QueryModel model) throws ParserException {
-        if (tok != null && Chars.equals(tok, "timestamp")) {
-            expectTok(tok(), "(");
-            model.setTimestamp(expr());
-            expectTok(tok(), ")");
-            return lexer.optionTok();
+    private ExprNode parseTimestamp(CharSequence tok) throws ParserException {
+        if (Chars.equalsNc("timestamp", tok)) {
+            expectTok(tok(), '(');
+            final ExprNode result = expectExpr();
+            if (result.type != ExprNode.LITERAL) {
+                throw QueryError.$(result.position, "Literal expected");
+            }
+            expectTok(tok(), ')');
+            return result;
         }
-        return tok;
+        return null;
     }
 
     private void resolveJoinColumns(QueryModel model) {

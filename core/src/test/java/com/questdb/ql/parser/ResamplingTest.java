@@ -254,6 +254,15 @@ public class ResamplingTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testResamplingExplicitTimestampAsFunc() throws Exception {
+        try {
+            expectFailure("select orderDate, employeeId, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders2 timestamp(orderDate()) sample by 1d");
+        } catch (ParserException e) {
+            Assert.assertEquals(115, QueryError.getPosition());
+        }
+    }
+
+    @Test
     public void testResamplingNoTimestamp() throws Exception {
         try {
             assertThat("", "select employeeId, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders3 sample by 1d");
