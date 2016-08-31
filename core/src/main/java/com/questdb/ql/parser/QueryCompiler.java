@@ -30,7 +30,6 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalFactory;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.io.sink.StringSink;
@@ -157,17 +156,12 @@ public class QueryCompiler {
             case Statement.QUERY:
                 throw QueryError.$(0, "use compile() method to execute query");
             case Statement.CREATE:
-                return factory.writer(stmt.as(JournalStructure.class));
-            case Statement.CREATE_AS:
-                CreateAsSelectModel model = stmt.as(CreateAsSelectModel.class);
-                return JournalUtils.createJournal(
-                        factory,
-                        model.getName(),
-                        compile(model.getQueryModel(), factory),
-                        model.getPartitionBy(),
-                        model.getTimestamp(),
-                        model.getRecordHint()
-                );
+                CreateJournalModel model = stmt.as(CreateJournalModel.class);
+                QueryModel queryModel = model.getQueryModel();
+                if (queryModel != null) {
+                    model.setRecordSource(compile(queryModel, factory));
+                }
+                return JournalUtils.createJournal(factory, model);
             default:
                 throw QueryError.$(0, "unknown statement type");
         }

@@ -38,6 +38,8 @@ import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
+import com.questdb.ql.model.ColumnIndexModel;
+import com.questdb.ql.model.CreateJournalModel;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.ObjList;
@@ -48,88 +50,59 @@ public final class JournalUtils {
     private JournalUtils() {
     }
 
-    public static JournalWriter createJournal(
-            JournalFactory factory,
-            String name,
-            RecordSource rs,
-            ExprNode partitionBy,
-            ExprNode timestamp,
-            ExprNode recordHint) throws JournalException, ParserException {
-        final RecordMetadata metadata = rs.getMetadata();
-        final int n = metadata.getColumnCount();
+    public static JournalWriter createJournal(JournalFactory factory, CreateJournalModel model) throws JournalException, ParserException {
+        JournalStructure struct = model.getStruct();
+        RecordSource rs = model.getRecordSource();
 
-        JournalStructure structure = createStructure(name, metadata);
-        validateAndSetTimestamp(structure, timestamp);
-
-        // use timestamp from query
-        if (!structure.hasTimestamp()) {
-            structure.$ts(metadata.getTimestampIndex());
+        if (struct == null) {
+            assert rs != null;
+            struct = createStructure(model.getName(), rs.getMetadata());
         }
 
-        validateAndSetPartitionBy(structure, partitionBy);
+        validateAndSetTimestamp(struct, model.getTimestamp());
+        validateAndSetPartitionBy(struct, model.getPartitionBy());
 
+        ExprNode recordHint = model.getRecordHint();
         if (recordHint != null) {
             try {
-                structure.recordCountHint(Numbers.parseInt(recordHint.token));
+                struct.recordCountHint(Numbers.parseInt(recordHint.token));
             } catch (NumericException e) {
-                throw QueryError.$(recordHint.position, "Bad integer");
+                throw QueryError.$(recordHint.position, "Bad int");
             }
         }
 
-        JournalWriter w = factory.bulkWriter(structure);
-        try {
-            RecordCursor cursor = rs.prepareCursor(factory);
-            while (cursor.hasNext()) {
-                JournalEntryWriter ew = w.entryWriter();
-                Record r = cursor.next();
+        ObjList<ColumnIndexModel> columnIndexModels = model.getColumnIndexModels();
+        for (int i = 0, n = columnIndexModels.size(); i < n; i++) {
+            ColumnIndexModel cim = columnIndexModels.getQuick(i);
 
-                for (int i = 0; i < n; i++) {
-                    switch (metadata.getColumnQuick(i).getType()) {
-                        case ColumnType.DATE:
-                            ew.putDate(i, r.getDate(i));
-                            break;
-                        case ColumnType.DOUBLE:
-                            ew.putDouble(i, r.getDouble(i));
-                            break;
-                        case ColumnType.FLOAT:
-                            ew.putFloat(i, r.getFloat(i));
-                            break;
-                        case ColumnType.INT:
-                            ew.putInt(i, r.getInt(i));
-                            break;
-                        case ColumnType.STRING:
-                            ew.putStr(i, r.getFlyweightStr(i));
-                            break;
-                        case ColumnType.SYMBOL:
-                            ew.putSym(i, r.getSym(i));
-                            break;
-                        case ColumnType.SHORT:
-                            ew.putShort(i, r.getShort(i));
-                            break;
-                        case ColumnType.LONG:
-                            ew.putLong(i, r.getLong(i));
-                            break;
-                        case ColumnType.BYTE:
-                            ew.put(i, r.get(i));
-                            break;
-                        case ColumnType.BOOLEAN:
-                            ew.putBool(i, r.getBool(i));
-                            break;
-                        case ColumnType.BINARY:
-                            ew.putBin(i, r.getBin(i));
-                            break;
-                        default:
-                            break;
-                    }
-                }
-                ew.append();
+            ExprNode nn = cim.getName();
+            ColumnMetadata m = struct.getColumnMetadata(nn.token);
+
+            if (m == null) {
+                throw QueryError.invalidColumn(nn.position, nn.token);
             }
-            w.commit();
-        } catch (Throwable e) {
-            w.close();
-            throw e;
+
+            switch (m.getType()) {
+                case ColumnType.INT:
+                case ColumnType.SYMBOL:
+                case ColumnType.STRING:
+                    m.indexed = true;
+                    m.distinctCountHint = cim.getBuckets();
+                    break;
+                default:
+                    throw QueryError.$(nn.position, "Type index not supported");
+            }
         }
 
+        JournalWriter w = factory.bulkWriter(struct);
+        if (rs != null) {
+            try {
+                copy(factory, rs, w);
+            } catch (JournalException e) {
+                w.close();
+                throw e;
+            }
+        }
         return w;
     }
 
@@ -167,6 +140,57 @@ public final class JournalUtils {
         struct.$ts(index);
     }
 
+    private static void copy(JournalFactory factory, RecordSource rs, JournalWriter w) throws JournalException {
+        RecordMetadata metadata = rs.getMetadata();
+        final int n = metadata.getColumnCount();
+        RecordCursor cursor = rs.prepareCursor(factory);
+        while (cursor.hasNext()) {
+            JournalEntryWriter ew = w.entryWriter();
+            Record r = cursor.next();
+
+            for (int i = 0; i < n; i++) {
+                switch (metadata.getColumnQuick(i).getType()) {
+                    case ColumnType.DATE:
+                        ew.putDate(i, r.getDate(i));
+                        break;
+                    case ColumnType.DOUBLE:
+                        ew.putDouble(i, r.getDouble(i));
+                        break;
+                    case ColumnType.FLOAT:
+                        ew.putFloat(i, r.getFloat(i));
+                        break;
+                    case ColumnType.INT:
+                        ew.putInt(i, r.getInt(i));
+                        break;
+                    case ColumnType.STRING:
+                        ew.putStr(i, r.getFlyweightStr(i));
+                        break;
+                    case ColumnType.SYMBOL:
+                        ew.putSym(i, r.getSym(i));
+                        break;
+                    case ColumnType.SHORT:
+                        ew.putShort(i, r.getShort(i));
+                        break;
+                    case ColumnType.LONG:
+                        ew.putLong(i, r.getLong(i));
+                        break;
+                    case ColumnType.BYTE:
+                        ew.put(i, r.get(i));
+                        break;
+                    case ColumnType.BOOLEAN:
+                        ew.putBool(i, r.getBool(i));
+                        break;
+                    case ColumnType.BINARY:
+                        ew.putBin(i, r.getBin(i));
+                        break;
+                    default:
+                        break;
+                }
+            }
+            ew.append();
+        }
+        w.commit();
+    }
 
     private static JournalStructure createStructure(String location, RecordMetadata rm) {
         int n = rm.getColumnCount();
@@ -187,6 +211,6 @@ public final class JournalUtils {
             }
             m.add(cm);
         }
-        return new JournalStructure(location, m);
+        return new JournalStructure(location, m).$ts(rm.getTimestampIndex());
     }
 }

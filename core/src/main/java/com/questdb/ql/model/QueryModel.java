@@ -41,7 +41,7 @@ import com.questdb.std.*;
 
 import java.util.ArrayDeque;
 
-public class QueryModel implements Mutable {
+public class QueryModel implements Mutable, ParsedModel {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;

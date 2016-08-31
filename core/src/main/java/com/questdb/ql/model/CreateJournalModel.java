@@ -23,20 +23,34 @@
 
 package com.questdb.ql.model;
 
-public class CreateAsSelectModel {
-    private final String name;
-    private final QueryModel queryModel;
+import com.questdb.factory.configuration.JournalStructure;
+import com.questdb.ql.RecordSource;
+import com.questdb.std.ObjList;
+
+public class CreateJournalModel implements ParsedModel {
+    private String name;
+    private QueryModel queryModel;
     private ExprNode timestamp;
     private ExprNode partitionBy;
     private ExprNode recordHint;
+    private JournalStructure struct;
+    private ObjList<ColumnIndexModel> columnIndexModels = new ObjList<>();
+    private RecordSource recordSource;
 
-    public CreateAsSelectModel(String name, QueryModel queryModel) {
-        this.name = name;
-        this.queryModel = queryModel;
+    public void addColumnIndexModel(ColumnIndexModel model) {
+        columnIndexModels.add(model);
+    }
+
+    public ObjList<ColumnIndexModel> getColumnIndexModels() {
+        return columnIndexModels;
     }
 
     public String getName() {
         return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
     }
 
     public ExprNode getPartitionBy() {
@@ -51,12 +65,32 @@ public class CreateAsSelectModel {
         return queryModel;
     }
 
+    public void setQueryModel(QueryModel queryModel) {
+        this.queryModel = queryModel;
+    }
+
     public ExprNode getRecordHint() {
         return recordHint;
     }
 
     public void setRecordHint(ExprNode recordHint) {
         this.recordHint = recordHint;
+    }
+
+    public RecordSource getRecordSource() {
+        return recordSource;
+    }
+
+    public void setRecordSource(RecordSource recordSource) {
+        this.recordSource = recordSource;
+    }
+
+    public JournalStructure getStruct() {
+        return struct;
+    }
+
+    public void setStruct(JournalStructure struct) {
+        this.struct = struct;
     }
 
     public ExprNode getTimestamp() {
