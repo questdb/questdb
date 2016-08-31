@@ -165,7 +165,8 @@ public class QueryCompiler {
                         model.getName(),
                         compile(model.getQueryModel(), factory),
                         model.getPartitionBy(),
-                        model.getTimestamp()
+                        model.getTimestamp(),
+                        model.getRecordHint()
                 );
             default:
                 throw QueryError.$(0, "unknown statement type");

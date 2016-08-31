@@ -27,12 +27,14 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
+import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalFactory;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
@@ -46,18 +48,33 @@ public final class JournalUtils {
     private JournalUtils() {
     }
 
-    public static JournalWriter createJournal(JournalFactory factory, String name, RecordSource rs, ExprNode partitionBy, ExprNode timestamp) throws JournalException, ParserException {
+    public static JournalWriter createJournal(
+            JournalFactory factory,
+            String name,
+            RecordSource rs,
+            ExprNode partitionBy,
+            ExprNode timestamp,
+            ExprNode recordHint) throws JournalException, ParserException {
         final RecordMetadata metadata = rs.getMetadata();
         final int n = metadata.getColumnCount();
 
         JournalStructure structure = createStructure(name, metadata);
         validateAndSetTimestamp(structure, timestamp);
 
+        // use timestamp from query
         if (!structure.hasTimestamp()) {
             structure.$ts(metadata.getTimestampIndex());
         }
 
         validateAndSetPartitionBy(structure, partitionBy);
+
+        if (recordHint != null) {
+            try {
+                structure.recordCountHint(Numbers.parseInt(recordHint.token));
+            } catch (NumericException e) {
+                throw QueryError.$(recordHint.position, "Bad integer");
+            }
+        }
 
         JournalWriter w = factory.bulkWriter(structure);
         try {
@@ -116,40 +133,40 @@ public final class JournalUtils {
         return w;
     }
 
-    public static void validateAndSetPartitionBy(JournalStructure structure, ExprNode partitionBy) throws ParserException {
+    public static void validateAndSetPartitionBy(JournalStructure struct, ExprNode partitionBy) throws ParserException {
         if (partitionBy == null) {
             return;
         }
 
-        if (structure.hasTimestamp()) {
+        if (struct.hasTimestamp()) {
             int p = PartitionBy.fromString(partitionBy.token);
             if (p == -1) {
                 throw QueryError.$(partitionBy.position, "Invalid partition type");
             }
-            structure.partitionBy(p);
+            struct.partitionBy(p);
         } else {
             throw QueryError.$(partitionBy.position, "No timestamp");
         }
-
     }
 
-    public static void validateAndSetTimestamp(JournalStructure structure, ExprNode timestamp) throws ParserException {
+    public static void validateAndSetTimestamp(JournalStructure struct, ExprNode timestamp) throws ParserException {
 
         if (timestamp == null) {
             return;
         }
 
-        int index = structure.getColumnIndex(timestamp.token);
+        int index = struct.getColumnIndex(timestamp.token);
         if (index == -1) {
             throw QueryError.invalidColumn(timestamp.position, timestamp.token);
         }
 
-        if (structure.getColumnMetadata(index).getType() != ColumnType.DATE) {
+        if (struct.getColumnMetadata(index).getType() != ColumnType.DATE) {
             throw QueryError.$(timestamp.position, "Not a DATE");
         }
 
-        structure.$ts(index);
+        struct.$ts(index);
     }
+
 
     private static JournalStructure createStructure(String location, RecordMetadata rm) {
         int n = rm.getColumnCount();

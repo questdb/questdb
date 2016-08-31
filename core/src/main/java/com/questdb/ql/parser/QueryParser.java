@@ -206,10 +206,10 @@ public final class QueryParser {
             tok = lexer.optionTok();
         }
 
-        if (Chars.equalsNc("record", tok)) {
-            expectTok(tok(), "hint");
+        ExprNode hint = parseRecordHint(tok);
+        if (hint != null) {
             try {
-                structure.recordCountHint(Numbers.parseInt(tok()));
+                structure.recordCountHint(Numbers.parseInt(hint.token));
             } catch (NumericException e) {
                 throw QueryError.$(lexer.position(), "Invalid record hint");
             }
@@ -239,6 +239,17 @@ public final class QueryParser {
         ExprNode partitionBy = parsePartitionBy(tok);
         if (partitionBy != null) {
             model.setPartitionBy(partitionBy);
+            tok = lexer.optionTok();
+        }
+
+        ExprNode hint = parseRecordHint(tok);
+        if (hint != null) {
+            model.setRecordHint(hint);
+            tok = lexer.optionTok();
+        }
+
+        if (tok != null) {
+            throw QueryError.$(lexer.position(), "Unexpected token");
         }
 
         return new Statement(Statement.CREATE_AS, model);
@@ -600,6 +611,18 @@ public final class QueryParser {
         resolveJoinColumns(model);
 
         return model;
+    }
+
+    private ExprNode parseRecordHint(CharSequence tok) throws ParserException {
+        if (Chars.equalsNc("record", tok)) {
+            expectTok(tok(), "hint");
+            ExprNode hint = expectExpr();
+            if (hint.type != ExprNode.CONSTANT) {
+                throw QueryError.$(hint.position, "Constant expected");
+            }
+            return hint;
+        }
+        return null;
     }
 
     private void parseSelectColumns(QueryModel model) throws ParserException {

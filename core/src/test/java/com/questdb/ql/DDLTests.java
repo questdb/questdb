@@ -123,7 +123,7 @@ public class DDLTests {
     @Test
     public void testCreateAsSelectPartitionBy() throws Exception {
         compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
-        try (JournalWriter w = compiler.createWriter(factory, "create table x as (y order by t) partition by MONTH")) {
+        try (JournalWriter w = compiler.createWriter(factory, "create table x as (y order by t) partition by MONTH record hint 100")) {
             JournalMetadata m = w.getMetadata();
             Assert.assertEquals(11, m.getColumnCount());
             Assert.assertEquals(ColumnType.INT, m.getColumn("a").getType());

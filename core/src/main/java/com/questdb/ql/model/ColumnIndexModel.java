@@ -23,47 +23,23 @@
 
 package com.questdb.ql.model;
 
-public class CreateAsSelectModel {
-    private final String name;
-    private final QueryModel queryModel;
-    private ExprNode timestamp;
-    private ExprNode partitionBy;
-    private ExprNode recordHint;
+public class ColumnIndexModel {
+    private ExprNode name;
+    private int buckets;
 
-    public CreateAsSelectModel(String name, QueryModel queryModel) {
-        this.name = name;
-        this.queryModel = queryModel;
+    public int getBuckets() {
+        return buckets;
     }
 
-    public String getName() {
+    public void setBuckets(int buckets) {
+        this.buckets = buckets;
+    }
+
+    public ExprNode getName() {
         return name;
     }
 
-    public ExprNode getPartitionBy() {
-        return partitionBy;
-    }
-
-    public void setPartitionBy(ExprNode partitionBy) {
-        this.partitionBy = partitionBy;
-    }
-
-    public QueryModel getQueryModel() {
-        return queryModel;
-    }
-
-    public ExprNode getRecordHint() {
-        return recordHint;
-    }
-
-    public void setRecordHint(ExprNode recordHint) {
-        this.recordHint = recordHint;
-    }
-
-    public ExprNode getTimestamp() {
-        return timestamp;
-    }
-
-    public void setTimestamp(ExprNode timestamp) {
-        this.timestamp = timestamp;
+    public void setName(ExprNode name) {
+        this.name = name;
     }
 }
