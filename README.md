@@ -41,13 +41,12 @@ Work in progress. Please stay tuned.
 
 ## Releases
 
-Beta version can download from our web site https://www.questdb.org. Snapthot of embedded database is available on maven central
+Beta version can be downloaded from our web site https://www.questdb.org. Snapthot of embedded database is available on maven central at these coordinates
 
 ```xml
-        <dependency>
-            <groupId>org.questdb</groupId>
-            <artifactId>questdb-core</artifactId>
-            <version>1.0.0-SNAPSHOT</version>
-        </dependency>
-
+<dependency>
+    <groupId>org.questdb</groupId>
+    <artifactId>questdb-core</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
 ```
