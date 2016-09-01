@@ -24,4 +24,5 @@
 package com.questdb.ql.model;
 
 public interface ParsedModel {
+    boolean isQuery();
 }

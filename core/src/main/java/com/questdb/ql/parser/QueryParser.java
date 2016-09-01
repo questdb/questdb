@@ -53,13 +53,21 @@ public final class QueryParser {
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
     private final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
     private final ObjectPool<AnalyticColumn> analyticColumnPool = new ObjectPool<>(AnalyticColumn.FACTORY, 8);
+    private final ObjectPool<CreateJournalModel> createJournalModelPool = new ObjectPool<>(CreateJournalModel.FACTORY, 4);
+    private final ObjectPool<ColumnIndexModel> columnIndexModelPool = new ObjectPool<>(ColumnIndexModel.FACTORY, 8);
 
-    public Statement parse(CharSequence query) throws ParserException {
+    public ParsedModel parse(CharSequence query) throws ParserException {
+        clear();
+        return parseInternal(query);
+    }
+
+    private void clear() {
         queryModelPool.clear();
         queryColumnPool.clear();
         exprNodePool.clear();
         analyticColumnPool.clear();
-        return parseInternal(query);
+        createJournalModelPool.clear();
+        columnIndexModelPool.clear();
     }
 
     private ParserException err(String msg) {
@@ -141,7 +149,7 @@ public final class QueryParser {
         return tok;
     }
 
-    private Statement parseCreateJournal() throws ParserException {
+    private ParsedModel parseCreateJournal() throws ParserException {
         String name = tok().toString();
         CharSequence tok = tok();
 
@@ -161,7 +169,7 @@ public final class QueryParser {
             throw QueryError.position(lexer.position()).$("Unexpected token").$();
         }
 
-        CreateJournalModel model = new CreateJournalModel();
+        CreateJournalModel model = createJournalModelPool.next();
         model.setStruct(struct);
         model.setQueryModel(queryModel);
         model.setName(name);
@@ -172,7 +180,7 @@ public final class QueryParser {
             expectTok(tok(), '(');
 
 
-            ColumnIndexModel columnIndexModel = new ColumnIndexModel();
+            ColumnIndexModel columnIndexModel = columnIndexModelPool.next();
             columnIndexModel.setName(expectExpr());
             tok = tok();
 
@@ -212,11 +220,10 @@ public final class QueryParser {
         if (tok != null) {
             throw QueryError.$(lexer.position(), "Unexpected token");
         }
-        return new Statement(Statement.CREATE, model);
-
+        return model;
     }
 
-    private Statement parseCreateStatement() throws ParserException {
+    private ParsedModel parseCreateStatement() throws ParserException {
         CharSequence tok = tok();
         if (Chars.equals(tok, "table")) {
             return parseCreateJournal();
@@ -250,7 +257,7 @@ public final class QueryParser {
         return null;
     }
 
-    Statement parseInternal(CharSequence query) throws ParserException {
+    ParsedModel parseInternal(CharSequence query) throws ParserException {
         lexer.setContent(query);
         CharSequence tok = tok();
         if (Chars.equals(tok, "create")) {
@@ -258,7 +265,7 @@ public final class QueryParser {
         }
 
         lexer.unparse();
-        return new Statement(Statement.QUERY, parseQuery(false));
+        return parseQuery(false);
     }
 
     private QueryModel parseJoin(CharSequence tok, int joinType) throws ParserException {

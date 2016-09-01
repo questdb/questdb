@@ -69,6 +69,7 @@ import java.util.ArrayDeque;
 
 public class QueryCompiler {
 
+    private static final CharSequenceObjHashMap<Parameter> EMPTY_PARAMS = new CharSequenceObjHashMap<>();
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static ObjObjHashMap<Signature, LatestByLambdaRowSourceFactory> LAMBDA_ROW_SOURCE_FACTORIES = new ObjObjHashMap<>();
     private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L);
@@ -139,36 +140,44 @@ public class QueryCompiler {
     }
 
     public RecordSource compile(JournalReaderFactory factory, CharSequence query) throws ParserException {
+        return compile(factory, parse(query));
+    }
+
+    public RecordSource compile(JournalReaderFactory factory, ParsedModel model) throws ParserException {
+        if (model.isQuery()) {
+            clearState();
+            final QueryModel qm = (QueryModel) model;
+            qm.setParameterMap(EMPTY_PARAMS);
+            RecordSource rs = compile(qm, factory);
+            rs.setParameterMap(EMPTY_PARAMS);
+            return rs;
+        }
+        throw new IllegalArgumentException("QueryModel expected");
+    }
+
+    public JournalWriter createWriter(JournalFactory factory, ParsedModel model) throws ParserException, JournalException {
+        if (model.isQuery()) {
+            throw new IllegalArgumentException("Statement expected");
+        }
         clearState();
-        final QueryModel model = parser.parse(query).as(QueryModel.class);
-        final CharSequenceObjHashMap<Parameter> map = new CharSequenceObjHashMap<>();
-        model.setParameterMap(map);
-        RecordSource rs = compile(model, factory);
-        rs.setParameterMap(map);
-        return rs;
+        CreateJournalModel cm = (CreateJournalModel) model;
+        QueryModel queryModel = cm.getQueryModel();
+        if (queryModel != null) {
+            cm.setRecordSource(compile(queryModel, factory));
+        }
+        return JournalUtils.createJournal(factory, cm);
     }
 
     public JournalWriter createWriter(JournalFactory factory, CharSequence statement) throws ParserException, JournalException {
-        clearState();
-        Statement stmt = parser.parse(statement);
-
-        switch (stmt.getType()) {
-            case Statement.QUERY:
-                throw QueryError.$(0, "use compile() method to execute query");
-            case Statement.CREATE:
-                CreateJournalModel model = stmt.as(CreateJournalModel.class);
-                QueryModel queryModel = model.getQueryModel();
-                if (queryModel != null) {
-                    model.setRecordSource(compile(queryModel, factory));
-                }
-                return JournalUtils.createJournal(factory, model);
-            default:
-                throw QueryError.$(0, "unknown statement type");
-        }
+        return createWriter(factory, parse(statement));
     }
 
     public void execute(JournalFactory factory, CharSequence statement) throws ParserException, JournalException {
         createWriter(factory, statement).close();
+    }
+
+    public ParsedModel parse(CharSequence statement) throws ParserException {
+        return parser.parse(statement);
     }
 
     private static Signature lbs(int masterType, boolean indexed, int lambdaType) {
@@ -993,7 +1002,7 @@ public class QueryCompiler {
     }
 
     private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException {
-        return compile(parser.parseInternal(query).as(QueryModel.class), factory);
+        return compile((QueryModel) parser.parseInternal(query), factory);
     }
 
     private RecordSource compileSubQuery(QueryModel model, JournalReaderFactory factory) throws ParserException {
@@ -1679,7 +1688,7 @@ public class QueryCompiler {
 
     // todo: remove
     CharSequence plan(JournalReaderFactory factory, CharSequence query) throws ParserException {
-        QueryModel model = parser.parse(query).as(QueryModel.class);
+        QueryModel model = (QueryModel) parser.parse(query);
         resetAndOptimise(model, factory);
         return model.plan();
     }

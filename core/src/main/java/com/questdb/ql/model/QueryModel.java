@@ -91,6 +91,7 @@ public class QueryModel implements Mutable, ParsedModel {
     private VirtualColumn limitHiVc;
     private JournalMetadata journalMetadata;
 
+
     private QueryModel() {
         joinModels.add(this);
     }
@@ -395,6 +396,11 @@ public class QueryModel implements Mutable, ParsedModel {
 
     public void setWhereClause(ExprNode whereClause) {
         this.whereClause = whereClause;
+    }
+
+    @Override
+    public boolean isQuery() {
+        return true;
     }
 
     /**

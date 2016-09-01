@@ -86,15 +86,6 @@ public class DDLTests {
             Assert.assertEquals(8, m.getTimestampIndex());
             Assert.assertEquals(PartitionBy.MONTH, m.getPartitionBy());
         }
-
-        // test query execute fails
-
-        try {
-            compiler.execute(factory, "x");
-            Assert.fail();
-        } catch (ParserException e) {
-            Assert.assertEquals(0, QueryError.getPosition());
-        }
     }
 
     @Test

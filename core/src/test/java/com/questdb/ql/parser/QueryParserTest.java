@@ -28,7 +28,6 @@ import com.questdb.misc.Chars;
 import com.questdb.ql.model.AnalyticColumn;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.QueryModel;
-import com.questdb.ql.model.Statement;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -39,14 +38,14 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testAliasWithSpace() throws Exception {
-        Statement statement = parser.parse("x 'b a' where x > 1");
-        Assert.assertEquals("b a", statement.as(QueryModel.class).getAlias().token);
+        QueryModel statement = (QueryModel) parser.parse("x 'b a' where x > 1");
+        Assert.assertEquals("b a", statement.getAlias().token);
     }
 
     @Test
     public void testAliasWithSpace2() throws Exception {
-        Statement statement = parser.parse("(x where a > 1) 'b a' where x > 1");
-        Assert.assertEquals("b a", statement.as(QueryModel.class).getAlias().token);
+        QueryModel statement = (QueryModel) parser.parse("(x where a > 1) 'b a' where x > 1");
+        Assert.assertEquals("b a", statement.getAlias().token);
     }
 
     @Test
@@ -60,11 +59,10 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testAliasedAnalyticColumn() throws Exception {
-        Statement statement = parser.parse("select a,b, f(c) my over (partition by b order by ts) from xyz");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
-        Assert.assertEquals(3, statement.as(QueryModel.class).getColumns().size());
+        QueryModel statement = (QueryModel) parser.parse("select a,b, f(c) my over (partition by b order by ts) from xyz");
+        Assert.assertEquals(3, statement.getColumns().size());
 
-        AnalyticColumn col = (AnalyticColumn) statement.as(QueryModel.class).getColumns().get(2);
+        AnalyticColumn col = (AnalyticColumn) statement.getColumns().get(2);
         Assert.assertEquals("my", col.getAlias());
         Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
         Assert.assertEquals(1, col.getPartitionBy().size());
@@ -76,11 +74,10 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testAnalyticOrderDirection() throws Exception {
-        Statement statement = parser.parse("select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
-        Assert.assertEquals(3, statement.as(QueryModel.class).getColumns().size());
+        QueryModel statement = (QueryModel) parser.parse("select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz");
+        Assert.assertEquals(3, statement.getColumns().size());
 
-        AnalyticColumn col = (AnalyticColumn) statement.as(QueryModel.class).getColumns().get(2);
+        AnalyticColumn col = (AnalyticColumn) statement.getColumns().get(2);
         Assert.assertEquals("my", col.getAlias());
         Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
         Assert.assertEquals(1, col.getPartitionBy().size());
@@ -108,40 +105,40 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testCrossJoin2() throws Exception {
-        Statement statement = parser.parse("select x from a a cross join b z");
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals("a", statement.as(QueryModel.class).getAlias().token);
-        Assert.assertEquals(2, statement.as(QueryModel.class).getJoinModels().size());
-        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.as(QueryModel.class).getJoinModels().getQuick(1).getJoinType());
-        Assert.assertNull(statement.as(QueryModel.class).getJoinModels().getQuick(1).getJoinCriteria());
+        QueryModel statement = (QueryModel) parser.parse("select x from a a cross join b z");
+        Assert.assertNotNull(statement);
+        Assert.assertEquals("a", statement.getAlias().token);
+        Assert.assertEquals(2, statement.getJoinModels().size());
+        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.getJoinModels().getQuick(1).getJoinType());
+        Assert.assertNull(statement.getJoinModels().getQuick(1).getJoinCriteria());
     }
 
     @Test
     public void testCrossJoin3() throws Exception {
-        Statement statement = parser.parse("select x from a a " +
+        QueryModel statement = (QueryModel) parser.parse("select x from a a " +
                 "cross join b z " +
                 "join c on a.x = c.x");
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals("a", statement.as(QueryModel.class).getAlias().token);
-        Assert.assertEquals(3, statement.as(QueryModel.class).getJoinModels().size());
-        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.as(QueryModel.class).getJoinModels().getQuick(1).getJoinType());
-        Assert.assertNull(statement.as(QueryModel.class).getJoinModels().getQuick(1).getJoinCriteria());
-        Assert.assertEquals(QueryModel.JOIN_INNER, statement.as(QueryModel.class).getJoinModels().getQuick(2).getJoinType());
-        Assert.assertNotNull(statement.as(QueryModel.class).getJoinModels().getQuick(2).getJoinCriteria());
+        Assert.assertNotNull(statement);
+        Assert.assertEquals("a", statement.getAlias().token);
+        Assert.assertEquals(3, statement.getJoinModels().size());
+        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.getJoinModels().getQuick(1).getJoinType());
+        Assert.assertNull(statement.getJoinModels().getQuick(1).getJoinCriteria());
+        Assert.assertEquals(QueryModel.JOIN_INNER, statement.getJoinModels().getQuick(2).getJoinType());
+        Assert.assertNotNull(statement.getJoinModels().getQuick(2).getJoinCriteria());
     }
 
     @Test
     public void testCrossJoinNoAlias() throws Exception {
-        Statement statement = parser.parse("select x from a a " +
+        QueryModel statement = (QueryModel) parser.parse("select x from a a " +
                 "cross join b " +
                 "join c on a.x = c.x");
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals("a", statement.as(QueryModel.class).getAlias().token);
-        Assert.assertEquals(3, statement.as(QueryModel.class).getJoinModels().size());
-        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.as(QueryModel.class).getJoinModels().getQuick(1).getJoinType());
-        Assert.assertNull(statement.as(QueryModel.class).getJoinModels().getQuick(1).getJoinCriteria());
-        Assert.assertEquals(QueryModel.JOIN_INNER, statement.as(QueryModel.class).getJoinModels().getQuick(2).getJoinType());
-        Assert.assertNotNull(statement.as(QueryModel.class).getJoinModels().getQuick(2).getJoinCriteria());
+        Assert.assertNotNull(statement);
+        Assert.assertEquals("a", statement.getAlias().token);
+        Assert.assertEquals(3, statement.getJoinModels().size());
+        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.getJoinModels().getQuick(1).getJoinType());
+        Assert.assertNull(statement.getJoinModels().getQuick(1).getJoinCriteria());
+        Assert.assertEquals(QueryModel.JOIN_INNER, statement.getJoinModels().getQuick(2).getJoinType());
+        Assert.assertNotNull(statement.getJoinModels().getQuick(2).getJoinCriteria());
     }
 
     @Test
@@ -197,12 +194,12 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testInnerJoin() throws Exception {
-        Statement statement = parser.parse("select x from a a inner join b on b.x = a.x");
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals("a", statement.as(QueryModel.class).getAlias().token);
-        Assert.assertEquals(2, statement.as(QueryModel.class).getJoinModels().size());
-        Assert.assertEquals(QueryModel.JOIN_INNER, statement.as(QueryModel.class).getJoinModels().getQuick(1).getJoinType());
-        Assert.assertEquals("b.xa.x=", TestUtils.toRpn(statement.as(QueryModel.class).getJoinModels().getQuick(1).getJoinCriteria()));
+        QueryModel statement = (QueryModel) parser.parse("select x from a a inner join b on b.x = a.x");
+        Assert.assertNotNull(statement);
+        Assert.assertEquals("a", statement.getAlias().token);
+        Assert.assertEquals(2, statement.getJoinModels().size());
+        Assert.assertEquals(QueryModel.JOIN_INNER, statement.getJoinModels().getQuick(1).getJoinType());
+        Assert.assertEquals("b.xa.x=", TestUtils.toRpn(statement.getJoinModels().getQuick(1).getJoinCriteria()));
     }
 
     @Test
@@ -316,54 +313,53 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testJoin1() throws Exception {
-        Statement statement = parser.parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
+        QueryModel statement = (QueryModel) parser.parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
                 "join tab2 xx2 on tab2.x = t1.x " +
                 "join tab3 on xx2.x > tab3.b " +
                 "join (select x,y from tab4 latest by z where a > b) x4 on x4.x = t1.y " +
                 "where y > 0");
 
-        Assert.assertEquals(Statement.QUERY, statement.getType());
-        Assert.assertEquals("t1", statement.as(QueryModel.class).getAlias().token);
-        Assert.assertEquals(4, statement.as(QueryModel.class).getJoinModels().size());
-        Assert.assertNotNull(statement.as(QueryModel.class).getNestedModel());
-        Assert.assertNull(statement.as(QueryModel.class).getJournalName());
-        Assert.assertEquals("y0>", TestUtils.toRpn(statement.as(QueryModel.class).getWhereClause()));
-        Assert.assertEquals("tab", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getJournalName()));
-        Assert.assertEquals("t2", statement.as(QueryModel.class).getNestedModel().getAlias().token);
-        Assert.assertEquals(1, statement.as(QueryModel.class).getNestedModel().getJoinModels().size());
+        Assert.assertEquals("t1", statement.getAlias().token);
+        Assert.assertEquals(4, statement.getJoinModels().size());
+        Assert.assertNotNull(statement.getNestedModel());
+        Assert.assertNull(statement.getJournalName());
+        Assert.assertEquals("y0>", TestUtils.toRpn(statement.getWhereClause()));
+        Assert.assertEquals("tab", TestUtils.toRpn(statement.getNestedModel().getJournalName()));
+        Assert.assertEquals("t2", statement.getNestedModel().getAlias().token);
+        Assert.assertEquals(1, statement.getNestedModel().getJoinModels().size());
 
-        Assert.assertEquals("xx2", statement.as(QueryModel.class).getJoinModels().getQuick(1).getAlias().token);
-        Assert.assertNull(statement.as(QueryModel.class).getJoinModels().getQuick(2).getAlias());
-        Assert.assertEquals("x4", statement.as(QueryModel.class).getJoinModels().getQuick(3).getAlias().token);
-        Assert.assertNotNull(statement.as(QueryModel.class).getJoinModels().getQuick(3).getNestedModel());
+        Assert.assertEquals("xx2", statement.getJoinModels().getQuick(1).getAlias().token);
+        Assert.assertNull(statement.getJoinModels().getQuick(2).getAlias());
+        Assert.assertEquals("x4", statement.getJoinModels().getQuick(3).getAlias().token);
+        Assert.assertNotNull(statement.getJoinModels().getQuick(3).getNestedModel());
 
-        Assert.assertEquals("tab2", TestUtils.toRpn(statement.as(QueryModel.class).getJoinModels().getQuick(1).getJournalName()));
-        Assert.assertEquals("tab3", TestUtils.toRpn(statement.as(QueryModel.class).getJoinModels().getQuick(2).getJournalName()));
-        Assert.assertNull(statement.as(QueryModel.class).getJoinModels().getQuick(3).getJournalName());
+        Assert.assertEquals("tab2", TestUtils.toRpn(statement.getJoinModels().getQuick(1).getJournalName()));
+        Assert.assertEquals("tab3", TestUtils.toRpn(statement.getJoinModels().getQuick(2).getJournalName()));
+        Assert.assertNull(statement.getJoinModels().getQuick(3).getJournalName());
 
-        Assert.assertEquals("tab2.xt1.x=", TestUtils.toRpn(statement.as(QueryModel.class).getJoinModels().getQuick(1).getJoinCriteria()));
-        Assert.assertEquals("xx2.xtab3.b>", TestUtils.toRpn(statement.as(QueryModel.class).getJoinModels().getQuick(2).getJoinCriteria()));
-        Assert.assertEquals("x4.xt1.y=", TestUtils.toRpn(statement.as(QueryModel.class).getJoinModels().getQuick(3).getJoinCriteria()));
+        Assert.assertEquals("tab2.xt1.x=", TestUtils.toRpn(statement.getJoinModels().getQuick(1).getJoinCriteria()));
+        Assert.assertEquals("xx2.xtab3.b>", TestUtils.toRpn(statement.getJoinModels().getQuick(2).getJoinCriteria()));
+        Assert.assertEquals("x4.xt1.y=", TestUtils.toRpn(statement.getJoinModels().getQuick(3).getJoinCriteria()));
 
-        Assert.assertEquals("ab>", TestUtils.toRpn(statement.as(QueryModel.class).getJoinModels().getQuick(3).getNestedModel().getWhereClause()));
-        Assert.assertEquals("z", TestUtils.toRpn(statement.as(QueryModel.class).getJoinModels().getQuick(3).getNestedModel().getLatestBy()));
+        Assert.assertEquals("ab>", TestUtils.toRpn(statement.getJoinModels().getQuick(3).getNestedModel().getWhereClause()));
+        Assert.assertEquals("z", TestUtils.toRpn(statement.getJoinModels().getQuick(3).getNestedModel().getLatestBy()));
     }
 
     @Test
     public void testJoin2() throws Exception {
-        Statement statement = parser.parse("select x from ((tab join tab2 on tab.x=tab2.x) join tab3 on tab3.x = tab2.x)");
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals(1, statement.as(QueryModel.class).getJoinModels().size());
-        Assert.assertNotNull(statement.as(QueryModel.class).getNestedModel());
-        Assert.assertEquals(2, statement.as(QueryModel.class).getNestedModel().getJoinModels().size());
-        Assert.assertEquals("tab3", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getJoinModels().getQuick(1).getJournalName()));
-        Assert.assertEquals("tab3.xtab2.x=", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getJoinModels().getQuick(1).getJoinCriteria()));
-        Assert.assertEquals(0, statement.as(QueryModel.class).getNestedModel().getColumns().size());
-        Assert.assertNotNull(statement.as(QueryModel.class).getNestedModel().getNestedModel());
-        Assert.assertEquals("tab", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getNestedModel().getJournalName()));
-        Assert.assertEquals(2, statement.as(QueryModel.class).getNestedModel().getNestedModel().getJoinModels().size());
-        Assert.assertEquals("tab2", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getNestedModel().getJoinModels().getQuick(1).getJournalName()));
-        Assert.assertEquals("tab.xtab2.x=", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getNestedModel().getJoinModels().getQuick(1).getJoinCriteria()));
+        QueryModel statement = (QueryModel) parser.parse("select x from ((tab join tab2 on tab.x=tab2.x) join tab3 on tab3.x = tab2.x)");
+        Assert.assertNotNull(statement);
+        Assert.assertEquals(1, statement.getJoinModels().size());
+        Assert.assertNotNull(statement.getNestedModel());
+        Assert.assertEquals(2, statement.getNestedModel().getJoinModels().size());
+        Assert.assertEquals("tab3", TestUtils.toRpn(statement.getNestedModel().getJoinModels().getQuick(1).getJournalName()));
+        Assert.assertEquals("tab3.xtab2.x=", TestUtils.toRpn(statement.getNestedModel().getJoinModels().getQuick(1).getJoinCriteria()));
+        Assert.assertEquals(0, statement.getNestedModel().getColumns().size());
+        Assert.assertNotNull(statement.getNestedModel().getNestedModel());
+        Assert.assertEquals("tab", TestUtils.toRpn(statement.getNestedModel().getNestedModel().getJournalName()));
+        Assert.assertEquals(2, statement.getNestedModel().getNestedModel().getJoinModels().size());
+        Assert.assertEquals("tab2", TestUtils.toRpn(statement.getNestedModel().getNestedModel().getJoinModels().getQuick(1).getJournalName()));
+        Assert.assertEquals("tab.xtab2.x=", TestUtils.toRpn(statement.getNestedModel().getNestedModel().getJoinModels().getQuick(1).getJoinCriteria()));
     }
 
     @Test
@@ -396,58 +392,56 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testMixedFieldsSubQuery() throws Exception {
-        Statement statement = parser.parse("select x, y from (select z from tab t2 latest by x where x > 100) t1 " +
+        QueryModel statement = (QueryModel) parser.parse("select x, y from (select z from tab t2 latest by x where x > 100) t1 " +
                 "where y > 0");
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertNotNull(statement.as(QueryModel.class).getNestedModel());
-        Assert.assertNull(statement.as(QueryModel.class).getJournalName());
-        Assert.assertEquals("t1", statement.as(QueryModel.class).getAlias().token);
+        Assert.assertNotNull(statement);
+        Assert.assertNotNull(statement.getNestedModel());
+        Assert.assertNull(statement.getJournalName());
+        Assert.assertEquals("t1", statement.getAlias().token);
 
-        Assert.assertEquals("tab", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getJournalName()));
-        Assert.assertEquals("t2", statement.as(QueryModel.class).getNestedModel().getAlias().token);
-        Assert.assertEquals("x100>", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getWhereClause()));
-        Assert.assertEquals("x", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getLatestBy()));
-        Assert.assertEquals(2, statement.as(QueryModel.class).getColumns().size());
-        Assert.assertEquals("x", statement.as(QueryModel.class).getColumns().get(0).getAst().token);
-        Assert.assertEquals("y", statement.as(QueryModel.class).getColumns().get(1).getAst().token);
-        Assert.assertEquals(1, statement.as(QueryModel.class).getNestedModel().getColumns().size());
-        Assert.assertEquals("z", statement.as(QueryModel.class).getNestedModel().getColumns().get(0).getAst().token);
+        Assert.assertEquals("tab", TestUtils.toRpn(statement.getNestedModel().getJournalName()));
+        Assert.assertEquals("t2", statement.getNestedModel().getAlias().token);
+        Assert.assertEquals("x100>", TestUtils.toRpn(statement.getNestedModel().getWhereClause()));
+        Assert.assertEquals("x", TestUtils.toRpn(statement.getNestedModel().getLatestBy()));
+        Assert.assertEquals(2, statement.getColumns().size());
+        Assert.assertEquals("x", statement.getColumns().get(0).getAst().token);
+        Assert.assertEquals("y", statement.getColumns().get(1).getAst().token);
+        Assert.assertEquals(1, statement.getNestedModel().getColumns().size());
+        Assert.assertEquals("z", statement.getNestedModel().getColumns().get(0).getAst().token);
     }
 
     @Test
     public void testMostRecentWhereClause() throws Exception {
-        Statement statement = parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
+        QueryModel statement = (QueryModel) parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10");
+
         // journal name
-        Assert.assertEquals("zyzy", statement.as(QueryModel.class).getJournalName().token);
+        Assert.assertEquals("zyzy", statement.getJournalName().token);
         // columns
-        Assert.assertEquals(2, statement.as(QueryModel.class).getColumns().size());
-        Assert.assertEquals("x", statement.as(QueryModel.class).getColumns().get(0).getAlias());
-        Assert.assertEquals("ohoh", statement.as(QueryModel.class).getColumns().get(1).getAlias());
+        Assert.assertEquals(2, statement.getColumns().size());
+        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
+        Assert.assertEquals("ohoh", statement.getColumns().get(1).getAlias());
         // where
-        Assert.assertEquals("axyinb10=and", TestUtils.toRpn(statement.as(QueryModel.class).getWhereClause()));
+        Assert.assertEquals("axyinb10=and", TestUtils.toRpn(statement.getWhereClause()));
         // latest by
-        Assert.assertEquals("x", TestUtils.toRpn(statement.as(QueryModel.class).getLatestBy()));
+        Assert.assertEquals("x", TestUtils.toRpn(statement.getLatestBy()));
     }
 
     @Test
     public void testMultipleExpressions() throws Exception {
-        Statement statement = parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals("zyzy", statement.as(QueryModel.class).getJournalName().token);
-        Assert.assertEquals(2, statement.as(QueryModel.class).getColumns().size());
-        Assert.assertEquals("x", statement.as(QueryModel.class).getColumns().get(0).getAlias());
-        Assert.assertEquals("ohoh", statement.as(QueryModel.class).getColumns().get(1).getAlias());
+        QueryModel statement = (QueryModel) parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy");
+        Assert.assertNotNull(statement);
+        Assert.assertEquals("zyzy", statement.getJournalName().token);
+        Assert.assertEquals(2, statement.getColumns().size());
+        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
+        Assert.assertEquals("ohoh", statement.getColumns().get(1).getAlias());
     }
 
     @Test
     public void testOneAnalyticColumn() throws Exception {
-        Statement statement = parser.parse("select a,b, f(c) over (partition by b order by ts) from xyz");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
-        Assert.assertEquals(3, statement.as(QueryModel.class).getColumns().size());
+        QueryModel statement = (QueryModel) parser.parse("select a,b, f(c) over (partition by b order by ts) from xyz");
+        Assert.assertEquals(3, statement.getColumns().size());
 
-        AnalyticColumn col = (AnalyticColumn) statement.as(QueryModel.class).getColumns().get(2);
+        AnalyticColumn col = (AnalyticColumn) statement.getColumns().get(2);
 
         Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
         Assert.assertEquals(1, col.getPartitionBy().size());
@@ -459,23 +453,23 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testOptionalSelect() throws Exception {
-        Statement statement = parser.parse("tab t2 latest by x where x > 100");
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals("tab", TestUtils.toRpn(statement.as(QueryModel.class).getJournalName()));
-        Assert.assertEquals("t2", statement.as(QueryModel.class).getAlias().token);
-        Assert.assertEquals("x100>", TestUtils.toRpn(statement.as(QueryModel.class).getWhereClause()));
-        Assert.assertEquals(0, statement.as(QueryModel.class).getColumns().size());
-        Assert.assertEquals("x", TestUtils.toRpn(statement.as(QueryModel.class).getLatestBy()));
+        QueryModel statement = (QueryModel) parser.parse("tab t2 latest by x where x > 100");
+        Assert.assertNotNull(statement);
+        Assert.assertEquals("tab", TestUtils.toRpn(statement.getJournalName()));
+        Assert.assertEquals("t2", statement.getAlias().token);
+        Assert.assertEquals("x100>", TestUtils.toRpn(statement.getWhereClause()));
+        Assert.assertEquals(0, statement.getColumns().size());
+        Assert.assertEquals("x", TestUtils.toRpn(statement.getLatestBy()));
     }
 
     @Test
     public void testOrderBy1() throws Exception {
-        Statement statement = parser.parse("select x,y from tab order by x,y,z");
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals(3, statement.as(QueryModel.class).getOrderBy().size());
-        Assert.assertEquals("x", TestUtils.toRpn(statement.as(QueryModel.class).getOrderBy().getQuick(0)));
-        Assert.assertEquals("y", TestUtils.toRpn(statement.as(QueryModel.class).getOrderBy().getQuick(1)));
-        Assert.assertEquals("z", TestUtils.toRpn(statement.as(QueryModel.class).getOrderBy().getQuick(2)));
+        QueryModel statement = (QueryModel) parser.parse("select x,y from tab order by x,y,z");
+        Assert.assertNotNull(statement);
+        Assert.assertEquals(3, statement.getOrderBy().size());
+        Assert.assertEquals("x", TestUtils.toRpn(statement.getOrderBy().getQuick(0)));
+        Assert.assertEquals("y", TestUtils.toRpn(statement.getOrderBy().getQuick(1)));
+        Assert.assertEquals("z", TestUtils.toRpn(statement.getOrderBy().getQuick(2)));
     }
 
     @Test
@@ -490,83 +484,79 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testOuterJoin() throws Exception {
-        Statement statement = parser.parse("select x from a a outer join b on b.x = a.x");
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals("a", statement.as(QueryModel.class).getAlias().token);
-        Assert.assertEquals(2, statement.as(QueryModel.class).getJoinModels().size());
-        Assert.assertEquals(QueryModel.JOIN_OUTER, statement.as(QueryModel.class).getJoinModels().getQuick(1).getJoinType());
-        Assert.assertEquals("b.xa.x=", TestUtils.toRpn(statement.as(QueryModel.class).getJoinModels().getQuick(1).getJoinCriteria()));
+        QueryModel statement = (QueryModel) parser.parse("select x from a a outer join b on b.x = a.x");
+        Assert.assertNotNull(statement);
+        Assert.assertEquals("a", statement.getAlias().token);
+        Assert.assertEquals(2, statement.getJoinModels().size());
+        Assert.assertEquals(QueryModel.JOIN_OUTER, statement.getJoinModels().getQuick(1).getJoinType());
+        Assert.assertEquals("b.xa.x=", TestUtils.toRpn(statement.getJoinModels().getQuick(1).getJoinCriteria()));
     }
 
     @Test
     public void testSampleBy1() throws Exception {
-        Statement statement = parser.parse("select x,y from tab sample by 2m");
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals("2m", statement.as(QueryModel.class).getSampleBy().token);
+        QueryModel statement = (QueryModel) parser.parse("select x,y from tab sample by 2m");
+        Assert.assertNotNull(statement);
+        Assert.assertEquals("2m", statement.getSampleBy().token);
     }
 
     @Test
     public void testSelectPlainColumns() throws Exception {
-        Statement statement = parser.parse("select a,b,c from t");
+        QueryModel statement = (QueryModel) parser.parse("select a,b,c from t");
 
-        Assert.assertEquals(Statement.QUERY, statement.getType());
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals("t", statement.as(QueryModel.class).getJournalName().token);
-        Assert.assertEquals(3, statement.as(QueryModel.class).getColumns().size());
+        Assert.assertNotNull(statement);
+        Assert.assertEquals("t", statement.getJournalName().token);
+        Assert.assertEquals(3, statement.getColumns().size());
         for (int i = 0; i < 3; i++) {
-            Assert.assertEquals(ExprNode.LITERAL, statement.as(QueryModel.class).getColumns().get(i).getAst().type);
+            Assert.assertEquals(ExprNode.LITERAL, statement.getColumns().get(i).getAst().type);
         }
     }
 
     @Test
     public void testSelectSingleExpression() throws Exception {
-        Statement statement = parser.parse("select a+b*c x from t");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertEquals(1, statement.as(QueryModel.class).getColumns().size());
-        Assert.assertEquals("x", statement.as(QueryModel.class).getColumns().get(0).getAlias());
-        Assert.assertEquals("+", statement.as(QueryModel.class).getColumns().get(0).getAst().token);
-        Assert.assertEquals("t", statement.as(QueryModel.class).getJournalName().token);
+        QueryModel statement = (QueryModel) parser.parse("select a+b*c x from t");
+        Assert.assertNotNull(statement);
+        Assert.assertEquals(1, statement.getColumns().size());
+        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
+        Assert.assertEquals("+", statement.getColumns().get(0).getAst().token);
+        Assert.assertEquals("t", statement.getJournalName().token);
     }
 
     @Test
     public void testSimpleSubquery() throws Exception {
-        Statement statement = parser.parse("(x) where x > 1");
-        Assert.assertNotNull(statement.as(QueryModel.class).getNestedModel());
-        Assert.assertEquals("x", statement.as(QueryModel.class).getNestedModel().getJournalName().token);
+        QueryModel statement = (QueryModel) parser.parse("(x) where x > 1");
+        Assert.assertNotNull(statement.getNestedModel());
+        Assert.assertEquals("x", statement.getNestedModel().getJournalName().token);
     }
 
     @Test
     public void testSingleJournalLimit() throws Exception {
-        Statement statement = parser.parse("select x x, y y from tab where x > z limit 100");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
+        QueryModel statement = (QueryModel) parser.parse("select x x, y y from tab where x > z limit 100");
         // journal name
-        Assert.assertEquals("tab", statement.as(QueryModel.class).getJournalName().token);
+        Assert.assertEquals("tab", statement.getJournalName().token);
         // columns
-        Assert.assertEquals(2, statement.as(QueryModel.class).getColumns().size());
-        Assert.assertEquals("x", statement.as(QueryModel.class).getColumns().get(0).getAlias());
-        Assert.assertEquals("y", statement.as(QueryModel.class).getColumns().get(1).getAlias());
+        Assert.assertEquals(2, statement.getColumns().size());
+        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
+        Assert.assertEquals("y", statement.getColumns().get(1).getAlias());
         // where
-        Assert.assertEquals("xz>", TestUtils.toRpn(statement.as(QueryModel.class).getWhereClause()));
+        Assert.assertEquals("xz>", TestUtils.toRpn(statement.getWhereClause()));
         // limit
-        Assert.assertEquals("100", TestUtils.toRpn(statement.as(QueryModel.class).getLimitLo()));
+        Assert.assertEquals("100", TestUtils.toRpn(statement.getLimitLo()));
     }
 
     @Test
     public void testSingleJournalLimitLoHi() throws Exception {
-        Statement statement = parser.parse("select x x, y y from tab where x > z limit 100,200");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
+        QueryModel statement = (QueryModel) parser.parse("select x x, y y from tab where x > z limit 100,200");
         // journal name
-        Assert.assertEquals("tab", statement.as(QueryModel.class).getJournalName().token);
+        Assert.assertEquals("tab", statement.getJournalName().token);
         // columns
-        Assert.assertEquals(2, statement.as(QueryModel.class).getColumns().size());
-        Assert.assertEquals("x", statement.as(QueryModel.class).getColumns().get(0).getAlias());
-        Assert.assertEquals("y", statement.as(QueryModel.class).getColumns().get(1).getAlias());
+        Assert.assertEquals(2, statement.getColumns().size());
+        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
+        Assert.assertEquals("y", statement.getColumns().get(1).getAlias());
         // where
-        Assert.assertEquals("xz>", TestUtils.toRpn(statement.as(QueryModel.class).getWhereClause()));
+        Assert.assertEquals("xz>", TestUtils.toRpn(statement.getWhereClause()));
         // limit
-        Assert.assertEquals("100", TestUtils.toRpn(statement.as(QueryModel.class).getLimitLo()));
-        Assert.assertEquals("200", TestUtils.toRpn(statement.as(QueryModel.class).getLimitHi()));
+        Assert.assertEquals("100", TestUtils.toRpn(statement.getLimitLo()));
+        Assert.assertEquals("200", TestUtils.toRpn(statement.getLimitHi()));
     }
 
     @Test
@@ -580,67 +570,65 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testSingleJournalNoWhereLimit() throws Exception {
-        Statement statement = parser.parse("select x x, y y from tab limit 100");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
+        QueryModel statement = (QueryModel) parser.parse("select x x, y y from tab limit 100");
         // journal name
-        Assert.assertEquals("tab", statement.as(QueryModel.class).getJournalName().token);
+        Assert.assertEquals("tab", statement.getJournalName().token);
         // columns
-        Assert.assertEquals(2, statement.as(QueryModel.class).getColumns().size());
-        Assert.assertEquals("x", statement.as(QueryModel.class).getColumns().get(0).getAlias());
-        Assert.assertEquals("y", statement.as(QueryModel.class).getColumns().get(1).getAlias());
+        Assert.assertEquals(2, statement.getColumns().size());
+        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
+        Assert.assertEquals("y", statement.getColumns().get(1).getAlias());
         // limit
-        Assert.assertEquals("100", TestUtils.toRpn(statement.as(QueryModel.class).getLimitLo()));
+        Assert.assertEquals("100", TestUtils.toRpn(statement.getLimitLo()));
     }
 
     @Test
     public void testSubQuery() throws Exception {
-        Statement statement = parser.parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
+        QueryModel statement = (QueryModel) parser.parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
                 "where y > 0");
-        Assert.assertNotNull(statement.as(QueryModel.class));
-        Assert.assertNotNull(statement.as(QueryModel.class).getNestedModel());
-        Assert.assertNull(statement.as(QueryModel.class).getJournalName());
-        Assert.assertEquals("t1", statement.as(QueryModel.class).getAlias().token);
+        Assert.assertNotNull(statement);
+        Assert.assertNotNull(statement.getNestedModel());
+        Assert.assertNull(statement.getJournalName());
+        Assert.assertEquals("t1", statement.getAlias().token);
 
-        Assert.assertEquals("tab", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getJournalName()));
-        Assert.assertEquals("t2", statement.as(QueryModel.class).getNestedModel().getAlias().token);
-        Assert.assertEquals("x100>", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getWhereClause()));
-        Assert.assertEquals("x", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getLatestBy()));
+        Assert.assertEquals("tab", TestUtils.toRpn(statement.getNestedModel().getJournalName()));
+        Assert.assertEquals("t2", statement.getNestedModel().getAlias().token);
+        Assert.assertEquals("x100>", TestUtils.toRpn(statement.getNestedModel().getWhereClause()));
+        Assert.assertEquals("x", TestUtils.toRpn(statement.getNestedModel().getLatestBy()));
     }
 
     @Test
     public void testSubqueryLimitLoHi() throws Exception {
-        Statement statement = parser.parse("(select x x, y y from tab where x > z limit 100,200) where x = y limit 150");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
+        QueryModel statement = (QueryModel) parser.parse("(select x x, y y from tab where x > z limit 100,200) where x = y limit 150");
         // journal name
-        Assert.assertEquals("tab", statement.as(QueryModel.class).getNestedModel().getJournalName().token);
+        Assert.assertEquals("tab", statement.getNestedModel().getJournalName().token);
         // columns
-        Assert.assertEquals(2, statement.as(QueryModel.class).getNestedModel().getColumns().size());
-        Assert.assertEquals("x", statement.as(QueryModel.class).getNestedModel().getColumns().get(0).getAlias());
-        Assert.assertEquals("y", statement.as(QueryModel.class).getNestedModel().getColumns().get(1).getAlias());
+        Assert.assertEquals(2, statement.getNestedModel().getColumns().size());
+        Assert.assertEquals("x", statement.getNestedModel().getColumns().get(0).getAlias());
+        Assert.assertEquals("y", statement.getNestedModel().getColumns().get(1).getAlias());
         // where
-        Assert.assertEquals("xz>", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getWhereClause()));
+        Assert.assertEquals("xz>", TestUtils.toRpn(statement.getNestedModel().getWhereClause()));
         // limit
-        Assert.assertEquals("100", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getLimitLo()));
-        Assert.assertEquals("200", TestUtils.toRpn(statement.as(QueryModel.class).getNestedModel().getLimitHi()));
+        Assert.assertEquals("100", TestUtils.toRpn(statement.getNestedModel().getLimitLo()));
+        Assert.assertEquals("200", TestUtils.toRpn(statement.getNestedModel().getLimitHi()));
 
-        Assert.assertEquals("150", TestUtils.toRpn(statement.as(QueryModel.class).getLimitLo()));
-        Assert.assertNull(statement.as(QueryModel.class).getLimitHi());
+        Assert.assertEquals("150", TestUtils.toRpn(statement.getLimitLo()));
+        Assert.assertNull(statement.getLimitHi());
     }
 
     @Test
     public void testTimestampOnJournal() throws Exception {
-        Statement statement = parser.parse("select x from a b timestamp(x) where x > y");
-        Assert.assertEquals("x", statement.as(QueryModel.class).getTimestamp().token);
-        Assert.assertEquals("b", statement.as(QueryModel.class).getAlias().token);
-        Assert.assertNotNull(statement.as(QueryModel.class).getWhereClause());
+        QueryModel statement = (QueryModel) parser.parse("select x from a b timestamp(x) where x > y");
+        Assert.assertEquals("x", statement.getTimestamp().token);
+        Assert.assertEquals("b", statement.getAlias().token);
+        Assert.assertNotNull(statement.getWhereClause());
     }
 
     @Test
     public void testTimestampOnSubquery() throws Exception {
-        Statement statement = parser.parse("select x from (a b) timestamp(x) where x > y");
-        Assert.assertEquals("x", statement.as(QueryModel.class).getTimestamp().token);
-        Assert.assertNotNull(statement.as(QueryModel.class).getNestedModel());
-        Assert.assertNotNull(statement.as(QueryModel.class).getWhereClause());
+        QueryModel statement = (QueryModel) parser.parse("select x from (a b) timestamp(x) where x > y");
+        Assert.assertEquals("x", statement.getTimestamp().token);
+        Assert.assertNotNull(statement.getNestedModel());
+        Assert.assertNotNull(statement.getWhereClause());
     }
 
     @Test
@@ -653,8 +641,8 @@ public class QueryParserTest extends AbstractTest {
             }
             b.append('f').append(i);
         }
-        Statement st = parser.parse(b);
-        Assert.assertEquals(QueryParser.MAX_ORDER_BY_COLUMNS - 1, st.as(QueryModel.class).getOrderBy().size());
+        QueryModel st = (QueryModel) parser.parse(b);
+        Assert.assertEquals(QueryParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
     }
 
     @Test
@@ -676,11 +664,10 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testTwoAnalyticColumns() throws Exception {
-        Statement statement = parser.parse("select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
-        Assert.assertEquals(4, statement.as(QueryModel.class).getColumns().size());
+        QueryModel statement = (QueryModel) parser.parse("select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz");
+        Assert.assertEquals(4, statement.getColumns().size());
 
-        AnalyticColumn col = (AnalyticColumn) statement.as(QueryModel.class).getColumns().get(2);
+        AnalyticColumn col = (AnalyticColumn) statement.getColumns().get(2);
         Assert.assertEquals("my", col.getAlias());
         Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
         Assert.assertEquals(1, col.getPartitionBy().size());
@@ -688,7 +675,7 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals(1, col.getOrderBy().size());
         Assert.assertEquals("ts", col.getOrderBy().get(0).token);
 
-        col = (AnalyticColumn) statement.as(QueryModel.class).getColumns().get(3);
+        col = (AnalyticColumn) statement.getColumns().get(3);
         Assert.assertEquals("d", col.getAst().token);
         Assert.assertNull(col.getAlias());
         Assert.assertEquals(0, col.getPartitionBy().size());
@@ -738,15 +725,14 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testWhereClause() throws Exception {
-        Statement statement = parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10");
-        Assert.assertEquals(Statement.QUERY, statement.getType());
+        QueryModel statement = (QueryModel) parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10");
         // journal name
-        Assert.assertEquals("zyzy", statement.as(QueryModel.class).getJournalName().token);
+        Assert.assertEquals("zyzy", statement.getJournalName().token);
         // columns
-        Assert.assertEquals(2, statement.as(QueryModel.class).getColumns().size());
-        Assert.assertEquals("x", statement.as(QueryModel.class).getColumns().get(0).getAlias());
-        Assert.assertEquals("ohoh", statement.as(QueryModel.class).getColumns().get(1).getAlias());
+        Assert.assertEquals(2, statement.getColumns().size());
+        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
+        Assert.assertEquals("ohoh", statement.getColumns().get(1).getAlias());
         // where
-        Assert.assertEquals("axyinb10=and", TestUtils.toRpn(statement.as(QueryModel.class).getWhereClause()));
+        Assert.assertEquals("axyinb10=and", TestUtils.toRpn(statement.getWhereClause()));
     }
 }

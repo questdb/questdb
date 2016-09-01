@@ -23,9 +23,28 @@
 
 package com.questdb.ql.model;
 
-public class ColumnIndexModel {
+import com.questdb.std.Mutable;
+import com.questdb.std.ObjectFactory;
+
+public class ColumnIndexModel implements Mutable {
+    public static final ObjectFactory<ColumnIndexModel> FACTORY = new ObjectFactory<ColumnIndexModel>() {
+        @Override
+        public ColumnIndexModel newInstance() {
+            return new ColumnIndexModel();
+        }
+    };
+
     private ExprNode name;
     private int buckets;
+
+    private ColumnIndexModel() {
+    }
+
+    @Override
+    public void clear() {
+        this.name = null;
+        this.buckets = 0;
+    }
 
     public int getBuckets() {
         return buckets;

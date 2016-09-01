@@ -25,9 +25,18 @@ package com.questdb.ql.model;
 
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.ql.RecordSource;
+import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
+import com.questdb.std.ObjectFactory;
 
-public class CreateJournalModel implements ParsedModel {
+public class CreateJournalModel implements Mutable, ParsedModel {
+    public static final ObjectFactory<CreateJournalModel> FACTORY = new ObjectFactory<CreateJournalModel>() {
+        @Override
+        public CreateJournalModel newInstance() {
+            return new CreateJournalModel();
+        }
+    };
+
     private String name;
     private QueryModel queryModel;
     private ExprNode timestamp;
@@ -37,8 +46,23 @@ public class CreateJournalModel implements ParsedModel {
     private ObjList<ColumnIndexModel> columnIndexModels = new ObjList<>();
     private RecordSource recordSource;
 
+    private CreateJournalModel() {
+    }
+
     public void addColumnIndexModel(ColumnIndexModel model) {
         columnIndexModels.add(model);
+    }
+
+    @Override
+    public void clear() {
+        columnIndexModels.clear();
+        queryModel = null;
+        timestamp = null;
+        partitionBy = null;
+        recordHint = null;
+        struct = null;
+        recordSource = null;
+        name = null;
     }
 
     public ObjList<ColumnIndexModel> getColumnIndexModels() {
@@ -99,5 +123,10 @@ public class CreateJournalModel implements ParsedModel {
 
     public void setTimestamp(ExprNode timestamp) {
         this.timestamp = timestamp;
+    }
+
+    @Override
+    public boolean isQuery() {
+        return false;
     }
 }
