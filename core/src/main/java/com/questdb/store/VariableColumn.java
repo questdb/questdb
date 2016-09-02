@@ -147,7 +147,7 @@ public class VariableColumn extends AbstractColumn {
 
     public DirectInputStream getBin(long localRowID) {
         binIn.reset(getOffset(localRowID));
-        return binIn;
+        return binIn.isNull() ? null : binIn;
     }
 
     // todo: support long
@@ -426,6 +426,10 @@ public class VariableColumn extends AbstractColumn {
         @Override
         public long size() {
             return remaining;
+        }
+
+        public boolean isNull() {
+            return remaining == -1;
         }
 
         @Override

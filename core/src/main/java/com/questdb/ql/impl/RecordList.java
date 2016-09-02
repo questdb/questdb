@@ -182,6 +182,11 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
     }
 
     private void writeBin(long headerAddress, DirectInputStream value) {
+        if (value == null) {
+            writeNullString(headerAddress);
+            return;
+        }
+
         long offset = mem.allocateOffset(8);
         long len = value.size();
 

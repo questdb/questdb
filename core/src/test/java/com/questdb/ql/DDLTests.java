@@ -29,16 +29,14 @@ import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Files;
-import com.questdb.misc.Rnd;
-import com.questdb.misc.Unsafe;
+import com.questdb.misc.*;
 import com.questdb.model.configuration.ModelConfiguration;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.JournalTestFactory;
+import com.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
@@ -69,13 +67,13 @@ public class DDLTests {
 
     @Test
     public void testCreateAllFieldTypes() throws Exception {
-        compiler.execute(factory, "create table x (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by MONTH record hint 100");
+        compiler.execute(factory, "create table x (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING, y BOOLEAN) timestamp(t) partition by MONTH record hint 100");
 
         // validate journal
         try (Journal r = factory.reader("x")) {
             Assert.assertNotNull(r);
             JournalMetadata m = r.getMetadata();
-            Assert.assertEquals(11, m.getColumnCount());
+            Assert.assertEquals(12, m.getColumnCount());
             Assert.assertEquals(ColumnType.INT, m.getColumn("a").getType());
             Assert.assertEquals(ColumnType.BYTE, m.getColumn("b").getType());
 
@@ -88,6 +86,7 @@ public class DDLTests {
             Assert.assertEquals(ColumnType.DATE, m.getColumn("t").getType());
             Assert.assertEquals(ColumnType.SYMBOL, m.getColumn("x").getType());
             Assert.assertEquals(ColumnType.STRING, m.getColumn("z").getType());
+            Assert.assertEquals(ColumnType.BOOLEAN, m.getColumn("y").getType());
 
             Assert.assertEquals(8, m.getTimestampIndex());
             Assert.assertEquals(PartitionBy.MONTH, m.getPartitionBy());
@@ -114,6 +113,111 @@ public class DDLTests {
             Assert.assertEquals(ColumnType.STRING, m.getColumn("z").getType());
             Assert.assertEquals(8, m.getTimestampIndex());
             Assert.assertEquals(PartitionBy.NONE, m.getPartitionBy());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectAll() throws Exception {
+        int N = 5;
+        try (JournalWriter w = compiler.createWriter(factory, "create table x (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING, y BOOLEAN) timestamp(t) partition by MONTH record hint 100")) {
+            Rnd rnd = new Rnd();
+
+            for (int i = 0; i < N; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putInt(0, i);
+                ew.put(1, (byte) rnd.nextInt());
+                ew.putShort(2, (short) rnd.nextInt());
+                ew.putLong(3, rnd.nextLong());
+                ew.putFloat(4, rnd.nextFloat());
+                ew.putDouble(5, rnd.nextDouble());
+                ew.putDate(6, rnd.nextLong());
+                ew.putNull(7);
+                ew.putDate(8, rnd.nextLong());
+                ew.putSym(9, rnd.nextChars(1));
+                ew.putStr(10, rnd.nextChars(10));
+                ew.putBool(11, rnd.nextBoolean());
+                ew.append();
+            }
+            w.commit();
+        }
+
+        compiler.execute(factory, "create table y as (x)");
+
+        int count = 0;
+        RecordSource rs = compiler.compile(factory, "y");
+        RecordCursor cursor = rs.prepareCursor(factory);
+
+        Rnd rnd = new Rnd();
+        while (cursor.hasNext()) {
+            Record rec = cursor.next();
+            Assert.assertEquals(count, rec.getInt(0));
+            Assert.assertTrue((byte) rnd.nextInt() == rec.get(1));
+            Assert.assertEquals((short) rnd.nextInt(), rec.getShort(2));
+            Assert.assertEquals(rnd.nextLong(), rec.getLong(3));
+            Assert.assertEquals(rnd.nextFloat(), rec.getFloat(4), 0.00001f);
+            Assert.assertEquals(rnd.nextDouble(), rec.getDouble(5), 0.00000000001);
+            Assert.assertEquals(rnd.nextLong(), rec.getDate(6));
+            Assert.assertNull(rec.getBin(7));
+            Assert.assertEquals(rnd.nextLong(), rec.getDate(8));
+            TestUtils.assertEquals(rnd.nextChars(1), rec.getSym(9));
+            TestUtils.assertEquals(rnd.nextChars(10), rec.getFlyweightStr(10));
+            Assert.assertEquals(rnd.nextBoolean(), rec.getBool(11));
+            count++;
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectBadHint() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) record hint 100");
+        try {
+            compiler.execute(factory, "create table x as (y order by t) record hint 1000000000000000000000000000");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(45, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectBadIndex() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) record hint 100");
+        try {
+            compiler.execute(factory, "create table x as (y order by t), index(e) record hint 100");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(40, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectBadIndex2() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) record hint 100");
+        try {
+            compiler.execute(factory, "create table x as (y order by t), index(e2) record hint 100");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(40, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectBadTimestamp() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) record hint 100");
+        try {
+            compiler.execute(factory, "create table x as (y order by t) timestamp(c) partition by MONTH record hint 100");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(43, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectBadTimestamp2() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) record hint 100");
+        try {
+            compiler.execute(factory, "create table x as (y order by t) timestamp(c2) partition by MONTH record hint 100");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(43, QueryError.getPosition());
         }
     }
 
@@ -175,6 +279,32 @@ public class DDLTests {
     }
 
     @Test
+    public void testCreateAsSelectIndexes() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
+        try (JournalWriter w = compiler.createWriter(factory, "create table x as (y order by t), index (a), index(x), index(z)")) {
+            JournalMetadata m = w.getMetadata();
+            Assert.assertEquals(11, m.getColumnCount());
+            Assert.assertEquals(ColumnType.INT, m.getColumn("a").getType());
+            Assert.assertTrue(m.getColumn("a").isIndexed());
+            Assert.assertEquals(ColumnType.BYTE, m.getColumn("b").getType());
+
+            Assert.assertEquals(ColumnType.SHORT, m.getColumn("c").getType());
+            Assert.assertEquals(ColumnType.LONG, m.getColumn("d").getType());
+            Assert.assertEquals(ColumnType.FLOAT, m.getColumn("e").getType());
+            Assert.assertEquals(ColumnType.DOUBLE, m.getColumn("f").getType());
+            Assert.assertEquals(ColumnType.DATE, m.getColumn("g").getType());
+            Assert.assertEquals(ColumnType.BINARY, m.getColumn("h").getType());
+            Assert.assertEquals(ColumnType.DATE, m.getColumn("t").getType());
+            Assert.assertEquals(ColumnType.SYMBOL, m.getColumn("x").getType());
+            Assert.assertTrue(m.getColumn("x").isIndexed());
+            Assert.assertEquals(ColumnType.STRING, m.getColumn("z").getType());
+            Assert.assertTrue(m.getColumn("z").isIndexed());
+            Assert.assertEquals(8, m.getTimestampIndex());
+            Assert.assertEquals(PartitionBy.NONE, m.getPartitionBy());
+        }
+    }
+
+    @Test
     public void testCreateAsSelectPartitionBy() throws Exception {
         compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
         try (JournalWriter w = compiler.createWriter(factory, "create table x as (y order by t) partition by MONTH record hint 100")) {
@@ -194,6 +324,40 @@ public class DDLTests {
             Assert.assertEquals(ColumnType.STRING, m.getColumn("z").getType());
             Assert.assertEquals(8, m.getTimestampIndex());
             Assert.assertEquals(PartitionBy.MONTH, m.getPartitionBy());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectPartitioned() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
+        try (JournalWriter w = compiler.createWriter(factory, "create table x as (y order by t) partition by MONTH record hint 100")) {
+            JournalMetadata m = w.getMetadata();
+            Assert.assertEquals(11, m.getColumnCount());
+            Assert.assertEquals(ColumnType.INT, m.getColumn("a").getType());
+            Assert.assertEquals(ColumnType.BYTE, m.getColumn("b").getType());
+
+            Assert.assertEquals(ColumnType.SHORT, m.getColumn("c").getType());
+            Assert.assertEquals(ColumnType.LONG, m.getColumn("d").getType());
+            Assert.assertEquals(ColumnType.FLOAT, m.getColumn("e").getType());
+            Assert.assertEquals(ColumnType.DOUBLE, m.getColumn("f").getType());
+            Assert.assertEquals(ColumnType.DATE, m.getColumn("g").getType());
+            Assert.assertEquals(ColumnType.BINARY, m.getColumn("h").getType());
+            Assert.assertEquals(ColumnType.DATE, m.getColumn("t").getType());
+            Assert.assertEquals(ColumnType.SYMBOL, m.getColumn("x").getType());
+            Assert.assertEquals(ColumnType.STRING, m.getColumn("z").getType());
+            Assert.assertEquals(8, m.getTimestampIndex());
+            Assert.assertEquals(PartitionBy.MONTH, m.getPartitionBy());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectPartitionedNoTimestamp() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) record hint 100");
+        try {
+            compiler.execute(factory, "create table x as (y order by t) partition by MONTH record hint 100");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(46, QueryError.getPosition());
         }
     }
 
@@ -375,6 +539,17 @@ public class DDLTests {
             Assert.assertTrue(m.getColumn("x").isIndexed());
             Assert.assertEquals(2, m.getTimestampIndex());
             Assert.assertEquals(PartitionBy.MONTH, m.getPartitionBy());
+        }
+    }
+
+    @Test
+    public void testCreateReservedName() throws Exception {
+        Files.mkDirsOrException(new File(factory.getConfiguration().getJournalBase(), "x"));
+        try {
+            compiler.execute(factory, "create table x (a INT, b BYTE, t DATE, x SYMBOL) partition by MONTH");
+        } catch (ParserException e) {
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "reserved"));
+            Assert.assertEquals(13, QueryError.getPosition());
         }
     }
 
