@@ -165,7 +165,7 @@ public class QueryCompiler {
         if (queryModel != null) {
             cm.setRecordSource(compile(queryModel, factory));
         }
-        return JournalUtils.createJournal(factory, cm);
+        return QueryCompilerUtils.createJournal(factory, cm);
     }
 
     public JournalWriter createWriter(JournalFactory factory, CharSequence statement) throws ParserException, JournalException {
@@ -174,6 +174,10 @@ public class QueryCompiler {
 
     public void execute(JournalFactory factory, CharSequence statement) throws ParserException, JournalException {
         createWriter(factory, statement).close();
+    }
+
+    public void execute(JournalFactory factory, ParsedModel model) throws ParserException, JournalException {
+        createWriter(factory, model).close();
     }
 
     public ParsedModel parse(CharSequence statement) throws ParserException {

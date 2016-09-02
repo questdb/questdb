@@ -177,7 +177,7 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
 
     @Test
     public void testQueryHandlerConsistency() throws Exception {
-        testHandler(new QueryHandler(new JournalFactoryPool(factory.getConfiguration(), 1), new ServerConfiguration()));
+        testHandler(new QueryHandler(new JournalFactoryPool(factory.getConfiguration(), 1), new ServerConfiguration(), factory));
     }
 
     private void testHandler(ContextHandler handler) throws Exception {

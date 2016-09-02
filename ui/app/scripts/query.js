@@ -70,13 +70,18 @@
         }
 
         function handleServerResponse(r) {
-            $(document).trigger('query.ok',
-                {
-                    r,
-                    delta: (new Date().getTime() - time),
-                    count: r.count
-                }
-            );
+            $(document).trigger('query.ok', {
+                delta: (new Date().getTime() - time),
+                count: r.count
+            });
+            if (r.result) {
+                $(document).trigger('query.grid',
+                    {
+                        r,
+                        count: r.count
+                    }
+                );
+            }
             readyToExecuteAgain();
         }
 
@@ -194,7 +199,11 @@
             div.removeClass('query-progress-animated');
             divMsg.removeClass('query-message-error').addClass('query-message-ok');
             divTime.html('read in <strong>' + (m.delta / 1000) + 's</strong>');
-            divMsgText.html(m.count.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ' rows');
+            if (m.count) {
+                divMsgText.html(m.count.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ' rows');
+            } else {
+                divMsgText.html('done');
+            }
         }
 
         function bind() {

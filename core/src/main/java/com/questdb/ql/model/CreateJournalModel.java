@@ -37,7 +37,7 @@ public class CreateJournalModel implements Mutable, ParsedModel {
         }
     };
 
-    private String name;
+    private ExprNode name;
     private QueryModel queryModel;
     private ExprNode timestamp;
     private ExprNode partitionBy;
@@ -69,11 +69,11 @@ public class CreateJournalModel implements Mutable, ParsedModel {
         return columnIndexModels;
     }
 
-    public String getName() {
+    public ExprNode getName() {
         return name;
     }
 
-    public void setName(String name) {
+    public void setName(ExprNode name) {
         this.name = name;
     }
 

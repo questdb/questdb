@@ -697,7 +697,7 @@
             canvas = div.find('.qg-canvas');
             canvas.bind('keydown', onKeyDown);
             canvas.bind('keyup', onKeyUp);
-            $(document).on('query.ok', update);
+            $(document).on('query.grid', update);
             $(window).resize(resize);
             $('.js-query-export').click(function (e) {
                 e.preventDefault();

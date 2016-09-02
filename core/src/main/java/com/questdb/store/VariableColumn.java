@@ -255,6 +255,7 @@ public class VariableColumn extends AbstractColumn {
         try {
             while ((bufRemaining = s.read(streamBuf)) != -1) {
                 sz += bufRemaining;
+                long streamOffset = Unsafe.BYTE_OFFSET;
                 while (bufRemaining > 0) {
 
                     if (blockRemaining == 0) {
@@ -267,11 +268,12 @@ public class VariableColumn extends AbstractColumn {
                     }
 
                     int len = bufRemaining > blockRemaining ? blockRemaining : bufRemaining;
-                    Unsafe.getUnsafe().copyMemory(streamBuf, Unsafe.BYTE_OFFSET, null, blockAddress, len);
+                    Unsafe.getUnsafe().copyMemory(streamBuf, streamOffset, null, blockAddress, len);
                     bufRemaining -= len;
                     off += len;
                     blockRemaining -= len;
                     blockAddress += len;
+                    streamOffset += len;
                 }
             }
             long a = mappedFile.addressOf(rowOffset, 4);
@@ -409,9 +411,10 @@ public class VariableColumn extends AbstractColumn {
             long offset = workOffset + start;
 
             do {
+                long from = mappedFile.addressOf(offset, 1);
                 int remaining = mappedFile.pageRemaining(offset);
                 int sz = size > remaining ? remaining : (int) size;
-                Unsafe.getUnsafe().copyMemory(mappedFile.addressOf(offset, 1), address, sz);
+                Unsafe.getUnsafe().copyMemory(from, address, sz);
                 address += sz;
                 offset += sz;
                 size -= sz;
@@ -438,7 +441,7 @@ public class VariableColumn extends AbstractColumn {
             pageRemaining--;
             workOffset++;
             remaining--;
-            return Unsafe.getUnsafe().getByte(blockAddress++);
+            return (int) Unsafe.getUnsafe().getByte(blockAddress++) & 0xFF;
         }
 
         private void renew() {

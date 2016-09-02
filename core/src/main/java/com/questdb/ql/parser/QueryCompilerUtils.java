@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl;
+package com.questdb.ql.parser;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
@@ -30,10 +30,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalFactory;
-import com.questdb.factory.configuration.ColumnMetadata;
-import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.factory.configuration.*;
 import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
@@ -41,22 +38,32 @@ import com.questdb.ql.RecordSource;
 import com.questdb.ql.model.ColumnIndexModel;
 import com.questdb.ql.model.CreateJournalModel;
 import com.questdb.ql.model.ExprNode;
-import com.questdb.ql.parser.QueryError;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 
-public final class JournalUtils {
+public final class QueryCompilerUtils {
 
-    private JournalUtils() {
+    private QueryCompilerUtils() {
     }
 
     public static JournalWriter createJournal(JournalFactory factory, CreateJournalModel model) throws JournalException, ParserException {
+
+        final String name = model.getName().token;
+        switch (factory.getConfiguration().exists(name)) {
+            case JournalConfiguration.EXISTS:
+                throw QueryError.$(model.getName().position, "Journal already exists");
+            case JournalConfiguration.EXISTS_FOREIGN:
+                throw QueryError.$(model.getName().position, "Name is reserved");
+            default:
+                break;
+        }
+
         JournalStructure struct = model.getStruct();
         RecordSource rs = model.getRecordSource();
 
         if (struct == null) {
             assert rs != null;
-            struct = createStructure(model.getName(), rs.getMetadata());
+            struct = createStructure(name, rs.getMetadata());
         }
 
         validateAndSetTimestamp(struct, model.getTimestamp());
@@ -213,4 +220,5 @@ public final class JournalUtils {
         }
         return new JournalStructure(location, m).$ts(rm.getTimestampIndex());
     }
+
 }

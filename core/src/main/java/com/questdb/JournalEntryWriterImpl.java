@@ -32,6 +32,7 @@ import com.questdb.store.*;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 public class JournalEntryWriterImpl implements JournalEntryWriter {
@@ -86,6 +87,11 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     public OutputStream putBin(int index) {
         skip(index);
         return varCol(index).putBin();
+    }
+
+    public void putBin(int index, ByteBuffer buf) {
+        varCol(index).putBin(buf);
+        skip(index);
     }
 
     @Override

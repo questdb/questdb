@@ -48,7 +48,7 @@ public class QueryHandlerSmallBufferTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUp() throws Exception {
         factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
-        handler = new QueryHandler(factoryPool, new ServerConfiguration());
+        handler = new QueryHandler(factoryPool, new ServerConfiguration(), factory);
 
         ServerConfiguration configuration = new ServerConfiguration();
         configuration.setHttpBufRespContent(128);

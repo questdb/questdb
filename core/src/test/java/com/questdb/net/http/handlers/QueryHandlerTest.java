@@ -60,7 +60,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public static void setUp() throws Exception {
         final ServerConfiguration serverConfiguration = new ServerConfiguration();
         factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
-        handler = new QueryHandler(factoryPool, serverConfiguration);
+        handler = new QueryHandler(factoryPool, serverConfiguration, factory);
 
         server = new HttpServer(serverConfiguration, new SimpleUrlMatcher() {{
             put("/js", handler);

@@ -27,6 +27,7 @@ import com.questdb.ex.JournalException;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 
 public interface JournalEntryWriter {
     void append() throws JournalException;
@@ -36,6 +37,8 @@ public interface JournalEntryWriter {
     void putBin(int index, InputStream value);
 
     OutputStream putBin(int index);
+
+    void putBin(int index, ByteBuffer buf);
 
     void putBool(int index, boolean value);
 

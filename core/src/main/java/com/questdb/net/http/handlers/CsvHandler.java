@@ -67,7 +67,7 @@ public class CsvHandler implements ContextHandler {
         }
         ChunkedResponse r = context.chunkedResponse();
         if (ctx.parseUrl(r, context.request)) {
-            ctx.compileQuery(r, factoryPool, cacheMisses, cacheHits);
+            ctx.compileQuery(r, factoryPool, null, cacheMisses, cacheHits);
             resume(context);
         }
     }

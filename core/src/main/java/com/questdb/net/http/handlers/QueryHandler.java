@@ -26,6 +26,7 @@ package com.questdb.net.http.handlers;
 import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.ex.SlowWritableChannelException;
+import com.questdb.factory.JournalFactory;
 import com.questdb.factory.JournalFactoryPool;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Numbers;
@@ -50,10 +51,12 @@ public class QueryHandler implements ContextHandler {
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
     private final ServerConfiguration configuration;
+    private final JournalFactory writerFactory;
 
-    public QueryHandler(JournalFactoryPool factoryPool, ServerConfiguration configuration) {
+    public QueryHandler(JournalFactoryPool factoryPool, ServerConfiguration configuration, JournalFactory writerFactory) {
         this.factoryPool = factoryPool;
         this.configuration = configuration;
+        this.writerFactory = writerFactory;
     }
 
     @Override
@@ -65,7 +68,7 @@ public class QueryHandler implements ContextHandler {
         }
         ChunkedResponse r = context.chunkedResponse();
         if (ctx.parseUrl(r, context.request)) {
-            ctx.compileQuery(r, factoryPool, cacheMisses, cacheHits);
+            ctx.compileQuery(r, factoryPool, writerFactory, cacheMisses, cacheHits);
             resume(context);
         }
     }
@@ -88,7 +91,7 @@ public class QueryHandler implements ContextHandler {
                 switch (ctx.queryState) {
                     case QUERY_PREFIX:
                         if (ctx.noMeta) {
-                            r.put("{\"result\":[");
+                            r.put('{').putQuoted("result").put(":[");
                             ctx.queryState = QUERY_RECORD_START;
                             break;
                         }

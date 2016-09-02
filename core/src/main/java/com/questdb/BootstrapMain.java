@@ -84,7 +84,7 @@ class BootstrapMain {
         JournalFactory factory = new JournalFactory(configuration.getDbPath().getAbsolutePath());
         JournalFactoryPool pool = new JournalFactoryPool(factory.getConfiguration(), configuration.getJournalPoolSize());
         matcher.put("/imp", new ImportHandler(factory));
-        matcher.put("/js", new QueryHandler(pool, configuration));
+        matcher.put("/js", new QueryHandler(pool, configuration, factory));
         matcher.put("/csv", new CsvHandler(pool, configuration));
         matcher.put("/chk", new ExistenceCheckHandler(factory));
         matcher.setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));

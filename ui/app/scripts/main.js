@@ -105,7 +105,7 @@
         $('a#sql-editor').click(switchToEditor);
         $('a#file-upload').click(switchToImport);
         $(document).on('query.build.execute', switchToEditor);
-        $(document).on('query.ok', function (e, m) {
+        $(document).on('query.grid', function (e, m) {
             divExportUrl.val(qdb.toExportUrl(m.r.query));
         });
         divExportUrl.click(function () {

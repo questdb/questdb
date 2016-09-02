@@ -150,14 +150,18 @@ public final class QueryParser {
     }
 
     private ParsedModel parseCreateJournal() throws ParserException {
-        String name = tok().toString();
+        ExprNode name = exprNodePool.next();
+        name.token = tok().toString();
+        name.position = lexer.position();
+        name.type = ExprNode.LITERAL;
+
         CharSequence tok = tok();
 
         final JournalStructure struct;
         final QueryModel queryModel;
         if (Chars.equals(tok, '(')) {
             queryModel = null;
-            struct = new JournalStructure(name);
+            struct = new JournalStructure(name.token);
             lexer.unparse();
             parseJournalFields(struct);
         } else if (Chars.equals(tok, "as")) {

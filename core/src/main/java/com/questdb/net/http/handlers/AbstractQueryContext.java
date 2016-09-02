@@ -24,6 +24,7 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.ex.*;
+import com.questdb.factory.JournalFactory;
 import com.questdb.factory.JournalFactoryPool;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -40,6 +41,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.impl.ChannelCheckCancellationHandler;
+import com.questdb.ql.model.ParsedModel;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.AssociativeCache;
@@ -105,26 +107,33 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
         clear();
     }
 
-    public void compileQuery(ChunkedResponse r, JournalFactoryPool pool, AtomicLong misses, AtomicLong hits) throws IOException {
+    public void compileQuery(
+            ChunkedResponse r,
+            JournalFactoryPool pool,
+            JournalFactory writerFactory,
+            AtomicLong misses,
+            AtomicLong hits) throws IOException {
         try {
-            // Prepare Context.
             this.factory = pool.get();
             recordSource = CACHE.get().poll(query);
             if (recordSource == null) {
-                recordSource = COMPILER.get().compile(factory, query);
+                recordSource = executeQuery(r, writerFactory);
                 misses.incrementAndGet();
             } else {
                 hits.incrementAndGet();
             }
-            cursor = recordSource.prepareCursor(factory, cancellationHandler);
-            metadata = recordSource.getMetadata();
+
             header(r, 200);
+            if (recordSource != null) {
+                cursor = recordSource.prepareCursor(factory, cancellationHandler);
+                metadata = recordSource.getMetadata();
+            } else {
+                sendConfirmation(r);
+            }
         } catch (ParserException e) {
-            info().$("Parser error executing query ").$(query).$(": at (").$(QueryError.getPosition()).$(") ").$(QueryError.getMessage()).$();
-            sendException(r, QueryError.getPosition(), QueryError.getMessage(), 400);
+            syntaxError(r);
         } catch (JournalRuntimeException e) {
-            error().$("Server error executing query ").$(query).$(e).$();
-            sendException(r, 0, e.getMessage(), 500);
+            internalError(r, e);
         } catch (InterruptedException e) {
             error().$("Error executing query. Server is shutting down. Query: ").$(query).$(e).$();
             sendException(r, 0, "Server is shutting down.", 500);
@@ -197,11 +206,48 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
         return LOG.error().$('[').$(fd).$("] ");
     }
 
+    private RecordSource executeQuery(ChunkedResponse r, JournalFactory writerFactory) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
+        QueryCompiler compiler = COMPILER.get();
+        ParsedModel model = compiler.parse(query);
+        if (model.isQuery()) {
+            return compiler.compile(factory, model);
+        }
+
+        if (writerFactory != null) {
+            try {
+                compiler.execute(writerFactory, model);
+            } catch (JournalException e) {
+                error().$("Server error executing statement ").$(query).$(e).$();
+                sendException(r, 0, e.getMessage(), 500);
+            }
+        } else {
+            error().$("Statement execution is not supported: ").$(query).$();
+            sendException(r, 0, "Statement execution is not supported", 400);
+        }
+        return null;
+    }
+
     protected abstract void header(ChunkedResponse r, int code) throws DisconnectedChannelException, SlowWritableChannelException;
 
     LogRecord info() {
         return LOG.info().$('[').$(fd).$("] ");
     }
 
+    private void internalError(ChunkedResponse r, Throwable e) throws DisconnectedChannelException, SlowWritableChannelException {
+        error().$("Server error executing query ").$(query).$(e).$();
+        sendException(r, 0, e.getMessage(), 500);
+    }
+
+    private void sendConfirmation(ChunkedResponse r) throws DisconnectedChannelException, SlowWritableChannelException {
+        r.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
+        r.sendChunk();
+        r.done();
+    }
+
     protected abstract void sendException(ChunkedResponse r, int position, CharSequence message, int code) throws DisconnectedChannelException, SlowWritableChannelException;
+
+    private void syntaxError(ChunkedResponse r) throws DisconnectedChannelException, SlowWritableChannelException {
+        info().$("Parser error executing query ").$(query).$(": at (").$(QueryError.getPosition()).$(") ").$(QueryError.getMessage()).$();
+        sendException(r, QueryError.getPosition(), QueryError.getMessage(), 400);
+    }
 }
