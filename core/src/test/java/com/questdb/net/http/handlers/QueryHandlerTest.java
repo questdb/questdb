@@ -23,7 +23,6 @@
 
 package com.questdb.net.http.handlers;
 
-import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
@@ -65,6 +64,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         server = new HttpServer(serverConfiguration, new SimpleUrlMatcher() {{
             put("/js", handler);
             put("/chk", new ExistenceCheckHandler(factory));
+            put("/csv", new CsvHandler(factoryPool, serverConfiguration));
         }});
 
         server.start();
@@ -75,6 +75,27 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public static void tearDown() throws Exception {
         server.halt();
         factoryPool.close();
+    }
+
+    @Test
+    public void testDDLCsv() throws Exception {
+        File f = temp.newFile();
+        String url = "http://localhost:9000/csv?query=" + URLEncoder.encode("create table x(a INT)", "UTF-8");
+        HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
+        String response = Files.readStringFromFile(f);
+        Assert.assertTrue(response.contains("Statement execution is not supported"));
+    }
+
+    @Test
+    public void testDDLError() throws Exception {
+        String response = downloadStr("create table x (a xyz, b DOUBLE)", -1, -1, false, false, temp);
+        Assert.assertEquals("{\"query\":\"create table x (a xyz, b DOUBLE)\",\"error\":\"Unsupported type\",\"position\":18}", response);
+    }
+
+    @Test
+    public void testDDLSimple() throws Exception {
+        String response = downloadStr("create table x (a INT, b DOUBLE)", -1, -1, false, false, temp);
+        Assert.assertEquals("{\"ddl\":\"OK\"}", response);
     }
 
     @Test
@@ -285,7 +306,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         generateJournal(name, new QueryResponse.Tab[]{record}, 1000);
     }
 
-    private static QueryResponse download(String queryUrl, int limitFrom, int limitTo, boolean noMeta, boolean count, TemporaryFolder temp) throws Exception {
+    private static String downloadStr(String queryUrl, int limitFrom, int limitTo, boolean noMeta, boolean count, TemporaryFolder temp) throws Exception {
         File f = temp.newFile();
         String url = "http://localhost:9000/js?query=" + URLEncoder.encode(queryUrl, "UTF-8");
         if (limitFrom >= 0) {
@@ -304,9 +325,13 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         }
 
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        Gson gson = new GsonBuilder().setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").create();
-        String s = Files.readStringFromFile(f);
-        return gson.fromJson(s, QueryResponse.class);
+        return Files.readStringFromFile(f);
+    }
+
+    private static QueryResponse download(String queryUrl, int limitFrom, int limitTo, boolean noMeta, boolean count, TemporaryFolder temp) throws Exception {
+        return new GsonBuilder().setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").create().fromJson(
+                downloadStr(queryUrl, limitFrom, limitTo, noMeta, count, temp),
+                QueryResponse.class);
     }
 
     private static void generateJournal() throws JournalException, NumericException {
