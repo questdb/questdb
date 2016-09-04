@@ -117,12 +117,12 @@ public class JournalStructure implements MetadataBuilder<Object> {
         return $meta(name, ColumnType.FLOAT);
     }
 
-    public GenericIntBuilder $int(String name) {
-        return new GenericIntBuilder(this, newMeta(name));
+    public GenericIndexedBuilder $int(String name) {
+        return new GenericIndexedBuilder(this, newMeta(name), ColumnType.INT, 4);
     }
 
-    public JournalStructure $long(String name) {
-        return $meta(name, ColumnType.LONG);
+    public GenericIndexedBuilder $long(String name) {
+        return new GenericIndexedBuilder(this, newMeta(name), ColumnType.LONG, 8);
     }
 
     public JournalStructure $short(String name) {

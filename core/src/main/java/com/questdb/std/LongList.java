@@ -210,7 +210,7 @@ public class LongList implements Mutable {
         Unsafe.arrayPut(buffer, index, Unsafe.arrayGet(buffer, index) + 1);
     }
 
-    public boolean remove(int v) {
+    public boolean remove(long v) {
         int index = indexOf(v);
         if (index > -1) {
             removeIndex(index);
@@ -296,7 +296,7 @@ public class LongList implements Mutable {
         return false;
     }
 
-    private int indexOf(int o) {
+    private int indexOf(long o) {
         for (int i = 0, n = pos; i < n; i++) {
             if (o == getQuick(i)) {
                 return i;

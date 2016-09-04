@@ -23,19 +23,11 @@
 
 package com.questdb.factory.configuration;
 
-import com.questdb.misc.Numbers;
 import com.questdb.store.ColumnType;
 
-public class GenericSymbolBuilder extends AbstractGenericMetadataBuilder {
+public class GenericSymbolBuilder extends GenericIndexedBuilder {
     public GenericSymbolBuilder(JournalStructure parent, ColumnMetadata meta) {
-        super(parent, meta);
-        meta.type = ColumnType.SYMBOL;
-        meta.size = 4;
-    }
-
-    public GenericSymbolBuilder index() {
-        this.meta.indexed = true;
-        return this;
+        super(parent, meta, ColumnType.SYMBOL, 4);
     }
 
     public GenericSymbolBuilder noCache() {
@@ -50,11 +42,6 @@ public class GenericSymbolBuilder extends AbstractGenericMetadataBuilder {
 
     public GenericSymbolBuilder size(int size) {
         this.meta.avgSize = size;
-        return this;
-    }
-
-    public GenericSymbolBuilder valueCountHint(int valueCountHint) {
-        this.meta.distinctCountHint = Numbers.ceilPow2(valueCountHint) - 1;
         return this;
     }
 }

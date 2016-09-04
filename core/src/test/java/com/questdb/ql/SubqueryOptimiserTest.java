@@ -39,7 +39,7 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     public static void setUpClass() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
-                        $sym("id").index().valueCountHint(128).
+                        $sym("id").index().buckets(128).
                         $double("x").
                         $double("y").
                         $int("i1").
@@ -50,7 +50,7 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
 
         w = factory.writer(
                 new JournalStructure("tex").
-                        $sym("id").index().valueCountHint(128).
+                        $sym("id").index().buckets(128).
                         $double("amount").
                         $ts()
         );

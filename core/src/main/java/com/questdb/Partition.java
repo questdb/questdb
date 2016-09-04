@@ -421,6 +421,15 @@ public class Partition<T> implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 ColumnMetadata m = Unsafe.arrayGet(columnMetadata, i);
                 switch (m.type) {
+                    case ColumnType.LONG:
+                        long l = Unsafe.getUnsafe().getLong(obj, m.offset);
+                        if (m.indexed) {
+                            sparseIndexProxies[i].getIndex().add(
+                                    (int) (l & m.distinctCountHint), ((FixedColumn) Unsafe.arrayGet(columns, i)).putLong(l));
+                        } else {
+                            ((FixedColumn) Unsafe.arrayGet(columns, i)).putLong(l);
+                        }
+                        break;
                     case ColumnType.INT:
                         int v = Unsafe.getUnsafe().getInt(obj, m.offset);
                         if (m.indexed) {

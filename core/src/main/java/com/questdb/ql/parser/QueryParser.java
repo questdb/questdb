@@ -25,9 +25,7 @@ package com.questdb.ql.parser;
 
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.configuration.GenericIntBuilder;
-import com.questdb.factory.configuration.GenericStringBuilder;
-import com.questdb.factory.configuration.GenericSymbolBuilder;
+import com.questdb.factory.configuration.GenericIndexedBuilder;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
@@ -236,7 +234,7 @@ public final class QueryParser {
         throw err("table expected");
     }
 
-    private CharSequence parseIntDefinition(GenericIntBuilder genericIntBuilder) throws ParserException {
+    private CharSequence parseIndexDefinition(GenericIndexedBuilder builder) throws ParserException {
         CharSequence tok = tok();
 
         if (isFieldTerm(tok)) {
@@ -244,7 +242,7 @@ public final class QueryParser {
         }
 
         expectTok(tok, "index");
-        genericIntBuilder.index();
+        builder.index();
 
         if (isFieldTerm(tok = tok())) {
             return tok;
@@ -253,9 +251,9 @@ public final class QueryParser {
         expectTok(tok, "buckets");
 
         try {
-            genericIntBuilder.buckets(Numbers.parseInt(tok()));
+            builder.buckets(Numbers.parseInt(tok()));
         } catch (NumericException e) {
-            throw err("expected number of buckets (int)");
+            throw err("bad int");
         }
 
         return null;
@@ -362,7 +360,7 @@ public final class QueryParser {
                     struct.$byte(name);
                     break;
                 case ColumnType.INT:
-                    tok = parseIntDefinition(struct.$int(name));
+                    tok = parseIndexDefinition(struct.$int(name));
                     break;
                 case ColumnType.DOUBLE:
                     struct.$double(name);
@@ -374,16 +372,16 @@ public final class QueryParser {
                     struct.$float(name);
                     break;
                 case ColumnType.LONG:
-                    struct.$long(name);
+                    tok = parseIndexDefinition(struct.$long(name));
                     break;
                 case ColumnType.SHORT:
                     struct.$short(name);
                     break;
                 case ColumnType.STRING:
-                    tok = parseStrDefinition(struct.$str(name));
+                    tok = parseIndexDefinition(struct.$str(name));
                     break;
                 case ColumnType.SYMBOL:
-                    tok = parseSymDefinition(struct.$sym(name));
+                    tok = parseIndexDefinition(struct.$sym(name));
                     break;
                 case ColumnType.BINARY:
                     struct.$bin(name);
@@ -667,44 +665,6 @@ public final class QueryParser {
                 throw err(",|from expected");
             }
         }
-    }
-
-    private CharSequence parseStrDefinition(GenericStringBuilder builder) throws ParserException {
-        CharSequence tok = tok();
-
-        if (isFieldTerm(tok)) {
-            return tok;
-        }
-
-        expectTok(tok, "index");
-        builder.index();
-
-        if (isFieldTerm(tok = tok())) {
-            return tok;
-        }
-
-        expectTok(tok, "buckets");
-
-        try {
-            builder.buckets(Numbers.parseInt(tok()));
-        } catch (NumericException e) {
-            throw err("expected number of buckets (string)");
-        }
-
-        return null;
-    }
-
-    private CharSequence parseSymDefinition(GenericSymbolBuilder builder) throws ParserException {
-        CharSequence tok = tok();
-
-        if (isFieldTerm(tok)) {
-            return tok;
-        }
-
-        expectTok(tok, "index");
-        builder.index();
-
-        return null;
     }
 
     private ExprNode parseTimestamp(CharSequence tok) throws ParserException {

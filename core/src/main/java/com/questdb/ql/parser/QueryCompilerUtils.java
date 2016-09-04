@@ -91,6 +91,7 @@ public final class QueryCompilerUtils {
 
             switch (m.getType()) {
                 case ColumnType.INT:
+                case ColumnType.LONG:
                 case ColumnType.SYMBOL:
                 case ColumnType.STRING:
                     m.indexed = true;

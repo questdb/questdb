@@ -24,22 +24,21 @@
 package com.questdb.factory.configuration;
 
 import com.questdb.misc.Numbers;
-import com.questdb.store.ColumnType;
 
-public class GenericIntBuilder extends AbstractGenericMetadataBuilder {
+public class GenericIndexedBuilder extends AbstractGenericMetadataBuilder {
 
-    public GenericIntBuilder(JournalStructure parent, ColumnMetadata meta) {
+    public GenericIndexedBuilder(JournalStructure parent, ColumnMetadata meta, int type, int size) {
         super(parent, meta);
-        this.meta.type = ColumnType.INT;
-        this.meta.size = 4;
+        this.meta.type = type;
+        this.meta.size = size;
     }
 
-    public GenericIntBuilder buckets(int buckets) {
+    public GenericIndexedBuilder buckets(int buckets) {
         this.meta.distinctCountHint = Numbers.ceilPow2(buckets) - 1;
         return this;
     }
 
-    public GenericIntBuilder index() {
+    public GenericIndexedBuilder index() {
         this.meta.indexed = true;
         return this;
     }

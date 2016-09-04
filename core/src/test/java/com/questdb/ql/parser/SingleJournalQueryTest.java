@@ -353,7 +353,6 @@ public class SingleJournalQueryTest extends AbstractTest {
                         "1008.553894042969\tNaN\n" +
                         "1017.000000000000\tNaN\n",
                 "select x a, y b from tab where y = NaN and x > 1000", true);
-
     }
 
     @Test
@@ -593,7 +592,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testIntComparison() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
-                        $sym("id").index().valueCountHint(128).
+                        $sym("id").index().buckets(128).
                         $double("x").
                         $double("y").
                         $int("i1").
@@ -951,7 +950,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             expectFailure("select sym, bid, ask, timestamp from q latest by ask where sym in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
             Assert.assertEquals(49, QueryError.getPosition());
-            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "symbol or string column"));
+            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "symbol, string, int or long column"));
         }
     }
 
@@ -1346,6 +1345,64 @@ public class SingleJournalQueryTest extends AbstractTest {
                 "KKUSIMYDXUUSKCX\t861.750000000000\t8337682751207954574\n";
 
         assertThat(expected3, "select id,x,z from tab where z > x and id ~ 'UK|CX' and x > 600");
+    }
+
+    @Test
+    public void testLongIndexSearch() throws Exception {
+        createTabWithNaNs3();
+
+        assertThat("z\tw\ta\tb\n" +
+                        "414\t-436\t0.000080571304\t-565.593750000000\n" +
+                        "414\t-393\t352.000000000000\t-800.000000000000\n" +
+                        "414\t136\t0.000316714002\t-742.543395996094\n" +
+                        "414\t486\t873.480468750000\t0.000000064994\n" +
+                        "414\t454\t-760.938842773438\t736.375000000000\n" +
+                        "414\t-335\t0.000000009145\tNaN\n" +
+                        "414\t126\t8.567796945572\t864.000000000000\n" +
+                        "414\tNaN\t905.000000000000\t578.125000000000\n",
+                "select z, w, x a, y b from tab where z = 414", true);
+
+        assertPlan("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"KvIndexIntLookupRowSource\",\"column\":\"z\"\"value\":414}}}",
+                "select z, w, x a, y b from tab where z = 414");
+    }
+
+    @Test
+    public void testLongIndexSearch2() throws Exception {
+        createTabWithNaNs3();
+
+        assertThat("z\tw\ta\tb\n" +
+                        "414\t-436\t0.000080571304\t-565.593750000000\n" +
+                        "414\t-393\t352.000000000000\t-800.000000000000\n" +
+                        "414\t136\t0.000316714002\t-742.543395996094\n" +
+                        "414\t486\t873.480468750000\t0.000000064994\n" +
+                        "212\t257\t0.000120815996\t-789.000000000000\n" +
+                        "212\tNaN\t896.000000000000\t0.000287486248\n" +
+                        "212\t-422\t0.000008381868\t928.000000000000\n" +
+                        "212\tNaN\t0.408159479499\t-332.593750000000\n" +
+                        "212\t-97\t0.000004313318\t1.753653943539\n" +
+                        "212\t-112\t59.650172233582\t12.106574058533\n" +
+                        "212\t-42\t798.500000000000\t-972.920440673828\n" +
+                        "414\t454\t-760.938842773438\t736.375000000000\n" +
+                        "212\t-495\t251.654296875000\t384.000000000000\n" +
+                        "414\t-335\t0.000000009145\tNaN\n" +
+                        "212\t252\t-520.000000000000\t182.464950561523\n" +
+                        "414\t126\t8.567796945572\t864.000000000000\n" +
+                        "212\t111\t0.000000037987\t256.000000000000\n" +
+                        "212\t-428\t0.357973538339\t0.000000019578\n" +
+                        "414\tNaN\t905.000000000000\t578.125000000000\n",
+                "select z, w, x a, y b from tab where z in (414,212) ", true);
+
+        assertPlan("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"KvIndexIntLookupRowSource\",\"column\":\"z\"\"value\":414}}}",
+                "select z, w, x a, y b from tab where z = 414");
+    }
+
+    @Test
+    public void testLongIndexSearch3() throws Exception {
+        createTabWithNaNs3();
+        assertThat("z\tw\ta\tb\n" +
+                        "212\t-428\t0.357973538339\t0.000000019578\n" +
+                        "414\tNaN\t905.000000000000\t578.125000000000\n",
+                "select z, w, x a, y b from tab latest by z where z in (414,212) ", true);
     }
 
     @Test
@@ -2128,7 +2185,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testScaledDoubleComparison() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
-                        $sym("id").index().valueCountHint(128).
+                        $sym("id").index().buckets(128).
                         $double("x").
                         $double("y").
                         $int("i1").
@@ -2661,7 +2718,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testSearchIndexedSymNull() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
-                        $sym("id").index().valueCountHint(128).
+                        $sym("id").index().buckets(128).
                         $double("x").
                         $double("y").
                         $ts()
@@ -3034,7 +3091,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testSymRegex() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
-                        $sym("id").index().valueCountHint(128).
+                        $sym("id").index().buckets(128).
                         $double("x").
                         $double("y").
                         $ts()
@@ -3397,16 +3454,18 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabWithNaNs2() throws JournalException, NumericException {
-        try (JournalWriter w = factory.writer(
-                new JournalStructure("tab").
-                        $str("id").
-                        $double("x").
-                        $double("y").
-                        $long("z").
-                        $int("w").
-                        $ts()
+        createTabWithNaNs20(new JournalStructure("tab").
+                $str("id").
+                $double("x").
+                $double("y").
+                $long("z").
+                $int("w").
+                $ts()
+        );
+    }
 
-        )) {
+    private void createTabWithNaNs20(JournalStructure struct) throws JournalException, NumericException {
+        try (JournalWriter w = factory.writer(struct)) {
 
             Rnd rnd = new Rnd();
             int n = 128;
@@ -3439,6 +3498,17 @@ public class SingleJournalQueryTest extends AbstractTest {
             }
             w.commit();
         }
+    }
+
+    private void createTabWithNaNs3() throws JournalException, NumericException {
+        createTabWithNaNs20(new JournalStructure("tab").
+                $str("id").index().
+                $double("x").
+                $double("y").
+                $long("z").index().
+                $int("w").index().
+                $ts()
+        );
     }
 
     private ObjHashSet<String> getNames(Rnd r, int n) {

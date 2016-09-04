@@ -84,6 +84,7 @@ final class QueryFilterAnalyser {
                 switch (meta.getType()) {
                     case ColumnType.SYMBOL:
                     case ColumnType.STRING:
+                    case ColumnType.LONG:
                     case ColumnType.INT:
                         if (meta.isIndexed()) {
 

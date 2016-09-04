@@ -1351,7 +1351,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
 
         JournalWriter categories = factory.writer(
                 new JournalStructure("categories").
-                        $sym("category").index().valueCountHint(100).
+                        $sym("category").index().buckets(100).
                         $str("description").
                         $ts()
         );
@@ -1389,8 +1389,8 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 new JournalStructure("products").
                         $int("productId").
                         $str("productName").
-                        $sym("supplier").index().valueCountHint(100).
-                        $sym("category").index().valueCountHint(100).
+                        $sym("supplier").index().buckets(100).
+                        $sym("category").index().buckets(100).
                         $double("price").
                         $ts()
         );
@@ -1405,7 +1405,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
 
         JournalWriter suppliers = factory.writer(
                 new JournalStructure("suppliers").
-                        $sym("supplier").valueCountHint(100).
+                        $sym("supplier").buckets(100).
                         $str("contactName").
                         $str("address").
                         $str("city").

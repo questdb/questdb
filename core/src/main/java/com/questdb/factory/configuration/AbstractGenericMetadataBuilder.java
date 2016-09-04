@@ -56,11 +56,11 @@ public abstract class AbstractGenericMetadataBuilder {
         return parent.$float(name);
     }
 
-    public GenericIntBuilder $int(String name) {
+    public GenericIndexedBuilder $int(String name) {
         return parent.$int(name);
     }
 
-    public JournalStructure $long(String name) {
+    public GenericIndexedBuilder $long(String name) {
         return parent.$long(name);
     }
 
@@ -82,5 +82,9 @@ public abstract class AbstractGenericMetadataBuilder {
 
     public JournalStructure $ts() {
         return parent.$ts();
+    }
+
+    public JournalStructure recordCountHint(int hint) {
+        return parent.recordCountHint(hint);
     }
 }

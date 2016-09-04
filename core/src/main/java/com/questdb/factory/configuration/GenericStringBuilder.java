@@ -23,30 +23,13 @@
 
 package com.questdb.factory.configuration;
 
-import com.questdb.misc.Numbers;
 import com.questdb.store.ColumnType;
 
-public class GenericStringBuilder extends AbstractGenericMetadataBuilder {
+public class GenericStringBuilder extends GenericIndexedBuilder {
 
     public GenericStringBuilder(JournalStructure parent, ColumnMetadata meta) {
-        super(parent, meta);
-        meta.type = ColumnType.STRING;
+        super(parent, meta, ColumnType.STRING, 0);
         size(this.meta.avgSize);
-    }
-
-    public GenericStringBuilder buckets(int buckets) {
-        this.meta.distinctCountHint = Numbers.ceilPow2(buckets) - 1;
-        return this;
-    }
-
-    public GenericStringBuilder index() {
-        this.meta.indexed = true;
-        return this;
-    }
-
-    public GenericStringBuilder recordCountHint(int count) {
-        parent.recordCountHint(count);
-        return this;
     }
 
     private GenericStringBuilder size(int size) {

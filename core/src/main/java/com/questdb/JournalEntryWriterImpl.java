@@ -132,7 +132,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     @Override
     public void putLong(int index, long value) {
         assertType(index, ColumnType.LONG);
-        fixCol(index).putLong(value);
+        putLong0(index, value);
         skip(index);
     }
 
@@ -215,6 +215,16 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
             Unsafe.arrayPut(koTuple, index * 2L + 1L, fixCol(index).putInt(value));
         } else {
             fixCol(index).putInt(value);
+        }
+    }
+
+    private void putLong0(int index, long value) {
+        if (meta(index).indexed) {
+            int h = (int) (value & meta(index).distinctCountHint);
+            Unsafe.arrayPut(koTuple, index * 2L, h < 0 ? -h : h);
+            Unsafe.arrayPut(koTuple, index * 2L + 1L, fixCol(index).putLong(value));
+        } else {
+            fixCol(index).putLong(value);
         }
     }
 

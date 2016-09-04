@@ -44,13 +44,13 @@ public class GenericAppendPerfTest extends AbstractTest {
 
         JournalWriter wg = factory.writer(
                 new JournalStructure("qq") {{
-                    $sym("sym").index().valueCountHint(20);
+                    $sym("sym").index().buckets(20);
                     $double("bid");
                     $double("ask");
                     $int("bidSize");
                     $int("askSize");
-                    $sym("ex").valueCountHint(1);
-                    $sym("mode").valueCountHint(1);
+                    $sym("ex").buckets(1);
+                    $sym("mode").buckets(1);
                     recordCountHint(TEST_DATA_SIZE);
                 }}
         );

@@ -188,6 +188,38 @@ public class QueryCompiler {
         return new Signature().setName("").setParamCount(2).paramType(0, masterType, indexed).paramType(1, lambdaType, false);
     }
 
+    private static IntHashSet toIntHashSet(IntrinsicModel im) throws ParserException {
+        IntHashSet set = null;
+        for (int i = 0, n = im.keyValues.size(); i < n; i++) {
+            try {
+                int v = Numbers.parseInt(im.keyValues.get(i));
+                if (set == null) {
+                    set = new IntHashSet(n);
+                }
+                set.add(v);
+            } catch (NumericException e) {
+                throw QueryError.$(im.keyValuePositions.get(i), "int value expected");
+            }
+        }
+        return set;
+    }
+
+    private static LongHashSet toLongHashSet(IntrinsicModel im) throws ParserException {
+        LongHashSet set = null;
+        for (int i = 0, n = im.keyValues.size(); i < n; i++) {
+            try {
+                long v = Numbers.parseLong(im.keyValues.get(i));
+                if (set == null) {
+                    set = new LongHashSet(n);
+                }
+                set.add(v);
+            } catch (NumericException e) {
+                throw QueryError.$(im.keyValuePositions.get(i), "int value expected");
+            }
+        }
+        return set;
+    }
+
     private void addAlias(int position, String alias) throws ParserException {
         if (selectedColumnAliases.add(alias)) {
             return;
@@ -485,6 +517,25 @@ public class QueryCompiler {
                 RowSource sources[] = new RowSource[nSrc];
                 for (int i = 0; i < nSrc; i++) {
                     Unsafe.arrayPut(sources, i, new KvIndexIntLookupRowSource(im.keyColumn, toInt(im.keyValues.get(i), im.keyValuePositions.getQuick(i)), true));
+                }
+                return new HeapMergingRowSource(sources);
+        }
+    }
+
+    private RowSource buildRowSourceForLong(IntrinsicModel im) throws ParserException {
+        int nSrc = im.keyValues.size();
+        switch (nSrc) {
+            case 1:
+                return new KvIndexLongLookupRowSource(im.keyColumn, toLong(im.keyValues.getLast(), im.keyValuePositions.getLast()));
+            case 2:
+                return new MergingRowSource(
+                        new KvIndexLongLookupRowSource(im.keyColumn, toLong(im.keyValues.get(0), im.keyValuePositions.getQuick(0)), true),
+                        new KvIndexLongLookupRowSource(im.keyColumn, toLong(im.keyValues.get(1), im.keyValuePositions.getQuick(1)), true)
+                );
+            default:
+                RowSource sources[] = new RowSource[nSrc];
+                for (int i = 0; i < nSrc; i++) {
+                    Unsafe.arrayPut(sources, i, new KvIndexLongLookupRowSource(im.keyColumn, toLong(im.keyValues.get(i), im.keyValuePositions.getQuick(i)), true));
                 }
                 return new HeapMergingRowSource(sources);
         }
@@ -812,8 +863,8 @@ public class QueryCompiler {
             latestByMetadata = journalMetadata.getColumnQuick(colIndex);
 
             int type = latestByMetadata.getType();
-            if (type != ColumnType.SYMBOL && type != ColumnType.STRING && type != ColumnType.INT) {
-                throw QueryError.position(latestByNode.position).$("Expected symbol or string column, found: ").$(type).$();
+            if (type != ColumnType.SYMBOL && type != ColumnType.STRING && type != ColumnType.INT && type != ColumnType.LONG) {
+                throw QueryError.position(latestByNode.position).$("Expected symbol, string, int or long column, found: ").$(ColumnType.nameOf(type)).$();
             }
 
             if (!latestByMetadata.isIndexed()) {
@@ -874,6 +925,9 @@ public class QueryCompiler {
                             case ColumnType.INT:
                                 rs = buildRowSourceForInt(im);
                                 break;
+                            case ColumnType.LONG:
+                                rs = buildRowSourceForLong(im);
+                                break;
                             default:
                                 break;
                         }
@@ -928,6 +982,14 @@ public class QueryCompiler {
                                 } else {
                                     Misc.free(rs);
                                     throw QueryError.$(latestByNode.position, "Filter on string column expected");
+                                }
+                                break;
+                            case ColumnType.LONG:
+                                if (im.keyColumn != null) {
+                                    rs = new KvIndexLongListHeadRowSource(latestByCol, toLongHashSet(im), filter);
+                                } else {
+                                    Misc.free(rs);
+                                    throw QueryError.$(latestByNode.position, "Filter on long column expected");
                                 }
                                 break;
                             case ColumnType.INT:
@@ -2203,20 +2265,12 @@ public class QueryCompiler {
         }
     }
 
-    private IntHashSet toIntHashSet(IntrinsicModel im) throws ParserException {
-        IntHashSet set = null;
-        for (int i = 0, n = im.keyValues.size(); i < n; i++) {
-            try {
-                int v = Numbers.parseInt(im.keyValues.get(i));
-                if (set == null) {
-                    set = new IntHashSet(n);
-                }
-                set.add(v);
-            } catch (NumericException e) {
-                throw QueryError.$(im.keyValuePositions.get(i), "int value expected");
-            }
+    private long toLong(CharSequence cs, int pos) throws ParserException {
+        try {
+            return Numbers.parseLong(cs);
+        } catch (NumericException e) {
+            throw QueryError.$(pos, "long value expected");
         }
-        return set;
     }
 
     private IntList toOrderIndices(RecordMetadata m, ObjList<ExprNode> orderBy, IntList orderByDirection) throws ParserException {
