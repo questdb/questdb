@@ -23,8 +23,8 @@ __SQL implementation__
 - [x] order by optimiser
 - [ ] NEW distributed queries
 - [ ] NEW pivot tables
-- [ ] __DDL - create journal (in progress)__
-- [ ] __DDL - copy journal (in progress)__
+- [x] DDL - create journal
+- [x] DDL - copy journal (sample syntax: create table x as (y where a=1 order by b))
 - [ ] DDL - add/remove column
 - [ ] DDL - delete journal
 
