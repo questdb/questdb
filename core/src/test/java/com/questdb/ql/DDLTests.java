@@ -37,8 +37,8 @@ import com.questdb.std.DirectInputStream;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
-import org.junit.After;
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.File;
@@ -46,14 +46,9 @@ import java.nio.ByteBuffer;
 
 public class DDLTests {
 
-    public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
     private static final QueryCompiler compiler = new QueryCompiler();
-
-    @After
-    public void tearDown() throws Exception {
-        Files.deleteOrException(new File(factory.getConfiguration().getJournalBase(), "x"));
-        Files.deleteOrException(new File(factory.getConfiguration().getJournalBase(), "y"));
-    }
+    @Rule
+    public final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
 
     @Test
     public void testBadIntBuckets() throws Exception {
