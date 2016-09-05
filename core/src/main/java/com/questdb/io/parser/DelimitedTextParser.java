@@ -177,6 +177,7 @@ public class DelimitedTextParser implements TextParser {
         OUT:
         while (ptr < hi) {
             byte c = Unsafe.getUnsafe().getByte(ptr++);
+            char b = (char) c;
 
             if (useLineRollBuf) {
                 putToRollBuf(c);
@@ -260,7 +261,7 @@ public class DelimitedTextParser implements TextParser {
         if (inQuote) {
             delayedOutQuote = !delayedOutQuote;
             lastQuotePos = this.fieldHi;
-        } else {
+        } else if (fieldHi - fieldLo == 1) {
             inQuote = true;
             this.fieldLo = this.fieldHi;
         }

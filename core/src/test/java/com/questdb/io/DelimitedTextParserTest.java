@@ -73,6 +73,40 @@ public class DelimitedTextParserTest extends AbstractTest {
     }
 
     @Test
+    public void testImportMalformedQuote() throws Exception {
+        String file = this.getClass().getResource("/csv/test-import-malformed.csv").getFile();
+        ImportManager.importFile(factory, file, TextFileDelimiter.CSV, null);
+
+        String location = "test-import-malformed.csv";
+
+
+        Assert.assertEquals(JournalConfiguration.EXISTS, factory.getConfiguration().exists(location));
+
+        try (Journal r = factory.reader(location)) {
+            JournalMetadata m = r.getMetadata();
+            Assert.assertEquals(10, m.getColumnCount());
+            Assert.assertEquals(ColumnType.STRING, m.getColumn(0).type);
+            Assert.assertEquals(ColumnType.STRING, m.getColumn(1).type);
+            Assert.assertEquals(ColumnType.INT, m.getColumn(2).type);
+            Assert.assertEquals(ColumnType.DOUBLE, m.getColumn(3).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumn(4).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumn(5).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumn(6).type);
+            Assert.assertEquals(ColumnType.STRING, m.getColumn(7).type);
+            Assert.assertEquals(ColumnType.BOOLEAN, m.getColumn(8).type);
+            Assert.assertEquals(ColumnType.LONG, m.getColumn(9).type);
+        }
+
+        File actual = new File(factory.getConfiguration().getJournalBase(), "exp.csv");
+        File expected = new File(this.getClass().getResource("/csv/test-import-malformed-expected.csv").getFile());
+
+        try (RecordSource rs = compile("'" + location + "'")) {
+            ExportManager.export(rs, factory, actual, TextFileDelimiter.CSV);
+            TestUtils.assertEquals(expected, actual);
+        }
+    }
+
+    @Test
     public void testImportNan() throws Exception {
         imp("/csv/test-import-nan.csv");
         final String expected = "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\n" +

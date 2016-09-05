@@ -212,11 +212,12 @@ function nopropagation(e) {
         }
 
         function importDone(data) {
+            current.delta = new Date().getTime() - current.time;
             if (data.status === 'OK') {
                 current.response = data;
                 current.importState = 0; // ok
                 renderRowAsCancel(null, current);
-                status(current, '<span class="label label-success">imported</span>', true);
+                status(current, '<span class="label label-success">imported in ' + (current.delta / 1000) + 's</span>', true);
             } else {
                 current.importState = 4; // error with journal, status has error message
                 current.response = data.status;
@@ -270,6 +271,7 @@ function nopropagation(e) {
             }
 
             importRequest.data.append('data', current.file);
+            current.time = new Date().getTime();
             return importRequest;
         }
 
@@ -307,7 +309,7 @@ function nopropagation(e) {
                 current.importState = 0;
                 importFile();
             } else {
-                existenceCheckRequest.url = '/chk?f=json&j=' + e.name;
+                existenceCheckRequest.url = '/chk?f=json&j=' + encodeURIComponent(e.name);
                 $.ajax(existenceCheckRequest).then(existenceCheckFork).fail(importFailed);
             }
         }

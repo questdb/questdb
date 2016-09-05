@@ -323,7 +323,7 @@
 
         function computeQueryTextFromSelection() {
             var q = edit.getSelectedText();
-            var n = q.length - 1;
+            var n = q.length;
             var c;
             while (n > 0 && ((c = q.charAt(n)) === ' ' || c === '\n' || c === ';')) {
                 n--;
