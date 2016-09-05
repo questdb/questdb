@@ -23,14 +23,17 @@
 
 package com.questdb.store;
 
+import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 
 public class FixedColumn extends AbstractColumn {
     private final int width;
+    private final int bits;
 
     public FixedColumn(MemoryFile mappedFile, int width) {
         super(mappedFile);
         this.width = width;
+        this.bits = Numbers.msb(width);
     }
 
     public long bsearchEdge(long val, BSearchType type) {
@@ -91,17 +94,17 @@ public class FixedColumn extends AbstractColumn {
 
     @Override
     public long getOffset(long localRowID) {
-        return localRowID * width;
+        return localRowID << bits;
     }
 
     @Override
     public long size() {
-        return getOffset() / width;
+        return getOffset() >> bits;
     }
 
     @Override
     public void truncate(long size) {
-        preCommit(size <= 0 ? 0 : size * width);
+        preCommit(size <= 0 ? 0 : size << bits);
     }
 
     public short getShort(long localRowID) {
@@ -126,12 +129,12 @@ public class FixedColumn extends AbstractColumn {
 
     public long putInt(int value) {
         Unsafe.getUnsafe().putInt(getAddress(), value);
-        return txAppendOffset / width - 1;
+        return (txAppendOffset >> bits) - 1;
     }
 
     public long putLong(long value) {
         Unsafe.getUnsafe().putLong(getAddress(), value);
-        return txAppendOffset / width - 1;
+        return (txAppendOffset >> bits) - 1;
     }
 
     public void putNull() {
