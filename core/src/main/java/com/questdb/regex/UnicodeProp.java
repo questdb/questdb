@@ -210,7 +210,7 @@ enum UnicodeProp {
             propName = alias;
         try {
             return valueOf(propName);
-        } catch (IllegalArgumentException x) {
+        } catch (IllegalArgumentException ignore) {
         }
         return null;
     }

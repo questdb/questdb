@@ -780,14 +780,10 @@ public final class Pattern
     static final int POSSESSIVE = 2;
     static final int INDEPENDENT = 3;
     /**
-     * use serialVersionUID from Merlin b59 for interoperability
-     */
-    private static final long serialVersionUID = 5073258162644648461L;
-    /**
      * For use with lookbehinds; matches the position where the lookbehind
      * was encountered.
      */
-    static Node lookbehindEnd = new Node() {
+    static final Node lookbehindEnd = new Node() {
         boolean match(Matcher matcher, int i, CharSequence seq) {
             return i == matcher.lookbehindTo;
         }
@@ -795,8 +791,18 @@ public final class Pattern
     /**
      * This must be the very first initializer.
      */
-    static Node accept = new Node();
-    static Node lastAccept = new LastNode();
+    static final Node accept = new Node();
+    static final Node lastAccept = new LastNode();
+    /**
+     * use serialVersionUID from Merlin b59 for interoperability
+     */
+    private static final long serialVersionUID = 5073258162644648461L;
+    /**
+     * The original regular-expression pattern string.
+     *
+     * @serial
+     */
+    private final String pattern;
     /**
      * The starting point of state machine for the find operation.  This allows
      * a match to start anywhere in the input.
@@ -831,12 +837,6 @@ public final class Pattern
      * allocate storage needed to perform a match.
      */
     transient int localCount;
-    /**
-     * The original regular-expression pattern string.
-     *
-     * @serial
-     */
-    private String pattern;
     /**
      * The original pattern flags.
      *
@@ -1009,18 +1009,6 @@ public final class Pattern
     }
 
     /**
-     * <p>Returns the string representation of this pattern. This
-     * is the regular expression from which this pattern was
-     * compiled.</p>
-     *
-     * @return The string representation of this pattern
-     * @since 1.5
-     */
-    public String toString() {
-        return pattern;
-    }
-
-    /**
      * Returns the regular expression from which this pattern was compiled.
      *
      * @return The source of this pattern
@@ -1124,6 +1112,18 @@ public final class Pattern
                 resultSize--;
         String[] result = new String[resultSize];
         return matchList.subList(0, resultSize).toArray(result);
+    }
+
+    /**
+     * <p>Returns the string representation of this pattern. This
+     * is the regular expression from which this pattern was
+     * compiled.</p>
+     *
+     * @return The string representation of this pattern
+     * @since 1.5
+     */
+    public String toString() {
+        return pattern;
     }
 
     /**
@@ -1531,12 +1531,6 @@ public final class Pattern
         return newSingle(ch);
     }
 
-    /*
-     * The following private methods are mainly used to improve the
-     * readability of the code. In order to let the Java compiler easily
-     * inline them, we should not put many assertions or error checks in them.
-     */
-
     /**
      * Utility method for parsing control escape sequences.
      */
@@ -1572,6 +1566,12 @@ public final class Pattern
             }
         };
     }
+
+    /*
+     * The following private methods are mainly used to improve the
+     * readability of the code. In order to let the Java compiler easily
+     * inline them, we should not put many assertions or error checks in them.
+     */
 
     /**
      * Returns a CharProperty matching all characters in a named property.
@@ -3170,10 +3170,6 @@ public final class Pattern
         return n;
     }
 
-    //
-    // Utility methods for code point support
-    //
-
     /**
      * Utility method for parsing hexadecimal escape sequences.
      */
@@ -3219,6 +3215,10 @@ public final class Pattern
             deterministic = true;
         }
     }
+
+    //
+    // Utility methods for code point support
+    //
 
     /**
      * Creates a bit vector for matching Latin-1 values. A normal BitClass
@@ -3313,7 +3313,7 @@ public final class Pattern
      * or a BnM will bypass this node completely.
      */
     static class Start extends Node {
-        int minLength;
+        final int minLength;
 
         Start(Node node) {
             this.next = node;
@@ -3501,7 +3501,7 @@ public final class Pattern
      * line terminators themselves.
      */
     static final class Dollar extends Node {
-        boolean multiline;
+        final boolean multiline;
 
         Dollar(boolean mul) {
             multiline = mul;
@@ -3565,7 +3565,7 @@ public final class Pattern
      * multiline mode when in unix lines mode.
      */
     static final class UnixDollar extends Node {
-        boolean multiline;
+        final boolean multiline;
 
         UnixDollar(boolean mul) {
             multiline = mul;
@@ -3847,7 +3847,7 @@ public final class Pattern
      * Base class for all Slice nodes
      */
     static class SliceNode extends Node {
-        int[] buffer;
+        final int[] buffer;
 
         SliceNode(int[] buf) {
             buffer = buf;
@@ -4049,8 +4049,8 @@ public final class Pattern
      * The 0 or 1 quantifier. This one class implements all three types.
      */
     static final class Ques extends Node {
-        Node atom;
-        int type;
+        final Node atom;
+        final int type;
 
         Ques(Node node, int type) {
             this.atom = node;
@@ -4093,10 +4093,10 @@ public final class Pattern
      * This class handles the three types.
      */
     static final class Curly extends Node {
-        Node atom;
-        int type;
-        int cmin;
-        int cmax;
+        final Node atom;
+        final int type;
+        final int cmin;
+        final int cmax;
 
         Curly(Node node, int cmin, int cmax, int type) {
             this.atom = node;
@@ -4241,13 +4241,13 @@ public final class Pattern
      * that groups are unset when backing off of a group match.
      */
     static final class GroupCurly extends Node {
-        Node atom;
-        int type;
-        int cmin;
-        int cmax;
-        int localIndex;
-        int groupIndex;
-        boolean capture;
+        final Node atom;
+        final int type;
+        final int cmin;
+        final int cmax;
+        final int localIndex;
+        final int groupIndex;
+        final boolean capture;
 
         GroupCurly(Node node, int cmin, int cmax, int type, int local,
                    int group, boolean capture) {
@@ -4472,9 +4472,9 @@ public final class Pattern
      * and where it does not occur.
      */
     static final class Branch extends Node {
+        final Node conn;
         Node[] atoms = new Node[2];
         int size = 2;
-        Node conn;
 
         Branch(Node first, Node second, Node branchConn) {
             conn = branchConn;
@@ -4542,7 +4542,7 @@ public final class Pattern
      * doesn't match.
      */
     static final class GroupHead extends Node {
-        int localIndex;
+        final int localIndex;
 
         GroupHead(int localCount) {
             localIndex = localCount;
@@ -4573,7 +4573,7 @@ public final class Pattern
      * the group.
      */
     static final class GroupRef extends Node {
-        GroupHead head;
+        final GroupHead head;
 
         GroupRef(GroupHead head) {
             this.head = head;
@@ -4599,8 +4599,8 @@ public final class Pattern
      * and in that case no group information needs to be set.
      */
     static final class GroupTail extends Node {
-        int localIndex;
-        int groupIndex;
+        final int localIndex;
+        final int groupIndex;
 
         GroupTail(int localCount, int groupCount) {
             localIndex = localCount;
@@ -4636,7 +4636,7 @@ public final class Pattern
      * This sets up a loop to handle a recursive quantifier structure.
      */
     static final class Prolog extends Node {
-        Loop loop;
+        final Loop loop;
 
         Prolog(Loop loop) {
             this.loop = loop;
@@ -4658,9 +4658,9 @@ public final class Pattern
      * normal match but is skipped in the matchInit.
      */
     static class Loop extends Node {
+        final int countIndex; // local count index in matcher locals
+        final int beginIndex; // group beginning index
         Node body;
-        int countIndex; // local count index in matcher locals
-        int beginIndex; // group beginning index
         int cmin, cmax;
 
         Loop(int countIndex, int beginIndex) {
@@ -4796,7 +4796,7 @@ public final class Pattern
      * whatever the group referred to last matched.
      */
     static class BackRef extends Node {
-        int groupIndex;
+        final int groupIndex;
 
         BackRef(int groupCount) {
             super();
@@ -4833,8 +4833,8 @@ public final class Pattern
     }
 
     static class CIBackRef extends Node {
-        int groupIndex;
-        boolean doUnicodeCase;
+        final int groupIndex;
+        final boolean doUnicodeCase;
 
         CIBackRef(int groupCount, boolean doUnicodeCase) {
             super();
@@ -4897,7 +4897,7 @@ public final class Pattern
      * problem).
      */
     static final class First extends Node {
-        Node atom;
+        final Node atom;
 
         First(Node node) {
             this.atom = BnM.optimize(node);
@@ -4930,7 +4930,9 @@ public final class Pattern
     }
 
     static final class Conditional extends Node {
-        Node cond, yes, not;
+        final Node cond;
+        final Node yes;
+        final Node not;
 
         Conditional(Node cond, Node yes, Node not) {
             this.cond = cond;
@@ -4971,7 +4973,7 @@ public final class Pattern
      * Zero width positive lookahead.
      */
     static final class Pos extends Node {
-        Node cond;
+        final Node cond;
 
         Pos(Node cond) {
             this.cond = cond;
@@ -4998,7 +5000,7 @@ public final class Pattern
      * Zero width negative lookahead.
      */
     static final class Neg extends Node {
-        Node cond;
+        final Node cond;
 
         Neg(Node cond) {
             this.cond = cond;
@@ -5032,8 +5034,9 @@ public final class Pattern
      * Zero width positive lookbehind.
      */
     static class Behind extends Node {
-        Node cond;
-        int rmax, rmin;
+        final Node cond;
+        final int rmax;
+        final int rmin;
 
         Behind(Node cond, int rmax, int rmin) {
             this.cond = cond;
@@ -5101,8 +5104,9 @@ public final class Pattern
      * Zero width negative lookbehind.
      */
     static class NotBehind extends Node {
-        Node cond;
-        int rmax, rmin;
+        final Node cond;
+        final int rmax;
+        final int rmin;
 
         NotBehind(Node cond, int rmax, int rmin) {
             this.cond = cond;
@@ -5173,12 +5177,12 @@ public final class Pattern
      * they are ignored for purposes of finding word boundaries.
      */
     static final class Bound extends Node {
-        static int LEFT = 0x1;
-        static int RIGHT = 0x2;
-        static int BOTH = 0x3;
-        static int NONE = 0x4;
-        int type;
-        boolean useUWORD;
+        static final int LEFT = 0x1;
+        static final int RIGHT = 0x2;
+        static final int BOTH = 0x3;
+        static final int NONE = 0x4;
+        final int type;
+        final boolean useUWORD;
 
         Bound(int n, boolean useUWORD) {
             type = n;
@@ -5251,9 +5255,9 @@ public final class Pattern
      *      * Boyer-Moore search methods adapted from code by Amy Yu.
      */
     static class BnM extends Node {
-        int[] buffer;
-        int[] lastOcc;
-        int[] optoSft;
+        final int[] buffer;
+        final int[] lastOcc;
+        final int[] optoSft;
 
         BnM(int[] src, int[] lastOcc, int[] optoSft, Node next) {
             this.buffer = src;

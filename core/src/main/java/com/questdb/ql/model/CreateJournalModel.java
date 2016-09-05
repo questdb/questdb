@@ -36,14 +36,13 @@ public class CreateJournalModel implements Mutable, ParsedModel {
             return new CreateJournalModel();
         }
     };
-
+    private final ObjList<ColumnIndexModel> columnIndexModels = new ObjList<>();
     private ExprNode name;
     private QueryModel queryModel;
     private ExprNode timestamp;
     private ExprNode partitionBy;
     private ExprNode recordHint;
     private JournalStructure struct;
-    private ObjList<ColumnIndexModel> columnIndexModels = new ObjList<>();
     private RecordSource recordSource;
 
     private CreateJournalModel() {

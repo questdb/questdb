@@ -135,7 +135,7 @@ public class RegExTest {
     // Utility functions
 
     private static String getRandomAlphaString(int length) {
-        StringBuffer buf = new StringBuffer(length);
+        StringBuilder buf = new StringBuilder(length);
         for (int i = 0; i < length; i++) {
             char randChar = (char) (97 + generator.nextInt(26));
             buf.append(randChar);
@@ -221,7 +221,7 @@ public class RegExTest {
      */
     private static String toSupplementaries(String s) {
         int length = s.length();
-        StringBuffer sb = new StringBuffer(length * 2);
+        StringBuilder sb = new StringBuilder(length * 2);
 
         for (int i = 0; i < length; ) {
             char c = s.charAt(i++);
@@ -332,7 +332,7 @@ public class RegExTest {
 
     // This is for bug6635133
     // Test if surrogate pair in Unicode escapes can be handled correctly.
-    private static void surrogatesInClassTest() throws Exception {
+    private static void surrogatesInClassTest() {
         Pattern pattern = Pattern.compile("[\\ud834\\udd21-\\ud834\\udd24]");
         Matcher matcher = pattern.matcher("\ud834\udd22");
         if (!matcher.find())
@@ -345,7 +345,7 @@ public class RegExTest {
     // Test if Pattern.RemoveQEQuoting works correctly if the octal unicode
     // char encoding is only 2 or 3 digits instead of 4 and the first quoted
     // char is an octal digit.
-    private static void removeQEQuotingTest() throws Exception {
+    private static void removeQEQuotingTest() {
         Pattern pattern =
                 Pattern.compile("\\011\\Q1sometext\\E\\011\\Q2sometext\\E");
         Matcher matcher = pattern.matcher("\t1sometext\t2sometext");
@@ -358,7 +358,7 @@ public class RegExTest {
     // This is for bug 4988891
     // Test toMatchResult to see that it is a copy of the Matcher
     // that is not affected by subsequent operations on the original
-    private static void toMatchResultTest() throws Exception {
+    private static void toMatchResultTest() {
         Pattern pattern = Pattern.compile("squid");
         Matcher matcher = pattern.matcher(
                 "agiantsquidofdestinyasmallsquidoffate");
@@ -387,7 +387,7 @@ public class RegExTest {
 
     // This is for bug 5013885
     // Must test a slice to see if it reports hitEnd correctly
-    private static void hitEndTest() throws Exception {
+    private static void hitEndTest() {
         // Basic test of Slice node
         Pattern p = Pattern.compile("^squidattack");
         Matcher m = p.matcher("squack");
@@ -432,7 +432,7 @@ public class RegExTest {
 
     // This is for bug 4997476
     // It is weird code submitted by customer demonstrating a regression
-    private static void wordSearchTest() throws Exception {
+    private static void wordSearchTest() {
         String testString = new String("word1 word2 word3");
         Pattern p = Pattern.compile("\\b");
         Matcher m = p.matcher(testString);
@@ -456,7 +456,7 @@ public class RegExTest {
     }
 
     // This is for bug 4994840
-    private static void caretAtEndTest() throws Exception {
+    private static void caretAtEndTest() {
         // Problem only occurs with multiline patterns
         // containing a beginning-of-line caret "^" followed
         // by an expression that also matches the empty string.
@@ -511,7 +511,7 @@ public class RegExTest {
     }
 
     private static void twoFindIndexes(String input, Matcher matcher, int a,
-                                       int b) throws Exception {
+                                       int b) {
         matcher.reset(input);
         matcher.find();
         if (matcher.start() != a)
@@ -523,7 +523,7 @@ public class RegExTest {
 
     // This test is for 6284152
     static void check(String regex, String input, String[] expected) {
-        List<String> result = new ArrayList<String>();
+        List<String> result = new ArrayList<>();
         Pattern p = Pattern.compile(regex);
         Matcher m = p.matcher(input);
         while (m.find()) {
@@ -533,7 +533,7 @@ public class RegExTest {
             failCount++;
     }
 
-    private static void lookbehindTest() throws Exception {
+    private static void lookbehindTest() {
         //Positive
         check("(?<=%.{0,5})foo\\d",
                 "%foo1\n%bar foo2\n%bar  foo3\n%blahblah foo4\nfoo5",
@@ -572,7 +572,7 @@ public class RegExTest {
     // This test is for 4938995
     // Check to see if weak region boundaries are transparent to
     // lookahead and lookbehind constructs
-    private static void boundsTest() throws Exception {
+    private static void boundsTest() {
         String fullMessage = "catdogcat";
         Pattern pattern = Pattern.compile("(?<=cat)dog(?=cat)");
         Matcher matcher = pattern.matcher("catdogca");
@@ -626,7 +626,7 @@ public class RegExTest {
     }
 
     // This test is for 4945394
-    private static void findFromTest() throws Exception {
+    private static void findFromTest() {
         String message = "This is 40 $0 message.";
         Pattern pat = Pattern.compile("\\$0");
         Matcher match = pat.matcher(message);
@@ -640,7 +640,7 @@ public class RegExTest {
     }
 
     // This test is for 4872664 and 4892980
-    private static void negatedCharClassTest() throws Exception {
+    private static void negatedCharClassTest() {
         Pattern pattern = Pattern.compile("[^>]");
         Matcher matcher = pattern.matcher("\u203A");
         if (!matcher.matches())
@@ -705,7 +705,7 @@ public class RegExTest {
     }
 
     // This test is for 4628291
-    private static void toStringTest() throws Exception {
+    private static void toStringTest() {
         Pattern pattern = Pattern.compile("b+");
         if (pattern.toString() != "b+")
             failCount++;
@@ -721,7 +721,7 @@ public class RegExTest {
     }
 
     // This test is for 4808962
-    private static void literalPatternTest() throws Exception {
+    private static void literalPatternTest() {
         int flags = Pattern.LITERAL;
 
         Pattern pattern = Pattern.compile("abc\\t$^", flags);
@@ -838,7 +838,7 @@ public class RegExTest {
 
     // This test is for 4803179
     // This test is also for 4808962, replacement parts
-    private static void literalReplacementTest() throws Exception {
+    private static void literalReplacementTest() {
         int flags = Pattern.LITERAL;
 
         Pattern pattern = Pattern.compile("abc", flags);
@@ -902,7 +902,7 @@ public class RegExTest {
     }
 
     // This test is for 4757029
-    private static void regionTest() throws Exception {
+    private static void regionTest() {
         Pattern pattern = Pattern.compile("abc");
         Matcher matcher = pattern.matcher("abcdefabc");
 
@@ -998,15 +998,13 @@ public class RegExTest {
         try {
             matcher.region(index1, index2);
             failCount++;
-        } catch (IndexOutOfBoundsException ioobe) {
-            // Correct result
-        } catch (IllegalStateException ise) {
+        } catch (IndexOutOfBoundsException | IllegalStateException ioobe) {
             // Correct result
         }
     }
 
     // This test is for 4803197
-    private static void escapedSegmentTest() throws Exception {
+    private static void escapedSegmentTest() {
 
         Pattern pattern = Pattern.compile("\\Qdir1\\dir2\\E");
         check(pattern, "dir1\\dir2", true);
@@ -1031,7 +1029,7 @@ public class RegExTest {
     }
 
     // This test is for 4792284
-    private static void nonCaptureRepetitionTest() throws Exception {
+    private static void nonCaptureRepetitionTest() {
         String input = "abcdefgh;";
 
         String[] patterns = new String[]{
@@ -1066,7 +1064,7 @@ public class RegExTest {
     }
 
     // This test is for 6358731
-    private static void notCapturedGroupCurlyMatchTest() throws Exception {
+    private static void notCapturedGroupCurlyMatchTest() {
         Pattern pattern = Pattern.compile("(abc)+|(abcd)+");
         Matcher matcher = pattern.matcher("abcd");
         if (!matcher.matches() ||
@@ -1078,7 +1076,7 @@ public class RegExTest {
     }
 
     // This test is for 4706545
-    private static void javaCharClassTest() throws Exception {
+    private static void javaCharClassTest() {
         for (int i = 0; i < 1000; i++) {
             char c = (char) generator.nextInt();
             check("{javaLowerCase}", c, Character.isLowerCase(c));
@@ -1159,7 +1157,7 @@ public class RegExTest {
     */
 
     // This test is for 4776374
-    private static void caretBetweenTerminatorsTest() throws Exception {
+    private static void caretBetweenTerminatorsTest() {
         int flags1 = Pattern.DOTALL;
         int flags2 = Pattern.DOTALL | Pattern.UNIX_LINES;
         int flags3 = Pattern.DOTALL | Pattern.UNIX_LINES | Pattern.MULTILINE;
@@ -1217,7 +1215,7 @@ public class RegExTest {
     }
 
     // This test is for 4727935
-    private static void dollarAtEndTest() throws Exception {
+    private static void dollarAtEndTest() {
         int flags1 = Pattern.DOTALL;
         int flags2 = Pattern.DOTALL | Pattern.UNIX_LINES;
         int flags3 = Pattern.DOTALL | Pattern.MULTILINE;
@@ -1261,7 +1259,7 @@ public class RegExTest {
     }
 
     // This test is for 4711773
-    private static void multilineDollarTest() throws Exception {
+    private static void multilineDollarTest() {
         Pattern findCR = Pattern.compile("$", Pattern.MULTILINE);
         Matcher matcher = findCR.matcher("first bit\nsecond bit");
         matcher.find();
@@ -1283,7 +1281,7 @@ public class RegExTest {
         report("Multiline Dollar");
     }
 
-    private static void reluctantRepetitionTest() throws Exception {
+    private static void reluctantRepetitionTest() {
         Pattern p = Pattern.compile("1(\\s\\S+?){1,3}?[\\s,]2");
         check(p, "1 word word word 2", true);
         check(p, "1 wor wo w 2", true);
@@ -1759,7 +1757,7 @@ public class RegExTest {
         report("Ampersand");
     }
 
-    private static void octalTest() throws Exception {
+    private static void octalTest() {
         Pattern pattern = Pattern.compile("\\u0007");
         Matcher matcher = pattern.matcher("\u0007");
         if (!matcher.matches())
@@ -1792,13 +1790,13 @@ public class RegExTest {
         report("Octal");
     }
 
-    private static void longPatternTest() throws Exception {
+    private static void longPatternTest() {
         try {
             Pattern pattern = Pattern.compile(
                     "a 32-character-long pattern xxxx");
             pattern = Pattern.compile("a 33-character-long pattern xxxxx");
             pattern = Pattern.compile("a thirty four character long regex");
-            StringBuffer patternToBe = new StringBuffer(101);
+            StringBuilder patternToBe = new StringBuilder(101);
             for (int i = 0; i < 100; i++)
                 patternToBe.append((char) (97 + i % 26));
             pattern = Pattern.compile(patternToBe.toString());
@@ -1812,7 +1810,7 @@ public class RegExTest {
                     toSupplementaries("a 32-character-long pattern xxxx"));
             pattern = Pattern.compile(toSupplementaries("a 33-character-long pattern xxxxx"));
             pattern = Pattern.compile(toSupplementaries("a thirty four character long regex"));
-            StringBuffer patternToBe = new StringBuffer(101 * 2);
+            StringBuilder patternToBe = new StringBuilder(101 * 2);
             for (int i = 0; i < 100; i++)
                 patternToBe.append(Character.toChars(Character.MIN_SUPPLEMENTARY_CODE_POINT
                         + 97 + i % 26));
@@ -1823,7 +1821,7 @@ public class RegExTest {
         report("LongPattern");
     }
 
-    private static void group0Test() throws Exception {
+    private static void group0Test() {
         Pattern pattern = Pattern.compile("(tes)ting");
         Matcher matcher = pattern.matcher("testing");
         check(matcher, "testing");
@@ -1904,7 +1902,7 @@ public class RegExTest {
         report("Group0");
     }
 
-    private static void findIntTest() throws Exception {
+    private static void findIntTest() {
         Pattern p = Pattern.compile("blah");
         Matcher m = p.matcher("zzzzblahzzzzzblah");
         boolean result = m.find(2);
@@ -1933,7 +1931,7 @@ public class RegExTest {
         report("FindInt");
     }
 
-    private static void emptyPatternTest() throws Exception {
+    private static void emptyPatternTest() {
         Pattern p = Pattern.compile("");
         Matcher m = p.matcher("foo");
 
@@ -1973,7 +1971,7 @@ public class RegExTest {
         report("EmptyPattern");
     }
 
-    private static void charClassTest() throws Exception {
+    private static void charClassTest() {
         Pattern pattern = Pattern.compile("blah[ab]]blech");
         check(pattern, "blahb]blech", true);
 
@@ -2020,7 +2018,7 @@ public class RegExTest {
         report("CharClass");
     }
 
-    private static void caretTest() throws Exception {
+    private static void caretTest() {
         Pattern pattern = Pattern.compile("\\w*");
         Matcher matcher = pattern.matcher("a#bc#def##g");
         check(matcher, "a");
@@ -2090,7 +2088,7 @@ public class RegExTest {
         report("Caret");
     }
 
-    private static void groupCaptureTest() throws Exception {
+    private static void groupCaptureTest() {
         // Independent group
         Pattern pattern = Pattern.compile("x+(?>y+)z+");
         Matcher matcher = pattern.matcher("xxxyyyzzz");
@@ -2137,7 +2135,7 @@ public class RegExTest {
         report("GroupCapture");
     }
 
-    private static void backRefTest() throws Exception {
+    private static void backRefTest() {
         Pattern pattern = Pattern.compile("(a*)bc\\1");
         check(pattern, "zzzaabcazzz", true);
 
@@ -2199,7 +2197,7 @@ public class RegExTest {
      * There is no empty line to be matched in the sequence \u000D\u000A
      * but there is an empty line in the sequence \u000A\u000D.
      */
-    private static void anchorTest() throws Exception {
+    private static void anchorTest() {
         Pattern p = Pattern.compile("^.*$", Pattern.MULTILINE);
         Matcher m = p.matcher("blah1\r\nblah2");
         m.find();
@@ -2283,7 +2281,7 @@ public class RegExTest {
     /**
      * A basic sanity test of Matcher.lookingAt().
      */
-    private static void lookingAtTest() throws Exception {
+    private static void lookingAtTest() {
         Pattern p = Pattern.compile("(ab)(c*)");
         Matcher m = p.matcher("abccczzzabcczzzabccc");
 
@@ -2317,7 +2315,7 @@ public class RegExTest {
     /**
      * A basic sanity test of Matcher.matches().
      */
-    private static void matchesTest() throws Exception {
+    private static void matchesTest() {
         // matches()
         Pattern p = Pattern.compile("ulb(c*)");
         Matcher m = p.matcher("ulbcccccc");
@@ -2369,7 +2367,7 @@ public class RegExTest {
     /**
      * A basic sanity test of Pattern.matches().
      */
-    private static void patternMatchesTest() throws Exception {
+    private static void patternMatchesTest() {
         // matches()
         if (!Pattern.matches(toSupplementaries("ulb(c*)"),
                 toSupplementaries("ulbcccccc")))
@@ -2409,7 +2407,7 @@ public class RegExTest {
      * to match sequences that are not explicitly specified in the
      * pattern when they are considered equivalent by the Unicode Standard.
      */
-    private static void ceTest() throws Exception {
+    private static void ceTest() {
         // Decomposed char outside char classes
         Pattern p = Pattern.compile("testa\u030a", Pattern.CANON_EQ);
         Matcher m = p.matcher("test\u00e5");
@@ -2523,7 +2521,7 @@ public class RegExTest {
     /**
      * A basic sanity test of Matcher.replaceAll().
      */
-    private static void globalSubstitute() throws Exception {
+    private static void globalSubstitute() {
         // Global substitution with a literal
         Pattern p = Pattern.compile("(ab)(c*)");
         Matcher m = p.matcher("abccczzzabcczzzabccc");
@@ -2566,7 +2564,7 @@ public class RegExTest {
      * Tests the usage of Matcher.appendReplacement() with literal
      * and group substitutions.
      */
-    private static void stringbufferSubstitute() throws Exception {
+    private static void stringbufferSubstitute() {
         // SB substitution with literal
         String blah = "zzzblahzzz";
         Pattern p = Pattern.compile("blah");
@@ -2858,15 +2856,15 @@ public class RegExTest {
         for (int runs = 0; runs < 1000; runs++) {
             // Create a base string to work in
             int leadingChars = generator.nextInt(10);
-            StringBuffer baseBuffer = new StringBuffer(100);
+            StringBuilder baseBuffer = new StringBuilder(100);
             String leadingString = getRandomAlphaString(leadingChars);
             baseBuffer.append(leadingString);
 
             // Create 5 groups of random number of random chars
             // Create the string to substitute
             // Create the pattern string to search for
-            StringBuffer bufferToSub = new StringBuffer(25);
-            StringBuffer bufferToPat = new StringBuffer(50);
+            StringBuilder bufferToSub = new StringBuilder(25);
+            StringBuilder bufferToPat = new StringBuilder(50);
             String[] groups = new String[5];
             for (int i = 0; i < 5; i++) {
                 int aGroupSize = generator.nextInt(5) + 1;
@@ -2903,7 +2901,7 @@ public class RegExTest {
 
             // Construct a replacement string with :
             // random group + random string + random group
-            StringBuffer bufferToRep = new StringBuffer();
+            StringBuilder bufferToRep = new StringBuilder();
             int groupIndex1 = generator.nextInt(5);
             bufferToRep.append("$" + (groupIndex1 + 1));
             String randomMidString = getRandomAlphaString(5);
@@ -2916,7 +2914,7 @@ public class RegExTest {
             String result = m.replaceAll(replacement);
 
             // Construct expected result
-            StringBuffer bufferToRes = new StringBuffer();
+            StringBuilder bufferToRes = new StringBuilder();
             bufferToRes.append(leadingString);
             bufferToRes.append(groups[groupIndex1]);
             bufferToRes.append(randomMidString);
@@ -2938,7 +2936,7 @@ public class RegExTest {
      * not in the file because the escapes should be be processed
      * by the Pattern class when the regex is compiled.
      */
-    private static void escapes() throws Exception {
+    private static void escapes() {
         Pattern p = Pattern.compile("\\043");
         Matcher m = p.matcher("#");
         if (!m.find())
@@ -2961,7 +2959,7 @@ public class RegExTest {
      * Checks the handling of blank input situations. These
      * tests are incompatible with my test file format.
      */
-    private static void blankInput() throws Exception {
+    private static void blankInput() {
         Pattern p = Pattern.compile("abc", Pattern.CASE_INSENSITIVE);
         Matcher m = p.matcher("");
         if (m.find())
@@ -2997,13 +2995,13 @@ public class RegExTest {
         report("Boyer Moore (Supplementary)");
     }
 
-    private static void doBnM(int baseCharacter) throws Exception {
+    private static void doBnM(int baseCharacter) {
         int achar = 0;
 
         for (int i = 0; i < 100; i++) {
             // Create a short pattern to search for
             int patternLength = generator.nextInt(7) + 4;
-            StringBuffer patternBuffer = new StringBuffer(patternLength);
+            StringBuilder patternBuffer = new StringBuilder(patternLength);
             String pattern;
             retry:
             for (; ; ) {
@@ -3081,14 +3079,14 @@ public class RegExTest {
         report("Slice (Supplementary)");
     }
 
-    private static void doSlice(int maxCharacter) throws Exception {
+    private static void doSlice(int maxCharacter) {
         Random generator = new Random();
         int achar = 0;
 
         for (int i = 0; i < 100; i++) {
             // Create a short pattern to search for
             int patternLength = generator.nextInt(7) + 4;
-            StringBuffer patternBuffer = new StringBuffer(patternLength);
+            StringBuilder patternBuffer = new StringBuilder(patternLength);
             for (int x = 0; x < patternLength; x++) {
                 int randomChar = 0;
                 while (!Character.isLetterOrDigit(randomChar))
@@ -3197,7 +3195,7 @@ public class RegExTest {
             // Read a line for input string
             String dataString = grabLine(r);
             Matcher m = p.matcher(dataString);
-            StringBuffer result = new StringBuffer();
+            StringBuilder result = new StringBuilder();
 
             // Check for IllegalStateExceptions before a match
             failCount += preMatchInvariants(m);
@@ -3327,12 +3325,12 @@ public class RegExTest {
         while (line.startsWith("//") || line.length() < 1)
             line = r.readLine();
         while ((index = line.indexOf("\\n")) != -1) {
-            StringBuffer temp = new StringBuffer(line);
+            StringBuilder temp = new StringBuilder(line);
             temp.replace(index, index + 2, "\n");
             line = temp.toString();
         }
         while ((index = line.indexOf("\\u")) != -1) {
-            StringBuffer temp = new StringBuffer(line);
+            StringBuilder temp = new StringBuilder(line);
             String value = temp.substring(index + 2, index + 6);
             char aChar = (char) Integer.parseInt(value, 16);
             String unicodeChar = "" + aChar;
@@ -3413,7 +3411,7 @@ public class RegExTest {
         failCount++;
     }
 
-    private static void namedGroupCaptureTest() throws Exception {
+    private static void namedGroupCaptureTest() {
         check(Pattern.compile("x+(?<gname>y+)z+"),
                 "xxxyyyzzz",
                 "gname",
@@ -3545,7 +3543,7 @@ public class RegExTest {
     }
 
     // This is for bug 6969132
-    private static void nonBmpClassComplementTest() throws Exception {
+    private static void nonBmpClassComplementTest() {
         Pattern p = Pattern.compile("\\P{Lu}");
         Matcher m = p.matcher(new String(new int[]{0x1d400}, 0, 1));
         if (m.find() && m.start() == 1)
@@ -3568,7 +3566,7 @@ public class RegExTest {
         report("NonBmpClassComplement");
     }
 
-    private static void unicodePropertiesTest() throws Exception {
+    private static void unicodePropertiesTest() {
         // different forms
         if (!Pattern.compile("\\p{IsLu}").matcher("A").matches() ||
                 !Pattern.compile("\\p{Lu}").matcher("A").matches() ||
@@ -3644,7 +3642,7 @@ public class RegExTest {
         report("unicodeProperties");
     }
 
-    private static void unicodeHexNotationTest() throws Exception {
+    private static void unicodeHexNotationTest() {
 
         // negative
         checkExpectedFail("\\x{-23}");
@@ -3828,7 +3826,7 @@ public class RegExTest {
         report("unicodePredefinedClasses");
     }
 
-    private static void horizontalAndVerticalWSTest() throws Exception {
+    private static void horizontalAndVerticalWSTest() {
         String hws = new String(new char[]{
                 0x09, 0x20, 0xa0, 0x1680, 0x180e,
                 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005,
@@ -3889,7 +3887,7 @@ public class RegExTest {
         report("horizontalAndVerticalWSTest");
     }
 
-    private static void linebreakTest() throws Exception {
+    private static void linebreakTest() {
         String linebreaks = new String(new char[]{
                 0x0A, 0x0B, 0x0C, 0x0D, 0x85, 0x2028, 0x2029});
         String crnl = "\r\n";
@@ -3901,7 +3899,7 @@ public class RegExTest {
     }
 
     // #7189363
-    private static void branchTest() throws Exception {
+    private static void branchTest() {
         if (!Pattern.compile("(a)?bc|d").matcher("d").find() ||     // greedy
                 !Pattern.compile("(a)+bc|d").matcher("d").find() ||
                 !Pattern.compile("(a)*bc|d").matcher("d").find() ||
@@ -3929,7 +3927,7 @@ public class RegExTest {
     }
 
     // This test is for 8007395
-    private static void groupCurlyNotFoundSuppTest() throws Exception {
+    private static void groupCurlyNotFoundSuppTest() {
         String input = "test this as \ud83d\ude0d";
         for (String pStr : new String[]{"test(.)+(@[a-zA-Z.]+)",
                 "test(.)*(@[a-zA-Z.]+)",
@@ -3952,7 +3950,7 @@ public class RegExTest {
     }
 
     // This test is for 8023647
-    private static void groupCurlyBackoffTest() throws Exception {
+    private static void groupCurlyBackoffTest() {
         if (!"abc1c".matches("(\\w)+1\\1") ||
                 "abc11".matches("(\\w)+1\\1")) {
             failCount++;

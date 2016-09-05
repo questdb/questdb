@@ -778,7 +778,7 @@ public final class Matcher implements MatchResult {
      * Reports the end index (exclusive) of this matcher's region.
      * The searches this matcher conducts are limited to finding matches
      * within {@link #regionStart regionStart} (inclusive) and
-     * {@link #regionEnd regionEnd} (exclusive).
+     * {regionEnd} (exclusive).
      *
      * @return the ending point of this matcher's region
      * @since 1.5
@@ -790,7 +790,7 @@ public final class Matcher implements MatchResult {
     /**
      * Reports the start index of this matcher's region. The
      * searches this matcher conducts are limited to finding matches
-     * within {@link #regionStart regionStart} (inclusive) and
+     * within {regionStart} (inclusive) and
      * {@link #regionEnd regionEnd} (exclusive).
      *
      * @return The starting point of this matcher's region
