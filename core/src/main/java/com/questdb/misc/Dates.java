@@ -484,6 +484,55 @@ final public class Dates {
         }
     }
 
+    public static long parseTime24(CharSequence seq) throws NumericException {
+        return parseTime24(seq, 0, seq.length());
+    }
+
+    public static long parseTime24(CharSequence seq, int lo, int lim) throws NumericException {
+        int p = lo;
+        if (p + 2 > lim) {
+            throw NumericException.INSTANCE;
+        }
+        int hour = Numbers.parseInt(seq, p, p += 2);
+        int sec = 0;
+        int min = 0;
+        int mil = 0;
+        checkRange(hour, 0, 23);
+        if (p < lim && seq.charAt(p) == ':') {
+
+            checkChar(seq, p++, lim, ':');
+            if (p + 2 > lim) {
+                throw NumericException.INSTANCE;
+            }
+            min = Numbers.parseInt(seq, p, p += 2);
+            checkRange(min, 0, 59);
+
+            if (p < lim && seq.charAt(p) == ':') {
+                checkChar(seq, p++, lim, ':');
+                if (p + 2 > lim) {
+                    throw NumericException.INSTANCE;
+                }
+                sec = Numbers.parseInt(seq, p, p += 2);
+                checkRange(sec, 0, 59);
+                if (p < lim && seq.charAt(p) == '.') {
+                    if (p + 4 > lim) {
+                        throw NumericException.INSTANCE;
+                    }
+                    mil = Numbers.parseInt(seq, ++p, p += 3);
+                    checkRange(mil, 0, 999);
+                }
+            }
+        }
+
+        if (p < lim) {
+            checkChar(seq, p, lim, 'Z');
+        }
+        return hour * HOUR_MILLIS
+                + min * MINUTE_MILLIS
+                + sec * SECOND_MILLIS
+                + mil;
+    }
+
     public static long toMillis(int y, int m, int d, int h, int mi) {
         boolean l = isLeapYear(y);
         return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS + h * HOUR_MILLIS + mi * MINUTE_MILLIS;
@@ -659,7 +708,6 @@ final public class Dates {
                 + min * MINUTE_MILLIS
                 + sec * SECOND_MILLIS
                 + mil;
-
     }
 
     // YYYY-MM-DD hh:mm:ss

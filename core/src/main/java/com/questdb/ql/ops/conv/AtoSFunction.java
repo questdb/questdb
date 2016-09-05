@@ -44,6 +44,11 @@ public class AtoSFunction extends AbstractUnaryOperator {
     }
 
     @Override
+    public int getInt(Record rec) {
+        return 0;
+    }
+
+    @Override
     public String getSym(Record rec) {
         return value.getStr(rec).toString();
     }

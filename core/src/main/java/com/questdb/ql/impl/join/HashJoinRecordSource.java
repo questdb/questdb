@@ -126,6 +126,11 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
+    public Record newRecord() {
+        return new SplitRecord(master.getMetadata().getColumnCount());
+    }
+
+    @Override
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("HashJoinRecordSource").put(',');

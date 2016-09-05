@@ -21,32 +21,46 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.neq;
+package com.questdb.ql.ops.conv;
 
-import com.questdb.misc.Chars;
+import com.questdb.ex.NumericException;
+import com.questdb.misc.Dates;
 import com.questdb.ql.Record;
-import com.questdb.ql.ops.AbstractBinaryOperator;
+import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
-public class StrNotEqualsOperator extends AbstractBinaryOperator {
+public class Time24ToMillisFunction extends AbstractUnaryOperator {
 
     public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
         @Override
         public Function newInstance() {
-            return new StrNotEqualsOperator();
+            return new Time24ToMillisFunction();
         }
     };
 
-    private StrNotEqualsOperator() {
-        super(ColumnType.BOOLEAN);
+    private Time24ToMillisFunction() {
+        super(ColumnType.LONG);
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        CharSequence l = lhs.getFlyweightStr(rec);
-        CharSequence r = rhs.getFlyweightStr(rec);
-        return !(r == null && l == null) && (!(r != null && l != null) || !Chars.equals(l, r));
+    public long getDate(Record rec) {
+        return getLong(rec);
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return getLong(rec);
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        try {
+            CharSequence s = value.getFlyweightStr(rec);
+            return s == null ? 0 : Dates.parseTime24(s);
+        } catch (NumericException ignore) {
+            return 0;
+        }
     }
 }

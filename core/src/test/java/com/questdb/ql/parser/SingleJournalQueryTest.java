@@ -2182,6 +2182,12 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testRegexNull() throws Exception {
+        createTabWithNullsAndTime();
+        assertThat("IBBTGPGWFFYUDEYYQEHBHF\t19:36\t2015-03-12T00:00:00.000Z\n", "tab where id ~ 'BT'");
+    }
+
+    @Test
     public void testScaledDoubleComparison() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
@@ -2893,6 +2899,120 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testStrEqualsNull() throws Exception {
+        createTabWithNullsAndTime();
+        String expected = "RQ\t20:54\t2015-03-12T00:00:00.000Z\n";
+        assertThat(expected, "tab where id = 'RQ'");
+        assertThat(expected, "tab where 'RQ' = id");
+    }
+
+    @Test
+    public void testStrNotEqualsNull() throws Exception {
+        createTabWithNullsAndTime();
+        String expected = "JWCPSWHYRXPEHNRXGZ\t19:27\t2015-03-12T00:00:00.000Z\n" +
+                "IBBTGPGWFFYUDEYYQEHBHF\t19:36\t2015-03-12T00:00:00.000Z\n" +
+                "null\t2:52\t2015-03-12T00:00:00.000Z\n" +
+                "null\t5:22\t2015-03-12T00:00:00.000Z\n" +
+                "OUO\t8:47\t2015-03-12T00:00:00.000Z\n" +
+                "null\t0:14\t2015-03-12T00:00:00.000Z\n" +
+                "null\t15:34\t2015-03-12T00:00:00.000Z\n" +
+                "ETJRS\t13:27\t2015-03-12T00:00:00.000Z\n" +
+                "RFBVTMHGOOZZVDZJMYICCXZ\t12:9\t2015-03-12T00:00:00.000Z\n" +
+                "W\t8:19\t2015-03-12T00:00:00.000Z\n" +
+                "null\t9:5\t2015-03-12T00:00:00.000Z\n" +
+                "SDOTSEDYYCTGQOLYXWCK\t9:40\t2015-03-12T00:00:00.000Z\n" +
+                "WDSWUGSHOLNVTIQBZXI\t4:10\t2015-03-12T00:00:00.000Z\n" +
+                "null\t11:43\t2015-03-12T00:00:00.000Z\n" +
+                "null\t14:7\t2015-03-12T00:00:00.000Z\n" +
+                "QSRLTKVVSJOJIPHZEPI\t14:15\t2015-03-12T00:00:00.000Z\n" +
+                "OVLJUMLGLHMLLEOYPH\t22:22\t2015-03-12T00:00:00.000Z\n" +
+                "null\t19:32\t2015-03-12T00:00:00.000Z\n" +
+                "null\t21:49\t2015-03-12T00:00:00.000Z\n" +
+                "null\t7:16\t2015-03-12T00:00:00.000Z\n" +
+                "BEZGHWVDKFL\t15:19\t2015-03-12T00:00:00.000Z\n" +
+                "XPKRGIIHYHBOQ\t22:48\t2015-03-12T00:00:00.000Z\n" +
+                "null\t16:16\t2015-03-12T00:00:00.000Z\n" +
+                "null\t14:40\t2015-03-12T00:00:00.000Z\n" +
+                "HNZHZSQLDGLOG\t12:44\t2015-03-12T00:00:00.000Z\n" +
+                "SZMZVQEBNDCQCEHNOMV\t2:30\t2015-03-12T00:00:00.000Z\n" +
+                "null\t5:59\t2015-03-12T00:00:00.000Z\n" +
+                "WNWIFFLRBROMNXKUIZ\t23:25\t2015-03-12T00:00:00.000Z\n" +
+                "YVFZF\t11:46\t2015-03-12T00:00:00.000Z\n" +
+                "null\t0:14\t2015-03-12T00:00:00.000Z\n" +
+                "null\t6:47\t2015-03-12T00:00:00.000Z\n" +
+                "VWSW\t1:36\t2015-03-12T00:00:00.000Z\n" +
+                "ONFCLTJCKFMQN\t21:23\t2015-03-12T00:00:00.000Z\n" +
+                "XUKLGMXSLUQ\t15:38\t2015-03-12T00:00:00.000Z\n" +
+                "null\t20:26\t2015-03-12T00:00:00.000Z\n" +
+                "MYFFDTN\t12:56\t2015-03-12T00:00:00.000Z\n" +
+                "PBNHGZWWCC\t15:25\t2015-03-12T00:00:00.000Z\n" +
+                "LEGPUHHIUGGL\t14:43\t2015-03-12T00:00:00.000Z\n" +
+                "LCBDMIGQZVKHTLQZSLQVFGPP\t21:45\t2015-03-12T00:00:00.000Z\n" +
+                "BHYSBQYMIZJSVTNPIWZNFK\t13:23\t2015-03-12T00:00:00.000Z\n" +
+                "null\t2:41\t2015-03-12T00:00:00.000Z\n" +
+                "null\t8:57\t2015-03-12T00:00:00.000Z\n" +
+                "null\t12:16\t2015-03-12T00:00:00.000Z\n" +
+                "null\t14:20\t2015-03-12T00:00:00.000Z\n" +
+                "JYDVRVN\t11:57\t2015-03-12T00:00:00.000Z\n" +
+                "null\t18:45\t2015-03-12T00:00:00.000Z\n" +
+                "null\t17:31\t2015-03-12T00:00:00.000Z\n" +
+                "IWF\t11:20\t2015-03-12T00:00:00.000Z\n" +
+                "HQQUWQOEENNEBQQEMXDKXEJ\t22:48\t2015-03-12T00:00:00.000Z\n" +
+                "KYFLUHZQSNPXMKJSMKIXEYVT\t19:44\t2015-03-12T00:00:00.000Z\n" +
+                "HGGIWH\t16:4\t2015-03-12T00:00:00.000Z\n" +
+                "null\t15:11\t2015-03-12T00:00:00.000Z\n" +
+                "null\t6:29\t2015-03-12T00:00:00.000Z\n" +
+                "null\t18:13\t2015-03-12T00:00:00.000Z\n" +
+                "SVIHDWWLEV\t16:40\t2015-03-12T00:00:00.000Z\n" +
+                "null\t9:38\t2015-03-12T00:00:00.000Z\n" +
+                "VLU\t11:45\t2015-03-12T00:00:00.000Z\n" +
+                "null\t2:33\t2015-03-12T00:00:00.000Z\n" +
+                "null\t5:25\t2015-03-12T00:00:00.000Z\n" +
+                "CLNXFSUWPNXH\t22:39\t2015-03-12T00:00:00.000Z\n" +
+                "ODWKOCPFYXPVKNCBWLNLRHWQ\t14:48\t2015-03-12T00:00:00.000Z\n" +
+                "VFDBZWNIJEEHR\t19:25\t2015-03-12T00:00:00.000Z\n" +
+                "null\t17:16\t2015-03-12T00:00:00.000Z\n" +
+                "null\t2:4\t2015-03-12T00:00:00.000Z\n" +
+                "BEGMITINLKFNUHNRJ\t12:13\t2015-03-12T00:00:00.000Z\n" +
+                "null\t21:50\t2015-03-12T00:00:00.000Z\n" +
+                "MPBETTTKRIVOC\t15:50\t2015-03-12T00:00:00.000Z\n" +
+                "null\t16:22\t2015-03-12T00:00:00.000Z\n" +
+                "IVQF\t6:52\t2015-03-12T00:00:00.000Z\n" +
+                "SBOSEPGIUQZHE\t1:27\t2015-03-12T00:00:00.000Z\n" +
+                "null\t12:12\t2015-03-12T00:00:00.000Z\n" +
+                "null\t16:52\t2015-03-12T00:00:00.000Z\n" +
+                "INKG\t18:25\t2015-03-12T00:00:00.000Z\n" +
+                "EVQTQOZKXTPNHTDCEBYWX\t3:10\t2015-03-12T00:00:00.000Z\n" +
+                "RLPTYXYGYFUXCDKDWOMD\t0:26\t2015-03-12T00:00:00.000Z\n" +
+                "FRPXZSFX\t16:37\t2015-03-12T00:00:00.000Z\n" +
+                "XTGNJJILLEYMIWT\t15:46\t2015-03-12T00:00:00.000Z\n" +
+                "null\t14:8\t2015-03-12T00:00:00.000Z\n" +
+                "FIEVM\t2:29\t2015-03-12T00:00:00.000Z\n" +
+                "GPYKKBMQMUDDCIHCNPUG\t23:38\t2015-03-12T00:00:00.000Z\n" +
+                "null\t1:58\t2015-03-12T00:00:00.000Z\n" +
+                "null\t10:56\t2015-03-12T00:00:00.000Z\n" +
+                "null\t7:57\t2015-03-12T00:00:00.000Z\n" +
+                "BBUKOJSOLDYRODIPUNRPSMIF\t21:8\t2015-03-12T00:00:00.000Z\n" +
+                "KO\t14:49\t2015-03-12T00:00:00.000Z\n" +
+                "QSQJGDIHHNSSTCRZ\t19:39\t2015-03-12T00:00:00.000Z\n" +
+                "FULMERTPIQBUYZV\t16:30\t2015-03-12T00:00:00.000Z\n" +
+                "QSPZPBHLNEJRMDIKD\t15:22\t2015-03-12T00:00:00.000Z\n" +
+                "null\t12:49\t2015-03-12T00:00:00.000Z\n" +
+                "PZGPZNYVLTPKBBQ\t9:57\t2015-03-12T00:00:00.000Z\n" +
+                "YNNCTFSNSXHHD\t0:50\t2015-03-12T00:00:00.000Z\n" +
+                "RUMMZSCJOU\t2:14\t2015-03-12T00:00:00.000Z\n" +
+                "ENFEL\t4:46\t2015-03-12T00:00:00.000Z\n" +
+                "null\t11:40\t2015-03-12T00:00:00.000Z\n" +
+                "QHGJBFQBBKF\t19:3\t2015-03-12T00:00:00.000Z\n" +
+                "null\t5:18\t2015-03-12T00:00:00.000Z\n" +
+                "null\t5:14\t2015-03-12T00:00:00.000Z\n" +
+                "BHVRIIYMHOWKCDNZNLCNGZ\t14:48\t2015-03-12T00:00:00.000Z\n" +
+                "OXRSFPVRQLGYDONNLI\t20:1\t2015-03-12T00:00:00.000Z\n";
+        assertThat(expected, "tab where id != 'RQ'");
+        assertThat(expected, "tab where 'RQ' != id");
+    }
+
+    @Test
     public void testStrRegex() throws Exception {
         createTab();
         final String expecte = "KEQMMKDFIPNZVZR\t0.000000001530\t2015-03-12T00:00:03.470Z\n" +
@@ -3125,6 +3245,22 @@ public class SingleJournalQueryTest extends AbstractTest {
                 "EIWFOQKYHQQUWQO\t-617.734375000000\t2015-03-12T00:01:40.000Z\n";
 
         assertThat(expected, "select id, y, timestamp from tab latest by id where id ~ '^E.*'");
+    }
+
+    @Test
+    public void testTime24() throws Exception {
+        createTabWithNullsAndTime();
+        assertThat("null\t2015-03-12T00:00:00.000Z\t2:52\t2015-03-12T00:00:00.000Z\n" +
+                        "null\t2015-03-12T00:00:00.000Z\t5:22\t2015-03-12T00:00:00.000Z\n" +
+                        "null\t2015-03-12T00:00:00.000Z\t0:14\t2015-03-12T00:00:00.000Z\n" +
+                        "null\t2015-03-12T00:00:00.000Z\t15:34\t2015-03-12T15:34:00.000Z\n" +
+                        "null\t2015-03-12T00:00:00.000Z\t9:5\t2015-03-12T00:00:00.000Z\n" +
+                        "null\t2015-03-12T00:00:00.000Z\t11:43\t2015-03-12T11:43:00.000Z\n" +
+                        "null\t2015-03-12T00:00:00.000Z\t14:7\t2015-03-12T00:00:00.000Z\n" +
+                        "null\t2015-03-12T00:00:00.000Z\t19:32\t2015-03-12T19:32:00.000Z\n" +
+                        "null\t2015-03-12T00:00:00.000Z\t21:49\t2015-03-12T21:49:00.000Z\n" +
+                        "null\t2015-03-12T00:00:00.000Z\t7:16\t2015-03-12T00:00:00.000Z\n",
+                "select id, date, time, date + time24(time) from tab where id = null limit 10");
     }
 
     @Test
@@ -3509,6 +3645,24 @@ public class SingleJournalQueryTest extends AbstractTest {
                 $int("w").index().
                 $ts()
         );
+    }
+
+    private void createTabWithNullsAndTime() throws JournalException, NumericException {
+        try (JournalWriter w = factory.writer(new JournalStructure("tab").
+                $str("id").index().
+                $str("time").
+                $date("date"))) {
+            Rnd rnd = new Rnd();
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            for (int i = 0; i < 100; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, rnd.nextBoolean() ? null : rnd.nextChars(rnd.nextPositiveInt() % 25));
+                ew.putStr(1, rnd.nextPositiveInt() % 24 + ":" + rnd.nextPositiveInt() % 60);
+                ew.putDate(2, t);
+                ew.append();
+            }
+            w.commit();
+        }
     }
 
     private ObjHashSet<String> getNames(Rnd r, int n) {

@@ -45,6 +45,8 @@ public class StrEqualsOperator extends AbstractBinaryOperator {
 
     @Override
     public boolean getBool(Record rec) {
-        return Chars.equals(lhs.getFlyweightStr(rec), rhs.getFlyweightStr(rec));
+        CharSequence l = lhs.getFlyweightStr(rec);
+        CharSequence r = rhs.getFlyweightStr(rec);
+        return l == null && r == null || l != null && r != null && Chars.equals(l, r);
     }
 }

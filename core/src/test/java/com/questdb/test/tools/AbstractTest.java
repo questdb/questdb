@@ -32,6 +32,7 @@ import com.questdb.model.configuration.ModelConfiguration;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Rule;
 
 import java.io.IOException;
@@ -43,6 +44,11 @@ public abstract class AbstractTest {
     protected final StringSink sink = new StringSink();
     protected final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
     private final QueryCompiler compiler = new QueryCompiler();
+
+    @Before
+    public void setUp2() throws Exception {
+        factory.getConfiguration().exists("none");
+    }
 
     protected void assertEmpty(String query) throws ParserException {
         try (RecordSource src = compiler.compile(factory, query)) {

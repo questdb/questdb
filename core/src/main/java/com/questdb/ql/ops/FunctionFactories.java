@@ -63,10 +63,7 @@ import com.questdb.ql.ops.neg.DoubleNegativeOperator;
 import com.questdb.ql.ops.neg.IntNegativeOperator;
 import com.questdb.ql.ops.neg.LongNegativeOperator;
 import com.questdb.ql.ops.neq.*;
-import com.questdb.ql.ops.plus.AddDoubleOperator;
-import com.questdb.ql.ops.plus.AddIntOperator;
-import com.questdb.ql.ops.plus.AddLongOperator;
-import com.questdb.ql.ops.plus.StrConcatOperator;
+import com.questdb.ql.ops.plus.*;
 import com.questdb.ql.ops.sum.SumDoubleAggregator;
 import com.questdb.ql.ops.sum.SumIntAggregator;
 import com.questdb.ql.ops.sum.SumLongAggregator;
@@ -277,6 +274,9 @@ public final class FunctionFactories {
 
     static {
         binSig("+", AddDoubleOperator.FACTORY, AddLongOperator.FACTORY, AddIntOperator.FACTORY, StrConcatOperator.FACTORY);
+        binSig("+", ColumnType.DATE, ColumnType.LONG, AddDateOperator.FACTORY);
+        binSig("+", ColumnType.LONG, ColumnType.DATE, AddDateOperator.FACTORY);
+
         binSig("*", MultDoubleOperator.FACTORY, MultLongOperator.FACTORY, MultIntOperator.FACTORY);
         binSig("/", DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY);
         binSig("-", MinusDoubleOperator.FACTORY, MinusLongOperator.FACTORY, MinusIntOperator.FACTORY);
@@ -327,6 +327,7 @@ public final class FunctionFactories {
         unSig("ltod", ColumnType.LONG, LtoDFunction.FACTORY);
         unSig("dtol", ColumnType.DATE, DtoLFunction.FACTORY);
         unSig("round", ColumnType.DOUBLE, RoundFunction.FACTORY);
+        unSig("time24", ColumnType.STRING, Time24ToMillisFunction.FACTORY);
 
         factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.STRING, true), StrRegexOperator.FACTORY);
         factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.PARAMETER, true), StrRegexOperator.FACTORY);

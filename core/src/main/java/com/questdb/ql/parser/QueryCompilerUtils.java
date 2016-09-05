@@ -106,7 +106,7 @@ public final class QueryCompilerUtils {
         if (rs != null) {
             try {
                 copy(factory, rs, w);
-            } catch (JournalException e) {
+            } catch (Throwable e) {
                 w.close();
                 throw e;
             }

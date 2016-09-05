@@ -27,15 +27,19 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
+import com.questdb.ql.impl.join.SplitRecordStorageFacade;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
+import com.questdb.store.SymbolTable;
 
 public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource recordSource;
     private final RecordMetadata metadata;
     private final VirtualRecord current;
+    private final SplitRecordStorageFacade storageFacade;
+    private final VirtualColumnStorageFacade virtualColumnStorageFacade;
     private RecordCursor recordCursor;
 
     public VirtualColumnRecordSource(RecordSource recordSource, ObjList<VirtualColumn> virtualColumns) {
@@ -43,6 +47,8 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
         RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
         this.current = new VirtualRecord(dm.getColumnCount(), virtualColumns);
+        this.virtualColumnStorageFacade = new VirtualColumnStorageFacade();
+        this.storageFacade = new SplitRecordStorageFacade(dm.getColumnCount());
     }
 
     @Override
@@ -58,13 +64,15 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
-        current.prepare(recordCursor.getStorageFacade());
+        this.virtualColumnStorageFacade.prepare(factory);
+        storageFacade.prepare(factory, recordCursor.getStorageFacade(), this.virtualColumnStorageFacade);
+        current.prepare(storageFacade);
         return this;
     }
 
     @Override
     public StorageFacade getStorageFacade() {
-        return recordCursor.getStorageFacade();
+        return storageFacade;
     }
 
     @Override
@@ -107,5 +115,23 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
         sink.putQuoted("op").put(':').putQuoted("VirtualColumnRecordSource").put(',');
         sink.putQuoted("src").put(':').put(recordSource);
         sink.put('}');
+    }
+
+    private static class VirtualColumnStorageFacade implements StorageFacade {
+        private JournalReaderFactory factory;
+
+        @Override
+        public JournalReaderFactory getFactory() {
+            return factory;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int index) {
+            return null;
+        }
+
+        public void prepare(JournalReaderFactory factory) {
+            this.factory = factory;
+        }
     }
 }

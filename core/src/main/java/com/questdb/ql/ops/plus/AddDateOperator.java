@@ -21,32 +21,43 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.neq;
+package com.questdb.ql.ops.plus;
 
-import com.questdb.misc.Chars;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
-public class StrNotEqualsOperator extends AbstractBinaryOperator {
+public class AddDateOperator extends AbstractBinaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
         @Override
         public Function newInstance() {
-            return new StrNotEqualsOperator();
+            return new AddDateOperator();
         }
     };
 
-    private StrNotEqualsOperator() {
-        super(ColumnType.BOOLEAN);
+    private AddDateOperator() {
+        super(ColumnType.DATE);
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        CharSequence l = lhs.getFlyweightStr(rec);
-        CharSequence r = rhs.getFlyweightStr(rec);
-        return !(r == null && l == null) && (!(r != null && l != null) || !Chars.equals(l, r));
+    public long getDate(Record rec) {
+        return getLong(rec);
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        long l = lhs.getLong(rec);
+        long r = rhs.getLong(rec);
+        return l == Long.MIN_VALUE || r == Long.MIN_VALUE ? Double.NaN : l + r;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        long l = lhs.getLong(rec);
+        long r = rhs.getLong(rec);
+        return l == Long.MIN_VALUE || r == Long.MIN_VALUE ? Long.MIN_VALUE : l + r;
     }
 }

@@ -157,6 +157,7 @@ public class IOHttpJob implements Job {
             LOG.debug().$("Slow write").$();
             newChannelStatus = ChannelStatus.WRITE;
         } catch (Throwable e) {
+            context.clear();
             silent(context, 500, e.getMessage());
             newChannelStatus = ChannelStatus.DISCONNECTED;
             LOG.error().$("Internal error: ").$(e).$();
