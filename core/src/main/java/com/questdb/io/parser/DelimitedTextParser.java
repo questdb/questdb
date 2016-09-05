@@ -177,7 +177,6 @@ public class DelimitedTextParser implements TextParser {
         OUT:
         while (ptr < hi) {
             byte c = Unsafe.getUnsafe().getByte(ptr++);
-            char b = (char) c;
 
             if (useLineRollBuf) {
                 putToRollBuf(c);
