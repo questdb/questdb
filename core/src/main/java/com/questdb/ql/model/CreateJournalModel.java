@@ -24,7 +24,6 @@
 package com.questdb.ql.model;
 
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.ql.RecordSource;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
@@ -43,7 +42,6 @@ public class CreateJournalModel implements Mutable, ParsedModel {
     private ExprNode partitionBy;
     private ExprNode recordHint;
     private JournalStructure struct;
-    private RecordSource recordSource;
 
     private CreateJournalModel() {
     }
@@ -60,7 +58,6 @@ public class CreateJournalModel implements Mutable, ParsedModel {
         partitionBy = null;
         recordHint = null;
         struct = null;
-        recordSource = null;
         name = null;
     }
 
@@ -98,14 +95,6 @@ public class CreateJournalModel implements Mutable, ParsedModel {
 
     public void setRecordHint(ExprNode recordHint) {
         this.recordHint = recordHint;
-    }
-
-    public RecordSource getRecordSource() {
-        return recordSource;
-    }
-
-    public void setRecordSource(RecordSource recordSource) {
-        this.recordSource = recordSource;
     }
 
     public JournalStructure getStruct() {

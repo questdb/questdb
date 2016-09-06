@@ -111,7 +111,7 @@ public class ComparatorCompiler {
             asm.put(BytecodeAssembler.aload_1);
             int index = keyColumns.getQuick(i);
             asm.putConstant((index > 0 ? index : -index) - 1);
-            asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i));
+            asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 1);
             asm.put(BytecodeAssembler.invokestatic);
             asm.putShort(comparatorAccessorIndices.getQuick(i));
             if (index < 0) {
@@ -179,7 +179,7 @@ public class ComparatorCompiler {
             int index = keyColumns.getQuick(i);
             // make sure column index is valid in case of "descending sort" flag
             asm.putConstant((index > 0 ? index : -index) - 1);
-            asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i));
+            asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), 1);
             asm.put(BytecodeAssembler.putfield);
             asm.putShort(fieldIndices.getQuick(i));
         }

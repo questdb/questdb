@@ -38,6 +38,7 @@ public class BytecodeAssembler implements Mutable {
     public static final int aload_0 = 42;
     public static final int ineg = 0x74;
     public static final int aload_1 = 43;
+    public static final int aload_2 = 44;
     public static final int istore_2 = 61;
     public static final int ifne = 154;
     public static final int ireturn = 172;
@@ -45,11 +46,11 @@ public class BytecodeAssembler implements Mutable {
     public static final int getfield = 180;
     public static final int putfield = 181;
     public static final int invokestatic = 184;
+    public static final int invokeinterface = 185;
     private static final int iconst_0 = 3;
     private static final int bipush = 16;
     private static final int sipush = 17;
     private static final int invokespecial = 183;
-    private static final int invokeinterface = 185;
     private static final int O_POOL_COUNT = 8;
 
     private final Utf8Appender utf8Appender = new Utf8Appender();
@@ -136,10 +137,10 @@ public class BytecodeAssembler implements Mutable {
         return buf.get(pos);
     }
 
-    public void invokeInterface(int interfaceIndex) {
+    public void invokeInterface(int interfaceIndex, int argCount) {
         put(invokeinterface);
         putShort(interfaceIndex);
-        put(0x02);
+        put(argCount + 1);
         put(0);
     }
 
