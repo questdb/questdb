@@ -44,6 +44,10 @@ public class Rnd {
         return nextLong(1) != 0;
     }
 
+    public byte nextByte() {
+        return (byte) nextLong();
+    }
+
     public byte[] nextBytes(int len) {
         byte bytes[] = new byte[len];
         for (int i = 0; i < len; i++) {
@@ -97,6 +101,10 @@ public class Rnd {
     public long nextPositiveLong() {
         long l = nextLong();
         return l > 0 ? l : -l;
+    }
+
+    public short nextShort() {
+        return (short) nextLong();
     }
 
     public String nextString(int len) {

@@ -60,6 +60,511 @@ public class DDLTests {
         }
     }
 
+    public void testCast(int from, int to) throws Exception {
+        int n = 100;
+        try (JournalWriter w1 = compiler.createWriter(factory, "create table y (a " + ColumnType.nameOf(from) + ") record hint 100")) {
+            Rnd rnd = new Rnd();
+            for (int i = 0; i < n; i++) {
+                JournalEntryWriter ew = w1.entryWriter();
+                switch (from) {
+                    case ColumnType.INT:
+                        ew.putInt(0, rnd.nextInt());
+                        break;
+                    case ColumnType.LONG:
+                        ew.putLong(0, rnd.nextLong());
+                        break;
+                    case ColumnType.DATE:
+                        ew.putDate(0, rnd.nextLong());
+                        break;
+                    case ColumnType.BYTE:
+                        ew.put(0, rnd.nextByte());
+                        break;
+                    case ColumnType.SHORT:
+                        ew.putShort(0, rnd.nextShort());
+                        break;
+                    case ColumnType.FLOAT:
+                        ew.putFloat(0, rnd.nextFloat());
+                        break;
+                    case ColumnType.DOUBLE:
+                        ew.putDouble(0, rnd.nextDouble());
+                        break;
+                    case ColumnType.SYMBOL:
+                        ew.putSym(0, rnd.nextChars(10));
+                        break;
+                    case ColumnType.STRING:
+                        ew.putStr(0, rnd.nextChars(10));
+                        break;
+                    default:
+                        break;
+                }
+                ew.append();
+            }
+            w1.commit();
+        }
+
+        compiler.execute(factory, "create table x as (y), cast(a as " + ColumnType.nameOf(to) + ") record hint 100");
+
+        try (RecordSource rs = compiler.compile(factory, "x")) {
+            Rnd rnd = new Rnd();
+            Assert.assertEquals(to, rs.getMetadata().getColumn(0).getType());
+            RecordCursor cursor = rs.prepareCursor(factory);
+            while (cursor.hasNext()) {
+                switch (from) {
+                    case ColumnType.INT:
+                        switch (to) {
+                            case ColumnType.SHORT:
+                                Assert.assertEquals((short) rnd.nextInt(), cursor.next().getShort(0));
+                                break;
+                            case ColumnType.LONG:
+                                Assert.assertEquals((long) rnd.nextInt(), cursor.next().getLong(0));
+                                break;
+                            case ColumnType.BYTE:
+                                Assert.assertEquals((byte) rnd.nextInt(), cursor.next().get(0));
+                                break;
+                            case ColumnType.FLOAT:
+                                Assert.assertEquals((float) rnd.nextInt(), cursor.next().getFloat(0), 0.000000001f);
+                                break;
+                            case ColumnType.DOUBLE:
+                                Assert.assertEquals((double) rnd.nextInt(), cursor.next().getDouble(0), 0.000000001);
+                                break;
+                            case ColumnType.DATE:
+                                Assert.assertEquals((long) rnd.nextInt(), cursor.next().getDate(0));
+                                break;
+                            case ColumnType.INT:
+                                Assert.assertEquals(rnd.nextInt(), cursor.next().getInt(0));
+                                break;
+                            default:
+                                break;
+                        }
+                        break;
+                    case ColumnType.LONG:
+                    case ColumnType.DATE:
+                        switch (to) {
+                            case ColumnType.SHORT:
+                                Assert.assertEquals((short) rnd.nextLong(), cursor.next().getShort(0));
+                                break;
+                            case ColumnType.LONG:
+                                Assert.assertEquals(rnd.nextLong(), cursor.next().getLong(0));
+                                break;
+                            case ColumnType.BYTE:
+                                Assert.assertEquals((byte) rnd.nextLong(), cursor.next().get(0));
+                                break;
+                            case ColumnType.FLOAT:
+                                Assert.assertEquals((float) rnd.nextLong(), cursor.next().getFloat(0), 0.000000001f);
+                                break;
+                            case ColumnType.DOUBLE:
+                                Assert.assertEquals((double) rnd.nextLong(), cursor.next().getDouble(0), 0.000000001);
+                                break;
+                            case ColumnType.DATE:
+                                Assert.assertEquals(rnd.nextLong(), cursor.next().getDate(0));
+                                break;
+                            case ColumnType.INT:
+                                Assert.assertEquals((int) rnd.nextLong(), cursor.next().getInt(0));
+                                break;
+                            default:
+                                break;
+                        }
+                        break;
+                    case ColumnType.BYTE:
+                        switch (to) {
+                            case ColumnType.SHORT:
+                                Assert.assertEquals((short) rnd.nextByte(), cursor.next().getShort(0));
+                                break;
+                            case ColumnType.LONG:
+                                Assert.assertEquals((long) rnd.nextByte(), cursor.next().getLong(0));
+                                break;
+                            case ColumnType.BYTE:
+                                Assert.assertEquals(rnd.nextByte(), cursor.next().get(0));
+                                break;
+                            case ColumnType.FLOAT:
+                                Assert.assertEquals((float) rnd.nextByte(), cursor.next().getFloat(0), 0.000000001f);
+                                break;
+                            case ColumnType.DOUBLE:
+                                Assert.assertEquals((double) rnd.nextByte(), cursor.next().getDouble(0), 0.000000001);
+                                break;
+                            case ColumnType.DATE:
+                                Assert.assertEquals((long) rnd.nextByte(), cursor.next().getDate(0));
+                                break;
+                            case ColumnType.INT:
+                                Assert.assertEquals((int) rnd.nextByte(), cursor.next().getInt(0));
+                                break;
+                            default:
+                                break;
+                        }
+                        break;
+                    case ColumnType.SHORT:
+                        switch (to) {
+                            case ColumnType.SHORT:
+                                Assert.assertEquals(rnd.nextShort(), cursor.next().getShort(0));
+                                break;
+                            case ColumnType.LONG:
+                                Assert.assertEquals((long) rnd.nextShort(), cursor.next().getLong(0));
+                                break;
+                            case ColumnType.BYTE:
+                                Assert.assertEquals((byte) rnd.nextShort(), cursor.next().get(0));
+                                break;
+                            case ColumnType.FLOAT:
+                                Assert.assertEquals((float) rnd.nextShort(), cursor.next().getFloat(0), 0.000000001f);
+                                break;
+                            case ColumnType.DOUBLE:
+                                Assert.assertEquals((double) rnd.nextShort(), cursor.next().getDouble(0), 0.000000001);
+                                break;
+                            case ColumnType.DATE:
+                                Assert.assertEquals((long) rnd.nextShort(), cursor.next().getDate(0));
+                                break;
+                            case ColumnType.INT:
+                                Assert.assertEquals((int) rnd.nextShort(), cursor.next().getInt(0));
+                                break;
+                            default:
+                                break;
+                        }
+                        break;
+                    case ColumnType.FLOAT:
+                        switch (to) {
+                            case ColumnType.SHORT:
+                                Assert.assertEquals((short) rnd.nextFloat(), cursor.next().getShort(0));
+                                break;
+                            case ColumnType.LONG:
+                                Assert.assertEquals((long) rnd.nextFloat(), cursor.next().getLong(0));
+                                break;
+                            case ColumnType.BYTE:
+                                Assert.assertEquals((byte) rnd.nextFloat(), cursor.next().get(0));
+                                break;
+                            case ColumnType.FLOAT:
+                                Assert.assertEquals(rnd.nextFloat(), cursor.next().getFloat(0), 0.000000001f);
+                                break;
+                            case ColumnType.DOUBLE:
+                                Assert.assertEquals((double) rnd.nextFloat(), cursor.next().getDouble(0), 0.000000001);
+                                break;
+                            case ColumnType.DATE:
+                                Assert.assertEquals((long) rnd.nextFloat(), cursor.next().getDate(0));
+                                break;
+                            case ColumnType.INT:
+                                Assert.assertEquals((int) rnd.nextFloat(), cursor.next().getInt(0));
+                                break;
+                            default:
+                                break;
+                        }
+                        break;
+                    case ColumnType.DOUBLE:
+                        switch (to) {
+                            case ColumnType.SHORT:
+                                Assert.assertEquals((short) rnd.nextDouble(), cursor.next().getShort(0));
+                                break;
+                            case ColumnType.LONG:
+                                Assert.assertEquals((long) rnd.nextDouble(), cursor.next().getLong(0));
+                                break;
+                            case ColumnType.BYTE:
+                                Assert.assertEquals((byte) rnd.nextDouble(), cursor.next().get(0));
+                                break;
+                            case ColumnType.FLOAT:
+                                Assert.assertEquals((float) rnd.nextDouble(), cursor.next().getFloat(0), 0.000000001f);
+                                break;
+                            case ColumnType.DOUBLE:
+                                Assert.assertEquals(rnd.nextDouble(), cursor.next().getDouble(0), 0.000000001);
+                                break;
+                            case ColumnType.DATE:
+                                Assert.assertEquals((long) rnd.nextDouble(), cursor.next().getDate(0));
+                                break;
+                            case ColumnType.INT:
+                                Assert.assertEquals((int) rnd.nextDouble(), cursor.next().getInt(0));
+                                break;
+                            default:
+                                break;
+                        }
+                        break;
+                    case ColumnType.STRING:
+                        switch (to) {
+                            case ColumnType.SYMBOL:
+                                TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getSym(0));
+                                break;
+                            default:
+                                TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getFlyweightStr(0));
+                                break;
+                        }
+                        break;
+                    case ColumnType.SYMBOL:
+                        switch (to) {
+                            case ColumnType.STRING:
+                                TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getFlyweightStr(0));
+                                break;
+                            default:
+                                TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getSym(0));
+                                break;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testCastByteAsByte() throws Exception {
+        testCast(ColumnType.BYTE, ColumnType.BYTE);
+    }
+
+    @Test
+    public void testCastByteAsDate() throws Exception {
+        testCast(ColumnType.BYTE, ColumnType.DATE);
+    }
+
+    @Test
+    public void testCastByteAsDouble() throws Exception {
+        testCast(ColumnType.BYTE, ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testCastByteAsFloat() throws Exception {
+        testCast(ColumnType.BYTE, ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testCastByteAsInt() throws Exception {
+        testCast(ColumnType.BYTE, ColumnType.INT);
+    }
+
+    @Test
+    public void testCastByteAsLong() throws Exception {
+        testCast(ColumnType.BYTE, ColumnType.LONG);
+    }
+
+    @Test
+    public void testCastByteAsShort() throws Exception {
+        testCast(ColumnType.BYTE, ColumnType.SHORT);
+    }
+
+    @Test
+    public void testCastDateAsByte() throws Exception {
+        testCast(ColumnType.DATE, ColumnType.BYTE);
+    }
+
+    @Test
+    public void testCastDateAsDate() throws Exception {
+        testCast(ColumnType.DATE, ColumnType.DATE);
+    }
+
+    @Test
+    public void testCastDateAsDouble() throws Exception {
+        testCast(ColumnType.DATE, ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testCastDateAsFloat() throws Exception {
+        testCast(ColumnType.DATE, ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testCastDateAsInt() throws Exception {
+        testCast(ColumnType.DATE, ColumnType.INT);
+    }
+
+    @Test
+    public void testCastDateAsLong() throws Exception {
+        testCast(ColumnType.DATE, ColumnType.LONG);
+    }
+
+    @Test
+    public void testCastDateAsShort() throws Exception {
+        testCast(ColumnType.DATE, ColumnType.SHORT);
+    }
+
+    @Test
+    public void testCastDoubleAsByte() throws Exception {
+        testCast(ColumnType.DOUBLE, ColumnType.BYTE);
+    }
+
+    @Test
+    public void testCastDoubleAsDate() throws Exception {
+        testCast(ColumnType.DOUBLE, ColumnType.DATE);
+    }
+
+    @Test
+    public void testCastDoubleAsDouble() throws Exception {
+        testCast(ColumnType.DOUBLE, ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testCastDoubleAsFloat() throws Exception {
+        testCast(ColumnType.DOUBLE, ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testCastDoubleAsInt() throws Exception {
+        testCast(ColumnType.DOUBLE, ColumnType.INT);
+    }
+
+    @Test
+    public void testCastDoubleAsLong() throws Exception {
+        testCast(ColumnType.DOUBLE, ColumnType.LONG);
+    }
+
+    @Test
+    public void testCastDoubleAsShort() throws Exception {
+        testCast(ColumnType.DOUBLE, ColumnType.SHORT);
+    }
+
+    @Test
+    public void testCastFloatAsByte() throws Exception {
+        testCast(ColumnType.FLOAT, ColumnType.BYTE);
+    }
+
+    @Test
+    public void testCastFloatAsDate() throws Exception {
+        testCast(ColumnType.FLOAT, ColumnType.DATE);
+    }
+
+    @Test
+    public void testCastFloatAsDouble() throws Exception {
+        testCast(ColumnType.FLOAT, ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testCastFloatAsFloat() throws Exception {
+        testCast(ColumnType.FLOAT, ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testCastFloatAsInt() throws Exception {
+        testCast(ColumnType.FLOAT, ColumnType.INT);
+    }
+
+    @Test
+    public void testCastFloatAsLong() throws Exception {
+        testCast(ColumnType.FLOAT, ColumnType.LONG);
+    }
+
+    @Test
+    public void testCastFloatAsShort() throws Exception {
+        testCast(ColumnType.FLOAT, ColumnType.SHORT);
+    }
+
+    @Test
+    public void testCastIntAsByte() throws Exception {
+        testCast(ColumnType.INT, ColumnType.BYTE);
+    }
+
+    @Test
+    public void testCastIntAsDate() throws Exception {
+        testCast(ColumnType.INT, ColumnType.DATE);
+    }
+
+    @Test
+    public void testCastIntAsDouble() throws Exception {
+        testCast(ColumnType.INT, ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testCastIntAsFloat() throws Exception {
+        testCast(ColumnType.INT, ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testCastIntAsInt() throws Exception {
+        testCast(ColumnType.INT, ColumnType.INT);
+    }
+
+    @Test
+    public void testCastIntAsLong() throws Exception {
+        testCast(ColumnType.INT, ColumnType.LONG);
+    }
+
+    @Test
+    public void testCastIntAsShort() throws Exception {
+        testCast(ColumnType.INT, ColumnType.SHORT);
+    }
+
+    @Test
+    public void testCastLongAsByte() throws Exception {
+        testCast(ColumnType.LONG, ColumnType.BYTE);
+    }
+
+    @Test
+    public void testCastLongAsDate() throws Exception {
+        testCast(ColumnType.LONG, ColumnType.DATE);
+    }
+
+    @Test
+    public void testCastLongAsDouble() throws Exception {
+        testCast(ColumnType.LONG, ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testCastLongAsFloat() throws Exception {
+        testCast(ColumnType.LONG, ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testCastLongAsInt() throws Exception {
+        testCast(ColumnType.LONG, ColumnType.INT);
+    }
+
+    @Test
+    public void testCastLongAsLong() throws Exception {
+        testCast(ColumnType.LONG, ColumnType.LONG);
+    }
+
+    @Test
+    public void testCastLongAsShort() throws Exception {
+        testCast(ColumnType.LONG, ColumnType.SHORT);
+    }
+
+    @Test
+    public void testCastShortAsByte() throws Exception {
+        testCast(ColumnType.SHORT, ColumnType.BYTE);
+    }
+
+    @Test
+    public void testCastShortAsDate() throws Exception {
+        testCast(ColumnType.SHORT, ColumnType.DATE);
+    }
+
+    @Test
+    public void testCastShortAsDouble() throws Exception {
+        testCast(ColumnType.SHORT, ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testCastShortAsFloat() throws Exception {
+        testCast(ColumnType.SHORT, ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testCastShortAsInt() throws Exception {
+        testCast(ColumnType.SHORT, ColumnType.INT);
+    }
+
+    @Test
+    public void testCastShortAsLong() throws Exception {
+        testCast(ColumnType.SHORT, ColumnType.LONG);
+    }
+
+    @Test
+    public void testCastShortAsShort() throws Exception {
+        testCast(ColumnType.SHORT, ColumnType.SHORT);
+    }
+
+    @Test
+    public void testCastStrAsStr() throws Exception {
+        testCast(ColumnType.STRING, ColumnType.STRING);
+    }
+
+    @Test
+    public void testCastStrAsSym() throws Exception {
+        testCast(ColumnType.STRING, ColumnType.SYMBOL);
+    }
+
+    @Test
+    public void testCastSymAsStr() throws Exception {
+        testCast(ColumnType.SYMBOL, ColumnType.STRING);
+    }
+
+    @Test
+    public void testCastSymAsSym() throws Exception {
+        testCast(ColumnType.SYMBOL, ColumnType.SYMBOL);
+    }
+
     @Test
     public void testCreateAllFieldTypes() throws Exception {
         compiler.execute(factory, "create table x (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING, y BOOLEAN) timestamp(t) partition by MONTH record hint 100");
@@ -270,6 +775,61 @@ public class DDLTests {
             Assert.assertEquals(N, count);
         } finally {
             ByteBuffers.release(buf);
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectCastInconvertible() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
+        try {
+            compiler.createWriter(factory, "create table x as (y order by t), cast(a as SYMBOL), cast(b as INT)");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(44, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectCastInconvertible2() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
+        try {
+            compiler.createWriter(factory, "create table x as (y order by t), cast(h as INT), cast(b as INT)");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(44, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectCastMultipleWrong() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
+        try {
+            compiler.createWriter(factory, "create table x as (y order by t), cast(a as LONG), cast(bz as INT)");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(56, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectCastWrongColumn() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
+        try {
+            compiler.createWriter(factory, "create table x as (y order by t), cast(ab as LONG)");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(39, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectCastWrongType() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
+        try {
+            compiler.createWriter(factory, "create table x as (y order by t), cast(a as LONGI)");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(44, QueryError.getPosition());
         }
     }
 

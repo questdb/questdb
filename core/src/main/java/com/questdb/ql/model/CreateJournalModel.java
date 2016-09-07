@@ -24,6 +24,7 @@
 package com.questdb.ql.model;
 
 import com.questdb.factory.configuration.JournalStructure;
+import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
@@ -36,6 +37,7 @@ public class CreateJournalModel implements Mutable, ParsedModel {
         }
     };
     private final ObjList<ColumnIndexModel> columnIndexModels = new ObjList<>();
+    private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private ExprNode name;
     private QueryModel queryModel;
     private ExprNode timestamp;
@@ -46,6 +48,10 @@ public class CreateJournalModel implements Mutable, ParsedModel {
     private CreateJournalModel() {
     }
 
+    public boolean addColumnCastModel(ColumnCastModel model) {
+        return columnCastModels.put(model.getName().token, model);
+    }
+
     public void addColumnIndexModel(ColumnIndexModel model) {
         columnIndexModels.add(model);
     }
@@ -53,12 +59,17 @@ public class CreateJournalModel implements Mutable, ParsedModel {
     @Override
     public void clear() {
         columnIndexModels.clear();
+        columnCastModels.clear();
         queryModel = null;
         timestamp = null;
         partitionBy = null;
         recordHint = null;
         struct = null;
         name = null;
+    }
+
+    public CharSequenceObjHashMap<ColumnCastModel> getColumnCastModels() {
+        return columnCastModels;
     }
 
     public ObjList<ColumnIndexModel> getColumnIndexModels() {

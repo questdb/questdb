@@ -138,62 +138,6 @@ public class QueryCompiler {
         columnNamePrefixLen = 3;
     }
 
-    public static JournalStructure createStructure(String location, RecordMetadata rm) {
-        int n = rm.getColumnCount();
-        ObjList<ColumnMetadata> m = new ObjList<>(n);
-        for (int i = 0; i < n; i++) {
-            ColumnMetadata cm = new ColumnMetadata();
-            RecordColumnMetadata im = rm.getColumnQuick(i);
-            cm.name = im.getName();
-            cm.type = im.getType();
-
-            switch (cm.type) {
-                case ColumnType.STRING:
-                    cm.size = cm.avgSize + 4;
-                    break;
-                default:
-                    cm.size = ColumnType.sizeOf(cm.type);
-                    break;
-            }
-            m.add(cm);
-        }
-        return new JournalStructure(location, m).$ts(rm.getTimestampIndex());
-    }
-
-    public static void validateAndSetPartitionBy(JournalStructure struct, ExprNode partitionBy) throws ParserException {
-        if (partitionBy == null) {
-            return;
-        }
-
-        if (struct.hasTimestamp()) {
-            int p = PartitionBy.fromString(partitionBy.token);
-            if (p == -1) {
-                throw QueryError.$(partitionBy.position, "Invalid partition type");
-            }
-            struct.partitionBy(p);
-        } else {
-            throw QueryError.$(partitionBy.position, "No timestamp");
-        }
-    }
-
-    public static void validateAndSetTimestamp(JournalStructure struct, ExprNode timestamp) throws ParserException {
-
-        if (timestamp == null) {
-            return;
-        }
-
-        int index = struct.getColumnIndex(timestamp.token);
-        if (index == -1) {
-            throw QueryError.invalidColumn(timestamp.position, timestamp.token);
-        }
-
-        if (struct.getColumnMetadata(index).getType() != ColumnType.DATE) {
-            throw QueryError.$(timestamp.position, "Not a DATE");
-        }
-
-        struct.$ts(index);
-    }
-
     public RecordSource compile(JournalReaderFactory factory, CharSequence query) throws ParserException {
         return compile(factory, parse(query));
     }
@@ -239,56 +183,74 @@ public class QueryCompiler {
 
         if (struct == null) {
             assert rs != null;
-            struct = createStructure(name, rs.getMetadata());
+            RecordMetadata metadata = rs.getMetadata();
+            CharSequenceObjHashMap<ColumnCastModel> castModels = cm.getColumnCastModels();
+
+            // validate cast models
+            for (int i = 0, n = castModels.size(); i < n; i++) {
+                ColumnCastModel castModel = castModels.valueQuick(i);
+                if (metadata.getColumnIndexQuiet(castModel.getName().token) == -1) {
+                    throw QueryError.invalidColumn(castModel.getName().position, castModel.getName().token);
+                }
+            }
+            struct = createStructure(name, metadata, castModels);
         }
 
-        validateAndSetTimestamp(struct, cm.getTimestamp());
-        validateAndSetPartitionBy(struct, cm.getPartitionBy());
+        try {
 
-        ExprNode recordHint = cm.getRecordHint();
-        if (recordHint != null) {
-            try {
-                struct.recordCountHint(Numbers.parseInt(recordHint.token));
-            } catch (NumericException e) {
-                throw QueryError.$(recordHint.position, "Bad int");
+            validateAndSetTimestamp(struct, cm.getTimestamp());
+            validateAndSetPartitionBy(struct, cm.getPartitionBy());
+
+            ExprNode recordHint = cm.getRecordHint();
+            if (recordHint != null) {
+                try {
+                    struct.recordCountHint(Numbers.parseInt(recordHint.token));
+                } catch (NumericException e) {
+                    throw QueryError.$(recordHint.position, "Bad int");
+                }
             }
+
+            ObjList<ColumnIndexModel> columnIndexModels = cm.getColumnIndexModels();
+            for (int i = 0, n = columnIndexModels.size(); i < n; i++) {
+                ColumnIndexModel cim = columnIndexModels.getQuick(i);
+
+                ExprNode nn = cim.getName();
+                ColumnMetadata m = struct.getColumnMetadata(nn.token);
+
+                if (m == null) {
+                    throw QueryError.invalidColumn(nn.position, nn.token);
+                }
+
+                switch (m.getType()) {
+                    case ColumnType.INT:
+                    case ColumnType.LONG:
+                    case ColumnType.SYMBOL:
+                    case ColumnType.STRING:
+                        m.indexed = true;
+                        m.distinctCountHint = cim.getBuckets();
+                        break;
+                    default:
+                        throw QueryError.$(nn.position, "Type index not supported");
+                }
+            }
+
+            JournalWriter w = factory.bulkWriter(struct);
+
+            if (rs != null) {
+                try {
+                    copy(factory, rs, w);
+                } catch (Throwable e) {
+                    w.close();
+                    throw e;
+                }
+            }
+
+            return w;
+
+        } catch (Throwable e) {
+            Misc.free(rs);
+            throw e;
         }
-
-        ObjList<ColumnIndexModel> columnIndexModels = cm.getColumnIndexModels();
-        for (int i = 0, n = columnIndexModels.size(); i < n; i++) {
-            ColumnIndexModel cim = columnIndexModels.getQuick(i);
-
-            ExprNode nn = cim.getName();
-            ColumnMetadata m = struct.getColumnMetadata(nn.token);
-
-            if (m == null) {
-                throw QueryError.invalidColumn(nn.position, nn.token);
-            }
-
-            switch (m.getType()) {
-                case ColumnType.INT:
-                case ColumnType.LONG:
-                case ColumnType.SYMBOL:
-                case ColumnType.STRING:
-                    m.indexed = true;
-                    m.distinctCountHint = cim.getBuckets();
-                    break;
-                default:
-                    throw QueryError.$(nn.position, "Type index not supported");
-            }
-        }
-
-        JournalWriter w = factory.bulkWriter(struct);
-
-        if (rs != null) {
-            try {
-                copy(factory, rs, w);
-            } catch (Throwable e) {
-                w.close();
-                throw e;
-            }
-        }
-        return w;
     }
 
     public JournalWriter createWriter(JournalFactory factory, CharSequence statement) throws ParserException, JournalException {
@@ -305,6 +267,40 @@ public class QueryCompiler {
 
     public ParsedModel parse(CharSequence statement) throws ParserException {
         return parser.parse(statement);
+    }
+
+    private static void validateAndSetPartitionBy(JournalStructure struct, ExprNode partitionBy) throws ParserException {
+        if (partitionBy == null) {
+            return;
+        }
+
+        if (struct.hasTimestamp()) {
+            int p = PartitionBy.fromString(partitionBy.token);
+            if (p == -1) {
+                throw QueryError.$(partitionBy.position, "Invalid partition type");
+            }
+            struct.partitionBy(p);
+        } else {
+            throw QueryError.$(partitionBy.position, "No timestamp");
+        }
+    }
+
+    private static void validateAndSetTimestamp(JournalStructure struct, ExprNode timestamp) throws ParserException {
+
+        if (timestamp == null) {
+            return;
+        }
+
+        int index = struct.getColumnIndex(timestamp.token);
+        if (index == -1) {
+            throw QueryError.invalidColumn(timestamp.position, timestamp.token);
+        }
+
+        if (struct.getColumnMetadata(index).getType() != ColumnType.DATE) {
+            throw QueryError.$(timestamp.position, "Not a DATE");
+        }
+
+        struct.$ts(index);
     }
 
     private static Signature lbs(int masterType, boolean indexed, int lambdaType) {
@@ -1251,7 +1247,7 @@ public class QueryCompiler {
     }
 
     private void copy(JournalFactory factory, RecordSource rs, JournalWriter w) throws JournalException {
-        final CopyHelper helper = copyHelperCompiler.compile(rs.getMetadata());
+        final CopyHelper helper = copyHelperCompiler.compile(rs.getMetadata(), w.getMetadata());
         final RecordCursor cursor = rs.prepareCursor(factory);
         while (cursor.hasNext()) {
             JournalEntryWriter ew = w.entryWriter();
@@ -1403,6 +1399,36 @@ public class QueryCompiler {
                 }
             }
         }
+    }
+
+    private JournalStructure createStructure(String location, RecordMetadata rm, CharSequenceObjHashMap<ColumnCastModel> castModels) throws ParserException {
+        int n = rm.getColumnCount();
+        ObjList<ColumnMetadata> m = new ObjList<>(n);
+        for (int i = 0; i < n; i++) {
+            ColumnMetadata cm = new ColumnMetadata();
+            RecordColumnMetadata im = rm.getColumnQuick(i);
+            cm.name = im.getName();
+
+            int srcType = im.getType();
+            ColumnCastModel castModel = castModels.get(cm.name);
+            if (castModel != null) {
+                validateTypeCastCompatibility(srcType, castModel);
+                cm.type = castModel.getColumnType();
+            } else {
+                cm.type = srcType;
+            }
+
+            switch (cm.type) {
+                case ColumnType.STRING:
+                    cm.size = cm.avgSize + 4;
+                    break;
+                default:
+                    cm.size = ColumnType.sizeOf(cm.type);
+                    break;
+            }
+            m.add(cm);
+        }
+        return new JournalStructure(location, m).$ts(rm.getTimestampIndex());
     }
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
@@ -2444,6 +2470,56 @@ public class QueryCompiler {
 
     private void unlinkDependencies(QueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).removeDependency(child);
+    }
+
+    private void validateTypeCastCompatibility(int srcType, ColumnCastModel castModel) throws ParserException {
+        int dstType = castModel.getColumnType();
+        boolean incompatible;
+
+        switch (srcType) {
+            case ColumnType.INT:
+            case ColumnType.BYTE:
+            case ColumnType.DATE:
+            case ColumnType.SHORT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+                switch (dstType) {
+                    case ColumnType.STRING:
+                    case ColumnType.SYMBOL:
+                    case ColumnType.BINARY:
+                    case ColumnType.BOOLEAN:
+                        incompatible = true;
+                        break;
+                    default:
+                        incompatible = false;
+                        break;
+                }
+                break;
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+                switch (dstType) {
+                    case ColumnType.STRING:
+                    case ColumnType.SYMBOL:
+                        incompatible = false;
+                        break;
+                    default:
+                        incompatible = true;
+                }
+                break;
+            default:
+                incompatible = true;
+        }
+
+        if (incompatible) {
+            throw QueryError
+                    .position(castModel.getColumnTypePos())
+                    .$("Incompatible cast: ")
+                    .$(ColumnType.nameOf(srcType))
+                    .$(" as ")
+                    .$(ColumnType.nameOf(dstType))
+                    .$();
+        }
     }
 
     private class LiteralCollector implements PostOrderTreeTraversalAlgo.Visitor {

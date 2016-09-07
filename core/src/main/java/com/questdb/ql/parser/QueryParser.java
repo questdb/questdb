@@ -53,6 +53,7 @@ public final class QueryParser {
     private final ObjectPool<AnalyticColumn> analyticColumnPool = new ObjectPool<>(AnalyticColumn.FACTORY, 8);
     private final ObjectPool<CreateJournalModel> createJournalModelPool = new ObjectPool<>(CreateJournalModel.FACTORY, 4);
     private final ObjectPool<ColumnIndexModel> columnIndexModelPool = new ObjectPool<>(ColumnIndexModel.FACTORY, 8);
+    private final ObjectPool<ColumnCastModel> columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, 8);
 
     public ParsedModel parse(CharSequence query) throws ParserException {
         clear();
@@ -66,6 +67,7 @@ public final class QueryParser {
         analyticColumnPool.clear();
         createJournalModelPool.clear();
         columnIndexModelPool.clear();
+        columnCastModelPool.clear();
     }
 
     private ParserException err(String msg) {
@@ -178,27 +180,64 @@ public final class QueryParser {
 
         tok = lexer.optionTok();
         while (tok != null && Chars.equals(tok, ',')) {
-            expectTok(tok(), "index");
-            expectTok(tok(), '(');
 
+            int pos = lexer.position();
 
-            ColumnIndexModel columnIndexModel = columnIndexModelPool.next();
-            columnIndexModel.setName(expectExpr());
             tok = tok();
+            if (Chars.equals(tok, "index")) {
+                expectTok(tok(), '(');
 
-            if (Chars.equals(tok, "buckets")) {
-                int pos = lexer.position();
-                try {
-                    columnIndexModel.setBuckets(Numbers.ceilPow2(Numbers.parseInt(tok())) - 1);
-                } catch (NumericException e) {
-                    throw QueryError.$(pos, "Int constant expected");
-                }
+                ColumnIndexModel columnIndexModel = columnIndexModelPool.next();
+                columnIndexModel.setName(expectExpr());
                 tok = tok();
-            }
-            expectTok(tok, ')');
 
-            model.addColumnIndexModel(columnIndexModel);
-            tok = lexer.optionTok();
+                if (Chars.equals(tok, "buckets")) {
+                    pos = lexer.position();
+                    try {
+                        columnIndexModel.setBuckets(Numbers.ceilPow2(Numbers.parseInt(tok())) - 1);
+                    } catch (NumericException e) {
+                        throw QueryError.$(pos, "Int constant expected");
+                    }
+                    tok = tok();
+                }
+                expectTok(tok, ')');
+
+                model.addColumnIndexModel(columnIndexModel);
+                tok = lexer.optionTok();
+            } else if (Chars.equals(tok, "cast")) {
+                expectTok(tok(), '(');
+                ColumnCastModel columnCastModel = columnCastModelPool.next();
+
+                ExprNode node = expectExpr();
+                if (node.type != ExprNode.LITERAL) {
+                    throw QueryError.$(node.position, "literal expected");
+                }
+
+                columnCastModel.setName(node);
+                expectTok(tok(), "as");
+
+                node = expectExpr();
+                if (node.type != ExprNode.LITERAL) {
+                    throw QueryError.$(node.position, "literal expected");
+                }
+
+                int type = ColumnType.columnTypeOf(node.token);
+                if (type == -1) {
+                    throw QueryError.$(node.position, "invalid type");
+                }
+
+                columnCastModel.setType(type, node.position);
+
+                expectTok(tok(), ')');
+
+                if (!model.addColumnCastModel(columnCastModel)) {
+                    throw QueryError.$(columnCastModel.getName().position, "duplicate cast");
+                }
+
+                tok = lexer.optionTok();
+            } else {
+                throw QueryError.$(pos, "Unexpected token");
+            }
         }
 
         ExprNode timestamp = parseTimestamp(tok);

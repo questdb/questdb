@@ -32,7 +32,7 @@ import com.questdb.store.ColumnType;
 public class CopyHelperCompiler {
     private final BytecodeAssembler asm = new BytecodeAssembler();
 
-    public CopyHelper compile(RecordMetadata metadata) {
+    public CopyHelper compile(RecordMetadata from, RecordMetadata to) {
         asm.clear();
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
@@ -86,33 +86,173 @@ public class CopyHelperCompiler {
 
         asm.startMethod(0x01, copyNameIndex, copySigIndex, 4, 3);
 
-        int n = metadata.getColumnCount();
+        int n = from.getColumnCount();
         for (int i = 0; i < n; i++) {
             asm.put(BytecodeAssembler.aload_2);
             asm.putConstant(i);
             asm.put(BytecodeAssembler.aload_1);
             asm.putConstant(i);
 
-            switch (metadata.getColumnQuick(i).getType()) {
+            switch (from.getColumnQuick(i).getType()) {
                 case ColumnType.INT:
                     asm.invokeInterface(rGetInt, 1);
-                    asm.invokeInterface(wPutInt, 2);
+                    switch (to.getColumnQuick(i).getType()) {
+                        case ColumnType.LONG:
+                            asm.put(BytecodeAssembler.i2l);
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.DATE:
+                            asm.put(BytecodeAssembler.i2l);
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.put(BytecodeAssembler.i2s);
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.put(BytecodeAssembler.i2b);
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.put(BytecodeAssembler.i2f);
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.put(BytecodeAssembler.i2d);
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                    }
                     break;
                 case ColumnType.LONG:
                     asm.invokeInterface(rGetLong, 1);
-                    asm.invokeInterface(wPutLong, 3);
+                    switch (to.getColumnQuick(i).getType()) {
+                        case ColumnType.INT:
+                            asm.put(BytecodeAssembler.l2i);
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.DATE:
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.put(BytecodeAssembler.l2i);
+                            asm.put(BytecodeAssembler.i2s);
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.put(BytecodeAssembler.l2i);
+                            asm.put(BytecodeAssembler.i2b);
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.put(BytecodeAssembler.l2f);
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.put(BytecodeAssembler.l2d);
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                    }
                     break;
                 case ColumnType.DATE:
                     asm.invokeInterface(rGetDate, 1);
-                    asm.invokeInterface(wPutDate, 3);
+                    switch (to.getColumnQuick(i).getType()) {
+                        case ColumnType.INT:
+                            asm.put(BytecodeAssembler.l2i);
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.put(BytecodeAssembler.l2i);
+                            asm.put(BytecodeAssembler.i2s);
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.put(BytecodeAssembler.l2i);
+                            asm.put(BytecodeAssembler.i2b);
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.put(BytecodeAssembler.l2f);
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.put(BytecodeAssembler.l2d);
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                    }
                     break;
                 case ColumnType.BYTE:
                     asm.invokeInterface(rGetByte, 1);
-                    asm.invokeInterface(wPutByte, 2);
+                    switch (to.getColumnQuick(i).getType()) {
+                        case ColumnType.INT:
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.put(BytecodeAssembler.i2l);
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.DATE:
+                            asm.put(BytecodeAssembler.i2l);
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.put(BytecodeAssembler.i2s);
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.put(BytecodeAssembler.i2f);
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.put(BytecodeAssembler.i2d);
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                    }
                     break;
                 case ColumnType.SHORT:
                     asm.invokeInterface(rGetShort, 1);
-                    asm.invokeInterface(wPutShort, 2);
+                    switch (to.getColumnQuick(i).getType()) {
+                        case ColumnType.INT:
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.put(BytecodeAssembler.i2l);
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.DATE:
+                            asm.put(BytecodeAssembler.i2l);
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.put(BytecodeAssembler.i2b);
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.put(BytecodeAssembler.i2f);
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.put(BytecodeAssembler.i2d);
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                    }
                     break;
                 case ColumnType.BOOLEAN:
                     asm.invokeInterface(rGetBool, 1);
@@ -120,19 +260,93 @@ public class CopyHelperCompiler {
                     break;
                 case ColumnType.FLOAT:
                     asm.invokeInterface(rGetFloat, 1);
-                    asm.invokeInterface(wPutFloat, 2);
+                    switch (to.getColumnQuick(i).getType()) {
+                        case ColumnType.INT:
+                            asm.put(BytecodeAssembler.f2i);
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.put(BytecodeAssembler.f2l);
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.DATE:
+                            asm.put(BytecodeAssembler.f2l);
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.put(BytecodeAssembler.f2i);
+                            asm.put(BytecodeAssembler.i2s);
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.put(BytecodeAssembler.f2i);
+                            asm.put(BytecodeAssembler.i2b);
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.put(BytecodeAssembler.f2d);
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                    }
                     break;
                 case ColumnType.DOUBLE:
                     asm.invokeInterface(rGetDouble, 1);
-                    asm.invokeInterface(wPutDouble, 3);
+                    switch (to.getColumnQuick(i).getType()) {
+                        case ColumnType.INT:
+                            asm.put(BytecodeAssembler.d2i);
+                            asm.invokeInterface(wPutInt, 2);
+                            break;
+                        case ColumnType.LONG:
+                            asm.put(BytecodeAssembler.d2l);
+                            asm.invokeInterface(wPutLong, 3);
+                            break;
+                        case ColumnType.DATE:
+                            asm.put(BytecodeAssembler.d2l);
+                            asm.invokeInterface(wPutDate, 3);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.put(BytecodeAssembler.d2i);
+                            asm.put(BytecodeAssembler.i2s);
+                            asm.invokeInterface(wPutShort, 2);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.put(BytecodeAssembler.d2i);
+                            asm.put(BytecodeAssembler.i2b);
+                            asm.invokeInterface(wPutByte, 2);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.put(BytecodeAssembler.d2f);
+                            asm.invokeInterface(wPutFloat, 2);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutDouble, 3);
+                            break;
+                    }
                     break;
                 case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetSym, 1);
-                    asm.invokeInterface(wPutSym, 2);
+                    switch (to.getColumnQuick(i).getType()) {
+                        case ColumnType.STRING:
+                            asm.invokeInterface(wPutStr, 2);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutSym, 2);
+                            break;
+                    }
                     break;
                 case ColumnType.STRING:
                     asm.invokeInterface(rGetStr, 1);
-                    asm.invokeInterface(wPutStr, 2);
+                    switch (to.getColumnQuick(i).getType()) {
+                        case ColumnType.SYMBOL:
+                            asm.invokeInterface(wPutSym, 2);
+                            break;
+                        default:
+                            asm.invokeInterface(wPutStr, 2);
+                            break;
+                    }
                     break;
                 case ColumnType.BINARY:
                     asm.invokeInterface(rGetBin, 1);

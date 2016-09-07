@@ -87,13 +87,15 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         return list;
     }
 
-    public void put(CharSequence key, V value) {
+    public boolean put(CharSequence key, V value) {
         if (put0(key, value)) {
             list.add(key);
             if (free == 0) {
                 rehash();
             }
+            return true;
         }
+        return false;
     }
 
     public int size() {
