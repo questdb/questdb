@@ -217,7 +217,8 @@ function nopropagation(e) {
                 current.response = data;
                 current.importState = 0; // ok
                 renderRowAsCancel(null, current);
-                status(current, '<span class="label label-success">imported in ' + (current.delta / 1000) + 's</span>', true);
+                var type = data.rowsRejected > 0 ? 'label-warning' : 'label-success';
+                status(current, '<span class="label ' + type + '">imported in ' + (current.delta / 1000) + 's</span>', true);
             } else {
                 current.importState = 4; // error with journal, status has error message
                 current.response = data.status;
