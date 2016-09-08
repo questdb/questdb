@@ -912,6 +912,29 @@ public class DDLTests {
     }
 
     @Test
+    public void testCreateAsSelectPartitionedMixedCase() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b byte, c Short, d long, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
+        try (JournalWriter w = compiler.createWriter(factory, "create table x as (y order by t) partition by MONTH record hint 100")) {
+            JournalMetadata m = w.getMetadata();
+            Assert.assertEquals(11, m.getColumnCount());
+            Assert.assertEquals(ColumnType.INT, m.getColumn("a").getType());
+            Assert.assertEquals(ColumnType.BYTE, m.getColumn("b").getType());
+
+            Assert.assertEquals(ColumnType.SHORT, m.getColumn("c").getType());
+            Assert.assertEquals(ColumnType.LONG, m.getColumn("d").getType());
+            Assert.assertEquals(ColumnType.FLOAT, m.getColumn("e").getType());
+            Assert.assertEquals(ColumnType.DOUBLE, m.getColumn("f").getType());
+            Assert.assertEquals(ColumnType.DATE, m.getColumn("g").getType());
+            Assert.assertEquals(ColumnType.BINARY, m.getColumn("h").getType());
+            Assert.assertEquals(ColumnType.DATE, m.getColumn("t").getType());
+            Assert.assertEquals(ColumnType.SYMBOL, m.getColumn("x").getType());
+            Assert.assertEquals(ColumnType.STRING, m.getColumn("z").getType());
+            Assert.assertEquals(8, m.getTimestampIndex());
+            Assert.assertEquals(PartitionBy.MONTH, m.getPartitionBy());
+        }
+    }
+
+    @Test
     public void testCreateAsSelectPartitionedNoTimestamp() throws Exception {
         compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) record hint 100");
         try {

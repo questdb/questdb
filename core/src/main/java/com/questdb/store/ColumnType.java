@@ -23,6 +23,7 @@
 
 package com.questdb.store;
 
+import com.questdb.io.sink.StringSink;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.IntIntHashMap;
 import com.questdb.std.IntObjHashMap;
@@ -47,6 +48,12 @@ public final class ColumnType {
     private static final IntIntHashMap sizeMap = new IntIntHashMap();
     private static final IntObjHashMap<CharSequence> typeNameMap = new IntObjHashMap<>();
     private static final CharSequenceIntHashMap nameTypeMap = new CharSequenceIntHashMap();
+    private static final ThreadLocal<StringSink> caseConverterBuffer = new ThreadLocal<StringSink>() {
+        @Override
+        protected StringSink initialValue() {
+            return new StringSink();
+        }
+    };
 
     private ColumnType() {
     }
@@ -56,7 +63,12 @@ public final class ColumnType {
     }
 
     public static int columnTypeOf(CharSequence name) {
-        return nameTypeMap.get(name);
+        StringSink b = caseConverterBuffer.get();
+        b.clear();
+        for (int i = 0, n = name.length(); i < n; i++) {
+            b.put(Character.toUpperCase(name.charAt(i)));
+        }
+        return nameTypeMap.get(b);
     }
 
     public static CharSequence nameOf(int columnType) {
