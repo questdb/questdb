@@ -324,6 +324,7 @@ public final class FunctionFactories {
         unSig("_stoa", ColumnType.SYMBOL, StoAFunction.FACTORY);
         unSig("_atos", ColumnType.STRING, AtoSFunction.FACTORY);
         unSig("atoi", ColumnType.STRING, AtoIFunction.FACTORY);
+        unSig("atod", ColumnType.STRING, AtoDFunction.FACTORY);
         unSig("ltod", ColumnType.LONG, LtoDFunction.FACTORY);
         unSig("dtol", ColumnType.DATE, DtoLFunction.FACTORY);
         unSig("round", ColumnType.DOUBLE, RoundFunction.FACTORY);
