@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*!******************************************************************************
  *    ___                  _   ____  ____
  *   / _ \ _   _  ___  ___| |_|  _ \| __ )
  *  | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -208,7 +208,7 @@ video {
 }
 
 .wrapper-content {
-  padding: 20px 10px 40px;
+  padding: 10px 0 20px;
 }
 
 #page-wrapper {
@@ -1342,4 +1342,20 @@ body.mini-navbar.fixed-sidebar .logo-element {
 
 .fullscreen-video .animated {
   animation: none;
+}
+
+.section-title {
+  display: inline-block;
+  font-size: 12pt;
+  padding-right: 15px;
+  vertical-align: middle;
+}
+
+.section-title i {
+  padding-right: 5px;
+  color: $navy;
+}
+
+.section-nav {
+  display: inline-block;
 }

@@ -81,7 +81,7 @@
                     </div>
                 </li>
                 <li>
-                    <a id="sql-editor" href="#"><i class="fa fa-table"></i> <span
+                    <a id="sql-editor" href="#"><i class="fa fa-bars"></i> <span
                             class="nav-label">SQL Console</span></a>
                 </li>
                 <li>
@@ -95,28 +95,29 @@
     </nav>
 
     <div id="page-wrapper" class="gray-bg">
-        <div class="row border-bottom">
-            <nav class="navbar navbar-static-top" role="navigation" style="margin-bottom: 0">
-                <div class="navbar-header">
-                    <a class="navbar-minimalize minimalize-styl-2 btn btn-primary " href="#"><i class="fa fa-bars"></i>
-                    </a>
-                </div>
-                <ul class="nav navbar-top-links navbar-right">
-                    <li>
-                        <span class="m-r-sm text-muted welcome-message">Welcome to QuestDB Console</span>
-                    </li>
-                    <li>
-                        <a href="#">
-                            <i class="fa fa-sign-out"></i> Log out
-                        </a>
-                    </li>
-                </ul>
-
-            </nav>
-        </div>
         <div class="row wrapper border-bottom white-bg page-heading js-sql-panel">
-            <div class="col-lg-10">
-                <h3>SQL Console</h3>
+            <div class="col-lg-12">
+                <div class="section-title"><i class="fa fa-bars"></i> SQL console</div>
+                <div class="m-b-sm m-t-sm section-nav">
+                    <button class="btn btn-white btn-sm m-r-sm js-query-run"><i class="fa fa-play"></i>Run
+                    </button>
+                    <button class="btn btn-white btn-sm js-query-refresh"><i class="fa fa-refresh"></i>
+                    </button>
+                    <button class="btn btn-white btn-sm js-query-export"><i class="fa fa-download"></i>
+                    </button>
+                    <div class="export-input-container">
+                        <label for="export-url" style="display: none;"></label><input id="export-url"
+                                                                                      class="js-export-url"
+                                                                                      type="text">
+                    </div>
+                    <button type="button" class="btn btn-white btn-sm js-export-copy-url"
+                            data-clipboard-target="#export-url"><i
+                            class="fa fa-files-o"></i></button>
+                    <button data-toggle="button" type="button"
+                            class="btn btn-white btn-sm js-editor-toggle-invisible"><i
+                            class="fa fa-paragraph"></i>
+                    </button>
+                </div>
             </div>
         </div>
         <div class="wrapper wrapper-content js-sql-panel">
@@ -124,26 +125,6 @@
                 <div class="col-lg-12">
                     <div class="ibox">
                         <div class="ibox-content">
-                            <div class="m-b-sm">
-                                <button class="btn btn-white btn-sm m-r-sm js-query-run"><i class="fa fa-play"></i>Run
-                                </button>
-                                <button class="btn btn-white btn-sm js-query-refresh"><i class="fa fa-refresh"></i>
-                                </button>
-                                <button class="btn btn-white btn-sm js-query-export"><i class="fa fa-download"></i>
-                                </button>
-                                <div class="export-input-container">
-                                    <label for="export-url" style="display: none;"></label><input id="export-url"
-                                                                                                  class="js-export-url"
-                                                                                                  type="text">
-                                </div>
-                                <button type="button" class="btn btn-white btn-sm js-export-copy-url"
-                                        data-clipboard-target="#export-url"><i
-                                        class="fa fa-files-o"></i></button>
-                                <button data-toggle="button" type="button"
-                                        class="btn btn-white btn-sm js-editor-toggle-invisible"><i
-                                        class="fa fa-paragraph"></i>
-                                </button>
-                            </div>
                             <!--<div id="debug"></div>-->
                             <div id="sqlEditor" class="editor border-rounded-top-half">
                             </div>
@@ -175,8 +156,17 @@
             </div>
         </div>
         <div class="row wrapper border-bottom white-bg page-heading js-import-panel">
-            <div class="col-lg-10">
-                <h3>Data import</h3>
+            <div class="col-lg-12">
+                <div class="section-title"><i class="fa fa-upload"></i> import</div>
+                <div class="m-b-sm m-t-sm section-nav">
+                    <button id="btnImportClearSelected" class="btn btn-white btn-sm" disabled><i
+                            class="fa fa-remove"></i>Clear
+                    </button>
+                    <button id="btnRetry" class="btn btn-white btn-sm" title disabled><i
+                            class="fa fa-upload"></i></button>
+                    <button id="btnImportCancel" class="btn btn-white btn-sm" title disabled><i
+                            class="fa fa-stop"></i></button>
+                </div>
             </div>
         </div>
         <div class="wrapper wrapper-content js-import-panel">
@@ -186,15 +176,6 @@
                         <div class="ibox-content">
                             <div id="dragTarget" class="drag-target drag-idle">
                                 <h2>Drag files here to import</h2>
-                            </div>
-                            <div class="m-b-sm">
-                                <button id="btnImportClearSelected" class="btn btn-white btn-sm" disabled><i
-                                        class="fa fa-remove"></i>Clear
-                                </button>
-                                <button id="btnRetry" class="btn btn-white btn-sm" title disabled><i
-                                        class="fa fa-upload"></i></button>
-                                <button id="btnImportCancel" class="btn btn-white btn-sm" title disabled><i
-                                        class="fa fa-stop"></i></button>
                             </div>
                             <div id="import-file-list"></div>
                         </div>
