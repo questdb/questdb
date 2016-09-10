@@ -31,7 +31,6 @@ import com.questdb.misc.Os;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.net.http.HttpServer;
-import com.questdb.net.http.MimeTypes;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.net.http.handlers.*;
@@ -87,7 +86,7 @@ class BootstrapMain {
         matcher.put("/js", new QueryHandler(pool, configuration, factory));
         matcher.put("/csv", new CsvHandler(pool, configuration));
         matcher.put("/chk", new ExistenceCheckHandler(factory));
-        matcher.setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
+        matcher.setDefaultHandler(new StaticContentHandler(configuration));
 
         StringBuilder welcome = Misc.getThreadLocalBuilder();
         HttpServer server = new HttpServer(configuration, matcher);

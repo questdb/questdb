@@ -431,6 +431,16 @@ function nopropagation(e) {
                 $(document).trigger('dropbox.files', evt.originalEvent.dataTransfer);
             });
 
+            target.on('paste', function (e) {
+                var pastedText;
+                if (window.clipboardData && window.clipboardData.getData) { // IE
+                    pastedText = window.clipboardData.getData('Text');
+                } else if (e.originalEvent.clipboardData && e.originalEvent.clipboardData.getData) {
+                    pastedText = e.originalEvent.clipboardData.getData('text/plain');
+                }
+                console.log(pastedText);
+            });
+
             // deal with event propagation to child elements
             // http://stackoverflow.com/questions/10867506/dragleave-of-parent-element-fires-when-dragging-over-children-elements
 

@@ -31,7 +31,6 @@ import com.questdb.net.http.*;
 import com.questdb.std.*;
 
 import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
 import java.lang.ThreadLocal;
 import java.nio.ByteBuffer;
@@ -46,11 +45,11 @@ public class StaticContentHandler implements ContextHandler {
     private final ThreadLocal<FlyweightCharSequence> tlExt = new ThreadLocal<>();
 
     private final LocalValue<FileDescriptorHolder> lvFd = new LocalValue<>();
-    private final File publicDir;
+    private final ServerConfiguration configuration;
 
-    public StaticContentHandler(final File publicDir, MimeTypes mimeTypes) {
-        this.publicDir = publicDir;
-        this.mimeTypes = mimeTypes;
+    public StaticContentHandler(ServerConfiguration configuration) throws IOException {
+        this.configuration = configuration;
+        this.mimeTypes = new MimeTypes(configuration.getMimeTypes());
     }
 
     @Override
@@ -63,7 +62,14 @@ public class StaticContentHandler implements ContextHandler {
             context.simpleResponse().send(404);
         } else {
             PrefixedPath path = tlPrefixedPath.get();
-            if (Files.exists(path.of(url))) {
+
+            if (Chars.equals(url, '/')) {
+                path.of(configuration.getHttpIndexFile());
+            } else {
+                path.of(url);
+            }
+
+            if (Files.exists(path)) {
                 send(context, path, false);
             } else {
                 LOG.info().$("Not found: ").$(path).$();
@@ -101,7 +107,7 @@ public class StaticContentHandler implements ContextHandler {
     @Override
     public void setupThread() {
         tlRangeParser.set(RangeParser.FACTORY.newInstance());
-        tlPrefixedPath.set(new PrefixedPath(publicDir.getAbsolutePath()));
+        tlPrefixedPath.set(new PrefixedPath(configuration.getHttpPublic().getAbsolutePath()));
         tlExt.set(new FlyweightCharSequence());
     }
 

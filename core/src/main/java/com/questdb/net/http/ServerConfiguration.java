@@ -51,6 +51,7 @@ public class ServerConfiguration {
     private int httpSoRcvSmall = 8 * 1024;
     private int httpSoRcvLarge = 4 * 1024 * 1024;
     private int httpSoRetries = 1024;
+    private String httpIndexFile = "index.html";
     private int dbAsOfDataPage = 4 * 1024 * 1024;
     private int dbAsOfIndexPage = 1024 * 1024;
     private int dbAsOfRowPage = 1024 * 1024;
@@ -138,6 +139,10 @@ public class ServerConfiguration {
 
         if ((n = parseSize(props, "http.buf.resp.content")) > -1) {
             this.httpBufRespContent = n;
+        }
+
+        if ((s = props.getProperty("http.index.file")) != null) {
+            this.httpIndexFile = s;
         }
 
         if ((s = props.getProperty("db.path")) != null) {
@@ -341,6 +346,10 @@ public class ServerConfiguration {
 
     public String getHttpIP() {
         return httpIP;
+    }
+
+    public String getHttpIndexFile() {
+        return httpIndexFile;
     }
 
     public int getHttpMaxConnections() {

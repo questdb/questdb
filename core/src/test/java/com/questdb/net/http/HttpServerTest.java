@@ -117,9 +117,8 @@ public class HttpServerTest extends AbstractJournalTest {
         configuration.getSslConfig().setSecure(true);
         configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
 
-        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+            setDefaultHandler(new StaticContentHandler(configuration));
         }});
         server.start();
 
@@ -184,11 +183,9 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testConnectionCount() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
-        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         configuration.setHttpMaxConnections(10);
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), mimeTypes));
-
+            setDefaultHandler(new StaticContentHandler(configuration));
         }});
         server.start();
 
@@ -218,6 +215,22 @@ public class HttpServerTest extends AbstractJournalTest {
             c4.close();
             Thread.sleep(300);
             Assert.assertEquals(0, server.getConnectionCount());
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
+    public void testDefaultDirIndex() throws Exception {
+        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        configuration.getSslConfig().setSecure(false);
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            setDefaultHandler(new StaticContentHandler(configuration));
+        }});
+
+        server.start();
+        try {
+            HttpTestUtils.download(clientBuilder(false), "http://localhost:9000/", new File(temp.getRoot(), "index.html"));
         } finally {
             server.halt();
         }
@@ -286,12 +299,11 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testIdleTimeout() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
-        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         // 500ms timeout
         configuration.setHttpTimeout(500);
         configuration.getSslConfig().setSecure(false);
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+            setDefaultHandler(new StaticContentHandler(configuration));
 
         }});
         server.start();
@@ -486,10 +498,9 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testMaxConnections() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
-        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         configuration.setHttpMaxConnections(1);
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+            setDefaultHandler(new StaticContentHandler(configuration));
 
         }});
         server.start();
@@ -513,7 +524,7 @@ public class HttpServerTest extends AbstractJournalTest {
         configuration.getSslConfig().setSecure(false);
         final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+            setDefaultHandler(new StaticContentHandler(configuration));
         }});
         server.start();
 
@@ -524,7 +535,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testNativeNotModified() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
         HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), new MimeTypes(configuration.getMimeTypes())));
+            setDefaultHandler(new StaticContentHandler(configuration));
         }});
         assertNotModified(configuration, server);
     }
@@ -532,9 +543,14 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testRangesNative() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/questdb.conf"));
-        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/upload", new UploadHandler(temp.getRoot()));
-            setDefaultHandler(new StaticContentHandler(temp.getRoot(), new MimeTypes(configuration.getMimeTypes())));
+        HttpServer server = new HttpServer(new ServerConfiguration() {
+            @Override
+            public File getHttpPublic() {
+                return temp.getRoot();
+            }
+        }, new SimpleUrlMatcher() {{
+            put("/upload", new UploadHandler(configuration.getHttpPublic()));
+            setDefaultHandler(new StaticContentHandler(configuration));
         }});
         assertRanges(configuration, server);
     }
@@ -548,7 +564,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
         final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration.getHttpPublic(), mimeTypes));
+            setDefaultHandler(new StaticContentHandler(configuration));
         }});
         server.start();
         assertConcurrentDownload(mimeTypes, server, "https");
