@@ -201,7 +201,7 @@ function nopropagation(e) {
             if (processNext) {
                 var next = uploadQueue.shift();
                 if (next) {
-                    processFile(next);
+                    retryOrCheckExistence(next);
                 } else {
                     current = null;
                     xhr = null;
@@ -271,12 +271,17 @@ function nopropagation(e) {
                 importRequest.data.append('schema', schema);
             }
 
-            importRequest.data.append('data', current.file);
+            if (current.type === 'file') {
+                importRequest.data.append('data', current.file);
+            } else if (current.type === 'clipboard') {
+                importRequest.url = importRequest.url + '&n=' + encodeURIComponent(current.name);
+                importRequest.data.append('data', current.content);
+            }
             current.time = new Date().getTime();
             return importRequest;
         }
 
-        function importFile() {
+        function sendImportRequest() {
             status(current, '<span class="label label-info">importing</span>', false);
             $('#' + current.id).append('<div class="ud-progress"></div>');
             xhr = $.ajax(setupImportRequest()).done(importDone).fail(importFailed);
@@ -291,7 +296,7 @@ function nopropagation(e) {
                     break;
                 case 'Does not exist':
                     current.importState = 0; // ok
-                    importFile();
+                    sendImportRequest();
                     break;
                 case 'Reserved name':
                     current.importState = 2; // exists foreign (reserved)
@@ -304,14 +309,24 @@ function nopropagation(e) {
             }
         }
 
-        function processFile(e) {
+        function retryOrCheckExistence(e) {
             current = e;
             if (e.retry) {
                 current.importState = 0;
-                importFile();
+                sendImportRequest();
             } else {
                 existenceCheckRequest.url = '/chk?f=json&j=' + encodeURIComponent(e.name);
                 $.ajax(existenceCheckRequest).then(existenceCheckFork).fail(importFailed);
+            }
+        }
+
+        function enqueueImportItem(item) {
+            dict[item.id] = item;
+            render(item);
+            if (current != null) {
+                uploadQueue.push(item);
+            } else {
+                retryOrCheckExistence(item);
             }
         }
 
@@ -319,23 +334,31 @@ function nopropagation(e) {
         function addFile(x, dataTransfer) {
             for (var i = 0; i < dataTransfer.files.length; i++) {
                 var f = dataTransfer.files[i];
-                var e = {
+                enqueueImportItem({
                     id: guid(),
                     name: f.name,
                     size: f.size,
                     file: f,
+                    type: 'file',
                     sizeFmt: toSize(f.size),
                     selected: false,
                     imported: false
-                };
-                dict[e.id] = e;
-                render(e);
-                if (current != null) {
-                    uploadQueue.push(e);
-                } else {
-                    processFile(e);
-                }
+                });
             }
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function addClipboard(x, content) {
+            enqueueImportItem({
+                id: guid(),
+                name: 'clipboard-' + (new Date()),
+                size: content.length,
+                type: 'clipboard',
+                content: content,
+                sizeFmt: toSize(content.length),
+                selected: false,
+                imported: false
+            });
         }
 
         function clearSelected() {
@@ -370,7 +393,7 @@ function nopropagation(e) {
                     var e = dict[id];
                     if (e.selected && e.retry) {
                         if (current === null) {
-                            processFile(e);
+                            retryOrCheckExistence(e);
                         } else {
                             uploadQueue.push(e);
                         }
@@ -388,6 +411,7 @@ function nopropagation(e) {
         function subscribe() {
             // subscribe to document event
             $(document).on('dropbox.files', addFile);
+            $(document).on('dropbox.clipboard', addClipboard);
             $(document).on('import.clearSelected', clearSelected);
             $(document).on('import.cancel', abortImport);
             $(document).on('import.retry', retrySelected);
@@ -424,22 +448,37 @@ function nopropagation(e) {
             target.removeClass('drag-drop').addClass('drag-idle');
         }
 
-        function init() {
-            target.on('drop', function (evt) {
-                endDrag();
-                collection = $();
-                $(document).trigger('dropbox.files', evt.originalEvent.dataTransfer);
-            });
+        function handleDrop(evt) {
+            endDrag();
+            collection = $();
+            $(document).trigger('dropbox.files', evt.originalEvent.dataTransfer);
+        }
 
-            target.on('paste', function (e) {
-                var pastedText;
-                if (window.clipboardData && window.clipboardData.getData) { // IE
-                    pastedText = window.clipboardData.getData('Text');
-                } else if (e.originalEvent.clipboardData && e.originalEvent.clipboardData.getData) {
-                    pastedText = e.originalEvent.clipboardData.getData('text/plain');
-                }
-                console.log(pastedText);
-            });
+        function handlePaste(evt) {
+            var pastedText;
+            if (window.clipboardData && window.clipboardData.getData) { // IE
+                pastedText = window.clipboardData.getData('Text');
+            } else if (evt.originalEvent.clipboardData && evt.originalEvent.clipboardData.getData) {
+                pastedText = evt.originalEvent.clipboardData.getData('text/plain');
+            }
+            $(document).trigger('dropbox.clipboard', pastedText);
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function handleActivation(evt, name) {
+            if (name === 'import') {
+                $(document).on('drop', handleDrop);
+                $(document).on('paste', handlePaste);
+            } else {
+                $(document).unbind('drop', handleDrop);
+                $(document).unbind('paste', handlePaste);
+            }
+
+        }
+
+        function init() {
+
+            $(document).on('active.panel', handleActivation);
 
             // deal with event propagation to child elements
             // http://stackoverflow.com/questions/10867506/dragleave-of-parent-element-fires-when-dragging-over-children-elements

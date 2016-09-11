@@ -145,13 +145,16 @@ public class ImportHandler extends AbstractMultipartHandler {
         ImportHandlerContext h = lvContext.get(context);
         if (Chars.equals("data", hb.getContentDispositionName())) {
 
-            if (hb.getContentDispositionFilename() == null) {
-                context.simpleResponse().send(400, "data field should be of file type");
+            CharSequence name = context.request.getUrlParam("n");
+            if (name == null) {
+                name = hb.getContentDispositionFilename();
+            }
+            if (name == null) {
+                context.simpleResponse().send(400, "no name given");
                 throw DisconnectedChannelException.INSTANCE;
             }
             h.analysed = false;
-            h.importer.of(FileNameExtractorCharSequence.get(hb.getContentDispositionFilename()).toString(),
-                    Chars.equalsNc("true", context.request.getUrlParam("o")));
+            h.importer.of(FileNameExtractorCharSequence.get(name).toString(), Chars.equalsNc("true", context.request.getUrlParam("o")));
             h.messagePart = MESSAGE_DATA;
         } else if (Chars.equals("schema", hb.getContentDispositionName())) {
             h.messagePart = MESSAGE_SCHEMA;

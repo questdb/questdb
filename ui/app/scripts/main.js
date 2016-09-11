@@ -81,12 +81,13 @@
     function switchToEditor() {
         divSqlPanel.show();
         divImportPanel.hide();
-        $('#sqlEditor').css('height', '240px');
+        $(document).trigger('active.panel', 'console');
     }
 
     function switchToImport() {
         divSqlPanel.hide();
         divImportPanel.show();
+        $(document).trigger('active.panel', 'import');
     }
 
     function setup() {
@@ -124,8 +125,6 @@
             setup
         }
     });
-
-
 }(jQuery));
 
 $(document).ready(function () {
