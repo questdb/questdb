@@ -349,9 +349,10 @@ function nopropagation(e) {
 
         //noinspection JSUnusedLocalSymbols
         function addClipboard(x, content) {
+            var date = new Date();
             enqueueImportItem({
                 id: guid(),
-                name: 'clipboard-' + (new Date()),
+                name: 'clipboard-' + date.getTime(),
                 size: content.length,
                 type: 'clipboard',
                 content: content,
