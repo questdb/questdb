@@ -181,7 +181,11 @@
                                     <i class="fa fa-file-text-o fa-3x"></i>
                                 </div>
                                 <h2 style="font-weight: 500;">Drag files or paste data here to import</h2>
-                                <div style="font-size: 14pt; font-weight: 100;">or browse your files</div>
+                                <div style="font-size: 14pt; font-weight: 100;">or <a id="js-browse-files" href="#">browse
+                                    your files</a></div>
+                                <form action="#">
+                                    <input id="js-browse-files-input" type="file" style="visibility: hidden" multiple>
+                                </form>
                             </div>
                             <div id="import-file-list"></div>
                         </div>

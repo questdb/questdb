@@ -331,9 +331,9 @@ function nopropagation(e) {
         }
 
         //noinspection JSUnusedLocalSymbols
-        function addFile(x, dataTransfer) {
-            for (var i = 0; i < dataTransfer.files.length; i++) {
-                var f = dataTransfer.files[i];
+        function addFiles(x, e) {
+            for (var i = 0; i < e.files.length; i++) {
+                var f = e.files[i];
                 enqueueImportItem({
                     id: guid(),
                     name: f.name,
@@ -410,7 +410,7 @@ function nopropagation(e) {
 
         function subscribe() {
             // subscribe to document event
-            $(document).on('dropbox.files', addFile);
+            $(document).on('dropbox.files', addFiles);
             $(document).on('dropbox.clipboard', addClipboard);
             $(document).on('import.clearSelected', clearSelected);
             $(document).on('import.cancel', abortImport);
@@ -464,51 +464,54 @@ function nopropagation(e) {
             $(document).trigger('dropbox.clipboard', pastedText);
         }
 
+        function handleDragEnter(event) {
+            if (collection.size() === 0) {
+                nopropagation(event);
+                startDrag();
+            }
+            collection = collection.add(event.target);
+        }
+
+        function handleDragLeave(event) {
+            /*
+             * Firefox 3.6 fires the dragleave event on the previous element
+             * before firing dragenter on the next one so we introduce a delay
+             */
+            setTimeout(function () {
+                collection = collection.not(event.target);
+                if (collection.size() === 0) {
+                    endDrag();
+                }
+            }, 1);
+        }
+
         //noinspection JSUnusedLocalSymbols
         function handleActivation(evt, name) {
             if (name === 'import') {
                 $(document).on('drop', handleDrop);
                 $(document).on('paste', handlePaste);
+                $(document).on('dragenter', handleDragEnter);
+                $(document).on('dragleave', handleDragLeave);
             } else {
                 $(document).unbind('drop', handleDrop);
                 $(document).unbind('paste', handlePaste);
+                $(document).unbind('dragenter', handleDragEnter);
+                $(document).unbind('dragleave', handleDragLeave);
             }
-
         }
 
         function init() {
-
             $(document).on('active.panel', handleActivation);
 
-            // deal with event propagation to child elements
-            // http://stackoverflow.com/questions/10867506/dragleave-of-parent-element-fires-when-dragging-over-children-elements
+            var input = $('#js-browse-files-input');
 
-            target.each(function () {
-
-                var self = $(this);
-
-                self.on('dragenter', function (event) {
-                    if (collection.size() === 0) {
-                        nopropagation(event);
-                        startDrag();
-                    }
-                    collection = collection.add(event.target);
-                });
-
-                self.on('dragleave', function (event) {
-                    /*
-                     * Firefox 3.6 fires the dragleave event on the previous element
-                     * before firing dragenter on the next one so we introduce a delay
-                     */
-                    setTimeout(function () {
-                        collection = collection.not(event.target);
-                        if (collection.size() === 0) {
-                            endDrag();
-                        }
-                    }, 1);
-                });
+            $('#js-browse-files').click(function () {
+                input.click();
             });
 
+            input[0].onchange = function () {
+                $(document).trigger('dropbox.files', input[0]);
+            };
         }
 
         init();
