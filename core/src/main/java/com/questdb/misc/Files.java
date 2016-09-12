@@ -75,6 +75,18 @@ public final class Files {
         return getLastModified(lpsz) != -1;
     }
 
+    public native static void findClose(long findPtr);
+
+    public static long findFirst(LPSZ lpsz) {
+        return findFirst(lpsz.address());
+    }
+
+    public native static long findName(long findPtr);
+
+    public native static boolean findNext(long findPtr);
+
+    public native static int findType(long findPtr);
+
     public static long getLastModified(LPSZ lpsz) {
         return getLastModified(lpsz.address());
     }
@@ -178,6 +190,8 @@ public final class Files {
     private native static long openRW(long lpszName);
 
     private native static long openAppend(long lpszName);
+
+    private native static long findFirst(long lpszName);
 
     private native static boolean setLastModified(long lpszName, long millis);
 

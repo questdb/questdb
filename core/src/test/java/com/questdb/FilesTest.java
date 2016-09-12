@@ -28,10 +28,13 @@ import com.questdb.ex.NumericException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Files;
+import com.questdb.std.CompositePath;
 import com.questdb.std.DirectCharSequence;
+import com.questdb.std.NativeLPSZ;
 import com.questdb.std.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -66,6 +69,28 @@ public class FilesTest {
         long t = Dates.parseDateTime("2015-10-17T10:00:00.000Z");
         Assert.assertTrue(Files.setLastModified(path, t));
         Assert.assertEquals(t, Files.getLastModified(path));
+    }
+
+    @Test
+    @Ignore
+    public void testListDir() throws Exception {
+        String temp = temporaryFolder.getRoot().getAbsolutePath();
+        try (Path path = new Path(temp)) {
+            try (CompositePath cp = new CompositePath()) {
+
+                Files.touch(cp.of(temp).concat("a.txt").$());
+                NativeLPSZ name = new NativeLPSZ();
+                long pFind = Files.findFirst(path);
+                Assert.assertTrue(pFind != 0);
+                try {
+                    do {
+                        System.out.println(name.of(Files.findName(pFind)));
+                    } while (Files.findNext(pFind));
+                } finally {
+                    Files.findClose(pFind);
+                }
+            }
+        }
     }
 
     @Test

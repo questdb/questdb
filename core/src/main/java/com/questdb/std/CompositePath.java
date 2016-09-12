@@ -42,7 +42,7 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
     private int len;
     private boolean trailingSlash = false;
 
-    CompositePath() {
+    public CompositePath() {
         alloc(128);
     }
 

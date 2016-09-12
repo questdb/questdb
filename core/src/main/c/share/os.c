@@ -46,5 +46,3 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_errno
         (JNIEnv *e, jclass cl) {
     return errno;
 }
-
-

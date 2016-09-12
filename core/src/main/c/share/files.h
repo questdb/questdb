@@ -10,9 +10,9 @@ extern "C" {
 /*
  * Class:     com_questdb_misc_Files
  * Method:    append
- * Signature: (JJI)J
+ * Signature: (JJI)V
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
+JNIEXPORT void JNICALL Java_com_questdb_misc_Files_append
         (JNIEnv *, jclass, jlong, jlong, jint);
 
 /*
@@ -22,6 +22,30 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
  */
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close
         (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    findClose
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_com_questdb_misc_Files_findClose
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    findNext
+ * Signature: (J)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_findNext
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    getStdOutFd
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
+        (JNIEnv *, jclass);
 
 /*
  * Class:     com_questdb_misc_Files
@@ -81,19 +105,35 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openAppend
 
 /*
  * Class:     com_questdb_misc_Files
+ * Method:    findFirst
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findFirst
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    findName
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findName
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    findType
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
  * Method:    setLastModified
  * Signature: (JJ)Z
  */
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
         (JNIEnv *, jclass, jlong, jlong);
-
-/*
- * Class:     com_questdb_misc_Files
- * Method:    getStdOutFd
- * Signature: ()J
- */
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
-        (JNIEnv *, jclass);
 
 #ifdef __cplusplus
 }

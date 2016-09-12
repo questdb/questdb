@@ -37,7 +37,9 @@
 #include <sys/stat.h>
 #include <sys/fcntl.h>
 #include <sys/time.h>
-#include <utime.h>
+#include <string.h>
+#include <stdlib.h>
+#include <dirent.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
@@ -49,12 +51,12 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
     return pwrite((int) fd, (void *) (address), (size_t) len, (off_t) offset);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
+JNIEXPORT void JNICALL Java_com_questdb_misc_Files_append
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
          jint len) {
-    return write((int) fd, (void *) (address), (size_t) len);
+    write((int) fd, (void *) (address), (size_t) len);
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
@@ -130,4 +132,56 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
         (JNIEnv *e, jclass cl) {
     return (jlong) 1;
+}
+
+typedef struct {
+    DIR *dir;
+    struct dirent *entry;
+} FIND;
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findFirst
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+
+    DIR *dir;
+    struct dirent *entry;
+
+    dir = opendir((const char *) lpszName);
+    if (!dir) {
+        return 0;
+    }
+
+    entry = readdir(dir);
+    if (!entry) {
+        closedir(dir);
+        return 0;
+    }
+
+    FIND *find = malloc(sizeof(FIND));
+    find->dir = dir;
+    find->entry = entry;
+    return (jlong) find;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_findNext
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    FIND *find = (FIND *) findPtr;
+    find->entry = readdir(find->dir);
+    return (jboolean) (find->entry != NULL);
+}
+
+JNIEXPORT void JNICALL Java_com_questdb_misc_Files_findClose
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    FIND *find = (FIND *) findPtr;
+    closedir(find->dir);
+    free(find);
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findName
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    return (jlong) ((FIND *) findPtr)->entry->d_name;
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    return ((FIND *) findPtr)->entry->d_type;
 }
