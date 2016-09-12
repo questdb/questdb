@@ -124,7 +124,6 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRO
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    printf("hello: %s\n", (char *) lpszName);
     return (jlong) CreateFile(
             (LPCSTR) lpszName,
             GENERIC_READ,
@@ -148,7 +147,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRW
             GENERIC_WRITE,
             FILE_SHARE_READ,
             NULL,
-            OPEN_EXISTING,
+            OPEN_ALWAYS,
             FILE_ATTRIBUTE_NORMAL,
             NULL
     );
@@ -173,10 +172,10 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openAppend
     return (jlong) h;
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
+JNIEXPORT void JNICALL Java_com_questdb_misc_Files_append
         (JNIEnv *e, jclass cl, jlong fd, jlong address, jint length) {
     DWORD count;
-    return WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) length, &count, NULL) ? count : 0;
+    WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) length, &count, NULL) ? count : 0;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
@@ -192,3 +191,49 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
     return (jlong) GetStdHandle(STD_OUTPUT_HANDLE);
 }
 
+typedef struct {
+    WIN32_FIND_DATAA *find_dataa;
+    HANDLE hFind;
+} FIND;
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findFirst
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+
+    FIND *find = malloc(sizeof(FIND));
+    find->find_dataa = malloc(sizeof(WIN32_FIND_DATAA));
+
+    char path[2048];
+    sprintf(path, "%s\\*.*", (char *) lpszName);
+    find->hFind = FindFirstFile(path, find->find_dataa);
+    if (find->hFind == INVALID_HANDLE_VALUE) {
+        free(find->find_dataa);
+        free(find);
+        return 0;
+    }
+    return (jlong) find;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_findNext
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    FIND *find = (FIND *) findPtr;
+    return (jboolean) FindNextFile(find->hFind, find->find_dataa);
+}
+
+JNIEXPORT void JNICALL Java_com_questdb_misc_Files_findClose
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    FIND *find = (FIND *) findPtr;
+    FindClose(find->hFind);
+    free(find->find_dataa);
+    free(find);
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findName
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    return (jlong) ((FIND *) findPtr)->find_dataa->cFileName;
+}
+
+
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    return ((FIND *) findPtr)->find_dataa->dwFileAttributes;
+}

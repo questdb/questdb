@@ -28,10 +28,7 @@ import com.questdb.ex.NumericException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Files;
-import com.questdb.std.CompositePath;
-import com.questdb.std.DirectCharSequence;
-import com.questdb.std.NativeLPSZ;
-import com.questdb.std.Path;
+import com.questdb.std.*;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -75,22 +72,23 @@ public class FilesTest {
     @Ignore
     public void testListDir() throws Exception {
         String temp = temporaryFolder.getRoot().getAbsolutePath();
+        ObjList<String> names = new ObjList<>();
         try (Path path = new Path(temp)) {
             try (CompositePath cp = new CompositePath()) {
-
-                Files.touch(cp.of(temp).concat("a.txt").$());
+                Assert.assertTrue(Files.touch(cp.of(temp).concat("a.txt").$()));
                 NativeLPSZ name = new NativeLPSZ();
                 long pFind = Files.findFirst(path);
                 Assert.assertTrue(pFind != 0);
                 try {
                     do {
-                        System.out.println(name.of(Files.findName(pFind)));
+                        names.add(name.of(Files.findName(pFind)).toString());
                     } while (Files.findNext(pFind));
                 } finally {
                     Files.findClose(pFind);
                 }
             }
         }
+        Assert.assertEquals("[.,..,a.txt]", names.toString());
     }
 
     @Test
