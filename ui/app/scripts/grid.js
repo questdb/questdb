@@ -423,6 +423,7 @@
         function logDebug() {
             if (dbg) {
                 dbg.empty();
+                dbg.append('time = ' + new Date() + '<br>');
                 dbg.append('y = ' + y + '<br>');
                 dbg.append('M = ' + M + '<br>');
                 dbg.append('o = ' + o + '<br>');
@@ -430,6 +431,7 @@
                 dbg.append('vp = ' + vp + '<br>');
                 dbg.append('yMax = ' + yMax + '<br>');
                 dbg.append('top = ' + top + '<br>');
+                dbg.append('activeRow = ' + activeRow + '<br>');
             }
         }
 
@@ -496,25 +498,29 @@
                     y = scrollTop === 0 ? 0 : Math.min(Math.ceil((scrollTop + vp) * M - vp), yMax - vp);
                     top = scrollTop;
                     o = y - top;
-                } else if (scrollTop >= h - vp) {
-                    // final leap to bottom of grid
-                    // this happens when container div runs out of vertical height
-                    // and we artificially force leap to bottom
-                    y = Math.max(0, yMax - vp);
-                    top = scrollTop;
-                    o = y - top;
-                    activeRowDown(r - activeRow);
-                } else {
-                    if (scrollTop === 0) {
-                        // this happens when grid is coming slowly back up after being scrolled down harshly
-                        // because 'y' is much greater than top, we have to jump to top artificially.
-                        y = 0;
-                        o = 0;
-                        activeRowUp(activeRow);
+                } else if (h - vp > 0) {
+                    // if grid content fits in viewport we don't need to adjust activeRow
+
+                    if (scrollTop >= h - vp) {
+                        // final leap to bottom of grid
+                        // this happens when container div runs out of vertical height
+                        // and we artificially force leap to bottom
+                        y = Math.max(0, yMax - vp);
+                        top = scrollTop;
+                        o = y - top;
+                        activeRowDown(r - activeRow);
                     } else {
-                        y += scrollTop - top;
+                        if (scrollTop === 0) {
+                            // this happens when grid is coming slowly back up after being scrolled down harshly
+                            // because 'y' is much greater than top, we have to jump to top artificially.
+                            y = 0;
+                            o = 0;
+                            activeRowUp(activeRow);
+                        } else {
+                            y += scrollTop - top;
+                        }
+                        top = scrollTop;
                     }
-                    top = scrollTop;
                 }
                 renderViewport(y - oldY);
             }
