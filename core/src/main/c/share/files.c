@@ -40,6 +40,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <dirent.h>
+#include <utime.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write

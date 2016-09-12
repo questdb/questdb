@@ -69,7 +69,6 @@ public class FilesTest {
     }
 
     @Test
-    @Ignore
     public void testListDir() throws Exception {
         String temp = temporaryFolder.getRoot().getAbsolutePath();
         ObjList<String> names = new ObjList<>();
