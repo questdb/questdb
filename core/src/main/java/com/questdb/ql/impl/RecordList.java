@@ -48,6 +48,8 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
     private final int recordPrefix;
     private long readAddress = -1;
     private StorageFacade storageFacade;
+    private long hPtr;
+    private long wPtr;
 
     public RecordList(RecordMetadata recordMetadata, int pageSize) {
         this.metadata = recordMetadata;
@@ -59,13 +61,49 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
     }
 
     public long append(Record record, long prevAddress) {
-        long thisAddress = mem.allocate(8 + recordPrefix) + 8;
-        if (prevAddress != -1) {
-            Unsafe.getUnsafe().putLong(prevAddress - 8, thisAddress);
-        }
-        Unsafe.getUnsafe().putLong(thisAddress - 8, -1L);
+        long thisAddress = beginRecord0(prevAddress);
         append0(record, thisAddress);
         return thisAddress;
+    }
+
+    public void appendBool(boolean value) {
+        appendByte((byte) (value ? 1 : 0));
+    }
+
+    public void appendByte(byte value) {
+        Unsafe.getUnsafe().putByte(wPtr, value);
+        wPtr += 1;
+    }
+
+    public void appendDouble(double value) {
+        Unsafe.getUnsafe().putDouble(wPtr, value);
+        wPtr += 8;
+    }
+
+    public void appendFloat(float value) {
+        Unsafe.getUnsafe().putFloat(wPtr, value);
+        wPtr += 4;
+    }
+
+    public void appendInt(int value) {
+        Unsafe.getUnsafe().putInt(wPtr, value);
+        wPtr += 4;
+    }
+
+    public void appendLong(long value) {
+        Unsafe.getUnsafe().putLong(wPtr, value);
+        wPtr += 8;
+    }
+
+    public void appendStr(CharSequence value) {
+        writeString(hPtr, value);
+        hPtr += 8;
+    }
+
+    public long beginRecord(long prevAddress) {
+        this.hPtr = beginRecord0(prevAddress);
+        this.wPtr = this.hPtr + headerSize;
+        return this.hPtr;
     }
 
     public void clear() {
@@ -119,6 +157,11 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
 
     public void of(long offset) {
         this.readAddress = offset;
+    }
+
+    public void putShort(short value) {
+        Unsafe.getUnsafe().putShort(wPtr, value);
+        wPtr += 2;
     }
 
     public void toTop() {
@@ -181,14 +224,19 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
         }
     }
 
-    private void writeBin(long headerAddress, DirectInputStream value) {
-        if (value == null) {
-            writeNullString(headerAddress);
-            return;
+    private long beginRecord0(long prevAddress) {
+        long thisAddress = mem.allocate(8 + recordPrefix) + 8;
+        if (prevAddress != -1) {
+            Unsafe.getUnsafe().putLong(prevAddress - 8, thisAddress);
         }
+        Unsafe.getUnsafe().putLong(thisAddress - 8, -1L);
+        return thisAddress;
+    }
+
+    private void writeBin(long headerAddress, DirectInputStream value) {
 
         long offset = mem.allocateOffset(8);
-        long len = value.size();
+        long len = value == null ? -1L : value.size();
 
         // Write header offset.
         Unsafe.getUnsafe().putLong(headerAddress, offset);

@@ -47,7 +47,6 @@ public class RecordListTest extends AbstractTest {
     public void testAllFieldTypesField() throws JournalException, IOException, ParserException {
         writeAndReadRecords(factory.writer(AllFieldTypes.class), 1000, 64 * 1024,
                 new RecordGenerator<AllFieldTypes>() {
-
                     @Override
                     public void assertRecord(Record value, int i) throws IOException {
                         AllFieldTypes expected = generate(i);
@@ -234,6 +233,8 @@ public class RecordListTest extends AbstractTest {
             }
 
             int i = 0;
+            records.toTop();
+
             while (records.hasNext()) {
                 generator.assertRecord(records.next(), i++);
             }
