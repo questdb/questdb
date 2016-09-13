@@ -25,39 +25,44 @@ package com.questdb.ql.impl.sys;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
-import com.questdb.ex.ParserException;
 import com.questdb.misc.Dates;
 import com.questdb.ql.parser.AbstractOptimiserTest;
-import com.questdb.ql.parser.QueryError;
-import org.junit.Assert;
-import org.junit.Ignore;
+import com.questdb.test.tools.TestUtils;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class $TabsRecordSourceTest extends AbstractOptimiserTest {
 
-    @Test
-    @Ignore
-    public void testSimple() throws Exception {
-        try {
-            try (JournalWriter w = compiler.createWriter(factory, "create table xyz(x int, timestamp date) timestamp(timestamp) partition by MONTH")) {
-                JournalEntryWriter ew;
 
-                ew = w.entryWriter(Dates.parseDateTime("2016-01-02T00:00:00.000Z"));
-                ew.putInt(0, 0);
-                ew.append();
+    @BeforeClass
+    public static void setUp() throws Exception {
+        try (JournalWriter w = compiler.createWriter(factory, "create table xyz(x int, y string, timestamp date) timestamp(timestamp) partition by MONTH")) {
+            JournalEntryWriter ew;
 
-                ew = w.entryWriter(Dates.parseDateTime("2016-02-02T00:00:00.000Z"));
-                ew.putInt(0, 1);
-                ew.append();
+            ew = w.entryWriter(Dates.parseDateTime("2016-01-02T00:00:00.000Z"));
+            ew.putInt(0, 0);
+            ew.append();
 
-                w.commit();
-            }
-            try ($TabsRecordSource rs = new $TabsRecordSource(4096)) {
-                printer.print(rs, factory);
-            }
-            System.out.println(sink);
-        } catch (ParserException e) {
-            Assert.fail(QueryError.getMessage().toString());
+            ew = w.entryWriter(Dates.parseDateTime("2016-02-02T00:00:00.000Z"));
+            ew.putInt(0, 1);
+            ew.append();
+
+            w.commit();
         }
+    }
+
+    @Test
+    public void testCompiled() throws Exception {
+        $TabsRecordSource.init();
+        assertThat("xyz\tMONTH\t2\t3\n", "$tabs");
+    }
+
+    @Test
+    public void testSimple() throws Exception {
+        sink.clear();
+        try ($TabsRecordSource rs = new $TabsRecordSource(4096)) {
+            printer.print(rs, factory);
+        }
+        TestUtils.assertEquals("xyz\tMONTH\t2\t3\n", sink);
     }
 }

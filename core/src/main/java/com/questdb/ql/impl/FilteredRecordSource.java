@@ -32,7 +32,7 @@ import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 
-public class FilteredJournalRecordSource extends AbstractCombinedRecordSource {
+public class FilteredRecordSource extends AbstractCombinedRecordSource {
 
     private final RecordSource delegate;
     private final VirtualColumn filter;
@@ -40,7 +40,7 @@ public class FilteredJournalRecordSource extends AbstractCombinedRecordSource {
     private RecordCursor cursor;
     private Record record;
 
-    public FilteredJournalRecordSource(RecordSource delegate, VirtualColumn filter, ExprNode filterNode) {
+    public FilteredRecordSource(RecordSource delegate, VirtualColumn filter, ExprNode filterNode) {
         this.delegate = delegate;
         this.filter = filter;
         // this value is borrowed from pool
@@ -112,7 +112,7 @@ public class FilteredJournalRecordSource extends AbstractCombinedRecordSource {
     @Override
     public void toSink(CharSink sink) {
         sink.put('{');
-        sink.putQuoted("op").put(':').putQuoted("FilteredJournalRecordSource").put(',');
+        sink.putQuoted("op").put(':').putQuoted("FilteredRecordSource").put(',');
         sink.putQuoted("src").put(':').put(delegate).put(',');
         sink.putQuoted("filter").put(':').put('"').put(filterNode).put('"');
         sink.put('}');

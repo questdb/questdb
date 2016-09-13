@@ -138,7 +138,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
         assertPlan2("{\n" +
                         "  \"op\": \"HashJoinRecordSource\",\n" +
                         "  \"master\": {\n" +
-                        "    \"op\": \"FilteredJournalRecordSource\",\n" +
+                        "    \"op\": \"FilteredRecordSource\",\n" +
                         "    \"src\": {\n" +
                         "      \"op\": \"AsOfPartitionedJoinRecordSource\",\n" +
                         "      \"master\": {\n" +

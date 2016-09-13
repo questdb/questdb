@@ -125,7 +125,7 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     @Test
     public void testRecursiveAliasedMixedSubQuery() throws Exception {
         sink.put(compileSource("(select y from (select 1+1 y, x from tab order by x) a where a.x = 10) b where b.y > 100"));
-        TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"FilteredJournalRecordSource\",\"src\":{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"VirtualColumnRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}}},\"filter\":\"y > 100\"}}",
+        TestUtils.assertEquals("{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"FilteredRecordSource\",\"src\":{\"op\":\"RBTreeSortedRecordSource\",\"byRowId\":true,\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"VirtualColumnRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"FilteredRowSource\",\"rsrc\":{\"op\":\"AllRowSource\"}}}}}},\"filter\":\"y > 100\"}}",
                 sink);
     }
 
@@ -139,14 +139,14 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     @Test
     public void testSubQueryFilterOnAggregate() throws Exception {
         sink.put(compileSource("(select sum(x) k from tab) a where a.k = 10"));
-        TestUtils.assertEquals("{\"op\":\"FilteredJournalRecordSource\",\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"AggregatedRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}},\"filter\":\"a.k = 10\"}",
+        TestUtils.assertEquals("{\"op\":\"FilteredRecordSource\",\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"AggregatedRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}},\"filter\":\"a.k = 10\"}",
                 sink);
     }
 
     @Test
     public void testSubQueryFilterOnConstant() throws Exception {
         sink.put(compileSource("(select 1 k from tab) a where a.k = 10"));
-        TestUtils.assertEquals("{\"op\":\"FilteredJournalRecordSource\",\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"VirtualColumnRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}},\"filter\":\"a.k = 10\"}",
+        TestUtils.assertEquals("{\"op\":\"FilteredRecordSource\",\"src\":{\"op\":\"SelectedColumnsRecordSource\",\"src\":{\"op\":\"VirtualColumnRecordSource\",\"src\":{\"op\":\"JournalRecordSource\",\"psrc\":{\"op\":\"JournalPartitionSource\",\"journal\":\"tab\"},\"rsrc\":{\"op\":\"AllRowSource\"}}}},\"filter\":\"a.k = 10\"}",
                 sink);
     }
 }

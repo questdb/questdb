@@ -52,6 +52,8 @@ import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.ql.impl.sort.ComparatorCompiler;
 import com.questdb.ql.impl.sort.RBTreeSortedRecordSource;
 import com.questdb.ql.impl.sort.RecordComparator;
+import com.questdb.ql.impl.sys.$TabsFactory;
+import com.questdb.ql.impl.sys.SystemViewFactory;
 import com.questdb.ql.impl.virtual.VirtualColumnRecordSource;
 import com.questdb.ql.model.*;
 import com.questdb.ql.ops.FunctionFactories;
@@ -68,6 +70,7 @@ public class QueryCompiler {
 
     private static final CharSequenceObjHashMap<Parameter> EMPTY_PARAMS = new CharSequenceObjHashMap<>();
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    private final static CharSequenceObjHashMap<SystemViewFactory> sysViewFactories = new CharSequenceObjHashMap<>();
     private final static ObjObjHashMap<Signature, LatestByLambdaRowSourceFactory> LAMBDA_ROW_SOURCE_FACTORIES = new ObjObjHashMap<>();
     private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L);
     private final static IntHashSet joinBarriers;
@@ -924,7 +927,7 @@ public class QueryCompiler {
             // check if there are post-filters
             ExprNode filter = m.getPostJoinWhereClause();
             if (filter != null) {
-                master = new FilteredJournalRecordSource(master, virtualColumnBuilder.createVirtualColumn(model, filter, master.getMetadata()), filter);
+                master = new FilteredRecordSource(master, virtualColumnBuilder.createVirtualColumn(model, filter, master.getMetadata()), filter);
             }
         }
 
@@ -1162,12 +1165,18 @@ public class QueryCompiler {
                 optimiseJoins(model, factory);
                 rs = compileJoins(model, factory);
             } else if (model.getJournalName() != null) {
-                rs = compileJournal(model, factory);
+                if (sysViewFactories.get(model.getJournalName().token) != null) {
+                    rs = compileSysView(model, factory);
+                } else {
+                    rs = compileJournal(model, factory);
+                }
             } else {
                 rs = compileSubQuery(model, factory);
-                model.getNestedModel().setRecordSource(rs);
+                QueryModel nm = model.getNestedModel();
+                if (nm != null) {
+                    nm.setRecordSource(rs);
+                }
             }
-
             return limit(order(selectColumns(rs, model), model), model);
         } catch (ParserException e) {
             freeModelRecordSources(model);
@@ -1191,43 +1200,17 @@ public class QueryCompiler {
     }
 
     private RecordSource compileSubQuery(QueryModel model, JournalReaderFactory factory) throws ParserException {
-
         applyLimit(model);
+        return filter(model, compileNoOptimise(model.getNestedModel(), factory));
+    }
 
-        RecordSource rs = compileNoOptimise(model.getNestedModel(), factory);
-        if (model.getWhereClause() == null) {
-            return rs;
+    private RecordSource compileSysView(QueryModel model, JournalReaderFactory factory) throws ParserException {
+        applyLimit(model);
+        SystemViewFactory fact = sysViewFactories.get(model.getJournalName().token);
+        if (fact == null) {
+            throw QueryError.$(model.getJournalName().position, "invalid view name");
         }
-
-        RecordMetadata m = rs.getMetadata();
-        if (model.getAlias() != null) {
-            m.setAlias(model.getAlias().token);
-        }
-
-        IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null);
-
-        if (im.intrinsicValue == IntrinsicValue.FALSE) {
-            return new NoOpJournalRecordSource(rs);
-        }
-
-        if (im.intervalSource != null) {
-            rs = new IntervalRecordSource(rs, im.intervalSource);
-        }
-
-        if (im.filter != null) {
-            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, im.filter, m);
-            if (vc.isConstant()) {
-                if (vc.getBool(null)) {
-                    return rs;
-                } else {
-                    return new NoOpJournalRecordSource(rs);
-                }
-            }
-            return new FilteredJournalRecordSource(rs, vc, im.filter);
-        } else {
-            return rs;
-        }
-
+        return filter(model, fact.create(factory, configuration));
     }
 
     private ExprNode concatFilters(ExprNode old, ExprNode filter) {
@@ -1433,6 +1416,41 @@ public class QueryCompiler {
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
         return dot == -1 ? token : csPool.next().of(token, dot + 1, token.length() - dot - 1);
+    }
+
+    private RecordSource filter(QueryModel model, RecordSource rs) throws ParserException {
+        if (model.getWhereClause() == null) {
+            return rs;
+        }
+
+        RecordMetadata m = rs.getMetadata();
+        if (model.getAlias() != null) {
+            m.setAlias(model.getAlias().token);
+        }
+
+        IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null);
+
+        if (im.intrinsicValue == IntrinsicValue.FALSE) {
+            return new NoOpJournalRecordSource(rs);
+        }
+
+        if (im.intervalSource != null) {
+            rs = new IntervalRecordSource(rs, im.intervalSource);
+        }
+
+        if (im.filter != null) {
+            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, im.filter, m);
+            if (vc.isConstant()) {
+                if (vc.getBool(null)) {
+                    return rs;
+                } else {
+                    return new NoOpJournalRecordSource(rs);
+                }
+            }
+            return new FilteredRecordSource(rs, vc, im.filter);
+        } else {
+            return rs;
+        }
     }
 
     private void freeModelRecordSources(QueryModel model) {
@@ -2591,5 +2609,9 @@ public class QueryCompiler {
     static {
         nullConstants.add("null");
         nullConstants.add("NaN");
+    }
+
+    static {
+        sysViewFactories.put("$tabs", $TabsFactory.INSTANCE);
     }
 }

@@ -235,5 +235,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findName
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
         (JNIEnv *e, jclass cl, jlong findPtr) {
-    return ((FIND *) findPtr)->find_dataa->dwFileAttributes;
+    return ((FIND *) findPtr)->find_dataa->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ?
+           com_questdb_misc_Files_DT_DIR : com_questdb_misc_Files_DT_REG;
 }

@@ -61,6 +61,7 @@ public class ServerConfiguration {
     private int dbHashKeyPage = 4 * 1024 * 1024;
     private int dbHashDataPage = 8 * 1024 * 1024;
     private int dbHashRowPage = 1024 * 1024;
+    private int dbSysViewPage = 64 * 1024;
     private int dbCyclesBeforeCancel = 1024 * 1024;
     private int dbAnalyticFuncPage = 2 * 1024 * 1024;
     private int dbAnalyticWindowPage = 4 * 1024 * 1024;
@@ -193,6 +194,10 @@ public class ServerConfiguration {
             this.dbHashRowPage = n;
         }
 
+        if ((n = parseSize(props, "db.sys.viewpage")) > -1) {
+            this.dbSysViewPage = n;
+        }
+
         if ((n = parseInt(props, "db.cycles.before.cancel")) > -1) {
             this.dbCyclesBeforeCancel = Numbers.ceilPow2(n);
         }
@@ -314,6 +319,10 @@ public class ServerConfiguration {
 
     public int getDbSortKeyPage() {
         return dbSortKeyPage;
+    }
+
+    public int getDbSysViewPage() {
+        return dbSysViewPage;
     }
 
     public File getErrorLog() {
