@@ -238,7 +238,7 @@
 
         function setup() {
             edit = ace.edit('sqlEditor');
-            edit.getSession().setMode('ace/mode/sql');
+            edit.getSession().setMode('ace/mode/questdb');
             edit.setTheme('ace/theme/merbivore_soft');
             edit.setShowPrintMargin(false);
             edit.setDisplayIndentGuides(false);
