@@ -36,6 +36,15 @@ import java.nio.charset.Charset;
 public final class Files {
 
     public static final Charset UTF_8;
+    public static final int DT_UNKNOWN = 0;
+    public static final int DT_FIFO = 1;
+    public static final int DT_CHR = 2;
+    public static final int DT_DIR = 4;
+    public static final int DT_BLK = 6;
+    public static final int DT_REG = 8;
+    public static final int DT_LNK = 10;
+    public static final int DT_SOCK = 12;
+    public static final int DT_WHT = 14;
 
     private Files() {
     } // Prevent construction.
@@ -92,6 +101,10 @@ public final class Files {
     }
 
     public native static long getStdOutFd();
+
+    public static boolean isDots(CharSequence name) {
+        return Chars.equals(name, '.') || Chars.equals(name, "..");
+    }
 
     public static long length(LPSZ lpsz) {
         return length(lpsz.address());

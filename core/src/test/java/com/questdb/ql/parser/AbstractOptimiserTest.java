@@ -53,7 +53,7 @@ public abstract class AbstractOptimiserTest {
     public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
     protected static final StringSink sink = new StringSink();
     protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-    private static final QueryCompiler compiler = new QueryCompiler();
+    protected static final QueryCompiler compiler = new QueryCompiler();
     private static final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 16);
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private static final JsonParser jp = new JsonParser();

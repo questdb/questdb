@@ -7,6 +7,24 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#undef com_questdb_misc_Files_DT_UNKNOWN
+#define com_questdb_misc_Files_DT_UNKNOWN 0L
+#undef com_questdb_misc_Files_DT_FIFO
+#define com_questdb_misc_Files_DT_FIFO 1L
+#undef com_questdb_misc_Files_DT_CHR
+#define com_questdb_misc_Files_DT_CHR 2L
+#undef com_questdb_misc_Files_DT_DIR
+#define com_questdb_misc_Files_DT_DIR 4L
+#undef com_questdb_misc_Files_DT_BLK
+#define com_questdb_misc_Files_DT_BLK 6L
+#undef com_questdb_misc_Files_DT_REG
+#define com_questdb_misc_Files_DT_REG 8L
+#undef com_questdb_misc_Files_DT_LNK
+#define com_questdb_misc_Files_DT_LNK 10L
+#undef com_questdb_misc_Files_DT_SOCK
+#define com_questdb_misc_Files_DT_SOCK 12L
+#undef com_questdb_misc_Files_DT_WHT
+#define com_questdb_misc_Files_DT_WHT 14L
 /*
  * Class:     com_questdb_misc_Files
  * Method:    append
@@ -33,10 +51,26 @@ JNIEXPORT void JNICALL Java_com_questdb_misc_Files_findClose
 
 /*
  * Class:     com_questdb_misc_Files
+ * Method:    findName
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findName
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
  * Method:    findNext
  * Signature: (J)Z
  */
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_findNext
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    findType
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -109,22 +143,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openAppend
  * Signature: (J)J
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findFirst
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_questdb_misc_Files
- * Method:    findName
- * Signature: (J)J
- */
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findName
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_questdb_misc_Files
- * Method:    findType
- * Signature: (J)I
- */
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
         (JNIEnv *, jclass, jlong);
 
 /*

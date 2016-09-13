@@ -59,7 +59,7 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
     @Override
     public void close() {
         if (ptr != 0) {
-            Unsafe.free(ptr, capacity);
+            Unsafe.free(ptr, capacity + 1);
             ptr = 0;
         }
     }

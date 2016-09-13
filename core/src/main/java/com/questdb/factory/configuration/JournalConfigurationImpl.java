@@ -135,13 +135,14 @@ class JournalConfigurationImpl implements JournalConfiguration {
 
     public int exists(CharSequence location) {
         CompositePath path = tlPath.get();
+        String base = getJournalBase().getAbsolutePath();
 
-        if (!Files.exists(path.of(getJournalBase().getAbsolutePath()).concat(location).$())) {
+        if (!Files.exists(path.of(base).concat(location).$())) {
             return JournalConfiguration.DOES_NOT_EXIST;
         }
 
-        if (Files.exists(path.of(path.of(getJournalBase().getAbsolutePath()).concat(location).concat(TxLog.FILE_NAME).$()))
-                && Files.exists(path.of(path.of(getJournalBase().getAbsolutePath()).concat(location).concat(JournalConfiguration.FILE_NAME).$()))) {
+        if (Files.exists(path.of(base).concat(location).concat(TxLog.FILE_NAME).$())
+                && Files.exists(path.of(base).concat(location).concat(JournalConfiguration.FILE_NAME).$())) {
             return JournalConfiguration.EXISTS;
         }
 
