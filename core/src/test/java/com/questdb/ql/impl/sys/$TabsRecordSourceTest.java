@@ -27,13 +27,10 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.misc.Dates;
 import com.questdb.ql.parser.AbstractOptimiserTest;
-import com.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class $TabsRecordSourceTest extends AbstractOptimiserTest {
-
-
     @BeforeClass
     public static void setUp() throws Exception {
         try (JournalWriter w = compiler.createWriter(factory, "create table xyz(x int, y string, timestamp date) timestamp(timestamp) partition by MONTH")) {
@@ -49,20 +46,21 @@ public class $TabsRecordSourceTest extends AbstractOptimiserTest {
 
             w.commit();
         }
+        $TabsRecordSource.init();
+    }
+
+    @Test
+    public void testAsSubQuery() throws Exception {
+        assertThat("1\n", "select count() from ($tabs order by last_modified desc)");
     }
 
     @Test
     public void testCompiled() throws Exception {
-        $TabsRecordSource.init();
-        assertThat("xyz\tMONTH\t2\t3\n", "$tabs");
+        assertThat("xyz\tMONTH\t2\t3\n", "select name, partition_by, partition_count, column_count from $tabs");
     }
 
     @Test
-    public void testSimple() throws Exception {
-        sink.clear();
-        try ($TabsRecordSource rs = new $TabsRecordSource(4096)) {
-            printer.print(rs, factory);
-        }
-        TestUtils.assertEquals("xyz\tMONTH\t2\t3\n", sink);
+    public void testInJoin() throws Exception {
+        assertThat("xyz\txyz\n", "select a.name, b.name from $tabs a cross join $tabs b");
     }
 }

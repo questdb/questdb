@@ -34,6 +34,8 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Chars;
 import com.questdb.ql.RecordSource;
+import com.questdb.ql.impl.sys.SysFactories;
+import com.questdb.ql.impl.sys.SystemViewFactory;
 import com.questdb.ql.ops.Parameter;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.parser.QueryError;
@@ -174,7 +176,7 @@ public class QueryModel implements Mutable, ParsedModel {
         joinColumns.clear();
     }
 
-    public JournalMetadata collectJournalMetadata(JournalReaderFactory factory) throws ParserException {
+    public RecordMetadata collectJournalMetadata(JournalReaderFactory factory) throws ParserException {
         if (journalMetadata != null) {
             return journalMetadata;
         }
@@ -184,9 +186,14 @@ public class QueryModel implements Mutable, ParsedModel {
             throw QueryError.$(readerNode.position, "Journal name must be either literal or string constant");
         }
 
-        JournalConfiguration configuration = factory.getConfiguration();
-
         String reader = stripMarker(Chars.stripQuotes(readerNode.token));
+
+        SystemViewFactory systemViewFactory = SysFactories.getFactory(reader);
+        if (systemViewFactory != null) {
+            return systemViewFactory.getMetadata();
+        }
+
+        JournalConfiguration configuration = factory.getConfiguration();
         if (configuration.exists(reader) == JournalConfiguration.DOES_NOT_EXIST) {
             throw QueryError.$(readerNode.position, "Journal does not exist");
         }
@@ -497,7 +504,7 @@ public class QueryModel implements Mutable, ParsedModel {
                 createColumnNameHistogram0(histogram, jm.getQuick(i), factory, true);
             }
         } else if (model.getJournalName() != null) {
-            JournalMetadata m = model.collectJournalMetadata(factory);
+            RecordMetadata m = model.collectJournalMetadata(factory);
             for (int i = 0, k = m.getColumnCount(); i < k; i++) {
                 histogram.increment(m.getColumnName(i));
             }

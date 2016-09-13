@@ -24,6 +24,7 @@
 package com.questdb.ql.impl.sys;
 
 import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.RecordSource;
 
@@ -37,5 +38,10 @@ public class $TabsFactory implements SystemViewFactory {
     @Override
     public RecordSource create(JournalReaderFactory factory, ServerConfiguration configuration) {
         return new $TabsRecordSource(configuration.getDbSysViewPage());
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return new $TabsRecordMetadata();
     }
 }

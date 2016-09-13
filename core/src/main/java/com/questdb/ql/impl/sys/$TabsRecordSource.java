@@ -66,9 +66,11 @@ public class $TabsRecordSource extends AbstractRecordSource {
     };
 
     private final RecordList records;
+    private final $TabsRecordMetadata metadata;
 
     public $TabsRecordSource(int pageSize) {
-        this.records = new RecordList($TabsRecordMetadata.INSTANCE, pageSize);
+        this.metadata = new $TabsRecordMetadata();
+        this.records = new RecordList(metadata, pageSize);
     }
 
     public static void init() {
@@ -84,7 +86,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
 
     @Override
     public RecordMetadata getMetadata() {
-        return $TabsRecordMetadata.INSTANCE;
+        return metadata;
     }
 
     @Override
@@ -111,6 +113,8 @@ public class $TabsRecordSource extends AbstractRecordSource {
                                 continue;
                             }
 
+                            long lastModified = Files.getLastModified(compositePath.of(base).concat(name).$());
+
                             compositePath.of(base).concat(name).concat(JournalConfiguration.FILE_NAME).$();
 
                             if (Files.exists(compositePath)) {
@@ -122,7 +126,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
                                 }
 
                                 int columnCount;
-                                int partitionType;
+                                int partitionBy;
                                 try {
                                     long len = Files.length(compositePath);
                                     // don't bother with huge meta files. There is a high chance of them being fake.
@@ -145,7 +149,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
                                     readPtr += Unsafe.getUnsafe().getInt(readPtr) * 2 + 4;
                                     // skip over location string
                                     readPtr += Unsafe.getUnsafe().getInt(readPtr) * 2 + 4;
-                                    partitionType = Unsafe.getUnsafe().getInt(readPtr);
+                                    partitionBy = Unsafe.getUnsafe().getInt(readPtr);
                                     columnCount = Unsafe.getUnsafe().getInt(readPtr + 4);
                                 } finally {
                                     Files.close(fd);
@@ -154,11 +158,13 @@ public class $TabsRecordSource extends AbstractRecordSource {
                                 // name
                                 records.appendStr(name);
                                 // partition type
-                                records.appendStr(PartitionBy.toString(partitionType));
+                                records.appendStr(PartitionBy.toString(partitionBy));
                                 // partition count
                                 records.appendInt(countDirs(base, name));
                                 // column count
                                 records.appendInt(columnCount);
+                                // last modified
+                                records.appendLong(lastModified);
                             }
                         }
                     } while (Files.findNext(find));

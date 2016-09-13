@@ -23,13 +23,20 @@
 
 package com.questdb.ql.impl.sys;
 
-import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.net.http.ServerConfiguration;
-import com.questdb.ql.RecordSource;
+import com.questdb.std.CharSequenceObjHashMap;
 
-public interface SystemViewFactory {
-    RecordSource create(JournalReaderFactory factory, ServerConfiguration configuration);
+public final class SysFactories {
 
-    RecordMetadata getMetadata();
+    private final static CharSequenceObjHashMap<SystemViewFactory> sysViewFactories = new CharSequenceObjHashMap<>();
+
+    private SysFactories() {
+    }
+
+    public static SystemViewFactory getFactory(CharSequence name) {
+        return sysViewFactories.get(name);
+    }
+
+    static {
+        sysViewFactories.put("$tabs", $TabsFactory.INSTANCE);
+    }
 }

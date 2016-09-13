@@ -52,7 +52,7 @@ import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.ql.impl.sort.ComparatorCompiler;
 import com.questdb.ql.impl.sort.RBTreeSortedRecordSource;
 import com.questdb.ql.impl.sort.RecordComparator;
-import com.questdb.ql.impl.sys.$TabsFactory;
+import com.questdb.ql.impl.sys.SysFactories;
 import com.questdb.ql.impl.sys.SystemViewFactory;
 import com.questdb.ql.impl.virtual.VirtualColumnRecordSource;
 import com.questdb.ql.model.*;
@@ -70,7 +70,6 @@ public class QueryCompiler {
 
     private static final CharSequenceObjHashMap<Parameter> EMPTY_PARAMS = new CharSequenceObjHashMap<>();
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
-    private final static CharSequenceObjHashMap<SystemViewFactory> sysViewFactories = new CharSequenceObjHashMap<>();
     private final static ObjObjHashMap<Signature, LatestByLambdaRowSourceFactory> LAMBDA_ROW_SOURCE_FACTORIES = new ObjObjHashMap<>();
     private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L);
     private final static IntHashSet joinBarriers;
@@ -942,8 +941,16 @@ public class QueryCompiler {
         }
     }
 
-    @SuppressWarnings("ConstantConditions")
     private RecordSource compileJournal(QueryModel model, JournalReaderFactory factory) throws ParserException {
+        if (SysFactories.getFactory(model.getJournalName().token) != null) {
+            return compileSysView(model, factory);
+        } else {
+            return compileJournal0(model, factory);
+        }
+    }
+
+    @SuppressWarnings("ConstantConditions")
+    private RecordSource compileJournal0(QueryModel model, JournalReaderFactory factory) throws ParserException {
 
         applyLimit(model);
 
@@ -951,8 +958,10 @@ public class QueryCompiler {
         JournalMetadata journalMetadata;
 
         if (metadata == null) {
-            journalMetadata = model.collectJournalMetadata(factory);
-        } else if (metadata instanceof JournalMetadata) {
+            metadata = model.collectJournalMetadata(factory);
+        }
+
+        if (metadata instanceof JournalMetadata) {
             journalMetadata = (JournalMetadata) metadata;
         } else {
             throw QueryError.$(0, "Internal error: invalid metadata");
@@ -1165,11 +1174,7 @@ public class QueryCompiler {
                 optimiseJoins(model, factory);
                 rs = compileJoins(model, factory);
             } else if (model.getJournalName() != null) {
-                if (sysViewFactories.get(model.getJournalName().token) != null) {
-                    rs = compileSysView(model, factory);
-                } else {
-                    rs = compileJournal(model, factory);
-                }
+                rs = compileJournal(model, factory);
             } else {
                 rs = compileSubQuery(model, factory);
                 QueryModel nm = model.getNestedModel();
@@ -1206,7 +1211,7 @@ public class QueryCompiler {
 
     private RecordSource compileSysView(QueryModel model, JournalReaderFactory factory) throws ParserException {
         applyLimit(model);
-        SystemViewFactory fact = sysViewFactories.get(model.getJournalName().token);
+        SystemViewFactory fact = SysFactories.getFactory(model.getJournalName().token);
         if (fact == null) {
             throw QueryError.$(model.getJournalName().position, "invalid view name");
         }
@@ -2626,9 +2631,5 @@ public class QueryCompiler {
     static {
         nullConstants.add("null");
         nullConstants.add("NaN");
-    }
-
-    static {
-        sysViewFactories.put("$tabs", $TabsFactory.INSTANCE);
     }
 }

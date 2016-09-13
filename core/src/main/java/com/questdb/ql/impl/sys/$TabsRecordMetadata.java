@@ -29,12 +29,11 @@ import com.questdb.store.ColumnType;
 
 public class $TabsRecordMetadata extends CollectionRecordMetadata {
 
-    public static final $TabsRecordMetadata INSTANCE = new $TabsRecordMetadata();
-
-    private $TabsRecordMetadata() {
+    public $TabsRecordMetadata() {
         add(new RecordColumnMetadataImpl("name", ColumnType.STRING));
-        add(new RecordColumnMetadataImpl("partition", ColumnType.STRING));
+        add(new RecordColumnMetadataImpl("partition_by", ColumnType.STRING));
         add(new RecordColumnMetadataImpl("partition_count", ColumnType.INT));
         add(new RecordColumnMetadataImpl("column_count", ColumnType.INT));
+        add(new RecordColumnMetadataImpl("last_modified", ColumnType.DATE));
     }
 }

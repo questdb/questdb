@@ -1,40 +1,42 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.ql.impl;
 
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.AbstractRecordMetadata;
+import com.questdb.factory.configuration.ColumnName;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Chars;
-import com.questdb.std.ObjHashSet;
+import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
 
 public class CollectionRecordMetadata extends AbstractRecordMetadata {
     private final ObjList<RecordColumnMetadata> columns = new ObjList<>();
-    private final ObjHashSet<String> columnNames = new ObjHashSet<>();
+    private final CharSequenceIntHashMap nameIndexLookup = new CharSequenceIntHashMap();
 
     public CollectionRecordMetadata add(RecordColumnMetadata meta) {
-        if (columnNames.add(meta.getName())) {
+        if (nameIndexLookup.put(meta.getName(), columns.size())) {
             columns.add(meta);
             return this;
         } else {
@@ -54,10 +56,24 @@ public class CollectionRecordMetadata extends AbstractRecordMetadata {
 
     @Override
     public int getColumnIndexQuiet(CharSequence name) {
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            if (Chars.equals(columns.getQuick(i).getName(), name)) {
-                return i;
-            }
+
+        int index = nameIndexLookup.get(name);
+        if (index > -1) {
+            return index;
+        }
+
+        if (getAlias() == null) {
+            return -1;
+        }
+
+        ColumnName columnName = ColumnName.singleton(name);
+
+        if (columnName.alias().length() == 0) {
+            return -1;
+        }
+
+        if (Chars.equals(columnName.alias(), getAlias())) {
+            return nameIndexLookup.get(columnName.name());
         }
         return -1;
     }
