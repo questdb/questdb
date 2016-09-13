@@ -618,12 +618,14 @@ public class DDLTests {
 
     @Test
     public void testCreateAsSelectAll() throws Exception {
-        int N = 5;
-        try (JournalWriter w = compiler.createWriter(factory, "create table x (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING, y BOOLEAN) timestamp(t) partition by MONTH record hint 100")) {
+        int N = 50;
+        try (JournalWriter w = compiler.createWriter(factory, "create table x (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING, y BOOLEAN) timestamp(t) record hint 100")) {
             Rnd rnd = new Rnd();
 
+            long t = Dates.parseDateTime("2016-01-10T00:00:00.000Z");
+
             for (int i = 0; i < N; i++) {
-                JournalEntryWriter ew = w.entryWriter();
+                JournalEntryWriter ew = w.entryWriter(t += Dates.DAY_MILLIS);
                 ew.putInt(0, i);
                 ew.put(1, (byte) rnd.nextInt());
                 ew.putShort(2, (short) rnd.nextInt());
@@ -632,7 +634,6 @@ public class DDLTests {
                 ew.putDouble(5, rnd.nextDouble());
                 ew.putDate(6, rnd.nextLong());
                 ew.putNull(7);
-                ew.putDate(8, rnd.nextLong());
                 ew.putSym(9, rnd.nextChars(1));
                 ew.putStr(10, rnd.nextChars(10));
                 ew.putBool(11, rnd.nextBoolean());
@@ -641,7 +642,11 @@ public class DDLTests {
             w.commit();
         }
 
-        compiler.execute(factory, "create table y as (x)");
+        compiler.execute(factory, "create table y as (x) partition by MONTH");
+
+        try (Journal r = factory.reader("y")) {
+            Assert.assertEquals(2, r.getPartitionCount());
+        }
 
         int count = 0;
         RecordSource rs = compiler.compile(factory, "y");
@@ -658,7 +663,6 @@ public class DDLTests {
             Assert.assertEquals(rnd.nextDouble(), rec.getDouble(5), 0.00000000001);
             Assert.assertEquals(rnd.nextLong(), rec.getDate(6));
             Assert.assertNull(rec.getBin(7));
-            Assert.assertEquals(rnd.nextLong(), rec.getDate(8));
             TestUtils.assertEquals(rnd.nextChars(1), rec.getSym(9));
             TestUtils.assertEquals(rnd.nextChars(10), rec.getFlyweightStr(10));
             Assert.assertEquals(rnd.nextBoolean(), rec.getBool(11));
@@ -947,37 +951,31 @@ public class DDLTests {
 
     @Test
     public void testCreateDefaultPartitionBy() throws Exception {
-        try {
-            compiler.execute(factory, "create table x (a INT index, b BYTE, t DATE, z STRING index buckets 40, l LONG index buckets 500) record hint 100");
-            // validate journal
-            try (Journal r = factory.reader("x")) {
-                Assert.assertNotNull(r);
-                JournalMetadata m = r.getMetadata();
-                Assert.assertEquals(5, m.getColumnCount());
-                Assert.assertEquals(ColumnType.INT, m.getColumn("a").getType());
-                Assert.assertTrue(m.getColumn("a").isIndexed());
-                // bucket is ceilPow2(value) - 1
-                Assert.assertEquals(1, m.getColumn("a").getBucketCount());
+        compiler.execute(factory, "create table x (a INT index, b BYTE, t DATE, z STRING index buckets 40, l LONG index buckets 500) record hint 100");
+        // validate journal
+        try (Journal r = factory.reader("x")) {
+            Assert.assertNotNull(r);
+            JournalMetadata m = r.getMetadata();
+            Assert.assertEquals(5, m.getColumnCount());
+            Assert.assertEquals(ColumnType.INT, m.getColumn("a").getType());
+            Assert.assertTrue(m.getColumn("a").isIndexed());
+            // bucket is ceilPow2(value) - 1
+            Assert.assertEquals(1, m.getColumn("a").getBucketCount());
 
-                Assert.assertEquals(ColumnType.BYTE, m.getColumn("b").getType());
-                Assert.assertEquals(ColumnType.DATE, m.getColumn("t").getType());
-                Assert.assertEquals(ColumnType.STRING, m.getColumn("z").getType());
-                Assert.assertTrue(m.getColumn("z").isIndexed());
-                // bucket is ceilPow2(value) - 1
-                Assert.assertEquals(63, m.getColumn("z").getBucketCount());
+            Assert.assertEquals(ColumnType.BYTE, m.getColumn("b").getType());
+            Assert.assertEquals(ColumnType.DATE, m.getColumn("t").getType());
+            Assert.assertEquals(ColumnType.STRING, m.getColumn("z").getType());
+            Assert.assertTrue(m.getColumn("z").isIndexed());
+            // bucket is ceilPow2(value) - 1
+            Assert.assertEquals(63, m.getColumn("z").getBucketCount());
 
-                Assert.assertEquals(ColumnType.LONG, m.getColumn("l").getType());
-                Assert.assertTrue(m.getColumn("l").isIndexed());
-                // bucket is ceilPow2(value) - 1
-                Assert.assertEquals(511, m.getColumn("l").getBucketCount());
+            Assert.assertEquals(ColumnType.LONG, m.getColumn("l").getType());
+            Assert.assertTrue(m.getColumn("l").isIndexed());
+            // bucket is ceilPow2(value) - 1
+            Assert.assertEquals(511, m.getColumn("l").getBucketCount());
 
-                Assert.assertEquals(-1, m.getTimestampIndex());
-                Assert.assertEquals(PartitionBy.NONE, m.getPartitionBy());
-            }
-        } catch (ParserException e) {
-            e.printStackTrace();
-            System.out.println(QueryError.getPosition());
-            System.out.println(QueryError.getMessage());
+            Assert.assertEquals(-1, m.getTimestampIndex());
+            Assert.assertEquals(PartitionBy.NONE, m.getPartitionBy());
         }
     }
 

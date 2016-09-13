@@ -1230,14 +1230,31 @@ public class QueryCompiler {
     }
 
     private void copy(JournalFactory factory, RecordSource rs, JournalWriter w) throws JournalException {
-        final CopyHelper helper = copyHelperCompiler.compile(rs.getMetadata(), w.getMetadata());
-        final RecordCursor cursor = rs.prepareCursor(factory);
-        while (cursor.hasNext()) {
-            JournalEntryWriter ew = w.entryWriter();
-            helper.copy(cursor.next(), ew);
-            ew.append();
+        final int tsIndex = w.getMetadata().getTimestampIndex();
+        if (tsIndex == -1) {
+            copyNonPartitioned(rs.prepareCursor(factory), w, copyHelperCompiler.compile(rs.getMetadata(), w.getMetadata()));
+        } else {
+            copyPartitioned(rs.prepareCursor(factory), w, copyHelperCompiler.compile(rs.getMetadata(), w.getMetadata()), tsIndex);
         }
         w.commit();
+    }
+
+    private void copyNonPartitioned(RecordCursor cursor, JournalWriter w, CopyHelper helper) throws JournalException {
+        while (cursor.hasNext()) {
+            Record r = cursor.next();
+            JournalEntryWriter ew = w.entryWriter();
+            helper.copy(r, ew);
+            ew.append();
+        }
+    }
+
+    private void copyPartitioned(RecordCursor cursor, JournalWriter w, CopyHelper helper, int tsIndex) throws JournalException {
+        while (cursor.hasNext()) {
+            Record r = cursor.next();
+            JournalEntryWriter ew = w.entryWriter(r.getDate(tsIndex));
+            helper.copy(r, ew);
+            ew.append();
+        }
     }
 
     private String createAlias(int index) {

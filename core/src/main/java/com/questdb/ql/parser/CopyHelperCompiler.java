@@ -33,6 +33,7 @@ public class CopyHelperCompiler {
     private final BytecodeAssembler asm = new BytecodeAssembler();
 
     public CopyHelper compile(RecordMetadata from, RecordMetadata to) {
+        int tsIndex = to.getTimestampIndex();
         asm.clear();
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
@@ -88,6 +89,13 @@ public class CopyHelperCompiler {
 
         int n = from.getColumnCount();
         for (int i = 0; i < n; i++) {
+
+            // do not copy timestamp, it will be copied externally to this helper
+
+            if (i == tsIndex) {
+                continue;
+            }
+
             asm.put(BytecodeAssembler.aload_2);
             asm.putConstant(i);
             asm.put(BytecodeAssembler.aload_1);
