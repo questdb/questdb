@@ -273,6 +273,7 @@
             var startCol = 0;
             var startPos = -1;
             var sql = null;
+            var inQuote = false;
 
 
             for (var i = 0; i < text.length; i++) {
@@ -280,6 +281,11 @@
 
                 switch (char) {
                     case ';':
+                        if (inQuote) {
+                            c++;
+                            continue;
+                        }
+
                         if (r < pos.row || (r === pos.row && c < pos.column)) {
                             startRow = r;
                             startCol = c;
@@ -296,6 +302,10 @@
                     case '\n':
                         r++;
                         c = 0;
+                        break;
+                    case '\'':
+                        inQuote = !inQuote;
+                        c++;
                         break;
                     default:
                         c++;
