@@ -30,7 +30,7 @@ import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public class SymEqualsROperator extends AbstractBinaryOperator {
 
@@ -50,7 +50,7 @@ public class SymEqualsROperator extends AbstractBinaryOperator {
     @Override
     public boolean getBool(Record rec) {
         int k = rhs.getInt(rec);
-        return (k == key || (key == SymbolTable.VALUE_IS_NULL && k == Numbers.INT_NaN));
+        return (k == key || (key == MMappedSymbolTable.VALUE_IS_NULL && k == Numbers.INT_NaN));
     }
 
     @Override

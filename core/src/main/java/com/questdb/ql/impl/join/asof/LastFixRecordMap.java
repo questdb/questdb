@@ -35,7 +35,7 @@ import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.std.*;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public class LastFixRecordMap implements LastRecordMap {
     private final DirectMap map;
@@ -212,7 +212,7 @@ public class LastFixRecordMap implements LastRecordMap {
         }
 
         @Override
-        protected SymbolTable getSymbolTable(int col) {
+        protected MMappedSymbolTable getSymbolTable(int col) {
             return storageFacade.getSymbolTable(col);
         }
 

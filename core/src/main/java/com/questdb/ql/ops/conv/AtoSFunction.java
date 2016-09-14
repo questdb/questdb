@@ -28,7 +28,7 @@ import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public class AtoSFunction extends AbstractUnaryOperator {
 
@@ -54,7 +54,7 @@ public class AtoSFunction extends AbstractUnaryOperator {
     }
 
     @Override
-    public SymbolTable getSymbolTable() {
+    public MMappedSymbolTable getSymbolTable() {
         return null;
     }
 }

@@ -39,7 +39,7 @@ import com.questdb.std.IntHashSet;
 import com.questdb.std.IntList;
 import com.questdb.std.LongList;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public class LastVarRecordMap implements LastRecordMap {
     private final DirectMap map;
@@ -323,7 +323,7 @@ public class LastVarRecordMap implements LastRecordMap {
         }
 
         @Override
-        protected SymbolTable getSymbolTable(int col) {
+        protected MMappedSymbolTable getSymbolTable(int col) {
             return storageFacade.getSymbolTable(col);
         }
 

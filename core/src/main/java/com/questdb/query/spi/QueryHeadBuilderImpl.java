@@ -36,7 +36,7 @@ import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
@@ -162,7 +162,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
     @Override
     public QueryHeadBuilder<T> filter(String symbol, String value) {
-        SymbolTable tab = journal.getSymbolTable(symbol);
+        MMappedSymbolTable tab = journal.getSymbolTable(symbol);
         int key = tab.get(value);
         filterSymbols.add(symbol);
         filterSymbolKeys.add(key);
@@ -197,7 +197,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
     public void setSymbol(String symbol, String... values) {
         this.symbolColumnIndex = journal.getMetadata().getColumnIndex(symbol);
-        SymbolTable symbolTable = journal.getSymbolTable(symbol);
+        MMappedSymbolTable symbolTable = journal.getSymbolTable(symbol);
         this.symbolKeys.clear(values == null || values.length == 0 ? symbolTable.size() : values.length);
         if (values == null || values.length == 0) {
             int sz = symbolTable.size();
@@ -207,7 +207,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
         } else {
             for (int i = 0; i < values.length; i++) {
                 int key = symbolTable.getQuick(values[i]);
-                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                if (key != MMappedSymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(key);
                 }
             }

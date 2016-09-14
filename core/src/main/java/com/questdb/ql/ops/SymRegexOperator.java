@@ -30,7 +30,7 @@ import com.questdb.regex.Pattern;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public class SymRegexOperator extends AbstractBinaryOperator {
 
@@ -57,8 +57,8 @@ public class SymRegexOperator extends AbstractBinaryOperator {
         super.prepare(facade);
         final Matcher matcher = Pattern.compile(rhs.getStr(null).toString()).matcher("");
         set.clear();
-        SymbolTable tab = lhs.getSymbolTable();
-        for (SymbolTable.Entry e : tab.values()) {
+        MMappedSymbolTable tab = lhs.getSymbolTable();
+        for (MMappedSymbolTable.Entry e : tab.values()) {
             if (matcher.reset(e.value).find()) {
                 set.add(e.key);
             }

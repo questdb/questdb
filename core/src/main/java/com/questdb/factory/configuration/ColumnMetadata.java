@@ -23,7 +23,7 @@
 
 package com.questdb.factory.configuration;
 
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.UnstructuredFile;
 
 public class ColumnMetadata implements RecordColumnMetadata {
@@ -38,7 +38,7 @@ public class ColumnMetadata implements RecordColumnMetadata {
     public int distinctCountHint;
     public String sameAs;
     public boolean noCache = false;
-    public SymbolTable symbolTable;
+    public MMappedSymbolTable symbolTable;
 
     public ColumnMetadata copy(ColumnMetadata from) {
         this.name = from.name;
@@ -71,7 +71,7 @@ public class ColumnMetadata implements RecordColumnMetadata {
     }
 
     @Override
-    public SymbolTable getSymbolTable() {
+    public MMappedSymbolTable getSymbolTable() {
         return symbolTable;
     }
 

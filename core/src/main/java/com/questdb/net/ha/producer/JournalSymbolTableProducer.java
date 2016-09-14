@@ -28,7 +28,7 @@ import com.questdb.ex.JournalNetworkException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.net.ha.ChannelProducer;
 import com.questdb.std.ObjList;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.Tx;
 
 import java.nio.ByteBuffer;
@@ -38,14 +38,14 @@ import java.nio.channels.WritableByteChannel;
 public class JournalSymbolTableProducer implements ChannelProducer {
 
     private final ObjList<VariableColumnDeltaProducer> symbolTableProducers = new ObjList<>();
-    private final ObjList<SymbolTable> symbolTables = new ObjList<>();
+    private final ObjList<MMappedSymbolTable> symbolTables = new ObjList<>();
     private final ByteBuffer buffer;
     private boolean hasContent = false;
 
     public JournalSymbolTableProducer(Journal journal) {
         int tabCount = journal.getSymbolTableCount();
         for (int i = 0; i < tabCount; i++) {
-            SymbolTable tab = journal.getSymbolTable(i);
+            MMappedSymbolTable tab = journal.getSymbolTable(i);
             symbolTables.add(tab);
             symbolTableProducers.add(new VariableColumnDeltaProducer(tab.getDataColumn()));
         }
@@ -56,7 +56,7 @@ public class JournalSymbolTableProducer implements ChannelProducer {
         hasContent = false;
         buffer.rewind();
         for (int i = 0, k = symbolTables.size(); i < k; i++) {
-            SymbolTable tab = symbolTables.getQuick(i);
+            MMappedSymbolTable tab = symbolTables.getQuick(i);
             if (tab != null) {
                 VariableColumnDeltaProducer p = symbolTableProducers.getQuick(i);
                 p.configure(i < tx.symbolTableSizes.length ? tx.symbolTableSizes[i] : 0, tab.size());

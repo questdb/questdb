@@ -32,7 +32,7 @@ import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource recordSource;
@@ -126,7 +126,7 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
         }
 
         @Override
-        public SymbolTable getSymbolTable(int index) {
+        public MMappedSymbolTable getSymbolTable(int index) {
             return null;
         }
 

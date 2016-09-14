@@ -24,7 +24,7 @@
 package com.questdb.ql.impl;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public class RecordColumnMetadataImpl implements RecordColumnMetadata {
     private final String name;
@@ -46,7 +46,7 @@ public class RecordColumnMetadataImpl implements RecordColumnMetadata {
     }
 
     @Override
-    public SymbolTable getSymbolTable() {
+    public MMappedSymbolTable getSymbolTable() {
         return null;
     }
 

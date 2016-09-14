@@ -30,7 +30,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 import org.questdb.examples.model.Quote;
 import org.questdb.examples.support.QuoteGenerator;
 
@@ -79,9 +79,9 @@ public class ExistsExample {
                 //
                 // check values against SymbolTable, if they are there they would exist in journal too.
                 //
-                SymbolTable tab = journal.getSymbolTable("sym");
+                MMappedSymbolTable tab = journal.getSymbolTable("sym");
                 for (String v : values) {
-                    if (tab.getQuick(v) == SymbolTable.VALUE_NOT_FOUND) {
+                    if (tab.getQuick(v) == MMappedSymbolTable.VALUE_NOT_FOUND) {
                         System.out.println(v + ": MISSING");
                     } else {
                         System.out.println(v + ": ok");

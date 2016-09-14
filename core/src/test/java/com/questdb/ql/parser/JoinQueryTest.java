@@ -38,7 +38,7 @@ import com.questdb.ql.impl.join.HashJoinRecordSource;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -1484,9 +1484,9 @@ public class JoinQueryTest extends AbstractOptimiserTest {
         }
         suppliers.commit();
 
-        SymbolTable categoryTab = categories.getSymbolTable("category");
+        MMappedSymbolTable categoryTab = categories.getSymbolTable("category");
         int categoryTabSize = categoryTab.size();
-        SymbolTable supplierTab = suppliers.getSymbolTable("supplier");
+        MMappedSymbolTable supplierTab = suppliers.getSymbolTable("supplier");
         int supplierTabSize = supplierTab.size();
 
         // products
@@ -1512,7 +1512,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
         }
         shippers.commit();
 
-        SymbolTable shipperTab = shippers.getSymbolTable("shipper");
+        MMappedSymbolTable shipperTab = shippers.getSymbolTable("shipper");
         int shipperTabSize = shipperTab.size();
 
         int d = 0;

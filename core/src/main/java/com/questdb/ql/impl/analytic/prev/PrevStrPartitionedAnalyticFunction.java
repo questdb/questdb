@@ -40,7 +40,7 @@ import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.VariableColumn;
 
 import java.io.Closeable;
@@ -146,7 +146,7 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
     }
 
     @Override
-    public SymbolTable getSymbolTable() {
+    public MMappedSymbolTable getSymbolTable() {
         return null;
     }
 

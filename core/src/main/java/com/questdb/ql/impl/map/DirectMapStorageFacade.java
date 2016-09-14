@@ -27,7 +27,7 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.IntList;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public class DirectMapStorageFacade implements StorageFacade {
     private final int split;
@@ -45,7 +45,7 @@ public class DirectMapStorageFacade implements StorageFacade {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int index) {
+    public MMappedSymbolTable getSymbolTable(int index) {
         return delegate.getSymbolTable(keyIndices.getQuick(index - split));
     }
 

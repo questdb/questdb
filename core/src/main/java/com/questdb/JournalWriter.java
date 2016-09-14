@@ -619,7 +619,7 @@ public class JournalWriter<T> extends Journal<T> {
             tx.symbolTableIndexPointers = new long[len];
         }
         for (int i = 0; i < tx.symbolTableSizes.length; i++) {
-            SymbolTable tab = getSymbolTable(i);
+            MMappedSymbolTable tab = getSymbolTable(i);
             tab.commit();
             if (force) {
                 tab.force();

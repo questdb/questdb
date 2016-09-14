@@ -70,8 +70,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     };
     private final File location;
-    private final ObjObjHashMap<String, SymbolTable> symbolTableMap = new ObjObjHashMap<>();
-    private final ObjList<SymbolTable> symbolTables = new ObjList<>();
+    private final ObjObjHashMap<String, MMappedSymbolTable> symbolTableMap = new ObjObjHashMap<>();
+    private final ObjList<MMappedSymbolTable> symbolTables = new ObjList<>();
     private final JournalKey<T> key;
     private final Query<T> query = new QueryImpl<>(this);
     private final long timestampOffset;
@@ -321,15 +321,15 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     }
 
-    public SymbolTable getSymbolTable(String columnName) {
-        SymbolTable result = symbolTableMap.get(columnName);
+    public MMappedSymbolTable getSymbolTable(String columnName) {
+        MMappedSymbolTable result = symbolTableMap.get(columnName);
         if (result == null) {
             throw new JournalRuntimeException("Column is not a symbol: %s", columnName);
         }
         return result;
     }
 
-    public SymbolTable getSymbolTable(int index) {
+    public MMappedSymbolTable getSymbolTable(int index) {
         return symbolTables.get(index);
     }
 
@@ -565,7 +565,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                     int tabIndex = symbolTables.size();
                     int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
                     long indexTxAddress = tx.symbolTableIndexPointers.length > tabIndex ? tx.symbolTableIndexPointers[tabIndex] : 0;
-                    SymbolTable tab = new SymbolTable(meta.distinctCountHint, meta.avgSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress, meta.noCache);
+                    MMappedSymbolTable tab = new MMappedSymbolTable(meta.distinctCountHint, meta.avgSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress, meta.noCache);
                     symbolTables.add(tab);
                     symbolTableMap.put(meta.name, tab);
                     meta.symbolTable = tab;
@@ -644,7 +644,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             ColumnMetadata meta = metadata.getColumnQuick(i);
             if (meta.type == ColumnType.SYMBOL && meta.sameAs != null) {
-                SymbolTable tab = getSymbolTable(meta.sameAs);
+                MMappedSymbolTable tab = getSymbolTable(meta.sameAs);
                 symbolTableMap.put(meta.name, tab);
                 meta.symbolTable = tab;
             }

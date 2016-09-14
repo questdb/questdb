@@ -29,7 +29,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.JournalFactory;
 import com.questdb.misc.Files;
 import com.questdb.store.KVIndex;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 import org.questdb.examples.model.ModelConfiguration;
 import org.questdb.examples.model.Quote;
 import org.questdb.examples.support.QuoteGenerator;
@@ -71,7 +71,7 @@ public class ClassificationExample {
                 // symbol table is a Map<int, String> equivalent
                 // it contains (key,value) pairs for all values of column "sym"
                 // key is a 0-based dense sequence of INTs
-                SymbolTable tab = journal.getSymbolTable("sym");
+                MMappedSymbolTable tab = journal.getSymbolTable("sym");
 
                 // index is a sparse matrix (key x value) where key is "sym" key and values are localRowIDs
                 KVIndex index = journal.getLastPartition().getIndexForColumn("sym");

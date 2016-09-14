@@ -25,17 +25,17 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalInvalidSymbolValueException;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class SymbolTableTest extends AbstractTest {
+public class MMappedSymbolTableTest extends AbstractTest {
 
     private static final int DATA_SIZE = 500;
-    private SymbolTable tab = null;
+    private MMappedSymbolTable tab = null;
 
     @After
     public void tearDown() {
@@ -49,7 +49,7 @@ public class SymbolTableTest extends AbstractTest {
         String data[] = createData();
         createTestTable(data);
         // check that values match keys after cache heat up
-        try (SymbolTable tab = getReader().preLoad()) {
+        try (MMappedSymbolTable tab = getReader().preLoad()) {
             for (int i = 0; i < data.length; i++) {
                 Assert.assertEquals(i, tab.getQuick(data[i]));
             }
@@ -63,7 +63,7 @@ public class SymbolTableTest extends AbstractTest {
         createTestTable(data);
 
         // check that keys match values
-        try (SymbolTable tab = getReader()) {
+        try (MMappedSymbolTable tab = getReader()) {
             for (int i = 0; i < tab.size(); i++) {
                 Assert.assertEquals(data[i], tab.value(i));
             }
@@ -73,7 +73,7 @@ public class SymbolTableTest extends AbstractTest {
     @Test(expected = JournalInvalidSymbolValueException.class)
     public void testLoudCheckKey() throws Exception {
         createTestTable(createData());
-        try (SymbolTable tab = getReader()) {
+        try (MMappedSymbolTable tab = getReader()) {
             Assert.assertEquals(420, tab.get("TEST420"));
             // exception
             tab.get("650");
@@ -85,7 +85,7 @@ public class SymbolTableTest extends AbstractTest {
         String data[] = {null, null};
         createTestTable(data);
 
-        SymbolTable tab = getReader();
+        MMappedSymbolTable tab = getReader();
         try {
             Assert.assertEquals(0, tab.size());
         } finally {
@@ -106,7 +106,7 @@ public class SymbolTableTest extends AbstractTest {
         createTestTable(data);
 
         // check that keys match values
-        try (SymbolTable tab = getReader()) {
+        try (MMappedSymbolTable tab = getReader()) {
             for (int i = 0; i < tab.size(); i++) {
                 Assert.assertEquals(data[i], tab.value(i));
             }
@@ -143,7 +143,7 @@ public class SymbolTableTest extends AbstractTest {
 
         createTestTable(data);
 
-        try (SymbolTable tab = getReader()) {
+        try (MMappedSymbolTable tab = getReader()) {
             for (int i = 0; i < data.length; i++) {
                 Assert.assertEquals(expectedKeys[i], tab.getQuick(data[i]));
             }
@@ -155,7 +155,7 @@ public class SymbolTableTest extends AbstractTest {
         String data[] = createData();
         createTestTable(data);
 
-        try (SymbolTable tab = getWriter()) {
+        try (MMappedSymbolTable tab = getWriter()) {
             Assert.assertEquals(DATA_SIZE, tab.size());
             Assert.assertTrue(tab.valueExists("TEST25"));
             tab.truncate();
@@ -169,8 +169,8 @@ public class SymbolTableTest extends AbstractTest {
         String data[] = createData();
         createTestTable(data);
 
-        try (SymbolTable tab = getReader()) {
-            for (SymbolTable.Entry e : tab.values()) {
+        try (MMappedSymbolTable tab = getReader()) {
+            for (MMappedSymbolTable.Entry e : tab.values()) {
                 TestUtils.assertEquals(data[e.key], e.value);
             }
         }
@@ -182,7 +182,7 @@ public class SymbolTableTest extends AbstractTest {
         createTestTable(data);
 
         // check that values match keys
-        try (SymbolTable tab = getReader()) {
+        try (MMappedSymbolTable tab = getReader()) {
             for (int i = 0; i < data.length; i++) {
                 Assert.assertEquals(i, tab.getQuick(data[i]));
             }
@@ -201,7 +201,7 @@ public class SymbolTableTest extends AbstractTest {
 
     private void createTestTable(String data[]) throws JournalException {
         if (tab == null) {
-            tab = new SymbolTable(DATA_SIZE, 256, 1, factory.getConfiguration().getJournalBase(), "test", JournalMode.APPEND, 0, 0, false);
+            tab = new MMappedSymbolTable(DATA_SIZE, 256, 1, factory.getConfiguration().getJournalBase(), "test", JournalMode.APPEND, 0, 0, false);
         }
 
         for (String s : data) {
@@ -210,11 +210,11 @@ public class SymbolTableTest extends AbstractTest {
         tab.commit();
     }
 
-    private SymbolTable getReader() throws JournalException {
-        return new SymbolTable(DATA_SIZE, 256, 1, factory.getConfiguration().getJournalBase(), "test", JournalMode.READ, tab.size(), tab.getIndexTxAddress(), false);
+    private MMappedSymbolTable getReader() throws JournalException {
+        return new MMappedSymbolTable(DATA_SIZE, 256, 1, factory.getConfiguration().getJournalBase(), "test", JournalMode.READ, tab.size(), tab.getIndexTxAddress(), false);
     }
 
-    private SymbolTable getWriter() throws JournalException {
-        return new SymbolTable(DATA_SIZE, 256, 1, factory.getConfiguration().getJournalBase(), "test", JournalMode.APPEND, tab.size(), tab.getIndexTxAddress(), false);
+    private MMappedSymbolTable getWriter() throws JournalException {
+        return new MMappedSymbolTable(DATA_SIZE, 256, 1, factory.getConfiguration().getJournalBase(), "test", JournalMode.APPEND, tab.size(), tab.getIndexTxAddress(), false);
     }
 }

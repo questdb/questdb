@@ -30,7 +30,7 @@ import com.questdb.query.UnorderedResultSet;
 import com.questdb.query.api.QueryAllBuilder;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
 
@@ -52,7 +52,7 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
 
     @Override
     public QueryAllBuilder<T> filter(String symbol, String value) {
-        SymbolTable tab = journal.getSymbolTable(symbol);
+        MMappedSymbolTable tab = journal.getSymbolTable(symbol);
         int key = tab.get(value);
         filterSymbols.add(symbol);
         filterSymbolKeys.add(key);
@@ -73,11 +73,11 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
 
     public void setSymbol(String symbol, String... values) {
         this.symbol = symbol;
-        SymbolTable symbolTable = journal.getSymbolTable(symbol);
+        MMappedSymbolTable symbolTable = journal.getSymbolTable(symbol);
         this.symbolKeys.clear();
         for (int i = 0; i < values.length; i++) {
             int key = symbolTable.getQuick(values[i]);
-            if (key != SymbolTable.VALUE_NOT_FOUND) {
+            if (key != MMappedSymbolTable.VALUE_NOT_FOUND) {
                 symbolKeys.add(key);
             }
         }

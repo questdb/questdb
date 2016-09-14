@@ -32,7 +32,7 @@ import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectCharSequence;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.VariableColumn;
 
 import java.io.Closeable;
@@ -144,7 +144,7 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     }
 
     @Override
-    public SymbolTable getSymbolTable() {
+    public MMappedSymbolTable getSymbolTable() {
         return null;
     }
 

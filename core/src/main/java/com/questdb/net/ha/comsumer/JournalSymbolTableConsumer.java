@@ -30,7 +30,7 @@ import com.questdb.misc.Unsafe;
 import com.questdb.net.ha.AbstractChannelConsumer;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -41,7 +41,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
     private final ByteBuffer buffer;
     private final long address;
     private final ObjList<VariableColumnDeltaConsumer> symbolTableConsumers;
-    private final ObjList<SymbolTable> symbolTables;
+    private final ObjList<MMappedSymbolTable> symbolTables;
     private final IntList symbolTableSizes;
     private final int tabCount;
 
@@ -58,7 +58,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
         }
 
         for (int i = 0; i < tabCount; i++) {
-            SymbolTable tab = journal.getSymbolTable(i);
+            MMappedSymbolTable tab = journal.getSymbolTable(i);
             symbolTableConsumers.extendAndSet(i, new VariableColumnDeltaConsumer(tab.getDataColumn()));
             symbolTables.extendAndSet(i, tab);
             symbolTableSizes.setQuick(i, tab.size());
@@ -76,7 +76,7 @@ public class JournalSymbolTableConsumer extends AbstractChannelConsumer {
     @Override
     protected void commit() {
         for (int i = 0, sz = symbolTables.size(); i < sz; i++) {
-            SymbolTable tab = symbolTables.getQuick(i);
+            MMappedSymbolTable tab = symbolTables.getQuick(i);
             int oldSize = symbolTableSizes.getQuick(i);
             tab.getDataColumn().commit();
             tab.alignSize();

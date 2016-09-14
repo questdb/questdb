@@ -28,12 +28,12 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.VariableColumn;
 
 public class SymRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
-    private SymbolTable symbolTable;
+    private MMappedSymbolTable symbolTable;
 
     public SymRecordSourceColumn(int index) {
         super(ColumnType.SYMBOL);
@@ -77,7 +77,7 @@ public class SymRecordSourceColumn extends AbstractVirtualColumn {
     }
 
     @Override
-    public SymbolTable getSymbolTable() {
+    public MMappedSymbolTable getSymbolTable() {
         return symbolTable;
     }
 

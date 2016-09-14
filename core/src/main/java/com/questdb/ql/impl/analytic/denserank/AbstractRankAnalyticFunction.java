@@ -30,7 +30,7 @@ import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.std.CharSink;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public abstract class AbstractRankAnalyticFunction implements AnalyticFunction {
 
@@ -121,7 +121,7 @@ public abstract class AbstractRankAnalyticFunction implements AnalyticFunction {
     }
 
     @Override
-    public SymbolTable getSymbolTable() {
+    public MMappedSymbolTable getSymbolTable() {
         throw new UnsupportedOperationException();
     }
 

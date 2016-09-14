@@ -40,7 +40,7 @@ import com.questdb.std.IntList;
 import com.questdb.std.LongList;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public class KvIndexSymListHeadRowSource extends AbstractRowSource {
 
@@ -117,7 +117,7 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
             filter.prepare(fa);
         }
 
-        SymbolTable tab = fa.getSymbolTable(columnIndex);
+        MMappedSymbolTable tab = fa.getSymbolTable(columnIndex);
         keys.clear();
 
         for (int i = 0, n = values.size(); i < n; i++) {

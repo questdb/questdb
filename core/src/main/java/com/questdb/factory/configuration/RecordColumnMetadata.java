@@ -23,14 +23,14 @@
 
 package com.questdb.factory.configuration;
 
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 public interface RecordColumnMetadata {
     int getBucketCount();
 
     String getName();
 
-    SymbolTable getSymbolTable();
+    MMappedSymbolTable getSymbolTable();
 
     int getType();
 

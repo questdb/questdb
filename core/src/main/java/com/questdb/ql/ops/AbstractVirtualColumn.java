@@ -26,7 +26,7 @@ package com.questdb.ql.ops;
 import com.questdb.ql.Record;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 
 import java.io.OutputStream;
 
@@ -139,7 +139,7 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     }
 
     @Override
-    public SymbolTable getSymbolTable() {
+    public MMappedSymbolTable getSymbolTable() {
         return null;
     }
 

@@ -38,7 +38,7 @@ import com.questdb.std.ObjList;
 import java.io.Closeable;
 import java.io.File;
 
-public class SymbolTable implements Closeable {
+public class MMappedSymbolTable implements Closeable {
 
     public static final int VALUE_NOT_FOUND = -2;
     public static final int VALUE_IS_NULL = -1;
@@ -56,7 +56,7 @@ public class SymbolTable implements Closeable {
     private KVIndex index;
     private int size;
 
-    public SymbolTable(int keyCount, int avgStringSize, int txCountHint, File directory, String column, int journalMode, int size, long indexTxAddress, boolean noCache) throws JournalException {
+    public MMappedSymbolTable(int keyCount, int avgStringSize, int txCountHint, File directory, String column, int journalMode, int size, long indexTxAddress, boolean noCache) throws JournalException {
         // number of hash keys stored in index
         // assume it is 20% of stated capacity
         this.hashKeyCount = Numbers.ceilPow2(Math.max(2, (int) (keyCount * CACHE_LOAD_FACTOR))) - 1;
@@ -154,7 +154,7 @@ public class SymbolTable implements Closeable {
         return get0(value);
     }
 
-    public SymbolTable preLoad() {
+    public MMappedSymbolTable preLoad() {
         for (int key = 0, size = (int) data.size(); key < size; key++) {
             String value = data.getStr(key);
             valueCache.putIfAbsent(value, key);

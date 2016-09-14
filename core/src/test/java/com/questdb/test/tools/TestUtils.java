@@ -49,7 +49,7 @@ import com.questdb.std.IntList;
 import com.questdb.std.LongList;
 import com.questdb.store.ColumnType;
 import com.questdb.store.KVIndex;
-import com.questdb.store.SymbolTable;
+import com.questdb.store.MMappedSymbolTable;
 import org.junit.Assert;
 
 import java.io.File;
@@ -106,8 +106,8 @@ public final class TestUtils {
         IntList colKeyCount = new IntList();
 
         for (int k = 0; k < expected.getMetadata().getColumnCount(); k++) {
-            SymbolTable et = expected.getMetadata().getColumn(k).symbolTable;
-            SymbolTable at = actual.getMetadata().getColumn(k).symbolTable;
+            MMappedSymbolTable et = expected.getMetadata().getColumn(k).symbolTable;
+            MMappedSymbolTable at = actual.getMetadata().getColumn(k).symbolTable;
 
             if (et == null && at == null) {
                 continue;
@@ -309,10 +309,10 @@ public final class TestUtils {
 
     public static void compareSymbolTables(Journal a, Journal b) {
         for (int i = 0; i < a.getMetadata().getColumnCount(); i++) {
-            SymbolTable m = a.getMetadata().getColumn(i).symbolTable;
+            MMappedSymbolTable m = a.getMetadata().getColumn(i).symbolTable;
             if (m != null) {
-                SymbolTable s = b.getMetadata().getColumn(i).symbolTable;
-                for (SymbolTable.Entry e : m.values()) {
+                MMappedSymbolTable s = b.getMetadata().getColumn(i).symbolTable;
+                for (MMappedSymbolTable.Entry e : m.values()) {
                     Assert.assertEquals(m.getQuick(e.value), s.getQuick(e.value));
                 }
             }
