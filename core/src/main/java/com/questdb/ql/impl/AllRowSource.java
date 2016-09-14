@@ -25,9 +25,12 @@ package com.questdb.ql.impl;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
+import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
+import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.PartitionSlice;
 import com.questdb.ql.RowCursor;
+import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSink;
 
 public class AllRowSource extends AbstractRowSource {
@@ -36,6 +39,11 @@ public class AllRowSource extends AbstractRowSource {
 
     @Override
     public void configure(JournalMetadata metadata) {
+    }
+
+    @Override
+    public void prepare(JournalReaderFactory factory, StorageFacade storageFacade, CancellationHandler cancellationHandler) {
+
     }
 
     @Override

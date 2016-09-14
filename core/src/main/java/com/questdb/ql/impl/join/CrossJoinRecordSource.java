@@ -68,7 +68,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
         this.factory = factory;
         masterCursor = masterSource.prepareCursor(factory, cancellationHandler);
         slaveCursor = slaveSource.prepareCursor(factory, cancellationHandler);
-        this.storageFacade.prepare(factory, masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
+        this.storageFacade.prepare(masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
         return this;
     }
 

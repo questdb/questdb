@@ -23,20 +23,12 @@
 
 package com.questdb.ql.impl;
 
-import com.questdb.Journal;
-import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.StorageFacade;
 import com.questdb.store.SymbolTable;
 
 public class MasterStorageFacade implements StorageFacade {
     private RecordMetadata metadata;
-    private JournalReaderFactory factory;
-
-    @Override
-    public JournalReaderFactory getFactory() {
-        return factory;
-    }
 
     @Override
     public SymbolTable getSymbolTable(int index) {
@@ -44,11 +36,7 @@ public class MasterStorageFacade implements StorageFacade {
         return metadata.getColumnQuick(index).getSymbolTable();
     }
 
-    public void setFactory(JournalReaderFactory factory) {
-        this.factory = factory;
-    }
-
-    public void setJournal(Journal journal) {
-        this.metadata = journal.getMetadata();
+    public void setMetadata(RecordMetadata metadata) {
+        this.metadata = metadata;
     }
 }

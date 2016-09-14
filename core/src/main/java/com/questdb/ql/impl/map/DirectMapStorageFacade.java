@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.map;
 
-import com.questdb.factory.JournalReaderFactory;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.IntList;
@@ -37,11 +36,6 @@ public class DirectMapStorageFacade implements StorageFacade {
     public DirectMapStorageFacade(int split, IntList keyIndices) {
         this.split = split;
         this.keyIndices = keyIndices;
-    }
-
-    @Override
-    public JournalReaderFactory getFactory() {
-        return delegate.getFactory();
     }
 
     @Override

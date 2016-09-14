@@ -129,7 +129,7 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
         }
 
         final RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
-        this.storageFacade.prepare(factory, cursor.getStorageFacade());
+        this.storageFacade.prepare(cursor.getStorageFacade());
         // step #1: store source cursor in record list
         // - add record list' row ids to all trees, which will put these row ids in necessary order
         // for this we will be using out comparator, which helps tree compare long values

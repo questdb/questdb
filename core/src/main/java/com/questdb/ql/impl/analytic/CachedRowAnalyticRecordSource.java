@@ -130,7 +130,7 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
 
         final RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.parentCursor = cursor;
-        this.storageFacade.prepare(factory, cursor.getStorageFacade());
+        this.storageFacade.prepare(cursor.getStorageFacade());
 
         // red&black trees, one for each comparator where comparator is not null
         for (int i = 0; i < orderGroupCount; i++) {

@@ -132,7 +132,7 @@ public abstract class AbstractOptimiserTest {
         try (RecordSource src = compiler.compile(factory, query)) {
             RecordCursor cursor = src.prepareCursor(factory);
             SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
-            Assert.assertNotNull(cursor.getStorageFacade().getFactory());
+            Assert.assertNotNull(factory);
             while (cursor.hasNext()) {
                 Record r = cursor.next();
                 TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));

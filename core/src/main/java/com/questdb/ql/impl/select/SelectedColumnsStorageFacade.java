@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.select;
 
-import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.ObjList;
@@ -42,11 +41,6 @@ public class SelectedColumnsStorageFacade implements StorageFacade {
         for (int i = 0; i < k; i++) {
             reindex[i] = parentMetadata.getColumnIndex(names.getQuick(i));
         }
-    }
-
-    @Override
-    public JournalReaderFactory getFactory() {
-        return delegate.getFactory();
     }
 
     @Override

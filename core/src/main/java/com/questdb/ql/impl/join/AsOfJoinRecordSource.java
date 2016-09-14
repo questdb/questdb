@@ -115,7 +115,7 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
         this.slaveCursor = slave.prepareCursor(factory, cancellationHandler);
         this.recordHolder.setCursor(slaveCursor);
         this.delayedHolder.setCursor(slaveCursor);
-        this.storageFacade.prepare(factory, masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
+        this.storageFacade.prepare(masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
         return this;
     }
 

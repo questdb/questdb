@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.factory.JournalReaderFactory;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.ObjList;
 import com.questdb.store.SymbolTable;
@@ -31,17 +30,11 @@ import com.questdb.store.SymbolTable;
 public class AnalyticRecordStorageFacade implements StorageFacade {
     private final int split;
     private final ObjList<AnalyticFunction> functions;
-    private JournalReaderFactory factory;
     private StorageFacade a;
 
     public AnalyticRecordStorageFacade(int split, ObjList<AnalyticFunction> functions) {
         this.split = split;
         this.functions = functions;
-    }
-
-    @Override
-    public JournalReaderFactory getFactory() {
-        return factory;
     }
 
     @Override
@@ -52,8 +45,7 @@ public class AnalyticRecordStorageFacade implements StorageFacade {
         return functions.get(index - split).getSymbolTable();
     }
 
-    public void prepare(JournalReaderFactory factory, StorageFacade a) {
-        this.factory = factory;
+    public void prepare(StorageFacade a) {
         this.a = a;
     }
 }

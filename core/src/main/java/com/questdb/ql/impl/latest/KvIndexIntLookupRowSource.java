@@ -25,9 +25,12 @@ package com.questdb.ql.impl.latest;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
+import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
+import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.PartitionSlice;
 import com.questdb.ql.RowCursor;
+import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.AbstractRowSource;
 import com.questdb.std.CharSink;
 import com.questdb.store.FixedColumn;
@@ -62,6 +65,11 @@ public class KvIndexIntLookupRowSource extends AbstractRowSource {
     public void configure(JournalMetadata metadata) {
         this.columnIndex = metadata.getColumnIndex(columnName);
         this.key = value & metadata.getColumnQuick(columnIndex).distinctCountHint;
+    }
+
+    @Override
+    public void prepare(JournalReaderFactory factory, StorageFacade storageFacade, CancellationHandler cancellationHandler) {
+
     }
 
     @Override

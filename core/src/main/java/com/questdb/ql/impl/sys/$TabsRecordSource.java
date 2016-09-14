@@ -87,6 +87,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
         Misc.free(records);
     }
 
+
     @Override
     public RecordMetadata getMetadata() {
         return metadata;

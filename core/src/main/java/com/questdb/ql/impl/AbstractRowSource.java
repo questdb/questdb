@@ -23,13 +23,8 @@
 
 package com.questdb.ql.impl;
 
-import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.RowCursor;
 import com.questdb.ql.RowSource;
-import com.questdb.ql.StorageFacade;
 
 public abstract class AbstractRowSource implements RowSource, RowCursor {
-    @Override
-    public void prepare(StorageFacade storageFacade, CancellationHandler cancellationHandler) {
-    }
 }

@@ -26,6 +26,7 @@ package com.questdb.ql.impl.latest;
 import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
+import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.PartitionSlice;
@@ -62,6 +63,13 @@ public class KvIndexIntListHeadRowSource extends AbstractRowSource {
     public void configure(JournalMetadata metadata) {
         this.columnIndex = metadata.getColumnIndex(column);
         this.buckets = metadata.getColumnQuick(columnIndex).distinctCountHint;
+    }
+
+    @Override
+    public void prepare(JournalReaderFactory factory, StorageFacade storageFacade, CancellationHandler cancellationHandler) {
+        if (filter != null) {
+            filter.prepare(storageFacade);
+        }
     }
 
     @Override
@@ -110,13 +118,6 @@ public class KvIndexIntListHeadRowSource extends AbstractRowSource {
     @Override
     public long next() {
         return rec.rowid = rows.getQuick(keyIndex++);
-    }
-
-    @Override
-    public void prepare(StorageFacade storageFacade, CancellationHandler cancellationHandler) {
-        if (filter != null) {
-            filter.prepare(storageFacade);
-        }
     }
 
     @Override

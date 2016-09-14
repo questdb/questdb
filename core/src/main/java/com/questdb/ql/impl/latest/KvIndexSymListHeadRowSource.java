@@ -26,6 +26,7 @@ package com.questdb.ql.impl.latest;
 import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
+import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.PartitionSlice;
@@ -62,6 +63,24 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
     @Override
     public void configure(JournalMetadata metadata) {
         this.columnIndex = metadata.getColumnIndex(column);
+    }
+
+    @Override
+    public void prepare(JournalReaderFactory factory, StorageFacade fa, CancellationHandler cancellationHandler) {
+
+        if (filter != null) {
+            filter.prepare(fa);
+        }
+
+        SymbolTable tab = fa.getSymbolTable(columnIndex);
+        keys.clear();
+
+        for (int i = 0, n = values.size(); i < n; i++) {
+            int k = tab.getQuick(values.get(i));
+            if (k > -1) {
+                keys.add(k);
+            }
+        }
     }
 
     @Override
@@ -108,24 +127,6 @@ public class KvIndexSymListHeadRowSource extends AbstractRowSource {
     @Override
     public long next() {
         return rec.rowid = rows.getQuick(keyIndex++);
-    }
-
-    @Override
-    public void prepare(StorageFacade fa, CancellationHandler cancellationHandler) {
-
-        if (filter != null) {
-            filter.prepare(fa);
-        }
-
-        SymbolTable tab = fa.getSymbolTable(columnIndex);
-        keys.clear();
-
-        for (int i = 0, n = values.size(); i < n; i++) {
-            int k = tab.getQuick(values.get(i));
-            if (k > -1) {
-                keys.add(k);
-            }
-        }
     }
 
     @Override

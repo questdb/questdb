@@ -23,6 +23,7 @@
 
 package com.questdb.ql;
 
+import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.std.Sinkable;
 
@@ -30,7 +31,7 @@ public interface RowSource extends Sinkable {
 
     void configure(JournalMetadata metadata);
 
-    void prepare(StorageFacade storageFacade, CancellationHandler cancellationHandler);
+    void prepare(JournalReaderFactory factory, StorageFacade storageFacade, CancellationHandler cancellationHandler);
 
     RowCursor prepareCursor(PartitionSlice slice);
 

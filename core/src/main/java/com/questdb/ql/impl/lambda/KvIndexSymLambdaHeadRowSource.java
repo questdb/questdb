@@ -26,6 +26,7 @@ package com.questdb.ql.impl.lambda;
 import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
+import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.AbstractRowSource;
@@ -58,6 +59,23 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
     @Override
     public void configure(JournalMetadata metadata) {
         this.columnIndex = metadata.getColumnIndex(column);
+    }
+
+    @Override
+    public void prepare(JournalReaderFactory factory, StorageFacade fa, CancellationHandler cancellationHandler) {
+
+        if (filter != null) {
+            filter.prepare(fa);
+        }
+
+        SymbolTable tab = fa.getSymbolTable(columnIndex);
+        keys.clear();
+        for (Record r : recordSource.prepareCursor(factory, cancellationHandler)) {
+            int k = tab.getQuick(getKey(r, recordSourceColumn));
+            if (k > -1) {
+                keys.add(k);
+            }
+        }
     }
 
     @Override
@@ -99,23 +117,6 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
     @Override
     public long next() {
         return rec.rowid = rows.getQuick(cursor++);
-    }
-
-    @Override
-    public void prepare(StorageFacade fa, CancellationHandler cancellationHandler) {
-
-        if (filter != null) {
-            filter.prepare(fa);
-        }
-
-        SymbolTable tab = fa.getSymbolTable(columnIndex);
-        keys.clear();
-        for (Record r : recordSource.prepareCursor(fa.getFactory(), cancellationHandler)) {
-            int k = tab.getQuick(getKey(r, recordSourceColumn));
-            if (k > -1) {
-                keys.add(k);
-            }
-        }
     }
 
     protected abstract CharSequence getKey(Record r, int col);

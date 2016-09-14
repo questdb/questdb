@@ -123,7 +123,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
         this.slaveCursor = slave.prepareCursor(factory, cancellationHandler);
         map.setSlaveCursor(slaveCursor);
         holder.setCursor(slaveCursor);
-        storageFacade.prepare(factory, masterCursor.getStorageFacade(), map.getStorageFacade());
+        storageFacade.prepare(masterCursor.getStorageFacade(), map.getStorageFacade());
         return this;
     }
 

@@ -23,12 +23,8 @@
 
 package com.questdb.ql;
 
-import com.questdb.factory.JournalReaderFactory;
 import com.questdb.store.SymbolTable;
 
 public interface StorageFacade {
-
-    JournalReaderFactory getFactory();
-
     SymbolTable getSymbolTable(int index);
 }

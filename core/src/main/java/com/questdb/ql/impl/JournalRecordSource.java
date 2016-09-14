@@ -61,7 +61,7 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
         rowSource.reset();
         cursor = null;
         this.partitionCursor = partitionSource.prepareCursor(factory);
-        this.rowSource.prepare(partitionCursor.getStorageFacade(), cancellationHandler);
+        this.rowSource.prepare(factory, partitionCursor.getStorageFacade(), cancellationHandler);
         return this;
     }
 

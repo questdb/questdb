@@ -47,7 +47,7 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
         RecordMetadata dm = recordSource.getMetadata();
         this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
         this.current = new VirtualRecord(dm.getColumnCount(), virtualColumns);
-        this.virtualColumnStorageFacade = new VirtualColumnStorageFacade();
+        this.virtualColumnStorageFacade = VirtualColumnStorageFacade.INSTANCE;
         this.storageFacade = new SplitRecordStorageFacade(dm.getColumnCount());
     }
 
@@ -64,8 +64,7 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
-        this.virtualColumnStorageFacade.prepare(factory);
-        storageFacade.prepare(factory, recordCursor.getStorageFacade(), this.virtualColumnStorageFacade);
+        storageFacade.prepare(recordCursor.getStorageFacade(), this.virtualColumnStorageFacade);
         current.prepare(storageFacade);
         return this;
     }
@@ -118,20 +117,12 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     }
 
     private static class VirtualColumnStorageFacade implements StorageFacade {
-        private JournalReaderFactory factory;
 
-        @Override
-        public JournalReaderFactory getFactory() {
-            return factory;
-        }
+        private static final VirtualColumnStorageFacade INSTANCE = new VirtualColumnStorageFacade();
 
         @Override
         public SymbolTable getSymbolTable(int index) {
             return null;
-        }
-
-        public void prepare(JournalReaderFactory factory) {
-            this.factory = factory;
         }
     }
 }

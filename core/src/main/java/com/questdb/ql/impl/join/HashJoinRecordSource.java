@@ -101,7 +101,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         this.masterCursor = master.prepareCursor(factory, cancellationHandler);
         buildHashTable(cancellationHandler);
         recordMap.setStorageFacade(slaveCursor.getStorageFacade());
-        storageFacade.prepare(factory, masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
+        storageFacade.prepare(masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
         return this;
     }
 

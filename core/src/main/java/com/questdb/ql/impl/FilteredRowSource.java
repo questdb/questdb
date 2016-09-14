@@ -23,6 +23,7 @@
 
 package com.questdb.ql.impl;
 
+import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.VirtualColumn;
@@ -43,6 +44,12 @@ public class FilteredRowSource extends AbstractRowSource {
     @Override
     public void configure(JournalMetadata metadata) {
         this.delegate.configure(metadata);
+    }
+
+    @Override
+    public void prepare(JournalReaderFactory factory, StorageFacade facade, CancellationHandler cancellationHandler) {
+        delegate.prepare(factory, facade, cancellationHandler);
+        filter.prepare(facade);
     }
 
     @Override
@@ -71,12 +78,6 @@ public class FilteredRowSource extends AbstractRowSource {
     @Override
     public long next() {
         return rec.rowid;
-    }
-
-    @Override
-    public void prepare(StorageFacade facade, CancellationHandler cancellationHandler) {
-        delegate.prepare(facade, cancellationHandler);
-        filter.prepare(facade);
     }
 
     @Override
