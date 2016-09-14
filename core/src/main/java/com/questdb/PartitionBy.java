@@ -30,21 +30,25 @@ import com.questdb.std.CharSequenceIntHashMap;
  */
 public final class PartitionBy {
 
-    public static final int DAY = 1;
-    public static final int MONTH = 2;
-    public static final int YEAR = 4;
+    public static final int DAY = 0;
+    public static final int MONTH = 1;
+    public static final int YEAR = 2;
     /**
      * Data is not partitioned at all,
      * all data is stored in a single directory
      */
-    public static final int NONE = 8;
+    public static final int NONE = 3;
     /**
      * Setting partition type to DEFAULT will use whatever partition type is specified in journal configuration.
      */
-    public static final int DEFAULT = 16;
+    public static final int DEFAULT = 4;
     private final static CharSequenceIntHashMap nameToIndexMap = new CharSequenceIntHashMap();
 
     private PartitionBy() {
+    }
+
+    public static int count() {
+        return nameToIndexMap.size();
     }
 
     public static int fromString(CharSequence name) {

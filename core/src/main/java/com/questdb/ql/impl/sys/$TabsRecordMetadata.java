@@ -23,15 +23,17 @@
 
 package com.questdb.ql.impl.sys;
 
+import com.questdb.PartitionBy;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.store.ColumnType;
+import com.questdb.store.SymbolTable;
 
 public class $TabsRecordMetadata extends CollectionRecordMetadata {
 
     public static final RecordColumnMetadata NAME = new RecordColumnMetadataImpl("name", ColumnType.STRING);
-    public static final RecordColumnMetadata PARTITION_BY = new RecordColumnMetadataImpl("partition_by", ColumnType.STRING);
+    public static final RecordColumnMetadata PARTITION_BY = new RecordColumnMetadataImpl("partition_by", ColumnType.SYMBOL, PartitionBySymbolTable.INSTANCE, 5, false);
     public static final RecordColumnMetadata PARTITION_COUNT = new RecordColumnMetadataImpl("partition_count", ColumnType.INT);
     public static final RecordColumnMetadata COLUMN_COUNT = new RecordColumnMetadataImpl("column_count", ColumnType.INT);
     public static final RecordColumnMetadata LAST_MODIFIED = new RecordColumnMetadataImpl("last_modified", ColumnType.DATE);
@@ -44,5 +46,25 @@ public class $TabsRecordMetadata extends CollectionRecordMetadata {
         add(COLUMN_COUNT);
         add(LAST_MODIFIED);
         add(SIZE);
+    }
+
+    public static class PartitionBySymbolTable implements SymbolTable {
+
+        private static final PartitionBySymbolTable INSTANCE = new PartitionBySymbolTable();
+
+        @Override
+        public int getQuick(CharSequence value) {
+            return PartitionBy.fromString(value);
+        }
+
+        @Override
+        public int size() {
+            return PartitionBy.count();
+        }
+
+        @Override
+        public String value(int key) {
+            return PartitionBy.toString(key);
+        }
     }
 }

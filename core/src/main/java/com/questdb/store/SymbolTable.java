@@ -30,8 +30,6 @@ public interface SymbolTable {
 
     String value(int key);
 
-    Iterable<Entry> values();
-
     class Entry {
         public int key;
         public CharSequence value;

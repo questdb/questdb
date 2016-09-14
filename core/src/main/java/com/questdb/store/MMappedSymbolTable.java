@@ -178,13 +178,6 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
 
     }
 
-    @Override
-    public Iterable<Entry> values() {
-        iter.pos = 0;
-        iter.size = size();
-        return iter;
-    }
-
     public MMappedSymbolTable preLoad() {
         for (int key = 0, size = (int) data.size(); key < size; key++) {
             String value = data.getStr(key);
@@ -231,6 +224,12 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
 
     public boolean valueExists(CharSequence value) {
         return getQuick(value) != VALUE_NOT_FOUND;
+    }
+
+    public Iterable<Entry> values() {
+        iter.pos = 0;
+        iter.size = size();
+        return iter;
     }
 
     private void cache(int key, String value) {

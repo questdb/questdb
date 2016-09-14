@@ -30,7 +30,6 @@ import com.questdb.regex.Pattern;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
-import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.SymbolTable;
 
 public class SymRegexOperator extends AbstractBinaryOperator {
@@ -59,9 +58,9 @@ public class SymRegexOperator extends AbstractBinaryOperator {
         final Matcher matcher = Pattern.compile(rhs.getStr(null).toString()).matcher("");
         set.clear();
         SymbolTable tab = lhs.getSymbolTable();
-        for (MMappedSymbolTable.Entry e : tab.values()) {
-            if (matcher.reset(e.value).find()) {
-                set.add(e.key);
+        for (int i = 0, n = tab.size(); i < n; i++) {
+            if (matcher.reset(tab.value(i)).find()) {
+                set.add(i);
             }
         }
     }

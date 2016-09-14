@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.sys;
 
-import com.questdb.PartitionBy;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -35,6 +34,7 @@ import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.RecordCursor;
+import com.questdb.ql.impl.MasterStorageFacade;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.ops.AbstractRecordSource;
 import com.questdb.std.*;
@@ -72,6 +72,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
     public $TabsRecordSource(int pageSize, int metaSize, int maxMetaSize) {
         this.metadata = new $TabsRecordMetadata();
         this.records = new RecordList(metadata, pageSize);
+        this.records.setStorageFacade(new MasterStorageFacade().of(metadata));
         this.metaSize = metaSize;
         this.maxMetaSize = maxMetaSize;
     }
@@ -86,7 +87,6 @@ public class $TabsRecordSource extends AbstractRecordSource {
     public void close() {
         Misc.free(records);
     }
-
 
     @Override
     public RecordMetadata getMetadata() {
@@ -162,7 +162,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
                                 // name
                                 records.appendStr(name);
                                 // partition type
-                                records.appendStr(PartitionBy.toString(partitionBy));
+                                records.appendInt(partitionBy);
                                 // partition count
                                 records.appendInt(countDirs(compositePath.of(base).concat(name).$()));
                                 // column count
@@ -193,6 +193,9 @@ public class $TabsRecordSource extends AbstractRecordSource {
 
     @Override
     public void toSink(CharSink sink) {
+        sink.put('{');
+        sink.putQuoted("op").put(':').putQuoted("$tabs");
+        sink.put('}');
     }
 
     private static int countDirs(LPSZ path) {

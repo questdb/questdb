@@ -32,11 +32,11 @@ public class MasterStorageFacade implements StorageFacade {
 
     @Override
     public SymbolTable getSymbolTable(int index) {
-        // do not call journal.getSymbolTable() because it uses different indexing system
         return metadata.getColumnQuick(index).getSymbolTable();
     }
 
-    public void setMetadata(RecordMetadata metadata) {
+    public MasterStorageFacade of(RecordMetadata metadata) {
         this.metadata = metadata;
+        return this;
     }
 }
