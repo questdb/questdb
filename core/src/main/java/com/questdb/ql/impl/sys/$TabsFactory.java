@@ -37,7 +37,7 @@ public class $TabsFactory implements SystemViewFactory {
 
     @Override
     public RecordSource create(JournalReaderFactory factory, ServerConfiguration configuration) {
-        return new $TabsRecordSource(configuration.getDbSysViewPage());
+        return new $TabsRecordSource(configuration.getDbSysViewPage(), configuration.getDbSysMetaSize(), configuration.getDbSysMaxMetaSize());
     }
 
     @Override
