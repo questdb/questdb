@@ -38,7 +38,7 @@ import com.questdb.std.ObjList;
 import java.io.Closeable;
 import java.io.File;
 
-public class MMappedSymbolTable implements Closeable {
+public class MMappedSymbolTable implements Closeable, SymbolTable {
 
     public static final int VALUE_NOT_FOUND = -2;
     public static final int VALUE_IS_NULL = -1;
@@ -107,6 +107,7 @@ public class MMappedSymbolTable implements Closeable {
         this.index.setTxAddress(indexTxAddress);
     }
 
+    @Override
     public void close() {
         data = Misc.free(data);
         index = Misc.free(index);
@@ -139,6 +140,7 @@ public class MMappedSymbolTable implements Closeable {
         return index.getTxAddress();
     }
 
+    @Override
     public int getQuick(CharSequence value) {
         if (value == null) {
             return VALUE_IS_NULL;
@@ -152,6 +154,35 @@ public class MMappedSymbolTable implements Closeable {
         }
 
         return get0(value);
+    }
+
+    @Override
+    public int size() {
+        return size;
+    }
+
+    @Override
+    public String value(int key) {
+        if (key < 0) {
+            return null;
+        }
+
+        if (key < size) {
+            String value = key < keyCache.size() ? keyCache.getQuick(key) : null;
+            if (value == null) {
+                cache(key, value = data.getStr(key));
+            }
+            return value;
+        }
+        throw new JournalRuntimeException("Invalid symbol key: " + key);
+
+    }
+
+    @Override
+    public Iterable<Entry> values() {
+        iter.pos = 0;
+        iter.size = size();
+        return iter;
     }
 
     public MMappedSymbolTable preLoad() {
@@ -176,10 +207,6 @@ public class MMappedSymbolTable implements Closeable {
         return key;
     }
 
-    public int size() {
-        return size;
-    }
-
     public void truncate() {
         truncate(0);
     }
@@ -202,30 +229,8 @@ public class MMappedSymbolTable implements Closeable {
         }
     }
 
-    public String value(int key) {
-        if (key < 0) {
-            return null;
-        }
-
-        if (key < size) {
-            String value = key < keyCache.size() ? keyCache.getQuick(key) : null;
-            if (value == null) {
-                cache(key, value = data.getStr(key));
-            }
-            return value;
-        }
-        throw new JournalRuntimeException("Invalid symbol key: " + key);
-
-    }
-
     public boolean valueExists(CharSequence value) {
         return getQuick(value) != VALUE_NOT_FOUND;
-    }
-
-    public Iterable<Entry> values() {
-        iter.pos = 0;
-        iter.size = size();
-        return iter;
     }
 
     private void cache(int key, String value) {
@@ -262,11 +267,6 @@ public class MMappedSymbolTable implements Closeable {
 
     private int hashKey(CharSequence value) {
         return Hash.boundedHash(value, hashKeyCount);
-    }
-
-    public static class Entry {
-        public int key;
-        public CharSequence value;
     }
 
     private class Iter extends AbstractImmutableIterator<Entry> {

@@ -32,6 +32,7 @@ import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.store.ColumnType;
 import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public class PrevRowAnalyticFunction implements AnalyticFunction {
     private final VirtualColumn valueColumn;
@@ -132,7 +133,7 @@ public class PrevRowAnalyticFunction implements AnalyticFunction {
     }
 
     @Override
-    public MMappedSymbolTable getSymbolTable() {
+    public SymbolTable getSymbolTable() {
         return valueColumn.getSymbolTable();
     }
 

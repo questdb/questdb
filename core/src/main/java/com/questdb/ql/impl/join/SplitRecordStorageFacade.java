@@ -25,7 +25,7 @@ package com.questdb.ql.impl.join;
 
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.ql.StorageFacade;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public class SplitRecordStorageFacade implements StorageFacade {
     private final int split;
@@ -43,7 +43,7 @@ public class SplitRecordStorageFacade implements StorageFacade {
     }
 
     @Override
-    public MMappedSymbolTable getSymbolTable(int index) {
+    public SymbolTable getSymbolTable(int index) {
         return index < split ? a.getSymbolTable(index) : b.getSymbolTable(index - split);
     }
 

@@ -31,7 +31,7 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.IntList;
 import com.questdb.store.ColumnType;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolder {
     private final IntList types;
@@ -169,7 +169,7 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
     }
 
     @Override
-    protected MMappedSymbolTable getSymbolTable(int col) {
+    protected SymbolTable getSymbolTable(int col) {
         return storageFacade.getSymbolTable(col);
     }
 

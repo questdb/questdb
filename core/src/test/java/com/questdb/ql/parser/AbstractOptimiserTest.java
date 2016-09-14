@@ -37,7 +37,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.AssociativeCache;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -131,7 +131,7 @@ public abstract class AbstractOptimiserTest {
     protected void assertSymbol(String query, int columnIndex) throws ParserException {
         try (RecordSource src = compiler.compile(factory, query)) {
             RecordCursor cursor = src.prepareCursor(factory);
-            MMappedSymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
+            SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
             Assert.assertNotNull(cursor.getStorageFacade().getFactory());
             while (cursor.hasNext()) {
                 Record r = cursor.next();

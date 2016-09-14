@@ -35,7 +35,7 @@ import com.questdb.std.IntHashSet;
 import com.questdb.std.LongList;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
     protected final RecordSource recordSource;
@@ -108,7 +108,7 @@ abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
             filter.prepare(fa);
         }
 
-        MMappedSymbolTable tab = fa.getSymbolTable(columnIndex);
+        SymbolTable tab = fa.getSymbolTable(columnIndex);
         keys.clear();
         for (Record r : recordSource.prepareCursor(fa.getFactory(), cancellationHandler)) {
             int k = tab.getQuick(getKey(r, recordSourceColumn));

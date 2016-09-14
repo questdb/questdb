@@ -27,7 +27,7 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.std.CharSink;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public interface AnalyticFunction {
     int STREAM = 1;
@@ -66,7 +66,7 @@ public interface AnalyticFunction {
 
     String getSym();
 
-    MMappedSymbolTable getSymbolTable();
+    SymbolTable getSymbolTable();
 
     int getType();
 

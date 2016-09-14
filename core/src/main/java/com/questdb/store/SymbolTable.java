@@ -21,18 +21,19 @@
  *
  ******************************************************************************/
 
-package com.questdb.factory.configuration;
+package com.questdb.store;
 
-import com.questdb.store.SymbolTable;
+public interface SymbolTable {
+    int getQuick(CharSequence value);
 
-public interface RecordColumnMetadata {
-    int getBucketCount();
+    int size();
 
-    String getName();
+    String value(int key);
 
-    SymbolTable getSymbolTable();
+    Iterable<Entry> values();
 
-    int getType();
-
-    boolean isIndexed();
+    class Entry {
+        public int key;
+        public CharSequence value;
+    }
 }

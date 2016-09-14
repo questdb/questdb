@@ -24,20 +24,30 @@
 package com.questdb.ql.impl;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public class RecordColumnMetadataImpl implements RecordColumnMetadata {
     private final String name;
     private final int type;
+    private final SymbolTable symbolTable;
+    private final int buckets;
+    private final boolean indexed;
 
     public RecordColumnMetadataImpl(String name, int type) {
+        this(name, type, null, 0, false);
+    }
+
+    public RecordColumnMetadataImpl(String name, int type, SymbolTable symbolTable, int buckets, boolean indexed) {
         this.name = name;
         this.type = type;
+        this.symbolTable = symbolTable;
+        this.buckets = buckets;
+        this.indexed = indexed;
     }
 
     @Override
     public int getBucketCount() {
-        return 0;
+        return buckets;
     }
 
     @Override
@@ -46,8 +56,8 @@ public class RecordColumnMetadataImpl implements RecordColumnMetadata {
     }
 
     @Override
-    public MMappedSymbolTable getSymbolTable() {
-        return null;
+    public SymbolTable getSymbolTable() {
+        return symbolTable;
     }
 
     @Override
@@ -57,6 +67,6 @@ public class RecordColumnMetadataImpl implements RecordColumnMetadata {
 
     @Override
     public boolean isIndexed() {
-        return false;
+        return indexed;
     }
 }

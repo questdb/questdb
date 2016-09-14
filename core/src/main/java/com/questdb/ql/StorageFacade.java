@@ -24,11 +24,11 @@
 package com.questdb.ql;
 
 import com.questdb.factory.JournalReaderFactory;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public interface StorageFacade {
 
     JournalReaderFactory getFactory();
 
-    MMappedSymbolTable getSymbolTable(int index);
+    SymbolTable getSymbolTable(int index);
 }

@@ -23,14 +23,17 @@
 
 package com.questdb.ql.impl.select;
 
-import com.questdb.factory.configuration.*;
+import com.questdb.factory.configuration.AbstractRecordMetadata;
+import com.questdb.factory.configuration.ColumnName;
+import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
+import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
 import com.questdb.std.Transient;
-import com.questdb.store.ColumnType;
 
 import java.util.Arrays;
 
@@ -134,13 +137,6 @@ class SelectedColumnsMetadata extends AbstractRecordMetadata {
     }
 
     private RecordColumnMetadata meta(RecordColumnMetadata from, String newName) {
-        ColumnMetadata m = new ColumnMetadata();
-        m.name = newName;
-        m.distinctCountHint = from.getBucketCount();
-        if ((m.type = from.getType()) == ColumnType.SYMBOL) {
-            m.symbolTable = from.getSymbolTable();
-        }
-        m.indexed = from.isIndexed();
-        return m;
+        return new RecordColumnMetadataImpl(newName, from.getType(), from.getSymbolTable(), from.getBucketCount(), from.isIndexed());
     }
 }

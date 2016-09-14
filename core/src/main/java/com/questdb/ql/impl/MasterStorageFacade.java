@@ -27,7 +27,7 @@ import com.questdb.Journal;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.StorageFacade;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public class MasterStorageFacade implements StorageFacade {
     private RecordMetadata metadata;
@@ -39,7 +39,7 @@ public class MasterStorageFacade implements StorageFacade {
     }
 
     @Override
-    public MMappedSymbolTable getSymbolTable(int index) {
+    public SymbolTable getSymbolTable(int index) {
         // do not call journal.getSymbolTable() because it uses different indexing system
         return metadata.getColumnQuick(index).getSymbolTable();
     }

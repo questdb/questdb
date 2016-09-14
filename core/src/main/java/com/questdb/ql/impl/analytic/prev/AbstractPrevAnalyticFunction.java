@@ -33,6 +33,7 @@ import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.store.ColumnType;
 import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -129,7 +130,7 @@ public abstract class AbstractPrevAnalyticFunction implements AnalyticFunction, 
     }
 
     @Override
-    public MMappedSymbolTable getSymbolTable() {
+    public SymbolTable getSymbolTable() {
         return valueColumn.getSymbolTable();
     }
 

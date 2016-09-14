@@ -28,7 +28,7 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.ObjList;
 import com.questdb.std.Transient;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public class SelectedColumnsStorageFacade implements StorageFacade {
 
@@ -50,7 +50,7 @@ public class SelectedColumnsStorageFacade implements StorageFacade {
     }
 
     @Override
-    public MMappedSymbolTable getSymbolTable(int index) {
+    public SymbolTable getSymbolTable(int index) {
         return delegate.getSymbolTable(reindex[index]);
     }
 

@@ -33,7 +33,7 @@ import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -137,7 +137,7 @@ public abstract class AbstractOrderedAnalyticFunction implements AnalyticFunctio
     }
 
     @Override
-    public MMappedSymbolTable getSymbolTable() {
+    public SymbolTable getSymbolTable() {
         return valueColumn.getSymbolTable();
     }
 

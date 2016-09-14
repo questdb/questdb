@@ -27,7 +27,7 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.AbstractRecord;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 import java.io.OutputStream;
 
@@ -124,5 +124,5 @@ abstract class AbstractMemRecord extends AbstractRecord {
 
     protected abstract long address(int col);
 
-    protected abstract MMappedSymbolTable getSymbolTable(int col);
+    protected abstract SymbolTable getSymbolTable(int col);
 }

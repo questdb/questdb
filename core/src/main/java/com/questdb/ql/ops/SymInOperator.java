@@ -30,7 +30,7 @@ import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public class SymInOperator extends AbstractVirtualColumn implements Function {
 
@@ -62,7 +62,7 @@ public class SymInOperator extends AbstractVirtualColumn implements Function {
     @Override
     public void prepare(StorageFacade facade) {
         lhs.prepare(facade);
-        MMappedSymbolTable tab = lhs.getSymbolTable();
+        SymbolTable tab = lhs.getSymbolTable();
         for (int i = 0, n = values.size(); i < n; i++) {
             int k = tab.getQuick(values.get(i));
             if (k > -1) {
