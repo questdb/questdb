@@ -28,11 +28,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.ql.CancellationHandler;
-import com.questdb.ql.PartitionSlice;
-import com.questdb.ql.RowCursor;
-import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.AbstractRowSource;
+import com.questdb.ql.*;
 import com.questdb.ql.impl.JournalRecord;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
@@ -42,7 +38,7 @@ import com.questdb.store.FixedColumn;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
 
-public class KvIndexLongListHeadRowSource extends AbstractRowSource {
+public class KvIndexLongListHeadRowSource implements RowSource, RowCursor {
 
     private final String column;
     private final VirtualColumn filter;

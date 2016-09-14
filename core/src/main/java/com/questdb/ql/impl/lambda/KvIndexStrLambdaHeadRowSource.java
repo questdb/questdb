@@ -31,7 +31,6 @@ import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Hash;
 import com.questdb.ql.*;
-import com.questdb.ql.impl.AbstractRowSource;
 import com.questdb.ql.impl.JournalRecord;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSequenceHashSet;
@@ -41,7 +40,7 @@ import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
 import com.questdb.store.VariableColumn;
 
-abstract class KvIndexStrLambdaHeadRowSource extends AbstractRowSource {
+abstract class KvIndexStrLambdaHeadRowSource implements RowSource, RowCursor {
     protected final String column;
     protected final RecordSource recordSource;
     protected final int recordSourceColumn;

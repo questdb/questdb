@@ -29,7 +29,7 @@ import com.questdb.ql.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 
-public class FilteredRowSource extends AbstractRowSource {
+public class FilteredRowSource implements RowSource, RowCursor {
 
     private final RowSource delegate;
     private final VirtualColumn filter;

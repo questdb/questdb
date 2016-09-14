@@ -29,7 +29,6 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.*;
-import com.questdb.ql.impl.AbstractRowSource;
 import com.questdb.ql.impl.JournalRecord;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.IntHashSet;
@@ -38,7 +37,7 @@ import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
 import com.questdb.store.SymbolTable;
 
-abstract class KvIndexSymLambdaHeadRowSource extends AbstractRowSource {
+abstract class KvIndexSymLambdaHeadRowSource implements RowSource, RowCursor {
     protected final RecordSource recordSource;
     protected final String column;
     private final VirtualColumn filter;

@@ -27,13 +27,10 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.ql.CancellationHandler;
-import com.questdb.ql.PartitionSlice;
-import com.questdb.ql.RowCursor;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.*;
 import com.questdb.std.CharSink;
 
-public class AllRowSource extends AbstractRowSource {
+public class AllRowSource implements RowSource, RowCursor {
     private long lo;
     private long hi;
 
