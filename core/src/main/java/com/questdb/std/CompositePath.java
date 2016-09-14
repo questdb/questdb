@@ -90,10 +90,17 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
     }
 
     public CompositePath of(CharSequence str) {
-        this.wptr = ptr;
-        this.len = 0;
-        this.trailingSlash = false;
-        return concat(str);
+        if (str == this) {
+            this.len = str.length();
+            this.wptr = ptr + len;
+            this.trailingSlash = false;
+            return this;
+        } else {
+            this.wptr = ptr;
+            this.len = 0;
+            this.trailingSlash = false;
+            return concat(str);
+        }
     }
 
     private void alloc(int len) {

@@ -23,17 +23,26 @@
 
 package com.questdb.ql.impl.sys;
 
+import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.store.ColumnType;
 
 public class $TabsRecordMetadata extends CollectionRecordMetadata {
 
+    public static final RecordColumnMetadata NAME = new RecordColumnMetadataImpl("name", ColumnType.STRING);
+    public static final RecordColumnMetadata PARTITION_BY = new RecordColumnMetadataImpl("partition_by", ColumnType.STRING);
+    public static final RecordColumnMetadata PARTITION_COUNT = new RecordColumnMetadataImpl("partition_count", ColumnType.INT);
+    public static final RecordColumnMetadata COLUMN_COUNT = new RecordColumnMetadataImpl("column_count", ColumnType.INT);
+    public static final RecordColumnMetadata LAST_MODIFIED = new RecordColumnMetadataImpl("last_modified", ColumnType.DATE);
+    public static final RecordColumnMetadata SIZE = new RecordColumnMetadataImpl("size", ColumnType.LONG);
+
     public $TabsRecordMetadata() {
-        add(new RecordColumnMetadataImpl("name", ColumnType.STRING));
-        add(new RecordColumnMetadataImpl("partition_by", ColumnType.STRING));
-        add(new RecordColumnMetadataImpl("partition_count", ColumnType.INT));
-        add(new RecordColumnMetadataImpl("column_count", ColumnType.INT));
-        add(new RecordColumnMetadataImpl("last_modified", ColumnType.DATE));
+        add(NAME);
+        add(PARTITION_BY);
+        add(PARTITION_COUNT);
+        add(COLUMN_COUNT);
+        add(LAST_MODIFIED);
+        add(SIZE);
     }
 }

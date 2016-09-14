@@ -37,10 +37,9 @@ import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.ops.AbstractRecordSource;
-import com.questdb.std.CharSink;
-import com.questdb.std.CompositePath;
-import com.questdb.std.NativeLPSZ;
-import com.questdb.std.Path;
+import com.questdb.std.*;
+
+import java.lang.ThreadLocal;
 
 public class $TabsRecordSource extends AbstractRecordSource {
 
@@ -67,10 +66,14 @@ public class $TabsRecordSource extends AbstractRecordSource {
 
     private final RecordList records;
     private final $TabsRecordMetadata metadata;
+    private final int metaSize;
+    private final int maxMetaSize;
 
-    public $TabsRecordSource(int pageSize) {
+    public $TabsRecordSource(int pageSize, int metaSize, int maxMetaSize) {
         this.metadata = new $TabsRecordMetadata();
         this.records = new RecordList(metadata, pageSize);
+        this.metaSize = metaSize;
+        this.maxMetaSize = maxMetaSize;
     }
 
     public static void init() {
@@ -93,7 +96,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         records.clear();
         NativeLPSZ name = tlNativeLpsz.get();
-        int bufSz = 2 * 1024;
+        int bufSz = metaSize;
         long buf = Unsafe.malloc(bufSz);
 
         try {
@@ -130,7 +133,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
                                 try {
                                     long len = Files.length(compositePath);
                                     // don't bother with huge meta files. There is a high chance of them being fake.
-                                    if (len > 16 * 1024 * 1024) {
+                                    if (len > maxMetaSize) {
                                         LOG.error().$("File : ").$(compositePath).$(" is too large [").$(len).$(']').$();
                                         continue;
                                     }
@@ -160,11 +163,13 @@ public class $TabsRecordSource extends AbstractRecordSource {
                                 // partition type
                                 records.appendStr(PartitionBy.toString(partitionBy));
                                 // partition count
-                                records.appendInt(countDirs(base, name));
+                                records.appendInt(countDirs(compositePath.of(base).concat(name).$()));
                                 // column count
                                 records.appendInt(columnCount);
                                 // last modified
                                 records.appendLong(lastModified);
+                                // size
+                                records.appendLong(sumSizes(compositePath));
                             }
                         }
                     } while (Files.findNext(find));
@@ -189,13 +194,10 @@ public class $TabsRecordSource extends AbstractRecordSource {
     public void toSink(CharSink sink) {
     }
 
-    private static int countDirs(CharSequence base, CharSequence name) {
+    private static int countDirs(LPSZ path) {
         int count = 0;
-        CompositePath path = tlCompositePath.get();
-        path.of(base).concat(name).$();
-
         long find = Files.findFirst(path);
-        if (find < 0) {
+        if (find == 0) {
             return 0;
         }
 
@@ -216,5 +218,36 @@ public class $TabsRecordSource extends AbstractRecordSource {
             Files.findClose(find);
         }
         return count;
+    }
+
+    private static long sumSizes(LPSZ path) {
+        long total = 0;
+        long find = Files.findFirst(path);
+        if (find == 0) {
+            return 0;
+        }
+
+        try (CompositePath cp = new CompositePath()) {
+            NativeLPSZ file = tlNativeLpsz.get();
+            try {
+                do {
+                    file.of(Files.findName(find));
+
+                    if (Files.isDots(file)) {
+                        continue;
+                    }
+
+                    LPSZ n = cp.of(path).concat(file).$();
+                    if (Files.findType(find) == Files.DT_DIR) {
+                        total += sumSizes(n);
+                    } else {
+                        total += Files.length(n);
+                    }
+                } while (Files.findNext(find));
+            } finally {
+                Files.findClose(find);
+            }
+        }
+        return total;
     }
 }

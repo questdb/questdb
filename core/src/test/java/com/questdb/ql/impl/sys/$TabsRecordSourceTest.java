@@ -56,7 +56,7 @@ public class $TabsRecordSourceTest extends AbstractOptimiserTest {
 
     @Test
     public void testCompiled() throws Exception {
-        assertThat("xyz\tMONTH\t2\t3\n", "select name, partition_by, partition_count, column_count from $tabs");
+        assertThat("xyz\tMONTH\t2\t3\t9703504\n", "select name, partition_by, partition_count, column_count, size from $tabs");
     }
 
     @Test

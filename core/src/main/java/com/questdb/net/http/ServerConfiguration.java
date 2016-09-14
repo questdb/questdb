@@ -62,6 +62,8 @@ public class ServerConfiguration {
     private int dbHashDataPage = 8 * 1024 * 1024;
     private int dbHashRowPage = 1024 * 1024;
     private int dbSysViewPage = 64 * 1024;
+    private int dbSysMetaSize = 64 * 1024;
+    private int dbSysMaxMetaSize = 8 * 1024 * 1024;
     private int dbCyclesBeforeCancel = 1024 * 1024;
     private int dbAnalyticFuncPage = 2 * 1024 * 1024;
     private int dbAnalyticWindowPage = 4 * 1024 * 1024;
@@ -198,6 +200,14 @@ public class ServerConfiguration {
             this.dbSysViewPage = n;
         }
 
+        if ((n = parseSize(props, "db.sys.metasize")) > -1) {
+            this.dbSysMetaSize = n;
+        }
+
+        if ((n = parseSize(props, "db.sys.maxmetasize")) > -1) {
+            this.dbSysMaxMetaSize = n;
+        }
+
         if ((n = parseInt(props, "db.cycles.before.cancel")) > -1) {
             this.dbCyclesBeforeCancel = Numbers.ceilPow2(n);
         }
@@ -319,6 +329,14 @@ public class ServerConfiguration {
 
     public int getDbSortKeyPage() {
         return dbSortKeyPage;
+    }
+
+    public int getDbSysMaxMetaSize() {
+        return dbSysMaxMetaSize;
+    }
+
+    public int getDbSysMetaSize() {
+        return dbSysMetaSize;
     }
 
     public int getDbSysViewPage() {
