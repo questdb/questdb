@@ -31,7 +31,6 @@ import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.store.ColumnType;
-import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.SymbolTable;
 
 public class PrevRowAnalyticFunction implements AnalyticFunction {
@@ -88,7 +87,7 @@ public class PrevRowAnalyticFunction implements AnalyticFunction {
     public int getInt() {
         if (prevRowId == -1) {
             if (valueColumn.getType() == ColumnType.SYMBOL) {
-                return MMappedSymbolTable.VALUE_IS_NULL;
+                return SymbolTable.VALUE_IS_NULL;
             }
             return Numbers.INT_NaN;
         }

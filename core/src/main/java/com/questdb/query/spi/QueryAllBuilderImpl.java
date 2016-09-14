@@ -31,6 +31,7 @@ import com.questdb.query.api.QueryAllBuilder;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
 
@@ -77,7 +78,7 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
         this.symbolKeys.clear();
         for (int i = 0; i < values.length; i++) {
             int key = symbolTable.getQuick(values[i]);
-            if (key != MMappedSymbolTable.VALUE_NOT_FOUND) {
+            if (key != SymbolTable.VALUE_NOT_FOUND) {
                 symbolKeys.add(key);
             }
         }

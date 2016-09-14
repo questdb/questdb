@@ -28,22 +28,24 @@ import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.store.ColumnType;
 
-public class $TabsRecordMetadata extends CollectionRecordMetadata {
+public class $ColsRecordMetadata extends CollectionRecordMetadata {
 
-    public static final RecordColumnMetadata NAME = new RecordColumnMetadataImpl("name", ColumnType.STRING);
+    public static final RecordColumnMetadata TABLE_NAME = new RecordColumnMetadataImpl("table_name", ColumnType.STRING);
+    public static final RecordColumnMetadata COLUMN_NAME = new RecordColumnMetadataImpl("column_name", ColumnType.STRING);
+    public static final RecordColumnMetadata COLUMN_TYPE = new RecordColumnMetadataImpl("column_type", ColumnType.SYMBOL, ColumnTypeSymbolTable.INSTANCE, 5, false);
+    public static final RecordColumnMetadata TIMESTAMP = new RecordColumnMetadataImpl("timestamp", ColumnType.BOOLEAN);
     public static final RecordColumnMetadata PARTITION_BY = new RecordColumnMetadataImpl("partition_by", ColumnType.SYMBOL, PartitionBySymbolTable.INSTANCE, 5, false);
-    public static final RecordColumnMetadata PARTITION_COUNT = new RecordColumnMetadataImpl("partition_count", ColumnType.INT);
-    public static final RecordColumnMetadata COLUMN_COUNT = new RecordColumnMetadataImpl("column_count", ColumnType.INT);
-    public static final RecordColumnMetadata LAST_MODIFIED = new RecordColumnMetadataImpl("last_modified", ColumnType.DATE);
-    public static final RecordColumnMetadata SIZE = new RecordColumnMetadataImpl("size", ColumnType.LONG);
+    public static final RecordColumnMetadata INDEXED = new RecordColumnMetadataImpl("indexed", ColumnType.BOOLEAN);
+    public static final RecordColumnMetadata INDEX_BUCKETS = new RecordColumnMetadataImpl("index_buckets", ColumnType.INT);
 
-    public $TabsRecordMetadata() {
-        add(NAME);
+    public $ColsRecordMetadata() {
+        add(TABLE_NAME);
+        add(COLUMN_NAME);
+        add(COLUMN_TYPE);
+        add(TIMESTAMP);
         add(PARTITION_BY);
-        add(PARTITION_COUNT);
-        add(COLUMN_COUNT);
-        add(LAST_MODIFIED);
-        add(SIZE);
+        add(INDEXED);
+        add(INDEX_BUCKETS);
     }
 
 }

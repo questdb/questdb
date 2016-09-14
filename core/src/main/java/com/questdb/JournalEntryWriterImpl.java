@@ -230,7 +230,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
 
     private void putNullStr(int index) {
         if (meta(index).indexed) {
-            Unsafe.arrayPut(koTuple, index * 2L, MMappedSymbolTable.VALUE_IS_NULL);
+            Unsafe.arrayPut(koTuple, index * 2L, SymbolTable.VALUE_IS_NULL);
             Unsafe.arrayPut(koTuple, index * 2L + 1L, varCol(index).putNull());
         } else {
             varCol(index).putNull();
@@ -239,7 +239,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
 
     private void putString0(int index, CharSequence value) {
         if (meta(index).indexed) {
-            Unsafe.arrayPut(koTuple, index * 2L, value == null ? MMappedSymbolTable.VALUE_IS_NULL : Hash.boundedHash(value, Unsafe.arrayGet(meta, index).distinctCountHint));
+            Unsafe.arrayPut(koTuple, index * 2L, value == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(value, Unsafe.arrayGet(meta, index).distinctCountHint));
             Unsafe.arrayPut(koTuple, index * 2L + 1L, varCol(index).putStr(value));
         } else {
             varCol(index).putStr(value);
@@ -249,7 +249,7 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     private void putSymbol0(int index, CharSequence value) {
         int key;
         if (value == null) {
-            key = MMappedSymbolTable.VALUE_IS_NULL;
+            key = SymbolTable.VALUE_IS_NULL;
         } else {
             key = meta(index).symbolTable.put(value);
         }

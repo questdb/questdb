@@ -23,21 +23,24 @@
 
 package com.questdb.ql.impl.sys;
 
-import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.store.ColumnType;
+import com.questdb.store.SymbolTable;
 
-public final class SysFactories {
+public class ColumnTypeSymbolTable implements SymbolTable {
+    public static final ColumnTypeSymbolTable INSTANCE = new ColumnTypeSymbolTable();
 
-    private final static CharSequenceObjHashMap<SystemViewFactory> sysViewFactories = new CharSequenceObjHashMap<>();
-
-    private SysFactories() {
+    @Override
+    public int getQuick(CharSequence value) {
+        return ColumnType.columnTypeOf(value);
     }
 
-    public static SystemViewFactory getFactory(CharSequence name) {
-        return sysViewFactories.get(name);
+    @Override
+    public int size() {
+        return ColumnType.count();
     }
 
-    static {
-        sysViewFactories.put("$tabs", $TabsFactory.INSTANCE);
-        sysViewFactories.put("$cols", $ColsFactory.INSTANCE);
+    @Override
+    public String value(int key) {
+        return ColumnType.nameOf(key);
     }
 }

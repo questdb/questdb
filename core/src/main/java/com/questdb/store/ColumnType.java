@@ -32,21 +32,21 @@ import com.questdb.std.ObjIntHashMap;
 import java.nio.ByteBuffer;
 
 public final class ColumnType {
-    public static final int BOOLEAN = 1;
-    public static final int BYTE = 2;
-    public static final int DOUBLE = 4;
-    public static final int FLOAT = 8;
-    public static final int INT = 16;
-    public static final int LONG = 32;
-    public static final int SHORT = 64;
-    public static final int STRING = 128;
-    public static final int SYMBOL = 256;
-    public static final int BINARY = 512;
-    public static final int DATE = 1024;
-    public static final int PARAMETER = 2048;
+    public static final int BOOLEAN = 0;
+    public static final int BYTE = 1;
+    public static final int DOUBLE = 2;
+    public static final int FLOAT = 3;
+    public static final int INT = 4;
+    public static final int LONG = 5;
+    public static final int SHORT = 6;
+    public static final int STRING = 7;
+    public static final int SYMBOL = 8;
+    public static final int BINARY = 9;
+    public static final int DATE = 10;
+    public static final int PARAMETER = 11;
     private static final ObjIntHashMap<Class> classMap = new ObjIntHashMap<>();
     private static final IntIntHashMap sizeMap = new IntIntHashMap();
-    private static final IntObjHashMap<CharSequence> typeNameMap = new IntObjHashMap<>();
+    private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final CharSequenceIntHashMap nameTypeMap = new CharSequenceIntHashMap();
     private static final ThreadLocal<StringSink> caseConverterBuffer = new ThreadLocal<StringSink>() {
         @Override
@@ -71,7 +71,11 @@ public final class ColumnType {
         return nameTypeMap.get(b);
     }
 
-    public static CharSequence nameOf(int columnType) {
+    public static int count() {
+        return typeNameMap.size();
+    }
+
+    public static String nameOf(int columnType) {
         return typeNameMap.get(columnType);
     }
 

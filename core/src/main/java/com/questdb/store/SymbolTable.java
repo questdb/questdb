@@ -24,14 +24,13 @@
 package com.questdb.store;
 
 public interface SymbolTable {
+    int VALUE_NOT_FOUND = -2;
+    int VALUE_IS_NULL = -1;
+
     int getQuick(CharSequence value);
 
     int size();
 
     String value(int key);
 
-    class Entry {
-        public int key;
-        public CharSequence value;
-    }
 }

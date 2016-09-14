@@ -244,8 +244,8 @@ public class Partition<T> implements Closeable {
     public String getSym(long localRowID, int columnIndex) {
         int symbolIndex = fixCol(columnIndex).getInt(localRowID);
         switch (symbolIndex) {
-            case MMappedSymbolTable.VALUE_IS_NULL:
-            case MMappedSymbolTable.VALUE_NOT_FOUND:
+            case SymbolTable.VALUE_IS_NULL:
+            case SymbolTable.VALUE_NOT_FOUND:
                 return null;
             default:
                 return columnMetadata[columnIndex].symbolTable.value(symbolIndex);
@@ -443,7 +443,7 @@ public class Partition<T> implements Closeable {
                         long offset = ((VariableColumn) Unsafe.arrayGet(columns, i)).putStr(s);
                         if (m.indexed) {
                             sparseIndexProxies[i].getIndex().add(
-                                    s == null ? MMappedSymbolTable.VALUE_IS_NULL : Hash.boundedHash(s, m.distinctCountHint)
+                                    s == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(s, m.distinctCountHint)
                                     , offset
                             );
                         }
@@ -452,7 +452,7 @@ public class Partition<T> implements Closeable {
                         int key;
                         String sym = (String) Unsafe.getUnsafe().getObject(obj, m.offset);
                         if (sym == null) {
-                            key = MMappedSymbolTable.VALUE_IS_NULL;
+                            key = SymbolTable.VALUE_IS_NULL;
                         } else {
                             key = m.symbolTable.put(sym);
                         }

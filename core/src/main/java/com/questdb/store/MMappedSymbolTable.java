@@ -40,8 +40,6 @@ import java.io.File;
 
 public class MMappedSymbolTable implements Closeable, SymbolTable {
 
-    public static final int VALUE_NOT_FOUND = -2;
-    public static final int VALUE_IS_NULL = -1;
     private static final String DATA_FILE_SUFFIX = ".symd";
     private static final String INDEX_FILE_SUFFIX = ".symi";
     private static final String HASH_INDEX_FILE_SUFFIX = ".symr";
@@ -266,6 +264,11 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
 
     private int hashKey(CharSequence value) {
         return Hash.boundedHash(value, hashKeyCount);
+    }
+
+    public static class Entry {
+        public int key;
+        public CharSequence value;
     }
 
     private class Iter extends AbstractImmutableIterator<Entry> {

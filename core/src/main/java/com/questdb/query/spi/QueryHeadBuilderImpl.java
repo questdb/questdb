@@ -37,6 +37,7 @@ import com.questdb.std.ObjList;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
 import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
 
@@ -207,7 +208,7 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
         } else {
             for (int i = 0; i < values.length; i++) {
                 int key = symbolTable.getQuick(values[i]);
-                if (key != MMappedSymbolTable.VALUE_NOT_FOUND) {
+                if (key != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(key);
                 }
             }

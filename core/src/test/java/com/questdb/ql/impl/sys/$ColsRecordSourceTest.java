@@ -23,21 +23,26 @@
 
 package com.questdb.ql.impl.sys;
 
-import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.ql.parser.AbstractOptimiserTest;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
-public final class SysFactories {
-
-    private final static CharSequenceObjHashMap<SystemViewFactory> sysViewFactories = new CharSequenceObjHashMap<>();
-
-    private SysFactories() {
+public class $ColsRecordSourceTest extends AbstractOptimiserTest {
+    @BeforeClass
+    public static void setUp() throws Exception {
+        compiler.execute(factory, "create table xyz (x int, y string, ts date), index(y buckets 30) timestamp(ts) partition by YEAR");
+        compiler.execute(factory, "create table abc (a symbol, b boolean, d double), index(a buckets 70)");
+        $ColsRecordSource.init();
     }
 
-    public static SystemViewFactory getFactory(CharSequence name) {
-        return sysViewFactories.get(name);
-    }
-
-    static {
-        sysViewFactories.put("$tabs", $TabsFactory.INSTANCE);
-        sysViewFactories.put("$cols", $ColsFactory.INSTANCE);
+    @Test
+    public void testCompiled() throws Exception {
+        assertThat("abc\ta\tSYMBOL\tfalse\tnull\ttrue\t127\n" +
+                        "abc\tb\tBOOLEAN\tfalse\tnull\tfalse\t0\n" +
+                        "abc\td\tDOUBLE\tfalse\tnull\tfalse\t0\n" +
+                        "xyz\tx\tINT\tfalse\tnull\tfalse\t0\n" +
+                        "xyz\ty\tSTRING\tfalse\tnull\ttrue\t31\n" +
+                        "xyz\tts\tDATE\ttrue\tYEAR\tfalse\t0\n",
+                "$cols");
     }
 }

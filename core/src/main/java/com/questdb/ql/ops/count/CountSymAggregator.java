@@ -29,7 +29,7 @@ import com.questdb.ql.ops.AbstractUnaryAggregator;
 import com.questdb.ql.ops.Function;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 public final class CountSymAggregator extends AbstractUnaryAggregator {
 
@@ -48,8 +48,8 @@ public final class CountSymAggregator extends AbstractUnaryAggregator {
     public void calculate(Record rec, DirectMapValues values) {
         int d = value.getInt(rec);
         if (values.isNew()) {
-            values.putLong(valueIndex, d == MMappedSymbolTable.VALUE_IS_NULL ? 0 : 1);
-        } else if (d > MMappedSymbolTable.VALUE_IS_NULL) {
+            values.putLong(valueIndex, d == SymbolTable.VALUE_IS_NULL ? 0 : 1);
+        } else if (d > SymbolTable.VALUE_IS_NULL) {
             values.putLong(valueIndex, values.getLong(valueIndex) + 1);
         }
     }

@@ -34,7 +34,6 @@ import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSink;
 import com.questdb.std.MemoryPages;
 import com.questdb.store.ColumnType;
-import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
@@ -95,7 +94,7 @@ public abstract class AbstractNextAnalyticFunction implements AnalyticFunction, 
 
     @Override
     public int getInt() {
-        return next == NullRecord.INSTANCE && valueColumn.getType() == ColumnType.SYMBOL ? MMappedSymbolTable.VALUE_IS_NULL : valueColumn.getInt(next);
+        return next == NullRecord.INSTANCE && valueColumn.getType() == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : valueColumn.getInt(next);
     }
 
     @Override

@@ -23,21 +23,25 @@
 
 package com.questdb.ql.impl.sys;
 
-import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.PartitionBy;
+import com.questdb.store.SymbolTable;
 
-public final class SysFactories {
+public class PartitionBySymbolTable implements SymbolTable {
 
-    private final static CharSequenceObjHashMap<SystemViewFactory> sysViewFactories = new CharSequenceObjHashMap<>();
+    public static final PartitionBySymbolTable INSTANCE = new PartitionBySymbolTable();
 
-    private SysFactories() {
+    @Override
+    public int getQuick(CharSequence value) {
+        return PartitionBy.fromString(value);
     }
 
-    public static SystemViewFactory getFactory(CharSequence name) {
-        return sysViewFactories.get(name);
+    @Override
+    public int size() {
+        return PartitionBy.count();
     }
 
-    static {
-        sysViewFactories.put("$tabs", $TabsFactory.INSTANCE);
-        sysViewFactories.put("$cols", $ColsFactory.INSTANCE);
+    @Override
+    public String value(int key) {
+        return key == SymbolTable.VALUE_IS_NULL ? null : PartitionBy.toString(key);
     }
 }

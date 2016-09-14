@@ -33,7 +33,7 @@ import com.questdb.query.iterator.ResultSetBufferedIterator;
 import com.questdb.query.iterator.ResultSetIterator;
 import com.questdb.std.LongList;
 import com.questdb.store.ColumnType;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 
 import java.util.Iterator;
 
@@ -201,11 +201,11 @@ public class ResultSet<T> implements Iterable<T> {
                             int leftSymIndex = leftPart.getInt(leftLocalRowID, column);
                             int rightSymIndex = rightPart.getInt(rightLocalRowID, column);
 
-                            if (leftSymIndex == MMappedSymbolTable.VALUE_IS_NULL && rightSymIndex == MMappedSymbolTable.VALUE_IS_NULL) {
+                            if (leftSymIndex == SymbolTable.VALUE_IS_NULL && rightSymIndex == SymbolTable.VALUE_IS_NULL) {
                                 result = 0;
-                            } else if (leftSymIndex == MMappedSymbolTable.VALUE_IS_NULL) {
+                            } else if (leftSymIndex == SymbolTable.VALUE_IS_NULL) {
                                 result = 1;
-                            } else if (rightSymIndex == MMappedSymbolTable.VALUE_IS_NULL) {
+                            } else if (rightSymIndex == SymbolTable.VALUE_IS_NULL) {
                                 result = -1;
                             } else {
                                 leftStr = meta.symbolTable.value(leftSymIndex);

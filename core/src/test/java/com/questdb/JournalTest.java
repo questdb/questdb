@@ -35,7 +35,7 @@ import com.questdb.misc.Rows;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.query.ResultSet;
-import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.SymbolTable;
 import com.questdb.store.TxListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestData;
@@ -470,7 +470,7 @@ public class JournalTest extends AbstractTest {
             Assert.assertEquals(0, w.size());
             Assert.assertEquals(1, w.getPartitionCount());
             Assert.assertEquals(0, w.getSymbolTable("sym").size());
-            Assert.assertEquals(MMappedSymbolTable.VALUE_NOT_FOUND, w.getSymbolTable("sym").getQuick("LLOY.L"));
+            Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, w.getSymbolTable("sym").getQuick("LLOY.L"));
             Assert.assertNull(w.getLastPartition());
             Partition<Quote> p = w.getPartition(w.getPartitionCount() - 1, false);
             Assert.assertNotNull(p);

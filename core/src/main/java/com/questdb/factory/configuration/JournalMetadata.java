@@ -108,6 +108,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         location = buf.getStr();
         partitionBy = buf.getInt();
         columnCount = buf.getInt();
+        timestampColumnIndex = buf.getInt();
         columnMetadata = new ColumnMetadata[columnCount];
         columnIndexLookup = new CharSequenceIntHashMap();
         for (int i = 0; i < columnCount; i++) {
@@ -115,7 +116,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
             columnMetadata[i].read(buf);
             columnIndexLookup.put(columnMetadata[i].name, i);
         }
-        timestampColumnIndex = buf.getInt();
         if (timestampColumnIndex > -1) {
             timestampMetadata = columnMetadata[timestampColumnIndex];
         } else {
@@ -307,10 +307,10 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         buf.put(location);
         buf.put(partitionBy);
         buf.put(columnCount);
+        buf.put(timestampColumnIndex);
         for (int i = 0; i < columnMetadata.length; i++) {
             columnMetadata[i].write(buf);
         }
-        buf.put(timestampColumnIndex);
         buf.put(openFileTTL);
         buf.put(ioBlockRecordCount);
         buf.put(ioBlockTxCount);
