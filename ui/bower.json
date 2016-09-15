@@ -24,7 +24,8 @@
     "iCheck": "^1.0.2",
     "bootstrap": "^3.3.6",
     "animate.css": "animate-css#^3.5.1",
-    "clipboard": "^1.5.10"
+    "clipboard": "^1.5.10",
+    "vega": "https://github.com/bluestreak01/vega.git"
   },
   "overrides": {
     "bootstrap-sass": {

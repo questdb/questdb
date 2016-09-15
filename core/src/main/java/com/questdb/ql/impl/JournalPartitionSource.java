@@ -64,7 +64,7 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
-        storageFacade.of(metadata);
+        storageFacade.of(journal.getMetadata());
         partitionCount = journal.getPartitionCount();
         partitionIndex = 0;
         return this;

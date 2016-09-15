@@ -101,6 +101,16 @@
                 <div class="m-b-sm m-t-sm section-nav">
                     <button class="btn btn-white btn-sm m-r-sm js-query-run"><i class="fa fa-play"></i>Run
                     </button>
+
+                    <div class="btn-group">
+                        <button id="js-toggle-grid" type="button" class="btn btn-white btn-sm active"><i
+                                class="fa fa-bars"></i>
+                        </button>
+                        <button id="js-toggle-chart" type="button" class="btn btn-white btn-sm"><i
+                                class="fa fa-pie-chart"></i>
+                        </button>
+                    </div>
+
                     <button class="btn btn-white btn-sm js-query-refresh"><i class="fa fa-refresh"></i>
                     </button>
                     <button class="btn btn-white btn-sm js-query-export"><i class="fa fa-download"></i>
@@ -149,6 +159,9 @@
                                 <div class="qg-viewport">
                                     <div class="qg-canvas"></div>
                                 </div>
+                            </div>
+                            <div id="chart" style="display: none;">
+                                Here visualisation shall reside
                             </div>
                         </div>
                     </div>
@@ -298,6 +311,8 @@
 <script src="/bower_components/ace-builds/src-noconflict/theme-merbivore_soft.js"></script>
 <script src="/bower_components/iCheck/icheck.js"></script>
 <script src="/bower_components/clipboard/dist/clipboard.min.js"></script>
+<script src="/bower_components/d3/d3.js"></script>
+<script src="/bower_components/vega/vega.js"></script>
 <!-- endbower -->
 <script src="thirdparty/mode-questdb.js"></script>
 <script src="scripts/globals.js"></script>

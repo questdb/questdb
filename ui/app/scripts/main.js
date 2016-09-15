@@ -90,6 +90,20 @@
         $(document).trigger('active.panel', 'import');
     }
 
+    function switchToGrid() {
+        $('#chart').hide();
+        $('#grid').show();
+        $('#js-toggle-chart').removeClass('active');
+        $('#js-toggle-grid').addClass('active');
+    }
+
+    function switchToChart() {
+        $('#chart').show();
+        $('#grid').hide();
+        $('#js-toggle-chart').addClass('active');
+        $('#js-toggle-grid').removeClass('active');
+    }
+
     function setup() {
         $('#side-menu').metisMenu();
         $('.navbar-minimalize').click(toggleMenu);
@@ -118,6 +132,8 @@
         $('.js-query-refresh').click(function () {
             $(document).trigger('grid.refresh');
         });
+        $('#js-toggle-chart').click(switchToChart);
+        $('#js-toggle-grid').click(switchToGrid);
     }
 
     $.extend(true, window, {
