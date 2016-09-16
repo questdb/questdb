@@ -28,7 +28,6 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-/*globals $:false */
 /*globals jQuery:false */
 /*globals qdb:false */
 /*globals ace:false */
@@ -36,20 +35,20 @@
 (function ($) {
     'use strict';
 
-    function query() {
+    $.fn.query = function () {
+        var bus = $(this);
         var qry;
         var hActiveRequest = null;
         var hPendingRequest = null;
         var time;
         var batchSize = qdb.queryBatchSize;
-        var btn;
 
         var requestParams = {
             'query': '',
             'limit': ''
         };
 
-        function abortActive() {
+        function cancelActiveQuery() {
             if (hActiveRequest !== null) {
                 hActiveRequest.abort();
                 hActiveRequest = null;
@@ -63,30 +62,21 @@
             }
         }
 
-        function readyToExecuteAgain() {
-            hActiveRequest = null;
-            btn.html('<i class="fa fa-play"></i>Run');
-            btn.removeClass('js-query-cancel').addClass('js-query-run');
-        }
-
         function handleServerResponse(r) {
-            $(document).trigger('query.ok', {
+            bus.trigger(qdb.MSG_QUERY_OK, {
                 delta: (new Date().getTime() - time),
                 count: r.count
             });
-            if (r.result) {
-                $(document).trigger('query.grid',
-                    {
-                        r,
-                        count: r.count
-                    }
-                );
+
+            if (r.dataset) {
+                bus.trigger(qdb.MSG_QUERY_DATASET, r);
             }
-            readyToExecuteAgain();
+
+            hActiveRequest = null;
         }
 
         function handleServerError(jqXHR) {
-            $(document).trigger('query.error',
+            bus.trigger(qdb.MSG_QUERY_ERROR,
                 {
                     query: qry,
                     r: jqXHR.responseJSON,
@@ -95,56 +85,39 @@
                     delta: (new Date().getTime() - time)
                 }
             );
-            readyToExecuteAgain();
+            hActiveRequest = null;
         }
 
-        function qq() {
-            abortActive();
-            btn.html('<i class="fa fa-stop"></i>Cancel');
-            btn.removeClass('js-query-run').addClass('js-query-cancel');
+        function sendQueryDelayed() {
+            cancelActiveQuery();
             requestParams.query = qry.q;
             requestParams.limit = '0,' + batchSize;
             requestParams.count = true;
             time = new Date().getTime();
             hActiveRequest = $.get('/js', requestParams).done(handleServerResponse).fail(handleServerError);
+            bus.trigger(qdb.MSG_QUERY_RUNNING);
         }
 
-        function sendQuery(q) {
+        //noinspection JSUnusedLocalSymbols
+        function sendQuery(x, q) {
             qry = q;
             abortPending();
-            hPendingRequest = setTimeout(qq, 50);
+            hPendingRequest = setTimeout(sendQueryDelayed, 50);
         }
 
-        function executeToggle() {
-            if (hActiveRequest !== null) {
-                abortActive();
-            } else {
-                $(document).trigger('editor.execute');
-            }
-        }
+        bus.on(qdb.MSG_QUERY_EXEC, sendQuery);
+        bus.on(qdb.MSG_QUERY_CANCEL, cancelActiveQuery);
+    };
 
-        function bind() {
-            $(document).on(qdb.MSG_QUERY_EXEC, function (x, q) {
-                sendQuery(q);
-            });
-
-            $(document).on('query.toggle', function () {
-                executeToggle();
-            });
-
-            btn = $('.js-query-run');
-            btn.click(executeToggle);
-        }
-
-        bind();
-    }
-
-    function spinner() {
+    $.fn.domController = function () {
         var div = $('.js-query-spinner');
         var divMsg = $('.js-query-message-panel');
         var divTime = $('.js-query-message-panel .js-query-time');
         var divMsgText = $('.js-query-message-panel .js-query-message-text');
         var timer;
+        var runBtn;
+        var running = false;
+        var bus = $(this);
 
         function delayedStart() {
             div.addClass('query-progress-animated', 100);
@@ -154,7 +127,18 @@
         }
 
         function start() {
+            running = true;
+            runBtn.html('<i class="fa fa-stop"></i>Cancel');
+            runBtn.removeClass('js-query-run').addClass('js-query-cancel');
             timer = setTimeout(delayedStart, 500);
+        }
+
+        function stop() {
+            runBtn.html('<i class="fa fa-play"></i>Run');
+            runBtn.removeClass('js-query-cancel').addClass('js-query-run');
+            clearTimeout(timer);
+            div.removeClass('query-progress-animated');
+            running = false;
         }
 
         function toTextPosition(q, pos) {
@@ -176,8 +160,7 @@
 
         //noinspection JSUnusedLocalSymbols
         function error(x, m) {
-            clearTimeout(timer);
-            div.removeClass('query-progress-animated');
+            stop();
             divMsg.removeClass('query-message-ok').addClass('query-message-error');
             divTime.html('failed after <strong>' + (m.delta / 1000) + 's</strong>');
             if (m.statusText === 'abort') {
@@ -185,7 +168,7 @@
             } else if (m.r) {
                 var pos = toTextPosition(m.query, m.r.position);
                 divMsgText.html('<strong>' + pos.r + ':' + pos.c + '</strong>&nbsp;&nbsp;' + m.r.error);
-                $(document).trigger('editor.show.error', pos);
+                bus.trigger('editor.show.error', pos);
             } else if (m.status === 0) {
                 divMsgText.html('Server down?');
             } else {
@@ -195,8 +178,7 @@
 
         //noinspection JSUnusedLocalSymbols
         function ok(x, m) {
-            clearTimeout(timer);
-            div.removeClass('query-progress-animated');
+            stop();
             divMsg.removeClass('query-message-error').addClass('query-message-ok');
             divTime.html('read in <strong>' + (m.delta / 1000) + 's</strong>');
             if (m.count) {
@@ -206,18 +188,46 @@
             }
         }
 
+        function toggleRunBtn() {
+            if (running) {
+                bus.trigger(qdb.MSG_QUERY_CANCEL);
+            } else {
+                bus.trigger('editor.execute');
+            }
+        }
+
+        function exportClick(e) {
+            e.preventDefault();
+            bus.trigger('grid.publish.query');
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function exportQuery(x, query) {
+            if (query) {
+                window.location.href = '/csv?query=' + query;
+            }
+        }
+
         function bind() {
-            $(document).on(qdb.MSG_QUERY_EXEC, start);
-            $(document).on('query.error', error);
-            $(document).on('query.ok', ok);
+            runBtn = $('.js-query-run');
+            runBtn.click(toggleRunBtn);
+            bus.on(qdb.MSG_QUERY_ERROR, error);
+            bus.on(qdb.MSG_QUERY_OK, ok);
+            bus.on(qdb.MSG_QUERY_RUNNING, start);
+            bus.on('grid.query', exportQuery);
+
+            $('.js-editor-toggle-invisible').click(function () {
+                bus.trigger('editor.toggle.invisibles');
+            });
+            $('.js-query-export').click(exportClick);
         }
 
         bind();
-    }
+    };
 
-    function editor() {
+    $.fn.editor = function (msgBus) {
         var edit;
-        var item = 'query.text';
+        var storeKey = 'query.text';
         var Range = ace.require('ace/range').Range;
         var marker;
         var searchOpts = {
@@ -227,7 +237,8 @@
             regExp: false,
             preventScroll: false
         };
-
+        var bus = $(msgBus);
+        var element = this;
 
         function clearMarker() {
             if (marker) {
@@ -237,7 +248,7 @@
         }
 
         function setup() {
-            edit = ace.edit('sqlEditor');
+            edit = ace.edit(element[0]);
             edit.getSession().setMode('ace/mode/questdb');
             edit.setTheme('ace/theme/merbivore_soft');
             edit.setShowPrintMargin(false);
@@ -245,12 +256,12 @@
             edit.setHighlightActiveLine(false);
             edit.session.on('change', clearMarker);
             edit.$blockScrolling = Infinity;
-            $('#sqlEditor').css('height', '240px');
+            $(element).css('height', '240px');
         }
 
         function load() {
             if (typeof (Storage) !== 'undefined') {
-                var q = localStorage.getItem(item);
+                var q = localStorage.getItem(storeKey);
                 if (q) {
                     edit.setValue(q);
                 }
@@ -259,7 +270,7 @@
 
         function save() {
             if (typeof (Storage) !== 'undefined') {
-                localStorage.setItem(item, edit.getValue());
+                localStorage.setItem(storeKey, edit.getValue());
             }
         }
 
@@ -360,7 +371,7 @@
             }
 
             if (q) {
-                $(document).trigger(qdb.MSG_QUERY_EXEC, q);
+                bus.trigger(qdb.MSG_QUERY_EXEC, q);
             }
         }
 
@@ -381,12 +392,8 @@
             edit.renderer.setShowInvisibles(!edit.renderer.getShowInvisibles());
         }
 
-        function queryToggle() {
-            $(document).trigger('query.toggle');
-        }
-
         function focusGrid() {
-            $(document).trigger('grid.focus');
+            bus.trigger('grid.focus');
         }
 
         //noinspection JSUnusedLocalSymbols
@@ -411,18 +418,18 @@
         }
 
         function bind() {
-            $(document).on('editor.execute', submitQuery);
-            $(document).on('editor.show.error', showError);
-            $(document).on('editor.toggle.invisibles', toggleInvisibles);
-            $(document).on('query.build.execute', findOrInsertQuery);
-            $(document).on('editor.focus', function () {
+            bus.on('editor.execute', submitQuery);
+            bus.on('editor.show.error', showError);
+            bus.on('editor.toggle.invisibles', toggleInvisibles);
+            bus.on('query.build.execute', findOrInsertQuery);
+            bus.on('editor.focus', function () {
                 edit.focus();
             });
 
             edit.commands.addCommand({
                 name: 'editor.execute',
                 bindKey: 'F9',
-                exec: queryToggle
+                exec: submitQuery
             });
 
             edit.commands.addCommand({
@@ -435,26 +442,5 @@
         setup();
         load();
         bind();
-    }
-
-    $.extend(true, window, {
-        qdb: {
-            query,
-            spinner,
-            editor
-        }
-    });
+    };
 }(jQuery));
-
-$(document).ready(function () {
-    'use strict';
-
-    qdb.query();
-    qdb.spinner();
-    qdb.editor();
-
-    $('.js-editor-toggle-invisible').click(function () {
-        $(document).trigger('editor.toggle.invisibles');
-    });
-});
-

@@ -28,13 +28,12 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-/*globals $:false */
 /*globals jQuery:false */
 /*globals qdb:false */
 
 (function ($) {
     'use strict';
-    $.fn.grid = function () {
+    $.fn.grid = function (msgBus) {
         var defaults = {
             minColumnWidth: 60,
             rowHeight: 28,
@@ -44,6 +43,7 @@
             maxRowsToAnalyze: 100,
             bottomMargin: 90
         };
+        var bus = $(msgBus);
         var $style;
         var div = $(this);
         var viewport;
@@ -174,22 +174,22 @@
                 lo = p1 * pageSize;
                 hi = lo + pageSize * (p2 - p1 + 1);
                 f = function (response) {
-                    data[p1] = response.result.splice(0, pageSize);
-                    data[p2] = response.result;
+                    data[p1] = response.dataset.splice(0, pageSize);
+                    data[p2] = response.dataset;
                     renderViewportNoCompute();
                 };
             } else if (empty(p1) && (!empty(p2) || p1 === p2)) {
                 lo = p1 * pageSize;
                 hi = lo + pageSize;
                 f = function (response) {
-                    data[p1] = response.result;
+                    data[p1] = response.dataset;
                     renderViewportNoCompute();
                 };
             } else if ((!empty(p1) || p1 === p2) && empty(p2)) {
                 lo = p2 * pageSize;
                 hi = lo + pageSize;
                 f = function (response) {
-                    data[p2] = response.result;
+                    data[p2] = response.dataset;
                     renderViewportNoCompute();
                 };
             } else {
@@ -637,7 +637,7 @@
                     break;
                 case 113:
                     unfocusCell();
-                    $(document).trigger('editor.focus');
+                    bus.trigger('editor.focus');
                     break;
                 default:
                     downKey[keyCode] = true;
@@ -684,15 +684,21 @@
         //noinspection JSUnusedLocalSymbols
         function update(x, m) {
             clear();
-            query = m.r.query;
-            data.push(m.r.result);
-            columns = m.r.columns;
+            query = m.query;
+            data.push(m.dataset);
+            columns = m.columns;
             addColumns();
-            addRows(m.r.count);
+            addRows(m.count);
             computeColumnWidths();
             viewport.scrollTop = 0;
             resize();
             focusCell();
+        }
+
+        function publishQuery() {
+            if (query) {
+                bus.trigger('grid.query', encodeURIComponent(query));
+            }
         }
 
         function bind() {
@@ -703,29 +709,18 @@
             canvas = div.find('.qg-canvas');
             canvas.bind('keydown', onKeyDown);
             canvas.bind('keyup', onKeyUp);
-            $(document).on('query.grid', update);
+            bus.on(qdb.MSG_QUERY_DATASET, update);
             $(window).resize(resize);
-            $('.js-query-export').click(function (e) {
-                e.preventDefault();
-                if (query) {
-                    window.location.href = '/csv?query=' + encodeURIComponent(query);
-                }
-            });
-            $(document).on('grid.focus', focusCell);
-            $(document).on('grid.refresh', function () {
+            bus.on('grid.focus', focusCell);
+            bus.on('grid.refresh', function () {
                 if (query) {
                     $(document).trigger(qdb.MSG_QUERY_EXEC, {q: query});
                 }
             });
+            bus.on('grid.publish.query', publishQuery);
         }
 
         bind();
         resize();
     };
 }(jQuery));
-
-$(document).ready(function () {
-    'use strict';
-    $('#grid').grid();
-});
-

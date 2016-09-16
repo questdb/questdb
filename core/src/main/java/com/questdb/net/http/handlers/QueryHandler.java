@@ -91,7 +91,7 @@ public class QueryHandler implements ContextHandler {
                 switch (ctx.queryState) {
                     case QUERY_PREFIX:
                         if (ctx.noMeta) {
-                            r.put('{').putQuoted("result").put(":[");
+                            r.put('{').putQuoted("dataset").put(":[");
                             ctx.queryState = QUERY_RECORD_START;
                             break;
                         }
@@ -120,7 +120,7 @@ public class QueryHandler implements ContextHandler {
                         // fall through
                     case QUERY_META_SUFFIX:
                         r.bookmark();
-                        r.put("],\"result\":[");
+                        r.put("],\"dataset\":[");
                         ctx.queryState = QUERY_RECORD_START;
                         // fall through
                     case QUERY_RECORD_START:
@@ -133,6 +133,7 @@ public class QueryHandler implements ContextHandler {
                                     ctx.count++;
 
                                     if (ctx.fetchAll && ctx.count > ctx.stop) {
+                                        ctx.cancellationHandler.check();
                                         continue;
                                     }
 

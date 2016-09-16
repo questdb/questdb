@@ -120,8 +120,8 @@
         $('a#sql-editor').click(switchToEditor);
         $('a#file-upload').click(switchToImport);
         $(document).on('query.build.execute', switchToEditor);
-        $(document).on('query.grid', function (e, m) {
-            divExportUrl.val(qdb.toExportUrl(m.r.query));
+        $(document).on(qdb.MSG_QUERY_DATASET, function (e, m) {
+            divExportUrl.val(qdb.toExportUrl(m.query));
         });
         divExportUrl.click(function () {
             this.select();
@@ -146,4 +146,10 @@
 $(document).ready(function () {
     'use strict';
     qdb.setup();
+
+    var bus = {};
+    $(bus).query();
+    $(bus).domController();
+    $('#sqlEditor').editor(bus);
+    $('#grid').grid(bus);
 });

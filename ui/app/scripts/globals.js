@@ -34,7 +34,12 @@
     'use strict';
 
     var queryBatchSize = 1000;
-    var MSG_QUERY_EXEC = 'query.exec';
+    var MSG_QUERY_EXEC = 'query.in.exec';
+    var MSG_QUERY_CANCEL = 'query.in.cancel';
+    var MSG_QUERY_RUNNING = 'query.out.running';
+    var MSG_QUERY_OK = 'query.out.ok';
+    var MSG_QUERY_ERROR = 'query.out.error';
+    var MSG_QUERY_DATASET = 'query.out.dataset';
 
     function toExportUrl(query) {
         return window.location.protocol + '//' + window.location.host + '/csv?query=' + encodeURIComponent(query);
@@ -44,6 +49,11 @@
         qdb: {
             queryBatchSize,
             MSG_QUERY_EXEC,
+            MSG_QUERY_CANCEL,
+            MSG_QUERY_RUNNING,
+            MSG_QUERY_OK,
+            MSG_QUERY_ERROR,
+            MSG_QUERY_DATASET,
             toExportUrl
         }
     });
