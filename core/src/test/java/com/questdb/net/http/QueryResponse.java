@@ -30,7 +30,7 @@ import java.util.List;
 public class QueryResponse {
     public String error;
     public String query;
-    public List<String[]> result;
+    public List<String[]> dataset;
     public long count;
 
     public static class Tab {

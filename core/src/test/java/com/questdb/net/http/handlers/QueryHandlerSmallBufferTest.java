@@ -82,7 +82,7 @@ public class QueryHandlerSmallBufferTest extends AbstractOptimiserTest {
     @Test
     public void testJsonChunkOverflow() throws Exception {
         QueryResponse queryResponse = QueryHandlerTest.download("large", temp);
-        Assert.assertEquals(RECORD_COUNT, queryResponse.result.size());
+        Assert.assertEquals(RECORD_COUNT, queryResponse.dataset.size());
     }
 
     @Test(expected = JsonSyntaxException.class)
