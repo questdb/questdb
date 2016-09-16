@@ -104,7 +104,7 @@
         $('#js-toggle-grid').removeClass('active');
     }
 
-    function setup() {
+    function setup(bus) {
         $('#side-menu').metisMenu();
         $('.navbar-minimalize').click(toggleMenu);
 
@@ -119,8 +119,8 @@
         $(window).bind('resize', fixBodyClass);
         $('a#sql-editor').click(switchToEditor);
         $('a#file-upload').click(switchToImport);
-        $(document).on('query.build.execute', switchToEditor);
-        $(document).on(qdb.MSG_QUERY_DATASET, function (e, m) {
+        $(bus).on('query.build.execute', switchToEditor);
+        $(bus).on(qdb.MSG_QUERY_DATASET, function (e, m) {
             divExportUrl.val(qdb.toExportUrl(m.query));
         });
         divExportUrl.click(function () {
@@ -130,7 +130,7 @@
         /* eslint-disable no-new */
         new Clipboard('.js-export-copy-url');
         $('.js-query-refresh').click(function () {
-            $(document).trigger('grid.refresh');
+            $(bus).trigger('grid.refresh');
         });
         $('#js-toggle-chart').click(switchToChart);
         $('#js-toggle-grid').click(switchToGrid);
@@ -145,11 +145,14 @@
 
 $(document).ready(function () {
     'use strict';
-    qdb.setup();
-
     var bus = {};
+    qdb.setup(bus);
     $(bus).query();
     $(bus).domController();
     $('#sqlEditor').editor(bus);
     $('#grid').grid(bus);
+
+    $('#dragTarget').dropbox();
+    $('#import-file-list').importManager();
+    $('#import-detail').importEditor(bus);
 });

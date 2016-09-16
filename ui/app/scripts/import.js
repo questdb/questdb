@@ -28,7 +28,6 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-/*globals $:false */
 /*globals jQuery:false */
 
 /**
@@ -413,13 +412,18 @@ function nopropagation(e) {
             // subscribe to document event
             $(document).on('dropbox.files', addFiles);
             $(document).on('dropbox.clipboard', addClipboard);
-            $(document).on('import.clearSelected', clearSelected);
-            $(document).on('import.cancel', abortImport);
-            $(document).on('import.retry', retrySelected);
+            // $(document).on('import.clearSelected', clearSelected);
+            // $(document).on('import.cancel', abortImport);
+            // $(document).on('import.retry', retrySelected);
 
             $(document).on('import.line.overwrite', renderRowAsOverwrite);
             $(document).on('import.line.append', renderRowAsAppend);
             $(document).on('import.line.abort', renderRowAsCancel);
+
+            $('#btnImportClearSelected').click(clearSelected);
+            $('#btnImportCancel').click(abortImport);
+            $('#btnRetry').click(retrySelected);
+
         }
 
         function init() {
@@ -450,6 +454,7 @@ function nopropagation(e) {
         }
 
         function handleDrop(evt) {
+            nopropagation(evt);
             endDrag();
             collection = $();
             $(document).trigger('dropbox.files', evt.originalEvent.dataTransfer);
@@ -466,8 +471,8 @@ function nopropagation(e) {
         }
 
         function handleDragEnter(event) {
+            nopropagation(event);
             if (collection.size() === 0) {
-                nopropagation(event);
                 startDrag();
             }
             collection = collection.add(event.target);
@@ -492,11 +497,13 @@ function nopropagation(e) {
                 $(document).on('drop', handleDrop);
                 $(document).on('paste', handlePaste);
                 $(document).on('dragenter', handleDragEnter);
+                $(document).on('dragover', nopropagation);
                 $(document).on('dragleave', handleDragLeave);
             } else {
                 $(document).unbind('drop', handleDrop);
                 $(document).unbind('paste', handlePaste);
                 $(document).unbind('dragenter', handleDragEnter);
+                $(document).unbind('dragover', nopropagation);
                 $(document).unbind('dragleave', handleDragLeave);
             }
         }
@@ -520,36 +527,3 @@ function nopropagation(e) {
         return this;
     };
 }(jQuery));
-
-$(document).ready(function () {
-    'use strict';
-
-    $('#btnImportClearSelected').click(function () {
-        $(document).trigger('import.clearSelected');
-    });
-
-    $('#btnImportCancel').click(function () {
-        $(document).trigger('import.cancel');
-    });
-
-    $('#btnRetry').click(function () {
-        $(document).trigger('import.retry');
-    });
-
-    $('#dragTarget').dropbox();
-    $('#import-file-list').importManager();
-
-    //
-    // prevent dropping files into rest of document
-    //
-    $(document).on('dragenter', nopropagation);
-    $(document).on('dragover', nopropagation);
-    $(document).on('drop', nopropagation);
-
-    $(document).ready(function () {
-        $('input').iCheck({
-            checkboxClass: 'icheckbox_square-red',
-            radioClass: 'iradio_square-red'
-        });
-    });
-});

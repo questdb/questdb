@@ -28,14 +28,12 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-/*globals $:false */
 /*globals jQuery:false */
-
 
 (function ($) {
     'use strict';
 
-    $.fn.importEditor = function () {
+    $.fn.importEditor = function (ebus) {
         var container = $(this);
         var statsSwitcher = $('.stats-switcher');
         var divEditor = $(this).find('.js-import-editor');
@@ -71,6 +69,7 @@
         ];
 
         var current = null;
+        var editorBus = $(ebus);
 
         function resizeCanvas() {
             var top = divCanvas[0].getBoundingClientRect().top;
@@ -283,14 +282,14 @@
         });
 
         divTabName.click(function () {
-            $(document).trigger('query.build.execute', location);
+            editorBus.trigger('query.build.execute', location);
+        });
+
+        $('input').iCheck({
+            checkboxClass: 'icheckbox_square-red',
+            radioClass: 'iradio_square-red'
         });
 
         $(window).resize(resizeCanvas);
     };
 }(jQuery));
-
-$(document).ready(function () {
-    'use strict';
-    $('#import-detail').importEditor();
-});
