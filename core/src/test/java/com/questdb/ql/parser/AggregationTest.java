@@ -114,6 +114,22 @@ public class AggregationTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAvgConst() throws Exception {
+        assertThat("employeeId\tcol0\n" +
+                        "TGPGWFFYU\t100.300000000002\n" +
+                        "DEYYQEHBH\t100.300000000002\n" +
+                        "SRYRFBVTM\t100.300000000002\n" +
+                        "GZSXUXIBB\t100.300000000002\n" +
+                        "UEDRQQULO\t100.300000000002\n" +
+                        "FOWLPDXYS\t100.300000000002\n" +
+                        "FJGETJRSZ\t100.300000000002\n" +
+                        "BEOUOJSHR\t100.300000000002\n" +
+                        "YRXPEHNRX\t100.300000000002\n" +
+                        "VTJWCPSWH\t100.300000000002\n",
+                "select employeeId, avg(100.3) from orders", true);
+    }
+
+    @Test
     public void testCount() throws Exception {
         assertThat("TGPGWFFYU\t983\n" +
                         "DEYYQEHBH\t995\n" +
@@ -257,6 +273,15 @@ public class AggregationTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testResamplingAliasClash() throws Exception {
+        try {
+            expectFailure("select dtoa4(orderDate) orderDate, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders sample by 1d");
+        } catch (ParserException e) {
+            Assert.assertEquals(24, QueryError.getPosition());
+        }
+    }
+
+    @Test
     public void testResamplingNoAggregates() throws Exception {
         try {
             expectFailure("select orderDate, price+quantity from orders sample by 8h");
@@ -266,8 +291,33 @@ public class AggregationTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testResamplingTimestampRename() throws Exception {
+        assertThat("2014-05-04T08:00:00.000Z\t-18.041874103485\n" +
+                        "2014-05-04T16:00:00.000Z\t-12.148285354848\n" +
+                        "2014-05-05T00:00:00.000Z\t-10.773253435499\n" +
+                        "2014-05-05T08:00:00.000Z\t0.750778769143\n",
+                "select orderDate ts, vwap(price, quantity) from orders sample by 8h");
+    }
+
+    @Test
     public void testRowIdCompliance() throws Exception {
         assertRowId("select employeeId, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders", "employeeId");
+    }
+
+    @Test
+    public void testSumConst() throws Exception {
+        assertThat("employeeId\tsum\tcol0\tcol1\n" +
+                        "TGPGWFFYU\t983\t10\t20\n" +
+                        "DEYYQEHBH\t995\t10\t20\n" +
+                        "SRYRFBVTM\t969\t10\t20\n" +
+                        "GZSXUXIBB\t993\t10\t20\n" +
+                        "UEDRQQULO\t1035\t10\t20\n" +
+                        "FOWLPDXYS\t990\t10\t20\n" +
+                        "FJGETJRSZ\t1028\t10\t20\n" +
+                        "BEOUOJSHR\t979\t10\t20\n" +
+                        "YRXPEHNRX\t999\t10\t20\n" +
+                        "VTJWCPSWH\t1029\t10\t20\n",
+                "select employeeId, sum(1) sum, min(10), max(20) from orders", true);
     }
 
     @Test
@@ -316,6 +366,21 @@ public class AggregationTest extends AbstractOptimiserTest {
                         "YRXPEHNRX\t96407\t0\t199\n" +
                         "VTJWCPSWH\t102802\t0\t199\n",
                 "select employeeId, sum(productId) sum, min(productId), max(productId) from orders", true);
+    }
+
+    @Test
+    public void testVWapConst() throws Exception {
+        assertThat("TGPGWFFYU\t-21.643293565756\t10.000000000000\n" +
+                        "DEYYQEHBH\t-6.467001028408\t10.000000000000\n" +
+                        "SRYRFBVTM\t2.393438946531\t10.000000000000\n" +
+                        "GZSXUXIBB\t4.741280909223\t10.000000000000\n" +
+                        "UEDRQQULO\t-3.726755343047\t10.000000000000\n" +
+                        "FOWLPDXYS\t-16.216304999514\t10.000000000000\n" +
+                        "FJGETJRSZ\t-22.689574330892\t10.000000000000\n" +
+                        "BEOUOJSHR\t-15.105882600563\t10.000000000000\n" +
+                        "YRXPEHNRX\t-9.386559884214\t10.000000000000\n" +
+                        "VTJWCPSWH\t-12.402215320133\t10.000000000000\n",
+                "select employeeId, sum(price*quantity)/lsum(quantity), vwap(10, 20) sum from orders");
     }
 
     @Test

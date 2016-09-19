@@ -80,4 +80,9 @@ public final class VwapAggregator extends AbstractBinaryOperator implements Aggr
         sumQtyIdx = offset + 1;
         vwap = offset + 2;
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

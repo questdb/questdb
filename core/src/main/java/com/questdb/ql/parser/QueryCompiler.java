@@ -118,6 +118,7 @@ public class QueryCompiler {
     private final ObjectPool<QueryColumn> aggregateColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 8);
     private final ObjList<QueryColumn> aggregators = new ObjList<>();
     private final ObjList<QueryColumn> outerVirtualColumns = new ObjList<>();
+    private final ObjList<QueryColumn> innerVirtualColumn = new ObjList<>();
     private final ObjList<AnalyticColumn> analyticColumns = new ObjList<>();
     private final ObjHashSet<String> groupKeyColumns = new ObjHashSet<>();
     private final ComparatorCompiler cc = new ComparatorCompiler();
@@ -727,17 +728,12 @@ public class QueryCompiler {
         // create virtual columns
         for (int i = 0; i < n; i++) {
             QueryColumn qc = aggregators.get(i);
-            try {
-                VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
-                if (vc instanceof AggregatorFunction) {
-                    vc.setName(qc.getAlias());
-                    af.add((AggregatorFunction) vc);
-                } else {
-                    throw QueryError.$(qc.getAst().position, "Internal configuration error. Not an aggregate");
-                }
-            } catch (ParserException e) {
-                Misc.free(rs);
-                throw e;
+            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
+            if (vc instanceof AggregatorFunction) {
+                vc.setName(qc.getAlias());
+                af.add((AggregatorFunction) vc);
+            } else {
+                throw QueryError.$(qc.getAst().position, "Internal configuration error. Not an aggregate");
             }
         }
 
@@ -747,7 +743,6 @@ public class QueryCompiler {
         } else {
             TimestampSampler sampler = SamplerFactory.from(sampleBy.token);
             if (sampler == null) {
-                Misc.free(rs);
                 throw QueryError.$(sampleBy.position, "Invalid sample");
             }
             out = new ResampledRecordSource(rs,
@@ -782,7 +777,6 @@ public class QueryCompiler {
             ExprNode ast = col.getAst();
 
             if (ast.paramCount > 1) {
-                Misc.free(rs);
                 throw QueryError.$(col.getAst().position, "Too many arguments");
             }
 
@@ -1398,7 +1392,7 @@ public class QueryCompiler {
                     if (node.type == ExprNode.LITERAL) {
                         int direction = thatHash.get(node.token);
                         if (direction != -1) {
-                            hash.put(column.getAlias() == null ? node.token : column.getAlias(), direction);
+                            hash.put(column.getName(), direction);
                         }
                     }
                 }
@@ -2179,7 +2173,7 @@ public class QueryCompiler {
 
     private ExprNode replaceIfAggregate(@Transient ExprNode node, ObjList<QueryColumn> aggregateColumns) {
         if (node != null && FunctionFactories.isAggregate(node.token)) {
-            QueryColumn c = aggregateColumnPool.next().of(createAlias(aggregateColumnSequence++), node);
+            QueryColumn c = aggregateColumnPool.next().of(createAlias(aggregateColumnSequence++), node.position, node);
             aggregateColumns.add(c);
             return exprNodePool.next().of(ExprNode.LITERAL, c.getAlias(), 0, 0);
         }
@@ -2261,6 +2255,7 @@ public class QueryCompiler {
         final RecordMetadata meta = recordSource.getMetadata();
 
         this.outerVirtualColumns.clear();
+        this.innerVirtualColumn.clear();
         this.aggregators.clear();
         this.selectedColumns.clear();
         this.selectedColumnAliases.clear();
@@ -2268,7 +2263,7 @@ public class QueryCompiler {
         this.aggregateColumnSequence = 0;
         this.analyticColumns.clear();
 
-        ObjList<VirtualColumn> virtualColumns = null;
+        RecordSource rs = recordSource;
 
         try {
             // create virtual columns from select list
@@ -2290,14 +2285,14 @@ public class QueryCompiler {
 
                     // add to selected columns
                     selectedColumns.add(node.token);
-                    addAlias(node.position, qc.getAlias() == null ? node.token : qc.getAlias());
+                    addAlias(node.position, qc.getName());
                     groupKeyColumns.add(node.token);
                     continue;
                 }
 
                 // generate missing alias for everything else
                 if (qc.getAlias() == null) {
-                    qc.of(createAlias(aggregateColumnSequence++), node);
+                    qc.of(createAlias(aggregateColumnSequence++), node.position, node);
                 }
 
                 selectedColumns.add(qc.getAlias());
@@ -2334,52 +2329,65 @@ public class QueryCompiler {
                 } else {
                     // this is either a constant or non-aggregate expression
                     // either case is a virtual column
-                    if (virtualColumns == null) {
-                        virtualColumns = new ObjList<>();
+                    innerVirtualColumn.add(qc);
+                }
+            }
+
+
+            // if virtual columns are present, create record source to calculate them
+            if (innerVirtualColumn.size() > 0) {
+                // this is either a constant or non-aggregate expression
+                // either case is a virtual column
+                ObjList<VirtualColumn> virtualColumns = new ObjList<>();
+
+                final String timestampName;
+                if (model.getSampleBy() != null) {
+                    timestampName = meta.getColumnName(getTimestampIndex(model, model.getTimestamp(), meta));
+                } else {
+                    timestampName = null;
+                }
+
+                for (int i = 0, n = innerVirtualColumn.size(); i < n; i++) {
+                    QueryColumn qc = innerVirtualColumn.getQuick(i);
+                    if (Chars.equalsNc(qc.getAlias(), timestampName)) {
+                        throw QueryError.$(qc.getAliasPosition() == -1 ? qc.getAst().position : qc.getAliasPosition(), "Alias clashes with implicit sample column name");
                     }
 
-                    VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), recordSource.getMetadata());
+                    VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), meta);
                     vc.setName(qc.getAlias());
                     virtualColumns.add(vc);
                     groupKeyColumns.add(qc.getAlias());
                 }
+                rs = new VirtualColumnRecordSource(rs, virtualColumns);
             }
+
+            // if aggregators present, wrap record source into group-by source
+            if (aggregators.size() > 0) {
+                rs = compileAggregates(rs, model);
+            } else {
+                ExprNode sampleBy = model.getSampleBy();
+                if (sampleBy != null) {
+                    throw QueryError.$(sampleBy.position, "There are no aggregation columns");
+                }
+            }
+
+            if (outerVirtualColumns.size() > 0) {
+                rs = compileOuterVirtualColumns(rs, model);
+            }
+
+            if (analyticColumns.size() > 0) {
+                rs = compileAnalytic(rs, model);
+            }
+
+            if (selectedColumns.size() > 0) {
+                // wrap underlying record source into selected columns source.
+                rs = new SelectedColumnsRecordSource(rs, selectedColumns, selectedColumnAliases);
+            }
+            return rs;
         } catch (ParserException e) {
-            Misc.free(recordSource);
+            Misc.free(rs);
             throw e;
         }
-
-        RecordSource rs = recordSource;
-
-        // if virtual columns are present, create record source to calculate them
-        if (virtualColumns != null) {
-            rs = new VirtualColumnRecordSource(rs, virtualColumns);
-        }
-
-        // if aggregators present, wrap record source into group-by source
-        if (aggregators.size() > 0) {
-            rs = compileAggregates(rs, model);
-        } else {
-            ExprNode sampleBy = model.getSampleBy();
-            if (sampleBy != null) {
-                Misc.free(rs);
-                throw QueryError.$(sampleBy.position, "There are no aggregation columns");
-            }
-        }
-
-        if (outerVirtualColumns.size() > 0) {
-            rs = compileOuterVirtualColumns(rs, model);
-        }
-
-        if (analyticColumns.size() > 0) {
-            rs = compileAnalytic(rs, model);
-        }
-
-        if (selectedColumns.size() > 0) {
-            // wrap underlying record source into selected columns source.
-            rs = new SelectedColumnsRecordSource(rs, selectedColumns, selectedColumnAliases);
-        }
-        return rs;
     }
 
     private void splitAggregates(@Transient ExprNode node, ObjList<QueryColumn> aggregateColumns) {

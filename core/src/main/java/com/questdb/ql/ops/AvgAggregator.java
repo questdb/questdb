@@ -78,4 +78,9 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
         sumIdx = offset + 1;
         avgIdx = offset + 2;
     }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
 }

@@ -34,6 +34,7 @@ public class QueryColumn implements Mutable {
         }
     };
     private String alias;
+    private int aliasPosition;
     private ExprNode ast;
 
     protected QueryColumn() {
@@ -49,8 +50,16 @@ public class QueryColumn implements Mutable {
         return alias;
     }
 
+    public int getAliasPosition() {
+        return aliasPosition;
+    }
+
     public ExprNode getAst() {
         return ast;
+    }
+
+    public String getName() {
+        return alias != null ? alias : ast.token;
     }
 
     @Override
@@ -68,8 +77,9 @@ public class QueryColumn implements Mutable {
         return alias != null ? alias.equals(that.alias) : that.alias == null && (ast != null ? ast.equals(that.ast) : that.ast == null);
     }
 
-    public QueryColumn of(String alias, ExprNode ast) {
+    public QueryColumn of(String alias, int aliasPosition, ExprNode ast) {
         this.alias = alias;
+        this.aliasPosition = aliasPosition;
         this.ast = ast;
         return this;
     }

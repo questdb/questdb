@@ -638,21 +638,24 @@ public final class QueryParser {
         CharSequence tok;
         while (true) {
             ExprNode expr = expr();
+            String alias;
+            int aliasPosition = lexer.position();
+
             tok = tok();
 
-            String alias;
             if (!columnAliasStop.contains(tok)) {
                 alias = tok.toString();
                 tok = tok();
             } else {
                 alias = null;
+                aliasPosition = -1;
             }
 
             if (Chars.equals(tok, "over")) {
                 // analytic
                 expectTok(tok(), '(');
 
-                AnalyticColumn col = analyticColumnPool.next().of(alias, expr);
+                AnalyticColumn col = analyticColumnPool.next().of(alias, aliasPosition, expr);
                 tok = tok();
 
                 if (Chars.equals(tok, "partition")) {
@@ -693,7 +696,7 @@ public final class QueryParser {
 
                 tok = tok();
             } else {
-                model.addColumn(queryColumnPool.next().of(alias, expr));
+                model.addColumn(queryColumnPool.next().of(alias, aliasPosition, expr));
             }
 
             if (Chars.equals(tok, "from")) {

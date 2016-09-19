@@ -36,6 +36,11 @@ public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator impl
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public void prepare(ObjList<RecordColumnMetadata> columns, int offset) {
         columns.add(this);
         valueIndex = offset;

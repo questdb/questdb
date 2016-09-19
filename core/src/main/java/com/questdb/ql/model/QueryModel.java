@@ -489,11 +489,7 @@ public class QueryModel implements Mutable, ParsedModel {
                 QueryColumn qc = model.getColumns().getQuick(i);
                 switch (qc.getAst().type) {
                     case ExprNode.LITERAL:
-                        if (qc.getAlias() != null) {
-                            histogram.increment(qc.getAlias());
-                        } else {
-                            histogram.increment(qc.getAst().token);
-                        }
+                        histogram.increment(qc.getName());
                         break;
                     default:
                         break;
