@@ -208,70 +208,70 @@
 
             // scatter plot
 
-            // var spec = {
-            //     width: 500,
-            //     height: 200,
-            //     // padding: {top: 10, left: 30, bottom: 30, right: 10},
-            //     data: [
-            //         {
-            //             name: 'accidents',
-            //             url: 'http://localhost:9000/csv?query=%0A%0Aselect%20severity%2C%20timestamp%20ts%2C%20count()%20count%20from%20z2%20%20sample%20by%201M',
-            //             format: {type: 'csv', parse: {ts: 'date', count: 'number'}}
-            //         }
-            //     ],
-            //     scales: [
-            //         {
-            //             name: 'x',
-            //             type: 'time',
-            //             range: 'width',
-            //             points: true,
-            //             domain: {data: 'accidents', field: 'ts'}
-            //         },
-            //         {
-            //             name: 'y',
-            //             type: 'linear',
-            //             range: 'height',
-            //             nice: true,
-            //             domain: {data: 'accidents', field: 'count'}
-            //         },
-            //         {
-            //             name: 'color',
-            //             type: 'ordinal',
-            //             range: 'category10',
-            //             domain: {data: 'accidents', field: 'severity'},
-            //             nice: true
-            //         }
-            //     ],
-            //     axes: [
-            //         {type: 'x', scale: 'x', grid: true},
-            //         {type: 'y', scale: 'y', grid: true}
-            //     ],
-            //     marks: [
-            //         {
-            //             type: 'group',
-            //             from: {
-            //                 data: 'accidents',
-            //                 transform: [
-            //                     {type: 'stack', groupby: ['ts'], sortby: ['severity'], field: 'count'},
-            //                     {type: 'facet', groupby: ['severity']}
-            //                 ]
-            //             },
-            //             marks: [
-            //                 {
-            //                     type: 'symbol',
-            //                     properties: {
-            //                         update: {
-            //                             x: {scale: 'x', field: 'ts'},
-            //                             y: {scale: 'y', field: 'count'},
-            //                             fill: {scale: 'color', field: 'severity'},
-            //                             size: {value: 10}
-            //                         }
-            //                     }
-            //                 }
-            //             ]
-            //         }
-            //     ]
-            // };
+            var spec = {
+                width: 500,
+                height: 200,
+                // padding: {top: 10, left: 30, bottom: 30, right: 10},
+                data: [
+                    {
+                        name: 'accidents',
+                        url: 'http://localhost:9000/csv?query=%0A%0Aselect%20severity%2C%20timestamp%20ts%2C%20count()%20count%20from%20z2%20%20sample%20by%201M',
+                        format: {type: 'csv', parse: {ts: 'date', count: 'number'}}
+                    }
+                ],
+                scales: [
+                    {
+                        name: 'x',
+                        type: 'time',
+                        range: 'width',
+                        points: true,
+                        domain: {data: 'accidents', field: 'ts'}
+                    },
+                    {
+                        name: 'y',
+                        type: 'linear',
+                        range: 'height',
+                        nice: true,
+                        domain: {data: 'accidents', field: 'count'}
+                    },
+                    {
+                        name: 'color',
+                        type: 'ordinal',
+                        range: 'category10',
+                        domain: {data: 'accidents', field: 'severity'},
+                        nice: true
+                    }
+                ],
+                axes: [
+                    {type: 'x', scale: 'x', grid: true},
+                    {type: 'y', scale: 'y', grid: true}
+                ],
+                marks: [
+                    {
+                        type: 'group',
+                        from: {
+                            data: 'accidents',
+                            transform: [
+                                {type: 'stack', groupby: ['ts'], sortby: ['severity'], field: 'count'},
+                                {type: 'facet', groupby: ['severity']}
+                            ]
+                        },
+                        marks: [
+                            {
+                                type: 'symbol',
+                                properties: {
+                                    update: {
+                                        x: {scale: 'x', field: 'ts'},
+                                        y: {scale: 'y', field: 'count'},
+                                        fill: {scale: 'color', field: 'severity'},
+                                        size: {value: 10}
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ]
+            };
 
             // stacked bar
 
@@ -351,65 +351,66 @@
             // };
 
 
-            var spec = {
-                width: 400,
-                height: 400,
-                data: [
-                    {
-                        name: 'table',
-                        url: 'http://localhost:9000/csv?query=%0A%0Aselect%20severity%2C%20count%20from%20(select%20severity%2C%20count()%20count%20from%20z2)',
-                        format: {type: 'csv', parse: {count: 'number'}},
-                        transform: [{type: 'pie', field: 'count'}]
-                    }
-                ],
-                scales: [
-                    {
-                        name: 'r',
-                        type: 'sqrt',
-                        domain: {data: 'table', field: 'count'},
-                        range: [20, 100]
-                    }
-                ],
-                marks: [
-                    {
-                        type: 'arc',
-                        from: {data: 'table'},
-                        properties: {
-                            enter: {
-                                x: {field: {group: 'width'}, mult: 0.5},
-                                y: {field: {group: 'height'}, mult: 0.5},
-                                startAngle: {field: 'layout_start'},
-                                endAngle: {field: 'layout_end'},
-                                innerRadius: {value: 20},
-                                outerRadius: {scale: 'r', field: 'count'},
-                                stroke: {value: '#fff'}
-                            },
-                            update: {
-                                fill: {value: '#ccc'}
-                            },
-                            hover: {
-                                fill: {value: 'pink'}
-                            }
-                        }
-                    },
-                    {
-                        type: 'text',
-                        from: {data: 'table'},
-                        properties: {
-                            enter: {
-                                x: {field: {group: 'width'}, mult: 0.5},
-                                y: {field: {group: 'height'}, mult: 0.5},
-                                radius: {scale: 'r', field: 'count', offset: 8},
-                                theta: {field: 'layout_mid'},
-                                fill: {value: '#000'},
-                                align: {value: 'center'},
-                                baseline: {value: 'middle'},
-                                text: {field: 'severity'}
-                            }
-                        }
-                    }
-                ]
-            };
+            // pie chart
+            // var spec = {
+            //     width: 400,
+            //     height: 400,
+            //     data: [
+            //         {
+            //             name: 'table',
+            //             url: 'http://localhost:9000/csv?query=%0A%0Aselect%20severity%2C%20count%20from%20(select%20severity%2C%20count()%20count%20from%20z2)',
+            //             format: {type: 'csv', parse: {count: 'number'}},
+            //             transform: [{type: 'pie', field: 'count'}]
+            //         }
+            //     ],
+            //     scales: [
+            //         {
+            //             name: 'r',
+            //             type: 'sqrt',
+            //             domain: {data: 'table', field: 'count'},
+            //             range: [20, 100]
+            //         }
+            //     ],
+            //     marks: [
+            //         {
+            //             type: 'arc',
+            //             from: {data: 'table'},
+            //             properties: {
+            //                 enter: {
+            //                     x: {field: {group: 'width'}, mult: 0.5},
+            //                     y: {field: {group: 'height'}, mult: 0.5},
+            //                     startAngle: {field: 'layout_start'},
+            //                     endAngle: {field: 'layout_end'},
+            //                     innerRadius: {value: 20},
+            //                     outerRadius: {scale: 'r', field: 'count'},
+            //                     stroke: {value: '#fff'}
+            //                 },
+            //                 update: {
+            //                     fill: {value: '#ccc'}
+            //                 },
+            //                 hover: {
+            //                     fill: {value: 'pink'}
+            //                 }
+            //             }
+            //         },
+            //         {
+            //             type: 'text',
+            //             from: {data: 'table'},
+            //             properties: {
+            //                 enter: {
+            //                     x: {field: {group: 'width'}, mult: 0.5},
+            //                     y: {field: {group: 'height'}, mult: 0.5},
+            //                     radius: {scale: 'r', field: 'count', offset: 8},
+            //                     theta: {field: 'layout_mid'},
+            //                     fill: {value: '#000'},
+            //                     align: {value: 'center'},
+            //                     baseline: {value: 'middle'},
+            //                     text: {field: 'severity'}
+            //                 }
+            //             }
+            //         }
+            //     ]
+            // };
 
             //
             vg.parse.spec(spec, function (error, chart) {

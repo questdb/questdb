@@ -47,10 +47,6 @@ body.full-height-layout #page-wrapper {
   height: 100%;
 }
 
-#page-wrapper {
-  min-height: auto;
-}
-
 body.boxed-layout {
   background: $boxed-backgound;
 }
@@ -115,9 +111,8 @@ a:hover, a:focus {
 }
 
 .hr-line-solid {
-  border-bottom: 1px solid $border-color;
   background-color: rgba(0, 0, 0, 0);
-  border-style: solid !important;
+  border-style: solid $border-color !important;
   margin-top: 15px;
   margin-bottom: 15px;
 }
@@ -213,7 +208,6 @@ video {
 
 #page-wrapper {
   padding: 0 15px;
-  min-height: 568px;
   position: relative !important;
 }
 
@@ -221,7 +215,6 @@ video {
   #page-wrapper {
     position: inherit;
     margin: 0 0 0 240px;
-    min-height: 2002px;
   }
 }
 

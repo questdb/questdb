@@ -39,43 +39,45 @@
     var divSqlPanel = $('.js-sql-panel');
     var divImportPanel = $('.js-import-panel');
     var divExportUrl = $('.js-export-url');
+    var editor = $('#editor');
+    var sqlEditor = $('#sqlEditor');
+    var chart = $('#chart');
+    var consoleTop = $('#console-top');
+    var wrapper = $('#page-wrapper');
+    var navbar = $('nav.navbar-default');
+    // var body = $('body');
+    var msgPanel = editor.find('.js-query-message-panel');
 
-    function fixHeight() {
-        var b = $('body');
-        var navbarHeight = $('nav.navbar-default').height();
-        var pw = $('#page-wrapper');
-        var wrapperHeight = pw.height();
+    function resize() {
+        // if ($(this).width() < 769) {
+        //     body.addClass('body-small');
+        // } else {
+        //     body.removeClass('body-small');
+        // }
+
+        var navbarHeight = navbar.height();
+        var wrapperHeight = wrapper.height();
+        var msgPanelHeight = msgPanel.height();
+        var h;
 
         if (navbarHeight > wrapperHeight) {
-            pw.css('min-height', navbarHeight + 'px');
+            h = navbarHeight;
         }
 
         if (navbarHeight < wrapperHeight) {
-            pw.css('min-height', $(window).height() + 'px');
+            h = $(window).height();
         }
 
-        if (b.hasClass('fixed-nav')) {
-            if (navbarHeight > wrapperHeight) {
-                pw.css('min-height', navbarHeight - 60 + 'px');
-            } else {
-                pw.css('min-height', $(window).height() - 60 + 'px');
-            }
+        if (h) {
+            wrapper.css('height', h + 'px');
+            wrapper.css('min-height', h + 'px');
         }
-    }
 
-    function fixBodyClass() {
-        if ($(this).width() < 769) {
-            $('body').addClass('body-small');
-        } else {
-            $('body').removeClass('body-small');
-        }
-    }
-
-    function toggleMenu() {
-        $('body').toggleClass('mini-navbar');
-        $('.navbar-default').addClass('animated slideInLeft').one('webkitAnimationEnd mozAnimationEnd MSAnimationEnd oanimationend animationend', function () {
-            $(this).removeClass('animated slideInLeft');
-        });
+        var topHeight = 350;
+        consoleTop.css('height', topHeight + 'px');
+        editor.css('height', topHeight + 'px');
+        sqlEditor.css('height', (topHeight - msgPanelHeight - 60) + 'px');
+        chart.css('height', topHeight + 'px');
     }
 
     function switchToEditor() {
@@ -92,14 +94,14 @@
 
     function switchToGrid() {
         $('#chart').hide();
-        $('#grid').show();
+        $('#editor').show();
         $('#js-toggle-chart').removeClass('active');
         $('#js-toggle-grid').addClass('active');
     }
 
     function switchToChart() {
         $('#chart').show();
-        $('#grid').hide();
+        $('#editor').hide();
         $('#js-toggle-chart').addClass('active');
         $('#js-toggle-grid').removeClass('active');
         $(document).trigger('chart.draw');
@@ -107,17 +109,7 @@
 
     function setup(bus) {
         $('#side-menu').metisMenu();
-        $('.navbar-minimalize').click(toggleMenu);
-
-        fixBodyClass();
-        fixHeight();
-
-        $(window).bind('load resize scroll', function () {
-            if (!$('body').hasClass('body-small')) {
-                fixHeight();
-            }
-        });
-        $(window).bind('resize', fixBodyClass);
+        $(window).bind('resize', resize);
         $('a#sql-editor').click(switchToEditor);
         $('a#file-upload').click(switchToImport);
         $(bus).on('query.build.execute', switchToEditor);
@@ -152,9 +144,13 @@ $(document).ready(function () {
     $(bus).domController();
     $('#sqlEditor').editor(bus);
     $('#grid').grid(bus);
-
     $('#dragTarget').dropbox();
     $('#import-file-list').importManager();
     $('#import-detail').importEditor(bus);
     $('#chart').chart(document);
+});
+
+$(window).load(function () {
+    'use strict';
+    $(window).trigger('resize');
 });

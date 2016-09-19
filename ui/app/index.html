@@ -132,17 +132,22 @@
             <div class="row">
                 <div class="col-lg-12">
                     <div class="ibox">
-                        <div class="ibox-content">
-                            <!--<div id="debug"></div>-->
-                            <div id="sqlEditor" class="editor border-rounded-top-half">
-                            </div>
-                            <div class="query-progress-spinner js-query-spinner"></div>
-                            <div class="query-message query-message-ok js-query-message-panel">
-                                <div class="query-time">
-                                    <i class="fa fa-clock-o"></i>
-                                    <div class="js-query-time">-</div>
+                        <div id="console-top" class="ibox-content">
+                            <div id="editor">
+                                <!--<div id="debug"></div>-->
+                                <div id="sqlEditor" class="editor border-rounded-top-half">
                                 </div>
-                                <div class="js-query-message-text"></div>
+                                <div class="query-progress-spinner js-query-spinner"></div>
+                                <div class="query-message query-message-ok js-query-message-panel">
+                                    <div class="query-time">
+                                        <i class="fa fa-clock-o"></i>
+                                        <div class="js-query-time">-</div>
+                                    </div>
+                                    <div class="js-query-message-text"></div>
+                                </div>
+                            </div>
+                            <div id="chart">
+
                             </div>
                         </div>
                     </div>
@@ -157,8 +162,6 @@
                                 <div class="qg-viewport">
                                     <div class="qg-canvas"></div>
                                 </div>
-                            </div>
-                            <div id="chart" style="display: none;">
                             </div>
                         </div>
                     </div>

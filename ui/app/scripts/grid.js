@@ -41,7 +41,7 @@
             viewportHeight: 400,
             yMaxThreshold: 10000000,
             maxRowsToAnalyze: 100,
-            bottomMargin: 90
+            bottomMargin: 75
         };
         var bus = $(msgBus);
         var $style;

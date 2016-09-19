@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*!******************************************************************************
  *    ___                  _   ____  ____
  *   / _ \ _   _  ___  ___| |_|  _ \| __ )
  *  | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,7 +32,6 @@
   #page-wrapper {
     position: inherit;
     margin: 0 0 0 $sidebar-width;
-    min-height: 1200px;
   }
 
   .navbar-static-side {
@@ -53,7 +52,6 @@
   #page-wrapper {
     position: inherit;
     margin: 0 0 0 0;
-    min-height: 1000px;
   }
 
   .body-small .navbar-static-side {

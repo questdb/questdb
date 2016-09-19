@@ -256,7 +256,6 @@
             edit.setHighlightActiveLine(false);
             edit.session.on('change', clearMarker);
             edit.$blockScrolling = Infinity;
-            $(element).css('height', '240px');
         }
 
         function load() {
