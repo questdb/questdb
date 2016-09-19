@@ -5,7 +5,7 @@
   ],
   "description": "QuestDB Console",
   "license": "The MIT License",
-  "homepage": "www.questdb.org",
+  "homepage": "https://www.questdb.org",
   "private": true,
   "ignore": [
     "**/.*",
@@ -25,7 +25,7 @@
     "bootstrap": "^3.3.6",
     "animate.css": "animate-css#^3.5.1",
     "clipboard": "^1.5.10",
-    "vega": "https://github.com/bluestreak01/vega.git"
+    "vega": "^2.6.3"
   },
   "overrides": {
     "bootstrap-sass": {

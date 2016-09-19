@@ -327,6 +327,7 @@ public final class FunctionFactories {
         unSig("atod", ColumnType.STRING, AtoDFunction.FACTORY);
         unSig("ltod", ColumnType.LONG, LtoDFunction.FACTORY);
         unSig("dtol", ColumnType.DATE, DtoLFunction.FACTORY);
+        unSig("dtoa4", ColumnType.DATE, DtoA4Function.FACTORY);
         unSig("round", ColumnType.DOUBLE, RoundFunction.FACTORY);
         unSig("time24", ColumnType.STRING, Time24ToMillisFunction.FACTORY);
 

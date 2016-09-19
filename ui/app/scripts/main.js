@@ -102,6 +102,7 @@
         $('#grid').hide();
         $('#js-toggle-chart').addClass('active');
         $('#js-toggle-grid').removeClass('active');
+        $(document).trigger('chart.draw');
     }
 
     function setup(bus) {
@@ -155,4 +156,5 @@ $(document).ready(function () {
     $('#dragTarget').dropbox();
     $('#import-file-list').importManager();
     $('#import-detail').importEditor(bus);
+    $('#chart').chart(document);
 });

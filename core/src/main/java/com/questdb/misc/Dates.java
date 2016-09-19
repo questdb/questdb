@@ -241,7 +241,17 @@ final public class Dates {
                 .put(getSecondOfMinute(millis))
                 .put(' ')
                 .put("GMT");
+    }
 
+    public static void formatMMMDYYYY(CharSink sink, long millis) {
+        int y = getYear(millis);
+        boolean l = isLeapYear(y);
+        int m = getMonthOfYear(millis, y, l);
+        sink.put(MONTHS_OF_YEAR[m - 1])
+                .put(' ')
+                .put(getDayOfMonth(millis, y, m, l))
+                .put(' ')
+                .put(y);
     }
 
     // YYYY

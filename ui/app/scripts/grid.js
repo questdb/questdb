@@ -701,6 +701,12 @@
             }
         }
 
+        function refreshQuery() {
+            if (query) {
+                bus.trigger(qdb.MSG_QUERY_EXEC, {q: query});
+            }
+        }
+
         function bind() {
             dbg = $('#debug');
             header = div.find('.qg-header-row');
@@ -709,14 +715,10 @@
             canvas = div.find('.qg-canvas');
             canvas.bind('keydown', onKeyDown);
             canvas.bind('keyup', onKeyUp);
-            bus.on(qdb.MSG_QUERY_DATASET, update);
             $(window).resize(resize);
+            bus.on(qdb.MSG_QUERY_DATASET, update);
             bus.on('grid.focus', focusCell);
-            bus.on('grid.refresh', function () {
-                if (query) {
-                    $(document).trigger(qdb.MSG_QUERY_EXEC, {q: query});
-                }
-            });
+            bus.on('grid.refresh', refreshQuery);
             bus.on('grid.publish.query', publishQuery);
         }
 
