@@ -414,7 +414,6 @@
 
             //
             vg.parse.spec(spec, function (error, chart) {
-                console.log(error);
                 chart({el: '#chart'}).update();
             });
         }

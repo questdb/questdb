@@ -227,7 +227,13 @@
 
     $.fn.editor = function (msgBus) {
         var edit;
-        var storeKey = 'query.text';
+        var storeKeys = {
+            text: 'query.text',
+            line: 'editor.line',
+            col: 'editor.col',
+            topHeight: 'top.height'
+        };
+
         var Range = ace.require('ace/range').Range;
         var marker;
         var searchOpts = {
@@ -256,20 +262,33 @@
             edit.setHighlightActiveLine(false);
             edit.session.on('change', clearMarker);
             edit.$blockScrolling = Infinity;
+
+            $(window).on('resize', function () {
+                edit.resize();
+            });
         }
 
         function load() {
             if (typeof (Storage) !== 'undefined') {
-                var q = localStorage.getItem(storeKey);
+                var q = localStorage.getItem(storeKeys.text);
                 if (q) {
                     edit.setValue(q);
+                }
+
+                var row = localStorage.getItem(storeKeys.line);
+                var col = localStorage.getItem(storeKeys.col);
+
+                if (row && col) {
+                    edit.gotoLine(row, col);
                 }
             }
         }
 
         function save() {
             if (typeof (Storage) !== 'undefined') {
-                localStorage.setItem(storeKey, edit.getValue());
+                localStorage.setItem(storeKeys.text, edit.getValue());
+                localStorage.setItem(storeKeys.line, edit.getCursorPosition().row + 1);
+                localStorage.setItem(storeKeys.col, edit.getCursorPosition().column + 1);
             }
         }
 
@@ -422,6 +441,8 @@
             bus.on('editor.toggle.invisibles', toggleInvisibles);
             bus.on('query.build.execute', findOrInsertQuery);
             bus.on('editor.focus', function () {
+                edit.scrollToLine(edit.getCursorPosition().row + 1, true, true, function () {
+                });
                 edit.focus();
             });
 

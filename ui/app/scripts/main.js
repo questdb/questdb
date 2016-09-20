@@ -45,16 +45,11 @@
     var consoleTop = $('#console-top');
     var wrapper = $('#page-wrapper');
     var navbar = $('nav.navbar-default');
-    // var body = $('body');
     var msgPanel = editor.find('.js-query-message-panel');
+    var topHeight = 350;
+    var bottomHeight = 350;
 
     function resize() {
-        // if ($(this).width() < 769) {
-        //     body.addClass('body-small');
-        // } else {
-        //     body.removeClass('body-small');
-        // }
-
         var navbarHeight = navbar.height();
         var wrapperHeight = wrapper.height();
         var msgPanelHeight = msgPanel.height();
@@ -69,15 +64,23 @@
         }
 
         if (h) {
+
+            if (h < topHeight + bottomHeight) {
+                h = topHeight + bottomHeight;
+            }
+
             wrapper.css('height', h + 'px');
             wrapper.css('min-height', h + 'px');
         }
 
-        var topHeight = 350;
         consoleTop.css('height', topHeight + 'px');
+        consoleTop.css('min-height', topHeight + 'px');
         editor.css('height', topHeight + 'px');
+        editor.css('min-height', topHeight + 'px');
         sqlEditor.css('height', (topHeight - msgPanelHeight - 60) + 'px');
+        sqlEditor.css('min-height', (topHeight - msgPanelHeight - 60) + 'px');
         chart.css('height', topHeight + 'px');
+        chart.css('min-height', topHeight + 'px');
     }
 
     function switchToEditor() {
@@ -107,13 +110,13 @@
         $(document).trigger('chart.draw');
     }
 
-    function setup(bus) {
+    function setup(b) {
         $('#side-menu').metisMenu();
         $(window).bind('resize', resize);
         $('a#sql-editor').click(switchToEditor);
         $('a#file-upload').click(switchToImport);
-        $(bus).on('query.build.execute', switchToEditor);
-        $(bus).on(qdb.MSG_QUERY_DATASET, function (e, m) {
+        $(b).on('query.build.execute', switchToEditor);
+        $(b).on(qdb.MSG_QUERY_DATASET, function (e, m) {
             divExportUrl.val(qdb.toExportUrl(m.query));
         });
         divExportUrl.click(function () {
@@ -123,22 +126,29 @@
         /* eslint-disable no-new */
         new Clipboard('.js-export-copy-url');
         $('.js-query-refresh').click(function () {
-            $(bus).trigger('grid.refresh');
+            $(b).trigger('grid.refresh');
         });
         $('#js-toggle-chart').click(switchToChart);
         $('#js-toggle-grid').click(switchToGrid);
+        $(b).on('splitter.resize', function (x, e) {
+            topHeight += e;
+            $(window).trigger('resize');
+        });
     }
 
     $.extend(true, window, {
         qdb: {
-            setup
+            setup,
+            switchToGrid
         }
     });
 }(jQuery));
 
+var bus;
+
 $(document).ready(function () {
     'use strict';
-    var bus = {};
+    bus = {};
     qdb.setup(bus);
     $(bus).query();
     $(bus).domController();
@@ -148,9 +158,12 @@ $(document).ready(function () {
     $('#import-file-list').importManager();
     $('#import-detail').importEditor(bus);
     $('#chart').chart(document);
+    qdb.switchToGrid();
+    $('#sp1').splitter(bus, 200, 270);
 });
 
 $(window).load(function () {
     'use strict';
     $(window).trigger('resize');
+    $(bus).trigger('editor.focus');
 });
