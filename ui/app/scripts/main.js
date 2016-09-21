@@ -159,7 +159,7 @@ $(document).ready(function () {
     $('#import-detail').importEditor(bus);
     $('#chart').chart(document);
     qdb.switchToGrid();
-    $('#sp1').splitter(bus, 200, 270);
+    $('#sp1').splitter(bus, 200, 0);
 });
 
 $(window).load(function () {

@@ -530,11 +530,12 @@
         }
 
         function resize() {
-            vp = Math.round((window.innerHeight - viewport.getBoundingClientRect().top)) - defaults.bottomMargin;
+            var wh = window.innerHeight - $(window).scrollTop();
+            vp = Math.round((wh - viewport.getBoundingClientRect().top)) - defaults.bottomMargin;
             vp = Math.max(vp, defaults.minVpHeight);
             rowsInView = Math.floor(vp / rh);
             viewport.style.height = vp + 'px';
-            div.css('height', Math.max(Math.round((window.innerHeight - div[0].getBoundingClientRect().top)) - defaults.bottomMargin, defaults.minDivHeight) + 'px');
+            div.css('height', Math.max(Math.round((wh - div[0].getBoundingClientRect().top)) - defaults.bottomMargin, defaults.minDivHeight) + 'px');
             createCss();
             viewportScroll(true);
         }

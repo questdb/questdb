@@ -44,7 +44,10 @@
 
         function drag(e) {
             e.preventDefault();
-            if (e.pageY > minTop && e.pageY < (window.innerHeight - minBottom)) {
+            console.log('pageY: ' + e.pageY);
+            console.log('window offset: ' + $(window).scrollTop());
+            console.log('window height: ' + window.innerHeight);
+            if (e.pageY > minTop && e.pageY < ((window.innerHeight + $(window).scrollTop()) - minBottom)) {
                 end = e.pageY;
                 ghost[0].style = styleMain + 'top: ' + e.pageY + 'px;';
             }
@@ -60,13 +63,13 @@
 
         function beginDrag() {
             var rect = div[0].getBoundingClientRect();
-            start = rect.top;
+            start = rect.top + $(window).scrollTop();
             styleMain = 'position: absolute; left: ' + rect.left + 'px; width: ' + rect.width + 'px; height: ' + rect.height + 'px;';
             if (!ghost) {
                 ghost = $('<div class="qs-ghost"></div>');
                 ghost.appendTo('body');
             }
-            ghost[0].style = styleMain + 'top: ' + rect.top + 'px;';
+            ghost[0].style = styleMain + 'top: ' + start + 'px;';
             div.addClass('qs-dragging');
             $(document).mousemove(drag);
             $(document).mouseup(endDrag);
