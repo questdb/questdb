@@ -230,8 +230,7 @@
         var storeKeys = {
             text: 'query.text',
             line: 'editor.line',
-            col: 'editor.col',
-            topHeight: 'top.height'
+            col: 'editor.col'
         };
 
         var Range = ace.require('ace/range').Range;
@@ -243,7 +242,7 @@
             regExp: false,
             preventScroll: false
         };
-        var bus = $(msgBus);
+        var bus = msgBus;
         var element = this;
 
         function clearMarker() {
@@ -268,7 +267,7 @@
             });
         }
 
-        function load() {
+        function loadPreferences() {
             if (typeof (Storage) !== 'undefined') {
                 var q = localStorage.getItem(storeKeys.text);
                 if (q) {
@@ -284,11 +283,11 @@
             }
         }
 
-        function save() {
+        function savePreferences() {
             if (typeof (Storage) !== 'undefined') {
                 localStorage.setItem(storeKeys.text, edit.getValue());
                 localStorage.setItem(storeKeys.line, edit.getCursorPosition().row + 1);
-                localStorage.setItem(storeKeys.col, edit.getCursorPosition().column + 1);
+                localStorage.setItem(storeKeys.col, edit.getCursorPosition().column);
             }
         }
 
@@ -379,7 +378,7 @@
         }
 
         function submitQuery() {
-            save();
+            bus.trigger('preferences.save');
             clearMarker();
             var q;
             if (edit.getSelectedText() === '') {
@@ -457,10 +456,12 @@
                 bindKey: 'F2',
                 exec: focusGrid
             });
+
+            bus.on('preferences.load', loadPreferences);
+            bus.on('preferences.save', savePreferences);
         }
 
         setup();
-        load();
         bind();
     };
 }(jQuery));

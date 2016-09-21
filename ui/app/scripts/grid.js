@@ -45,7 +45,7 @@
             minVpHeight: 120,
             minDivHeight: 160
         };
-        var bus = $(msgBus);
+        var bus = msgBus;
         var $style;
         var div = $(this);
         var viewport;

@@ -110,13 +110,28 @@
         $(document).trigger('chart.draw');
     }
 
+    function loadSplitterPosition() {
+        if (typeof (Storage) !== 'undefined') {
+            var n = localStorage.getItem('splitter.position');
+            if (n) {
+                topHeight = parseInt(n);
+            }
+        }
+    }
+
+    function saveSplitterPosition() {
+        if (typeof (Storage) !== 'undefined') {
+            localStorage.setItem('splitter.position', topHeight);
+        }
+    }
+
     function setup(b) {
         $('#side-menu').metisMenu();
         $(window).bind('resize', resize);
         $('a#sql-editor').click(switchToEditor);
         $('a#file-upload').click(switchToImport);
-        $(b).on('query.build.execute', switchToEditor);
-        $(b).on(qdb.MSG_QUERY_DATASET, function (e, m) {
+        b.on('query.build.execute', switchToEditor);
+        b.on(qdb.MSG_QUERY_DATASET, function (e, m) {
             divExportUrl.val(qdb.toExportUrl(m.query));
         });
         divExportUrl.click(function () {
@@ -126,14 +141,18 @@
         /* eslint-disable no-new */
         new Clipboard('.js-export-copy-url');
         $('.js-query-refresh').click(function () {
-            $(b).trigger('grid.refresh');
+            b.trigger('grid.refresh');
         });
         $('#js-toggle-chart').click(switchToChart);
         $('#js-toggle-grid').click(switchToGrid);
-        $(b).on('splitter.resize', function (x, e) {
+        b.on('splitter.resize', function (x, e) {
             topHeight += e;
             $(window).trigger('resize');
+            b.trigger('preferences.save');
         });
+
+        b.on('preferences.save', saveSplitterPosition);
+        b.on('preferences.load', loadSplitterPosition);
     }
 
     $.extend(true, window, {
@@ -148,10 +167,10 @@ var bus;
 
 $(document).ready(function () {
     'use strict';
-    bus = {};
+    bus = $({});
     qdb.setup(bus);
-    $(bus).query();
-    $(bus).domController();
+    bus.query();
+    bus.domController();
     $('#sqlEditor').editor(bus);
     $('#grid').grid(bus);
     $('#dragTarget').dropbox();
@@ -160,10 +179,11 @@ $(document).ready(function () {
     $('#chart').chart(document);
     qdb.switchToGrid();
     $('#sp1').splitter(bus, 200, 0);
+    bus.trigger('preferences.load');
 });
 
 $(window).load(function () {
     'use strict';
     $(window).trigger('resize');
-    $(bus).trigger('editor.focus');
+    bus.trigger('editor.focus');
 });

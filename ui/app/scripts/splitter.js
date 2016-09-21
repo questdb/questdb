@@ -44,9 +44,6 @@
 
         function drag(e) {
             e.preventDefault();
-            console.log('pageY: ' + e.pageY);
-            console.log('window offset: ' + $(window).scrollTop());
-            console.log('window height: ' + window.innerHeight);
             if (e.pageY > minTop && e.pageY < ((window.innerHeight + $(window).scrollTop()) - minBottom)) {
                 end = e.pageY;
                 ghost[0].style = styleMain + 'top: ' + e.pageY + 'px;';
@@ -58,7 +55,7 @@
             $(document).off('mouseup', endDrag);
             ghost[0].style = 'display: none';
             div.removeClass('qs-dragging');
-            bus.trigger('splitter.resize', end - start);
+            bus.trigger('splitter.resize', (end - start));
         }
 
         function beginDrag() {

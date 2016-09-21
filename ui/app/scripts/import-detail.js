@@ -69,7 +69,7 @@
         ];
 
         var current = null;
-        var editorBus = $(ebus);
+        var editorBus = ebus;
 
         function resizeCanvas() {
             var top = divCanvas[0].getBoundingClientRect().top;
