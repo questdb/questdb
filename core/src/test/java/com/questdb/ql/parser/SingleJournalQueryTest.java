@@ -2864,7 +2864,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         try {
             expectFailure("select x,y from tab where x~0");
         } catch (ParserException e) {
-            Assert.assertEquals(28, QueryError.getPosition());
+            Assert.assertEquals(27, QueryError.getPosition());
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "No such function"));
         }
     }

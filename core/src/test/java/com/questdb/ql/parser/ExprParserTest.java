@@ -147,7 +147,7 @@ public class ExprParserTest {
             x("", "a+b(5,c(x,y)");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(4, QueryError.getPosition());
+            Assert.assertEquals(3, QueryError.getPosition());
         }
     }
 

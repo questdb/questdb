@@ -82,15 +82,30 @@ public final class QueryParser {
         return n;
     }
 
+    private ExprNode expectLiteral() throws ParserException {
+        CharSequence tok = tok();
+        int pos = lexer.position();
+        validateLiteral(pos, tok);
+        ExprNode node = exprNodePool.next();
+        node.token = tok.toString();
+        node.type = ExprNode.LITERAL;
+        node.position = pos;
+        return node;
+    }
+
     private void expectTok(CharSequence tok, CharSequence expected) throws ParserException {
         if (tok == null || !Chars.equals(tok, expected)) {
             throw QueryError.position(lexer.position()).$('\'').$(expected).$("' expected").$();
         }
     }
 
-    private void expectTok(CharSequence tok, char expected) throws ParserException {
+    private void expectTok(char expected) throws ParserException {
+        expectTok(tok(), lexer.position(), expected);
+    }
+
+    private void expectTok(CharSequence tok, int pos, char expected) throws ParserException {
         if (tok == null || !Chars.equals(tok, expected)) {
-            throw QueryError.position(lexer.position()).$('\'').$(expected).$("' expected").$();
+            throw QueryError.position(pos).$('\'').$(expected).$("' expected").$();
         }
     }
 
@@ -165,10 +180,10 @@ public final class QueryParser {
             lexer.unparse();
             parseJournalFields(struct);
         } else if (Chars.equals(tok, "as")) {
-            expectTok(tok(), '(');
+            expectTok('(');
             queryModel = parseQuery(true);
             struct = null;
-            expectTok(tok(), ')');
+            expectTok(')');
         } else {
             throw QueryError.position(lexer.position()).$("Unexpected token").$();
         }
@@ -185,42 +200,34 @@ public final class QueryParser {
 
             tok = tok();
             if (Chars.equals(tok, "index")) {
-                expectTok(tok(), '(');
+                expectTok('(');
 
                 ColumnIndexModel columnIndexModel = columnIndexModelPool.next();
-                columnIndexModel.setName(expectExpr());
-                tok = tok();
+                columnIndexModel.setName(expectLiteral());
 
+                pos = lexer.position();
+                tok = tok();
                 if (Chars.equals(tok, "buckets")) {
-                    pos = lexer.position();
                     try {
                         columnIndexModel.setBuckets(Numbers.ceilPow2(Numbers.parseInt(tok())) - 1);
                     } catch (NumericException e) {
                         throw QueryError.$(pos, "Int constant expected");
                     }
+                    pos = lexer.position();
                     tok = tok();
                 }
-                expectTok(tok, ')');
+                expectTok(tok, pos, ')');
 
                 model.addColumnIndexModel(columnIndexModel);
                 tok = lexer.optionTok();
             } else if (Chars.equals(tok, "cast")) {
-                expectTok(tok(), '(');
+                expectTok('(');
                 ColumnCastModel columnCastModel = columnCastModelPool.next();
 
-                ExprNode node = expectExpr();
-                if (node.type != ExprNode.LITERAL) {
-                    throw QueryError.$(node.position, "literal expected");
-                }
-
-                columnCastModel.setName(node);
+                columnCastModel.setName(expectLiteral());
                 expectTok(tok(), "as");
 
-                node = expectExpr();
-                if (node.type != ExprNode.LITERAL) {
-                    throw QueryError.$(node.position, "literal expected");
-                }
-
+                ExprNode node = expectLiteral();
                 int type = ColumnType.columnTypeOf(node.token);
                 if (type == -1) {
                     throw QueryError.$(node.position, "invalid type");
@@ -228,7 +235,24 @@ public final class QueryParser {
 
                 columnCastModel.setType(type, node.position);
 
-                expectTok(tok(), ')');
+                if (type == ColumnType.SYMBOL) {
+                    tok = lexer.optionTok();
+                    pos = lexer.position();
+
+                    if (Chars.equals(tok, "count")) {
+                        try {
+                            columnCastModel.setCount(Numbers.parseInt(tok()));
+                            tok = tok();
+                        } catch (NumericException e) {
+                            throw QueryError.$(pos, "int value expected");
+                        }
+                    }
+                } else {
+                    pos = lexer.position();
+                    tok = tok();
+                }
+
+                expectTok(tok, pos, ')');
 
                 if (!model.addColumnCastModel(columnCastModel)) {
                     throw QueryError.$(columnCastModel.getName().position, "duplicate cast");
@@ -321,7 +345,7 @@ public final class QueryParser {
 
         if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseQuery(true));
-            expectTok(tok(), ')');
+            expectTok(')');
         } else {
             lexer.unparse();
             joinModel.setJournalName(expr());
@@ -454,12 +478,7 @@ public final class QueryParser {
     private ExprNode parsePartitionBy(CharSequence tok) throws ParserException {
         if (Chars.equalsNc("partition", tok)) {
             expectTok(tok(), "by");
-            ExprNode expr = expectExpr();
-            if (expr.type != ExprNode.LITERAL) {
-                throw QueryError.$(expr.position, "Literal expected");
-            }
-
-            return expr;
+            return expectLiteral();
         }
         return null;
     }
@@ -483,7 +502,7 @@ public final class QueryParser {
             model.setNestedModel(parseQuery(true));
 
             // expect closing bracket
-            expectTok(tok(), ')');
+            expectTok(')');
 
             tok = lexer.optionTok();
 
@@ -553,7 +572,7 @@ public final class QueryParser {
 
         if (tok != null && Chars.equals(tok, "sample")) {
             expectTok(tok(), "by");
-            model.setSampleBy(expectExpr());
+            model.setSampleBy(expectLiteral());
             tok = lexer.optionTok();
         }
 
@@ -569,11 +588,7 @@ public final class QueryParser {
                 }
 
                 lexer.unparse();
-                ExprNode n = expectExpr();
-
-                if (n.type != ExprNode.LITERAL) {
-                    throw err("Column name expected");
-                }
+                ExprNode n = expectLiteral();
 
                 tok = lexer.optionTok();
 
@@ -653,7 +668,7 @@ public final class QueryParser {
 
             if (Chars.equals(tok, "over")) {
                 // analytic
-                expectTok(tok(), '(');
+                expectTok('(');
 
                 AnalyticColumn col = analyticColumnPool.next().of(alias, aliasPosition, expr);
                 tok = tok();
@@ -664,7 +679,7 @@ public final class QueryParser {
                     ObjList<ExprNode> partitionBy = col.getPartitionBy();
 
                     do {
-                        partitionBy.add(expectExpr());
+                        partitionBy.add(expectLiteral());
                         tok = tok();
                     } while (Chars.equals(tok, ','));
                 }
@@ -673,7 +688,7 @@ public final class QueryParser {
                     expectTok(tok(), "by");
 
                     do {
-                        ExprNode e = expectExpr();
+                        ExprNode e = expectLiteral();
                         tok = tok();
 
                         if (Chars.equalsIgnoreCase(tok, "desc")) {
@@ -711,12 +726,9 @@ public final class QueryParser {
 
     private ExprNode parseTimestamp(CharSequence tok) throws ParserException {
         if (Chars.equalsNc("timestamp", tok)) {
-            expectTok(tok(), '(');
-            final ExprNode result = expectExpr();
-            if (result.type != ExprNode.LITERAL) {
-                throw QueryError.$(result.position, "Literal expected");
-            }
-            expectTok(tok(), ')');
+            expectTok('(');
+            final ExprNode result = expectLiteral();
+            expectTok(')');
             return result;
         }
         return null;
@@ -779,6 +791,21 @@ public final class QueryParser {
             throw err("Unexpected end of input");
         }
         return tok;
+    }
+
+    private void validateLiteral(int pos, CharSequence tok) throws ParserException {
+        switch (tok.charAt(0)) {
+            case '(':
+            case ')':
+            case ',':
+            case '`':
+            case '"':
+            case '\'':
+                throw QueryError.$(pos, "literal expected");
+            default:
+                break;
+
+        }
     }
 
     static {

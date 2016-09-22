@@ -83,13 +83,15 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
             return last = result;
         }
 
-        this._lo = this._hi = _pos;
+        this._lo = this._hi;
 
         if (next != null) {
             CharSequence result = next;
             next = null;
             return last = result;
         }
+
+        this._lo = this._hi = _pos;
 
         char term = 0;
 

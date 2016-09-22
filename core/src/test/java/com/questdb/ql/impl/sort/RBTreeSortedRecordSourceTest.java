@@ -397,7 +397,7 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
             assertThat("", "(xyz where i < 100 order by i) order by str, i+i");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
-            Assert.assertEquals(47, QueryError.getPosition());
+            Assert.assertEquals(46, QueryError.getPosition());
         }
     }
 

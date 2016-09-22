@@ -950,6 +950,26 @@ public class DDLTests {
     }
 
     @Test
+    public void testCreateAsSelectSymbolCount() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
+        try (JournalWriter w = compiler.createWriter(factory, "create table x as (y order by t), cast(x as SYMBOL count 33), cast(b as INT)")) {
+            Assert.assertEquals(ColumnType.SYMBOL, w.getMetadata().getColumn("x").getType());
+            Assert.assertEquals(63, w.getMetadata().getColumn("x").getBucketCount());
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectSymbolCountError() throws Exception {
+        compiler.execute(factory, "create table y (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING) timestamp(t) partition by YEAR record hint 100");
+        try {
+            compiler.execute(factory, "create table x as (y order by t), cast(x as SYMBOL 33), cast(b as INT)");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(51, QueryError.getPosition());
+        }
+    }
+
+    @Test
     public void testCreateDefaultPartitionBy() throws Exception {
         compiler.execute(factory, "create table x (a INT index, b BYTE, t DATE, z STRING index buckets 40, l LONG index buckets 500) record hint 100");
         // validate journal
@@ -1143,6 +1163,16 @@ public class DDLTests {
         } catch (ParserException e) {
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "reserved"));
             Assert.assertEquals(13, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testCreateSymbolWithCount1() throws Exception {
+        try {
+            compiler.execute(factory, "create table x (a INT, x SYMBOL count 20, z STRING, y BOOLEAN) timestamp(t) partition by MONTH record hint 100");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(32, QueryError.getPosition());
         }
     }
 

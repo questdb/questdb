@@ -1413,6 +1413,9 @@ public class QueryCompiler {
             if (castModel != null) {
                 validateTypeCastCompatibility(srcType, castModel);
                 cm.type = castModel.getColumnType();
+                if (cm.type == ColumnType.SYMBOL) {
+                    cm.distinctCountHint = Numbers.ceilPow2(castModel.getCount()) - 1;
+                }
             } else {
                 cm.type = srcType;
             }

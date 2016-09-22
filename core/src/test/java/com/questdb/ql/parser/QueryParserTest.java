@@ -178,6 +178,7 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select a,b, f(c) my over (partition by b order by ,ts) from xyz");
             Assert.fail();
         } catch (ParserException e) {
+            System.out.println(QueryError.getMessage());
             Assert.assertEquals(50, QueryError.getPosition());
         }
     }
@@ -208,7 +209,7 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from tab sample by x,");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(33, QueryError.getPosition());
+            Assert.assertEquals(32, QueryError.getPosition());
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Unexpected"));
         }
     }
@@ -219,7 +220,7 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from (tab sample by x,)");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(34, QueryError.getPosition());
+            Assert.assertEquals(33, QueryError.getPosition());
         }
     }
 
@@ -229,7 +230,7 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from tab sample by x, order by y");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(33, QueryError.getPosition());
+            Assert.assertEquals(32, QueryError.getPosition());
         }
     }
 
@@ -261,7 +262,7 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from tab order by x,");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(32, QueryError.getPosition());
+            Assert.assertEquals(31, QueryError.getPosition());
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "end of input"));
         }
     }
@@ -478,7 +479,7 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select x, y from tab order by x+y");
             Assert.fail("Expected exception");
         } catch (ParserException e) {
-            Assert.assertEquals(32, QueryError.getPosition());
+            Assert.assertEquals(31, QueryError.getPosition());
         }
     }
 

@@ -258,7 +258,7 @@ public class ResamplingTest extends AbstractOptimiserTest {
         try {
             expectFailure("select orderDate, employeeId, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders2 timestamp(orderDate()) sample by 1d");
         } catch (ParserException e) {
-            Assert.assertEquals(115, QueryError.getPosition());
+            Assert.assertEquals(124, QueryError.getPosition());
         }
     }
 

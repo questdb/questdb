@@ -91,7 +91,7 @@ public class MultiColumnJoinTest extends AbstractTest {
         try {
             expectFailure("a join b on (1+2)");
         } catch (ParserException e) {
-            Assert.assertEquals(15, QueryError.getPosition());
+            Assert.assertEquals(14, QueryError.getPosition());
         }
     }
 }

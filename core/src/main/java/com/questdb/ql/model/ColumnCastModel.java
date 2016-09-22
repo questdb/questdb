@@ -37,9 +37,11 @@ public class ColumnCastModel implements Mutable {
     private ExprNode name;
     private int columnType;
     private int columnTypePos;
+    private int count;
 
     @Override
     public void clear() {
+        count = 0;
     }
 
     public int getColumnType() {
@@ -48,6 +50,14 @@ public class ColumnCastModel implements Mutable {
 
     public int getColumnTypePos() {
         return columnTypePos;
+    }
+
+    public int getCount() {
+        return count;
+    }
+
+    public void setCount(int count) {
+        this.count = count;
     }
 
     public ExprNode getName() {
