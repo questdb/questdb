@@ -502,7 +502,6 @@
                     o = y - top;
                 } else if (h - vp > 0) {
                     // if grid content fits in viewport we don't need to adjust activeRow
-
                     if (scrollTop >= h - vp) {
                         // final leap to bottom of grid
                         // this happens when container div runs out of vertical height
@@ -512,7 +511,7 @@
                         o = y - top;
                         activeRowDown(r - activeRow);
                     } else {
-                        if (scrollTop === 0) {
+                        if (scrollTop === 0 && top > 0) {
                             // this happens when grid is coming slowly back up after being scrolled down harshly
                             // because 'y' is much greater than top, we have to jump to top artificially.
                             y = 0;
