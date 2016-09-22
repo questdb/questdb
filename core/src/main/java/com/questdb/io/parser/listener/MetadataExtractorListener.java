@@ -229,6 +229,11 @@ public class MetadataExtractorListener implements Listener, Mutable {
                     capNext = true;
                     break;
                 default:
+
+                    if (i == 0 && Character.isDigit(c)) {
+                        tempSink.put('_');
+                    }
+
                     if (capNext) {
                         tempSink.put(Character.toUpperCase(c));
                         capNext = false;

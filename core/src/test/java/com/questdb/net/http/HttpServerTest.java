@@ -402,6 +402,30 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testImportNumberPrefixedColumn() throws Exception {
+        final ServerConfiguration configuration = new ServerConfiguration();
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(factory));
+        }});
+        server.start();
+
+        try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
+            try {
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-num-prefix.csv", "http://localhost:9000/imp?fmt=json", null, null));
+                StringSink sink = new StringSink();
+                RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+                QueryCompiler qc = new QueryCompiler(configuration);
+                try (RecordSource rs = qc.compile(f, "select count(StrSym), count(IntSym), count(_1IntCol), count(long), count() from 'test-import-num-prefix.csv'")) {
+                    printer.print(rs, f);
+                }
+                TestUtils.assertEquals("126\t126\t128\t129\t129\n", sink);
+            } finally {
+                server.halt();
+            }
+        }
+    }
+
+    @Test
     public void testImportUnknownFormat() throws Exception {
         HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(factory));
