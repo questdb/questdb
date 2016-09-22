@@ -66,7 +66,7 @@ public class MemoryFile implements Closeable {
         }
         this.bitHint = bitHint;
         long size = open();
-        this.buffers = new ObjList<>((int) (size >>> bitHint) + 1);
+        this.buffers = new ObjList<>((int) (size >>> this.bitHint) + 1);
         this.stitches = new ObjList<>(buffers.size());
     }
 
@@ -168,10 +168,11 @@ public class MemoryFile implements Closeable {
 
     private long allocateAddress(long offset, int size) {
         cachedBuffer = getBufferInternal(offset, size);
-        cachedBufferLo = offset - cachedBuffer.position() - 1;
+        int p = cachedBuffer.position();
+        cachedBufferLo = offset - p - 1;
         cachedBufferHi = cachedBufferLo + cachedBuffer.limit() + 2;
         cachedAddress = ByteBuffers.getAddress(cachedBuffer);
-        return cachedAddress + cachedBuffer.position();
+        return cachedAddress + p;
     }
 
     private MappedByteBuffer createMappedBuffer(int index, int bufferSize, long bufferOffset) {
@@ -338,8 +339,8 @@ public class MemoryFile implements Closeable {
                 if (offset > Integer.MAX_VALUE) {
                     bitHint = 30;
                 } else {
-                    int hint = Numbers.msb((int) offset);
-                    if (hint < 0) {
+                    int hint = Numbers.msb((int) offset) + 1;
+                    if (hint < 0 || hint > 30) {
                         bitHint = 30;
                     } else if (hint > bitHint) {
                         bitHint = hint;
