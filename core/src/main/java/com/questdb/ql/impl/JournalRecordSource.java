@@ -34,14 +34,14 @@ import com.questdb.std.CharSink;
 public class JournalRecordSource extends AbstractCombinedRecordSource {
     private final PartitionSource partitionSource;
     private final RowSource rowSource;
-    private final JournalRecord rec;
+    private final JournalRecord record;
     private final JournalMetadata metadata;
     private PartitionCursor partitionCursor;
     private RowCursor cursor;
 
     public JournalRecordSource(PartitionSource partitionSource, RowSource rowSource) {
         this.metadata = partitionSource.getMetadata();
-        this.rec = new JournalRecord();
+        this.record = new JournalRecord();
         this.partitionSource = partitionSource;
         rowSource.configure(partitionSource.getMetadata());
         this.rowSource = rowSource;
@@ -66,6 +66,11 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return partitionCursor.getStorageFacade();
     }
@@ -77,8 +82,8 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public JournalRecord next() {
-        rec.rowid = cursor.next();
-        return rec;
+        record.rowid = cursor.next();
+        return record;
     }
 
     @Override
@@ -88,9 +93,9 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public JournalRecord recordAt(long rowId) {
-        rec.rowid = Rows.toLocalRowID(rowId);
-        setPartition(rec, rowId);
-        return rec;
+        record.rowid = Rows.toLocalRowID(rowId);
+        setPartition(record, rowId);
+        return record;
     }
 
     @Override
@@ -124,8 +129,8 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
             }
 
             if (cursor.hasNext()) {
-                rec.partition = slice.partition;
-                rec.partitionIndex = slice.partition.getPartitionIndex();
+                record.partition = slice.partition;
+                record.partitionIndex = slice.partition.getPartitionIndex();
                 return true;
             }
         }

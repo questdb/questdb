@@ -69,6 +69,11 @@ public class FilteredRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record getRecord() {
+        return delegate.getRecord();
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return cursor.getStorageFacade();
     }
@@ -91,7 +96,7 @@ public class FilteredRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public Record newRecord() {
-        return this.cursor.newRecord();
+        return delegate.newRecord();
     }
 
     @Override

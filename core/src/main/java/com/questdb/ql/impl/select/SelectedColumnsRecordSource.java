@@ -34,23 +34,23 @@ import com.questdb.std.ObjList;
 import com.questdb.std.Transient;
 
 public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
-    private final RecordSource recordSource;
+    private final RecordSource delegate;
     private final RecordMetadata metadata;
     private final SelectedColumnsRecord record;
     private final SelectedColumnsStorageFacade storageFacade;
     private RecordCursor recordCursor;
 
-    public SelectedColumnsRecordSource(RecordSource recordSource, @Transient ObjList<CharSequence> names, @Transient CharSequenceHashSet aliases) {
-        this.recordSource = recordSource;
-        RecordMetadata dm = recordSource.getMetadata();
+    public SelectedColumnsRecordSource(RecordSource delegate, @Transient ObjList<CharSequence> names, @Transient CharSequenceHashSet aliases) {
+        this.delegate = delegate;
+        RecordMetadata dm = delegate.getMetadata();
         this.metadata = new SelectedColumnsMetadata(dm, names, aliases);
         this.record = new SelectedColumnsRecord(dm, names);
         this.storageFacade = new SelectedColumnsStorageFacade(dm, names);
     }
 
-    public SelectedColumnsRecordSource(RecordSource recordSource, @Transient ObjList<CharSequence> names) {
-        this.recordSource = recordSource;
-        RecordMetadata dm = recordSource.getMetadata();
+    public SelectedColumnsRecordSource(RecordSource delegate, @Transient ObjList<CharSequence> names) {
+        this.delegate = delegate;
+        RecordMetadata dm = delegate.getMetadata();
         this.metadata = new SelectedColumnsMetadata(dm, names);
         this.record = new SelectedColumnsRecord(dm, names);
         this.storageFacade = new SelectedColumnsStorageFacade(dm, names);
@@ -58,7 +58,7 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public void close() {
-        Misc.free(recordSource);
+        Misc.free(delegate);
     }
 
     @Override
@@ -68,9 +68,14 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
+        this.recordCursor = delegate.prepareCursor(factory, cancellationHandler);
         this.storageFacade.of(recordCursor.getStorageFacade());
         return this;
+    }
+
+    @Override
+    public Record getRecord() {
+        return record;
     }
 
     @Override
@@ -90,7 +95,7 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public Record newRecord() {
-        return record.copy().of(recordCursor.newRecord());
+        return record.copy().of(delegate.newRecord());
     }
 
     @Override
@@ -105,14 +110,14 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public boolean supportsRowIdAccess() {
-        return recordSource.supportsRowIdAccess();
+        return delegate.supportsRowIdAccess();
     }
 
     @Override
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("SelectedColumnsRecordSource").put(',');
-        sink.putQuoted("src").put(':').put(recordSource);
+        sink.putQuoted("src").put(':').put(delegate);
         sink.put('}');
     }
 }

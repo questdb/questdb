@@ -53,7 +53,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private final RecordList recordList;
     private final MemoryPages mem;
     private final RecordComparator comparator;
-    private final RecordSource recordSource;
+    private final RecordSource delegate;
     private final TreeCursor cursor = new TreeCursor();
     private final FakeRecord fakeRecord = new FakeRecord();
     private final boolean byRowId;
@@ -61,12 +61,13 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private RecordCursor sourceCursor;
     private Record sourceRecord;
 
-    public RBTreeSortedRecordSource(RecordSource recordSource, RecordComparator comparator, int keyPageSize, int valuePageSize) {
-        this.recordSource = recordSource;
+    public RBTreeSortedRecordSource(RecordSource delegate, RecordComparator comparator, int keyPageSize, int valuePageSize) {
+        this.delegate = delegate;
         this.comparator = comparator;
         this.mem = new MemoryPages(keyPageSize);
-        this.byRowId = recordSource.supportsRowIdAccess();
-        this.recordList = new RecordList(byRowId ? MapUtils.ROWID_RECORD_METADATA : recordSource.getMetadata(), valuePageSize);
+        this.byRowId = delegate.supportsRowIdAccess();
+        this.recordList = new RecordList(byRowId ? MapUtils.ROWID_RECORD_METADATA : delegate.getMetadata(), valuePageSize);
+        this.sourceRecord = delegate.newRecord();
     }
 
     @Override
@@ -78,20 +79,20 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     @Override
     public void close() {
-        Misc.free(recordSource);
+        Misc.free(delegate);
         Misc.free(recordList);
         Misc.free(mem);
     }
 
     @Override
     public RecordMetadata getMetadata() {
-        return recordSource.getMetadata();
+        return delegate.getMetadata();
     }
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         clear();
-        setSourceCursor(recordSource.prepareCursor(factory, cancellationHandler));
+        setSourceCursor(delegate.prepareCursor(factory, cancellationHandler));
         if (byRowId) {
             buildMapByRowId(sourceCursor, cancellationHandler);
         } else {
@@ -105,6 +106,10 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         return true;
     }
 
+    @Override
+    public Record getRecord() {
+        return byRowId ? sourceRecord : recordList.getRecord();
+    }
     public void put(Record record) {
         if (root == -1) {
             putParent(record);
@@ -142,6 +147,11 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             setRight(parent, p);
         }
         fix(p);
+    }
+
+    @Override
+    public Record newRecord() {
+        return byRowId ? delegate.newRecord() : recordList.newRecord();
     }
 
     public void put(long rowId) {
@@ -185,12 +195,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         fix(p);
     }
 
-    public void setSourceCursor(RecordCursor sourceCursor) {
-        this.sourceCursor = sourceCursor;
-        setStorageFacade(sourceCursor.getStorageFacade());
-        this.sourceRecord = sourceCursor.newRecord();
-    }
-
     public RecordCursor setupCursor() {
         cursor.setup();
         return cursor;
@@ -201,7 +205,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("RBTreeSortedRecordSource").put(',');
         sink.putQuoted("byRowId").put(':').put(byRowId).put(',');
-        sink.putQuoted("src").put(':').put(recordSource);
+        sink.putQuoted("src").put(':').put(delegate);
         sink.put('}');
     }
 
@@ -391,8 +395,9 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         }
     }
 
-    private void setStorageFacade(StorageFacade storageFacade) {
-        recordList.setStorageFacade(storageFacade);
+    private void setSourceCursor(RecordCursor sourceCursor) {
+        this.sourceCursor = sourceCursor;
+        recordList.setStorageFacade(sourceCursor.getStorageFacade());
     }
 
     private class TreeCursor extends AbstractImmutableIterator<Record> implements RecordCursor {
@@ -405,15 +410,15 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         }
 
         @Override
-        public Record newRecord() {
-            return byRowId ? sourceCursor.newRecord() : recordList.newRecord();
-        }
-
-        @Override
         public Record recordAt(long rowId) {
             return byRowId ?
                     sourceCursor.recordAt(rowId) :
                     recordList.recordAt(rowId);
+        }
+
+        @Override
+        public Record getRecord() {
+            return RBTreeSortedRecordSource.this.getRecord();
         }
 
         @Override
@@ -424,7 +429,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
                 recordList.recordAt(record, atRowId);
             }
         }
-
         @Override
         public boolean hasNext() {
             if (recordList.hasNext()) {
@@ -438,6 +442,11 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
             recordList.of(topOf(current));
             return true;
+        }
+
+        @Override
+        public Record newRecord() {
+            return RBTreeSortedRecordSource.this.newRecord();
         }
 
         @Override
@@ -459,5 +468,9 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             }
             recordList.of(topOf(current = p));
         }
+
+
     }
+
+
 }

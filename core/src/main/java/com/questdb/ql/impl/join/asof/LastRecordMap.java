@@ -43,6 +43,8 @@ public interface LastRecordMap extends Closeable {
 
     RecordMetadata getMetadata();
 
+    Record getRecord();
+
     StorageFacade getStorageFacade();
 
     void put(Record record);

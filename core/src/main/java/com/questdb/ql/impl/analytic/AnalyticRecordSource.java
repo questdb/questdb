@@ -35,7 +35,7 @@ import com.questdb.std.ObjList;
 
 public class AnalyticRecordSource extends AbstractCombinedRecordSource {
 
-    private final RecordSource recordSource;
+    private final RecordSource delegate;
     private final ObjList<AnalyticFunction> functions;
     private final RecordMetadata metadata;
     private final AnalyticRecord record;
@@ -44,9 +44,9 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
     private RecordCursor cursor;
 
     public AnalyticRecordSource(
-            RecordSource recordSource,
+            RecordSource delegate,
             ObjList<AnalyticFunction> functionGroups) {
-        this.recordSource = recordSource;
+        this.delegate = delegate;
 
         // create our metadata and also flatten functions for our record representation
         CollectionRecordMetadata funcMetadata = new CollectionRecordMetadata();
@@ -55,15 +55,15 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
             funcMetadata.add(functionGroups.getQuick(j).getMetadata());
         }
 
-        this.metadata = new SplitRecordMetadata(recordSource.getMetadata(), funcMetadata);
-        this.split = recordSource.getMetadata().getColumnCount();
+        this.metadata = new SplitRecordMetadata(delegate.getMetadata(), funcMetadata);
+        this.split = delegate.getMetadata().getColumnCount();
         this.record = new AnalyticRecord(split, functions);
         this.storageFacade = new AnalyticRecordStorageFacade(split, functions);
     }
 
     @Override
     public void close() {
-        Misc.free(recordSource);
+        Misc.free(delegate);
         for (int i = 0, n = functions.size(); i < n; i++) {
             Misc.free(functions.getQuick(i));
         }
@@ -76,7 +76,7 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        this.cursor = recordSource.prepareCursor(factory, cancellationHandler);
+        this.cursor = delegate.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(cursor.getStorageFacade());
         for (int i = 0, n = functions.size(); i < n; i++) {
             AnalyticFunction f = functions.getQuick(i);
@@ -84,6 +84,11 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
             f.prepare(cursor);
         }
         return this;
+    }
+
+    @Override
+    public Record getRecord() {
+        return record;
     }
 
     @Override
@@ -118,7 +123,7 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("AnalyticRecordSource").put(',');
         sink.putQuoted("functions").put(':').put(functions.size()).put(',');
-        sink.putQuoted("src").put(':').put(recordSource);
+        sink.putQuoted("src").put(':').put(delegate);
         sink.put('}');
     }
 

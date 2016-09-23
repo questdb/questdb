@@ -112,6 +112,11 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     }
 
     @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
     }

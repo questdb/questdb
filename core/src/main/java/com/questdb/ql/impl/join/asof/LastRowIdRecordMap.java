@@ -42,6 +42,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
     private final IntList slaveKeyTypes;
     private final IntList masterKeyTypes;
     private final RecordMetadata metadata;
+    private final Record passThruRecord;
     private RecordCursor slaveCursor;
 
     public LastRowIdRecordMap(
@@ -49,12 +50,14 @@ public class LastRowIdRecordMap implements LastRecordMap {
             RecordMetadata slaveMetadata,
             CharSequenceHashSet masterKeyColumns,
             CharSequenceHashSet slaveKeyColumns,
-            int pageSize) {
+            int pageSize,
+            Record passThruRecord) {
         final int ksz = masterKeyColumns.size();
         this.masterKeyTypes = new IntList(ksz);
         this.slaveKeyTypes = new IntList(ksz);
         this.masterKeyIndexes = new IntHashSet(ksz);
         this.slaveKeyIndexes = new IntHashSet(ksz);
+        this.passThruRecord = passThruRecord;
 
         for (int i = 0; i < ksz; i++) {
             int idx;
@@ -86,6 +89,11 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
     public RecordMetadata getMetadata() {
         return metadata;
+    }
+
+    @Override
+    public Record getRecord() {
+        return passThruRecord;
     }
 
     @Override

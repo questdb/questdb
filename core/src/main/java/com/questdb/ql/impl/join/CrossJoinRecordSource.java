@@ -47,7 +47,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
         this.slaveSource = slaveSource;
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
         int split = masterSource.getMetadata().getColumnCount();
-        this.record = new SplitRecord(split);
+        this.record = new SplitRecord(split, slaveSource.getMetadata().getColumnCount(), masterSource.getRecord(), slaveSource.getRecord());
         this.storageFacade = new SplitRecordStorageFacade(split);
     }
 
@@ -70,6 +70,11 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
         slaveCursor = slaveSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(masterCursor.getStorageFacade(), slaveCursor.getStorageFacade());
         return this;
+    }
+
+    @Override
+    public Record getRecord() {
+        return record;
     }
 
     @Override

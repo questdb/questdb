@@ -35,25 +35,25 @@ import com.questdb.std.ObjList;
 import com.questdb.store.SymbolTable;
 
 public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
-    private final RecordSource recordSource;
+    private final RecordSource delegate;
     private final RecordMetadata metadata;
-    private final VirtualRecord current;
+    private final VirtualRecord record;
     private final SplitRecordStorageFacade storageFacade;
     private final VirtualColumnStorageFacade virtualColumnStorageFacade;
     private RecordCursor recordCursor;
 
-    public VirtualColumnRecordSource(RecordSource recordSource, ObjList<VirtualColumn> virtualColumns) {
-        this.recordSource = recordSource;
-        RecordMetadata dm = recordSource.getMetadata();
+    public VirtualColumnRecordSource(RecordSource delegate, ObjList<VirtualColumn> virtualColumns) {
+        this.delegate = delegate;
+        RecordMetadata dm = delegate.getMetadata();
         this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
-        this.current = new VirtualRecord(dm.getColumnCount(), virtualColumns);
+        this.record = new VirtualRecord(dm.getColumnCount(), virtualColumns);
         this.virtualColumnStorageFacade = VirtualColumnStorageFacade.INSTANCE;
         this.storageFacade = new SplitRecordStorageFacade(dm.getColumnCount());
     }
 
     @Override
     public void close() {
-        Misc.free(recordSource);
+        Misc.free(delegate);
     }
 
     @Override
@@ -63,10 +63,15 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
+        this.recordCursor = delegate.prepareCursor(factory, cancellationHandler);
         storageFacade.prepare(recordCursor.getStorageFacade(), this.virtualColumnStorageFacade);
-        current.prepare(storageFacade);
+        record.prepare(storageFacade);
         return this;
+    }
+
+    @Override
+    public Record getRecord() {
+        return record;
     }
 
     @Override
@@ -81,21 +86,19 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public Record next() {
-        current.setBase(recordCursor.next());
-        return current;
+        record.of(recordCursor.next());
+        return record;
     }
 
     @Override
     public Record newRecord() {
-        VirtualRecord copy = current.copy();
-        copy.setBase(recordCursor.newRecord());
-        return copy;
+        return record.copy().of(delegate.newRecord());
     }
 
     @Override
     public Record recordAt(long rowId) {
-        current.setBase(recordCursor.recordAt(rowId));
-        return current;
+        record.of(recordCursor.recordAt(rowId));
+        return record;
     }
 
     @Override
@@ -105,14 +108,14 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public boolean supportsRowIdAccess() {
-        return recordSource.supportsRowIdAccess();
+        return delegate.supportsRowIdAccess();
     }
 
     @Override
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("VirtualColumnRecordSource").put(',');
-        sink.putQuoted("src").put(':').put(recordSource);
+        sink.putQuoted("src").put(':').put(delegate);
         sink.put('}');
     }
 

@@ -56,6 +56,11 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record getRecord() {
+        return delegate.getRecord();
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return cursor.getStorageFacade();
     }
@@ -72,7 +77,7 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public Record newRecord() {
-        return cursor.newRecord();
+        return delegate.newRecord();
     }
 
     @Override

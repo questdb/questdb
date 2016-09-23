@@ -40,7 +40,7 @@ import com.questdb.std.RedBlackTree;
 
 public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource {
     private final RecordList recordList;
-    private final RecordSource recordSource;
+    private final RecordSource delegate;
     private final ObjList<RedBlackTree> orderedSources;
     private final int orderGroupCount;
     private final ObjList<ObjList<AnalyticFunction>> functionGroups;
@@ -54,10 +54,10 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
 
     public CachedRowAnalyticRecordSource(
             int pageSize,
-            RecordSource recordSource,
+            RecordSource delegate,
             ObjList<RecordComparator> comparators,
             ObjList<ObjList<AnalyticFunction>> functionGroups) {
-        this.recordSource = recordSource;
+        this.delegate = delegate;
         this.orderGroupCount = comparators.size();
         assert orderGroupCount == functionGroups.size();
         this.orderedSources = new ObjList<>(orderGroupCount);
@@ -74,8 +74,8 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
                 functions.add(f);
             }
         }
-        this.metadata = new SplitRecordMetadata(recordSource.getMetadata(), funcMetadata);
-        this.split = recordSource.getMetadata().getColumnCount();
+        this.metadata = new SplitRecordMetadata(delegate.getMetadata(), funcMetadata);
+        this.split = delegate.getMetadata().getColumnCount();
         this.record = new AnalyticRecord(split, functions);
         this.storageFacade = new AnalyticRecordStorageFacade(split, functions);
         this.recordList.setStorageFacade(storageFacade);
@@ -94,7 +94,7 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
 
     @Override
     public void close() {
-        Misc.free(recordSource);
+        Misc.free(delegate);
         Misc.free(recordList);
         for (int i = 0; i < orderGroupCount; i++) {
             Misc.free(orderedSources.getQuick(i));
@@ -128,7 +128,7 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
             functions.getQuick(i).reset();
         }
 
-        final RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
+        final RecordCursor cursor = delegate.prepareCursor(factory, cancellationHandler);
         this.parentCursor = cursor;
         this.storageFacade.prepare(cursor.getStorageFacade());
 
@@ -197,6 +197,11 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
     }
 
     @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
     }
@@ -230,7 +235,7 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
         sink.putQuoted("op").put(':').putQuoted("CachedRowAnalyticRecordSource").put(',');
         sink.putQuoted("functions").put(':').put(functions.size()).put(',');
         sink.putQuoted("orderedSources").put(':').put(orderedSources.size()).put(',');
-        sink.putQuoted("src").put(':').put(recordSource);
+        sink.putQuoted("src").put(':').put(delegate);
         sink.put('}');
     }
 

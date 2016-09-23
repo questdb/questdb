@@ -66,6 +66,11 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return null;
     }

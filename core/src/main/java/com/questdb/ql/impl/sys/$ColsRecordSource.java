@@ -33,6 +33,7 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.CancellationHandler;
+import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.MasterStorageFacade;
 import com.questdb.ql.impl.RecordList;
@@ -218,6 +219,16 @@ public class $ColsRecordSource extends AbstractRecordSource {
     @Override
     public boolean supportsRowIdAccess() {
         return false;
+    }
+
+    @Override
+    public Record getRecord() {
+        return records.getRecord();
+    }
+
+    @Override
+    public Record newRecord() {
+        return records.newRecord();
     }
 
     @Override

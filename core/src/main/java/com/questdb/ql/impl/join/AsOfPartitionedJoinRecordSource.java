@@ -67,7 +67,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
         this.slave = slave;
         this.slaveTimestampIndex = slaveTimestampIndex;
         if (slave.supportsRowIdAccess()) {
-            map = new LastRowIdRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, rowIdPageSize);
+            map = new LastRowIdRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, rowIdPageSize, slave.getRecord());
             holder = new RowidRecordHolder();
         } else {
             // check if slave has variable length columns
@@ -96,7 +96,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
         }
 //        map.getMetadata().setAlias(slave.getMetadata().getAlias());
         this.metadata = new SplitRecordMetadata(master.getMetadata(), map.getMetadata());
-        this.record = new SplitRecord(master.getMetadata().getColumnCount());
+        this.record = new SplitRecord(master.getMetadata().getColumnCount(), map.getMetadata().getColumnCount(), master.getRecord(), map.getRecord());
         this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
     }
 
@@ -125,6 +125,11 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
         holder.setCursor(slaveCursor);
         storageFacade.prepare(masterCursor.getStorageFacade(), map.getStorageFacade());
         return this;
+    }
+
+    @Override
+    public Record getRecord() {
+        return record;
     }
 
     @Override

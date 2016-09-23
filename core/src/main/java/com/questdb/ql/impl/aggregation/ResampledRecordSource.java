@@ -125,6 +125,11 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
     }
@@ -143,6 +148,11 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
             }
         }
         return record.of(entry);
+    }
+
+    @Override
+    public Record newRecord() {
+        return new DirectMapRecord(this.storageFacade);
     }
 
     @Override

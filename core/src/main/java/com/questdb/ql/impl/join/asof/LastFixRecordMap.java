@@ -131,6 +131,11 @@ public class LastFixRecordMap implements LastRecordMap {
     }
 
     @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
     }

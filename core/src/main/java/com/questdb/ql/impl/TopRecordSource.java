@@ -33,35 +33,40 @@ import com.questdb.std.CharSink;
 
 public class TopRecordSource extends AbstractCombinedRecordSource {
 
-    private final RecordSource recordSource;
+    private final RecordSource delegate;
     private final VirtualColumn lo;
     private final VirtualColumn hi;
     private long _top;
     private long _count;
     private RecordCursor recordCursor;
 
-    public TopRecordSource(RecordSource recordSource, VirtualColumn lo, VirtualColumn hi) {
-        this.recordSource = recordSource;
+    public TopRecordSource(RecordSource delegate, VirtualColumn lo, VirtualColumn hi) {
+        this.delegate = delegate;
         this.lo = lo;
         this.hi = hi;
     }
 
     @Override
     public void close() {
-        Misc.free(recordSource);
+        Misc.free(delegate);
     }
 
     @Override
     public RecordMetadata getMetadata() {
-        return recordSource.getMetadata();
+        return delegate.getMetadata();
     }
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this._top = lo.getLong(null);
         this._count = hi.getLong(null) - this._top;
-        this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
+        this.recordCursor = delegate.prepareCursor(factory, cancellationHandler);
         return this;
+    }
+
+    @Override
+    public Record getRecord() {
+        return delegate.getRecord();
     }
 
     @Override
@@ -86,7 +91,7 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public Record newRecord() {
-        return recordCursor.newRecord();
+        return delegate.newRecord();
     }
 
     @Override
@@ -101,7 +106,7 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public boolean supportsRowIdAccess() {
-        return recordSource.supportsRowIdAccess();
+        return delegate.supportsRowIdAccess();
     }
 
     @Override

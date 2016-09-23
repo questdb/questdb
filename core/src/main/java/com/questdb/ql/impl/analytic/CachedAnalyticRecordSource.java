@@ -55,16 +55,16 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
     public CachedAnalyticRecordSource(
             int rowidPageSize,
             int keyPageSize,
-            RecordSource recordSource,
+            RecordSource delegate,
             @Transient ObjList<RecordComparator> comparators,
             ObjList<ObjList<AnalyticFunction>> functionGroups) {
-        this.recordSource = recordSource;
+        this.recordSource = delegate;
         this.orderGroupCount = comparators.size();
         assert orderGroupCount == functionGroups.size();
         this.orderedSources = new ObjList<>(orderGroupCount);
         this.functionGroups = functionGroups;
 
-        RecordList list = new RecordList(recordSource.getMetadata(), rowidPageSize);
+        RecordList list = new RecordList(delegate.getMetadata(), rowidPageSize);
         // red&black trees, one for each comparator where comparator is not null
         for (int i = 0; i < orderGroupCount; i++) {
             RecordComparator cmp = comparators.getQuick(i);
@@ -84,8 +84,8 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
                 functions.add(f);
             }
         }
-        this.metadata = new SplitRecordMetadata(recordSource.getMetadata(), funcMetadata);
-        this.split = recordSource.getMetadata().getColumnCount();
+        this.metadata = new SplitRecordMetadata(delegate.getMetadata(), funcMetadata);
+        this.split = delegate.getMetadata().getColumnCount();
         this.record = new AnalyticRecord(split, functions);
         this.storageFacade = new AnalyticRecordStorageFacade(split, functions);
         this.recordList.setStorageFacade(storageFacade);
@@ -184,6 +184,11 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
     }
@@ -220,11 +225,11 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
         sink.put('}');
     }
 
-    private void setCursorAndPrepareFunctions(RecordCursor cursor) {
+    private void setCursorAndPrepareFunctions(RecordList recordList) {
         for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).prepare(cursor);
+            functions.getQuick(i).prepare(recordList);
         }
-        this.cursor = cursor;
+        this.cursor = recordList;
     }
 
     private static class MyComparator implements RedBlackTree.LongComparator {

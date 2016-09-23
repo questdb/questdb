@@ -116,6 +116,16 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
         Misc.free(mem);
     }
 
+    public Record getRecord() {
+        return record;
+    }
+
+    public RecordListRecord newRecord() {
+        RecordListRecord record = new RecordListRecord(metadata, mem);
+        record.setStorageFacade(storageFacade);
+        return record;
+    }
+
     @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
@@ -123,13 +133,6 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
 
     public void setStorageFacade(StorageFacade storageFacade) {
         record.setStorageFacade(this.storageFacade = storageFacade);
-    }
-
-    @Override
-    public RecordListRecord newRecord() {
-        RecordListRecord record = new RecordListRecord(metadata, mem);
-        record.setStorageFacade(storageFacade);
-        return record;
     }
 
     @Override

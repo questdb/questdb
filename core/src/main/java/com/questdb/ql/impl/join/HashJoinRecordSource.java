@@ -45,7 +45,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private final RecordSource master;
     private final RecordSource slave;
     private final SplitRecordMetadata metadata;
-    private final SplitRecord currentRecord;
+    private final SplitRecord record;
     private final SplitRecordStorageFacade storageFacade;
     private final ObjList<RecordColumnMetadata> masterColumns = new ObjList<>();
     private final ObjList<RecordColumnMetadata> slaveColumns = new ObjList<>();
@@ -72,7 +72,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         this.master = master;
         this.slave = slave;
         this.metadata = new SplitRecordMetadata(master.getMetadata(), slave.getMetadata());
-        this.currentRecord = new SplitRecord(master.getMetadata().getColumnCount());
+        this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), slave.getRecord());
         this.byRowId = slave.supportsRowIdAccess();
         this.masterColIndex = masterColIndices;
         this.slaveColIndex = slaveColIndices;
@@ -106,6 +106,11 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
     }
@@ -114,7 +119,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     public boolean hasNext() {
         if (hashTableCursor != null && hashTableCursor.hasNext()) {
             Record rec = hashTableCursor.next();
-            currentRecord.setB(byRowId ? slaveCursor.recordAt(rec.getLong(0)) : rec);
+            record.setB(byRowId ? slaveCursor.recordAt(rec.getLong(0)) : rec);
             return true;
         }
         return hasNext0();
@@ -122,12 +127,12 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
 
     @Override
     public SplitRecord next() {
-        return currentRecord;
+        return record;
     }
 
     @Override
     public Record newRecord() {
-        return new SplitRecord(master.getMetadata().getColumnCount());
+        return new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), slave.getRecord());
     }
 
     @Override
@@ -189,18 +194,18 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private boolean hasNext0() {
         while (masterCursor.hasNext()) {
             Record r = masterCursor.next();
-            currentRecord.setA(r);
+            record.setA(r);
             hashTableCursor = recordMap.get(populateKey(r, masterColIndex, masterColumns));
             if (hashTableCursor.hasNext()) {
                 if (byRowId) {
-                    currentRecord.setB(slaveCursor.recordAt(hashTableCursor.next().getLong(0)));
+                    record.setB(slaveCursor.recordAt(hashTableCursor.next().getLong(0)));
                 } else {
-                    currentRecord.setB(hashTableCursor.next());
+                    record.setB(hashTableCursor.next());
                 }
                 return true;
             } else if (outer) {
                 hashTableCursor = null;
-                currentRecord.setB(NullRecord.INSTANCE);
+                record.setB(NullRecord.INSTANCE);
                 return true;
             }
         }

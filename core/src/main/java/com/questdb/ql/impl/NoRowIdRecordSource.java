@@ -27,6 +27,7 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.CancellationHandler;
+import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.ops.AbstractRecordSource;
@@ -65,6 +66,16 @@ public class NoRowIdRecordSource extends AbstractRecordSource {
     @Override
     public void setParameterMap(CharSequenceObjHashMap<Parameter> map) {
         delegate.setParameterMap(map);
+    }
+
+    @Override
+    public Record getRecord() {
+        return delegate.getRecord();
+    }
+
+    @Override
+    public Record newRecord() {
+        return delegate.newRecord();
     }
 
     public NoRowIdRecordSource of(RecordSource delegate) {

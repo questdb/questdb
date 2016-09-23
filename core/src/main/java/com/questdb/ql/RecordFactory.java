@@ -23,28 +23,8 @@
 
 package com.questdb.ql;
 
-import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.ql.ops.Parameter;
-import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.Sinkable;
+public interface RecordFactory {
+    Record getRecord();
 
-import java.io.Closeable;
-
-public interface RecordSource extends Sinkable, Closeable, RecordFactory {
-
-    @Override
-    void close();
-
-    RecordMetadata getMetadata();
-
-    Parameter getParam(CharSequence name);
-
-    RecordCursor prepareCursor(JournalReaderFactory factory);
-
-    RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler);
-
-    void setParameterMap(CharSequenceObjHashMap<Parameter> map);
-
-    boolean supportsRowIdAccess();
+    Record newRecord();
 }

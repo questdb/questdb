@@ -25,10 +25,8 @@ package com.questdb.ql;
 
 import com.questdb.std.ImmutableIterator;
 
-public interface RecordCursor extends ImmutableIterator<Record> {
+public interface RecordCursor extends ImmutableIterator<Record>, RecordFactory {
     StorageFacade getStorageFacade();
-
-    Record newRecord();
 
     Record recordAt(long rowId);
 
