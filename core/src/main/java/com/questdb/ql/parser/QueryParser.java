@@ -653,6 +653,10 @@ public final class QueryParser {
         CharSequence tok;
         while (true) {
             ExprNode expr = expr();
+            if (expr == null) {
+                throw QueryError.$(lexer.position(), "missing column");
+            }
+
             String alias;
             int aliasPosition = lexer.position();
 

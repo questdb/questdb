@@ -55,6 +55,7 @@ public class MemoryFile implements Closeable {
     private long cachedBufferHi = -1;
     private long cachedAppendOffset = -1;
     private long cachedAddress;
+    private long cachedPointer;
     private long offsetDirectAddr;
     private boolean unlockedBuffers = true;
 
@@ -72,7 +73,7 @@ public class MemoryFile implements Closeable {
 
     public long addressOf(long offset, int size) {
         if (offset > cachedBufferLo && offset + size < cachedBufferHi) {
-            return cachedAddress + offset - cachedBufferLo - 1;
+            return cachedPointer + offset;
         } else {
             return allocateAddress(offset, size);
         }
@@ -149,6 +150,7 @@ public class MemoryFile implements Closeable {
             cachedBufferLo = offset - cachedBuffer.position() - 1;
             cachedBufferHi = cachedBufferLo + cachedBuffer.limit() + 2;
             cachedAddress = ByteBuffers.getAddress(cachedBuffer);
+            cachedPointer = cachedAddress - cachedBufferLo - 1;
         }
         return cachedBuffer;
     }
@@ -172,6 +174,7 @@ public class MemoryFile implements Closeable {
         cachedBufferLo = offset - p - 1;
         cachedBufferHi = cachedBufferLo + cachedBuffer.limit() + 2;
         cachedAddress = ByteBuffers.getAddress(cachedBuffer);
+        cachedPointer = cachedAddress - cachedBufferLo - 1;
         return cachedAddress + p;
     }
 

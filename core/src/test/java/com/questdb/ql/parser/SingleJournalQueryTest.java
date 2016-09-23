@@ -1672,6 +1672,16 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testMissingColumnInSelect() throws Exception {
+        createTabWithNaNs2();
+        try {
+            expectFailure("select id, , z from (tab where z = NaN) where id = 'KKUSIMYDXUUSKCX'");
+        } catch (ParserException e) {
+            Assert.assertEquals(11, QueryError.getPosition());
+        }
+    }
+
+    @Test
     public void testMissingEqualsArgument() throws Exception {
         factory.writer(Quote.class, "q");
         try {

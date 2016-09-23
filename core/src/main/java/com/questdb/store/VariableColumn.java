@@ -156,23 +156,11 @@ public class VariableColumn extends AbstractColumn {
     }
 
     public CharSequence getFlyweightStr(long localRowID) {
-        long offset = indexColumn.getLong(localRowID);
-        int len = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
-        if (len == NULL_LEN) {
-            return null;
-        }
-        long lo = mappedFile.addressOf(offset + 4, len * 2);
-        return csA.of(lo, lo + len * 2);
+        return getFlyweightStr0(localRowID, csA);
     }
 
     public CharSequence getFlyweightStrB(long localRowID) {
-        long offset = indexColumn.getLong(localRowID);
-        int len = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
-        if (len == NULL_LEN) {
-            return null;
-        }
-        long lo = mappedFile.addressOf(offset + 4, len * 2);
-        return csB.of(lo, lo + len * 2);
+        return getFlyweightStr0(localRowID, csB);
     }
 
     public FixedColumn getIndexColumn() {
@@ -337,6 +325,17 @@ public class VariableColumn extends AbstractColumn {
         } catch (IOException e) {
             throw new JournalRuntimeException(e);
         }
+    }
+
+    private CharSequence getFlyweightStr0(long localRowID, DirectCharSequence cs) {
+        long offset = indexColumn.getLong(localRowID);
+        int len = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
+        if (len == NULL_LEN) {
+            return null;
+        }
+        len = len << 1;
+        long lo = mappedFile.addressOf(offset + 4, len);
+        return cs.of(lo, lo + len);
     }
 
     private String getStr0(long address, int len) {
