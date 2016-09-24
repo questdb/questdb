@@ -90,15 +90,15 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     @Override
     public Record next() {
         if (!nextSlave) {
-            record.setA(masterCursor.next());
+            masterCursor.next();
             slaveCursor = slaveSource.prepareCursor(factory);
         }
 
         if (nextSlave || slaveCursor.hasNext()) {
-            record.setB(slaveCursor.next());
+            record.setBoff(slaveCursor.next() == null);
             nextSlave = slaveCursor.hasNext();
         } else {
-            record.setB(null);
+            record.setBoff(true);
             nextSlave = false;
         }
         return record;

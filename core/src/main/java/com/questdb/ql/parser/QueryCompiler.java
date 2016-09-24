@@ -1367,6 +1367,7 @@ public class QueryCompiler {
         }
     }
 
+    // order hash is used to determine redundant order by clauses
     private void createOrderHash(QueryModel model) {
         CharSequenceIntHashMap hash = model.getOrderHash();
         hash.clear();

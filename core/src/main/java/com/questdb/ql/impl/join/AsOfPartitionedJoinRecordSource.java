@@ -145,8 +145,6 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
     @Override
     public Record next() {
         Record master = masterCursor.next();
-        record.setA(master);
-
         long ts = master.getDate(masterTimestampIndex);
 
         Record delayed = holder.peek();
@@ -155,7 +153,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
                 map.put(delayed);
                 holder.clear();
             } else {
-                record.setB(null);
+                record.setBoff(true);
                 return record;
             }
         }
@@ -166,11 +164,11 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
                 map.put(slave);
             } else {
                 holder.write(slave);
-                record.setB(map.get(master));
+                record.setBoff(map.get(master) == null);
                 return record;
             }
         }
-        record.setB(map.get(master));
+        record.setBoff(map.get(master) == null);
         return record;
     }
 

@@ -28,7 +28,6 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
-import com.questdb.ql.impl.NullRecord;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.join.hash.MultiRecordMap;
@@ -72,11 +71,11 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         this.master = master;
         this.slave = slave;
         this.metadata = new SplitRecordMetadata(master.getMetadata(), slave.getMetadata());
-        this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), slave.getRecord());
         this.byRowId = slave.supportsRowIdAccess();
         this.masterColIndex = masterColIndices;
         this.slaveColIndex = slaveColIndices;
         this.recordMap = createRecordMap(master, slave, keyPageSize, dataPageSize, rowIdPageSize);
+        this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), byRowId ? slave.getRecord() : recordMap.getRecord());
         this.outer = outer;
         this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
     }
@@ -119,7 +118,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     public boolean hasNext() {
         if (hashTableCursor != null && hashTableCursor.hasNext()) {
             Record rec = hashTableCursor.next();
-            record.setB(byRowId ? slaveCursor.recordAt(rec.getLong(0)) : rec);
+            record.setBoff((byRowId ? slaveCursor.recordAt(rec.getLong(0)) : rec) == null);
             return true;
         }
         return hasNext0();
@@ -194,18 +193,17 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private boolean hasNext0() {
         while (masterCursor.hasNext()) {
             Record r = masterCursor.next();
-            record.setA(r);
             hashTableCursor = recordMap.get(populateKey(r, masterColIndex, masterColumns));
             if (hashTableCursor.hasNext()) {
                 if (byRowId) {
-                    record.setB(slaveCursor.recordAt(hashTableCursor.next().getLong(0)));
+                    record.setBoff(slaveCursor.recordAt(hashTableCursor.next().getLong(0)) == null);
                 } else {
-                    record.setB(hashTableCursor.next());
+                    record.setBoff(hashTableCursor.next() == null);
                 }
                 return true;
             } else if (outer) {
                 hashTableCursor = null;
-                record.setB(NullRecord.INSTANCE);
+                record.setBoff(true);
                 return true;
             }
         }
@@ -214,7 +212,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
 
     private DirectMap.KeyWriter populateKey(Record r, IntList indices, ObjList<RecordColumnMetadata> columns) {
         DirectMap.KeyWriter key = recordMap.claimKey();
-        for (int i = 0, k = masterColumns.size(); i < k; i++) {
+        for (int i = 0, k = columns.size(); i < k; i++) {
             MapUtils.putRecord(key, r, indices.getQuick(i), columns.getQuick(i).getType());
         }
         return key;

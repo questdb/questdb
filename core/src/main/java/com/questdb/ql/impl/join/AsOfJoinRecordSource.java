@@ -63,11 +63,12 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
         this.slave = slave;
         this.slaveTimestampIndex = slaveTimestampIndex;
         this.metadata = new SplitRecordMetadata(master.getMetadata(), slave.getMetadata());
-        this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), slave.getRecord());
 
+        Record slaveRecord;
         if (slave.supportsRowIdAccess()) {
             this.recordHolder = new RowidRecordHolder();
             this.delayedHolder = new RowidRecordHolder();
+            slaveRecord = slave.getRecord();
         } else {
             // check if slave has variable length columns
             boolean var = false;
@@ -86,11 +87,14 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
             if (var) {
                 this.recordHolder = new VarRecordHolder(slave.getMetadata());
                 this.delayedHolder = new VarRecordHolder(slave.getMetadata());
+                slaveRecord = (VarRecordHolder) this.recordHolder;
             } else {
                 this.recordHolder = new FixRecordHolder(slave.getMetadata());
                 this.delayedHolder = new FixRecordHolder(slave.getMetadata());
+                slaveRecord = (FixRecordHolder) this.recordHolder;
             }
         }
+        this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), slaveRecord);
         this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
     }
 
@@ -136,17 +140,14 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
 
     @Override
     public Record next() {
-        Record master = masterCursor.next();
-        record.setA(master);
-
-        long ts = master.getDate(masterTimestampIndex);
+        long ts = masterCursor.next().getDate(masterTimestampIndex);
         Record delayed = delayedHolder.peek();
         if (delayed != null) {
             if (ts > delayed.getDate(slaveTimestampIndex)) {
                 recordHolder.write(delayed);
                 delayedHolder.clear();
             } else {
-                record.setB(null);
+                record.setBoff(true);
                 return record;
             }
         }
@@ -156,13 +157,13 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
             if (ts > slave.getDate(slaveTimestampIndex)) {
                 recordHolder.write(slave);
             } else {
-                record.setB(recordHolder.peek());
+                record.setBoff(recordHolder.peek() == null);
                 recordHolder.clear();
                 delayedHolder.write(slave);
                 return record;
             }
         }
-        record.setB(recordHolder.peek());
+        record.setBoff(recordHolder.peek() == null);
         return record;
     }
 

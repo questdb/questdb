@@ -23,135 +23,86 @@
 
 package com.questdb.ql.impl.join;
 
-import com.questdb.misc.Numbers;
 import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
+import com.questdb.ql.impl.NullRecord;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
+import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 
 import java.io.OutputStream;
 
 class SplitRecord extends AbstractRecord {
-    private final int countA;
-    private final int countB;
+    private final int split;
     private final ObjList<Record> records = new ObjList<>();
-    private Record a;
-    private Record b;
+    private final IntList indices = new IntList();
+    private boolean boff = false;
 
     SplitRecord(int countA, int countB, Record recordA, Record recordB) {
-        this.countA = countA;
-        this.countB = countB;
+        this.split = countA;
+        addRecord(recordA, countA);
+        addRecord(recordB, countB);
     }
 
     @Override
     public byte get(int col) {
-        if (col < countA) {
-            return a.get(col);
-        } else {
-            return b == null ? 0 : b.get(col - countA);
-        }
+        return getRec(col).get(idx(col));
     }
 
     @Override
     public void getBin(int col, OutputStream s) {
-        if (col < countA) {
-            a.getBin(col, s);
-        } else if (b != null) {
-            b.getBin(col - countA, s);
-        }
+        getRec(col).getBin(idx(col), s);
     }
 
     @Override
     public DirectInputStream getBin(int col) {
-        if (col < countA) {
-            return a.getBin(col);
-        } else {
-            return b == null ? null : b.getBin(col - countA);
-        }
+        return getRec(col).getBin(idx(col));
     }
 
     @Override
     public long getBinLen(int col) {
-        if (col < countA) {
-            return a.getBinLen(col);
-        } else if (b != null) {
-            return b.getBinLen(col - countA);
-        } else {
-            return -1;
-        }
+        return getRec(col).getBinLen(idx(col));
     }
 
     @Override
     public boolean getBool(int col) {
-        if (col < countA) {
-            return a.getBool(col);
-        } else {
-            return b != null && b.getBool(col - countA);
-        }
+        return getRec(col).getBool(idx(col));
     }
 
     @Override
     public long getDate(int col) {
-        if (col < countA) {
-            return a.getDate(col);
-        } else {
-            return b == null ? Numbers.LONG_NaN : b.getDate(col - countA);
-        }
+        return getRec(col).getDate(idx(col));
     }
 
     @Override
     public double getDouble(int col) {
-        if (col < countA) {
-            return a.getDouble(col);
-        } else {
-            return b == null ? Double.NaN : b.getDouble(col - countA);
-        }
+        return getRec(col).getDouble(idx(col));
     }
 
     @Override
     public float getFloat(int col) {
-        if (col < countA) {
-            return a.getFloat(col);
-        } else {
-            return b == null ? Float.NaN : b.getFloat(col - countA);
-        }
+        return getRec(col).getFloat(idx(col));
     }
 
     @Override
     public CharSequence getFlyweightStr(int col) {
-        if (col < countA) {
-            return a.getFlyweightStr(col);
-        } else {
-            return b == null ? null : b.getFlyweightStr(col - countA);
-        }
+        return getRec(col).getFlyweightStr(idx(col));
     }
 
     @Override
     public CharSequence getFlyweightStrB(int col) {
-        if (col < countA) {
-            return a.getFlyweightStrB(col);
-        } else {
-            return b == null ? null : b.getFlyweightStrB(col - countA);
-        }
+        return getRec(col).getFlyweightStrB(idx(col));
     }
 
     @Override
     public int getInt(int col) {
-        if (col < countA) {
-            return a.getInt(col);
-        } else {
-            return b == null ? Numbers.INT_NaN : b.getInt(col - countA);
-        }
+        return getRec(col).getInt(idx(col));
     }
 
     @Override
     public long getLong(int col) {
-        if (col < countA) {
-            return a.getLong(col);
-        } else {
-            return b == null ? Numbers.LONG_NaN : b.getLong(col - countA);
-        }
+        return getRec(col).getLong(idx(col));
     }
 
     @Override
@@ -161,54 +112,53 @@ class SplitRecord extends AbstractRecord {
 
     @Override
     public short getShort(int col) {
-        if (col < countA) {
-            return a.getShort(col);
-        } else {
-            return b == null ? 0 : b.getShort(col - countA);
-        }
+        return getRec(col).getShort(idx(col));
     }
 
     @Override
     public CharSequence getStr(int col) {
-        if (col < countA) {
-            return a.getStr(col);
-        } else {
-            return b == null ? null : b.getStr(col - countA);
-        }
+        return getRec(col).getStr(idx(col));
     }
 
     @Override
     public void getStr(int col, CharSink sink) {
-        if (col < countA) {
-            a.getStr(col, sink);
-        } else if (b != null) {
-            b.getStr(col - countA, sink);
-        }
+        getRec(col).getStr(idx(col), sink);
     }
 
     @Override
     public int getStrLen(int col) {
-        if (col < countA) {
-            return a.getStrLen(col);
-        } else {
-            return b == null ? -1 : b.getStrLen(col - countA);
-        }
+        return getRec(col).getStrLen(idx(col));
     }
 
     @Override
     public String getSym(int col) {
-        if (col < countA) {
-            return a.getSym(col);
+        return getRec(col).getSym(idx(col));
+    }
+
+    public Record getRec(int col) {
+        return boff && col >= split ? NullRecord.INSTANCE : records.getQuick(col);
+    }
+
+    public void setBoff(boolean boff) {
+        this.boff = boff;
+    }
+
+    private void addRecord(Record rec, int count) {
+        if (rec instanceof SplitRecord) {
+            ObjList<Record> theirRecords = ((SplitRecord) rec).records;
+            for (int i = 0, n = theirRecords.size(); i < n; i++) {
+                records.add(theirRecords.getQuick(i));
+                indices.add(((SplitRecord) rec).indices.getQuick(i));
+            }
         } else {
-            return b == null ? null : b.getSym(col - countA);
+            for (int i = 0; i < count; i++) {
+                records.add(rec);
+                indices.add(i);
+            }
         }
     }
 
-    public void setA(Record a) {
-        this.a = a;
-    }
-
-    public void setB(Record b) {
-        this.b = b;
+    private int idx(int col) {
+        return indices.getQuick(col);
     }
 }

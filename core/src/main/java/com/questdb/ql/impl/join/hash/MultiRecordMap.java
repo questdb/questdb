@@ -79,6 +79,10 @@ public class MultiRecordMap implements Closeable, Mutable {
         return records;
     }
 
+    public Record getRecord() {
+        return records.getRecord();
+    }
+
     public void setStorageFacade(StorageFacade storageFacade) {
         records.setStorageFacade(storageFacade);
     }
