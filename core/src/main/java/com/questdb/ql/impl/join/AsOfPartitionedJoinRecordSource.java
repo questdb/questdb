@@ -28,6 +28,7 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
+import com.questdb.ql.impl.NullableRecord;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.join.asof.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
@@ -47,6 +48,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
     private final int slaveTimestampIndex;
     private final SplitRecord record;
     private final SplitRecordStorageFacade storageFacade;
+    private final NullableRecord nullableRecord;
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
     private boolean closed = false;
@@ -94,9 +96,9 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
                 this.holder = new FixRecordHolder(slave.getMetadata());
             }
         }
-//        map.getMetadata().setAlias(slave.getMetadata().getAlias());
         this.metadata = new SplitRecordMetadata(master.getMetadata(), map.getMetadata());
-        this.record = new SplitRecord(master.getMetadata().getColumnCount(), map.getMetadata().getColumnCount(), master.getRecord(), map.getRecord());
+        this.nullableRecord = new NullableRecord(map.getRecord());
+        this.record = new SplitRecord(master.getMetadata().getColumnCount(), map.getMetadata().getColumnCount(), master.getRecord(), nullableRecord);
         this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
     }
 
@@ -153,7 +155,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
                 map.put(delayed);
                 holder.clear();
             } else {
-                record.setBoff(true);
+                nullableRecord.set_null(true);
                 return record;
             }
         }
@@ -164,11 +166,11 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
                 map.put(slave);
             } else {
                 holder.write(slave);
-                record.setBoff(map.get(master) == null);
+                nullableRecord.set_null(map.get(master) == null);
                 return record;
             }
         }
-        record.setBoff(map.get(master) == null);
+        nullableRecord.set_null(map.get(master) == null);
         return record;
     }
 

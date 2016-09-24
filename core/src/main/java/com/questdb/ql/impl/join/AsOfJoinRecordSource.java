@@ -28,6 +28,7 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
+import com.questdb.ql.impl.NullableRecord;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.join.asof.FixRecordHolder;
 import com.questdb.ql.impl.join.asof.RecordHolder;
@@ -49,6 +50,7 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
     private final RecordHolder recordHolder;
     private final RecordHolder delayedHolder;
     private final SplitRecordStorageFacade storageFacade;
+    private final NullableRecord nullableRecord;
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
 
@@ -94,7 +96,8 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
                 slaveRecord = (FixRecordHolder) this.recordHolder;
             }
         }
-        this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), slaveRecord);
+        this.nullableRecord = new NullableRecord(slaveRecord);
+        this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), nullableRecord);
         this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
     }
 
@@ -147,7 +150,7 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
                 recordHolder.write(delayed);
                 delayedHolder.clear();
             } else {
-                record.setBoff(true);
+                nullableRecord.set_null(true);
                 return record;
             }
         }
@@ -157,13 +160,13 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
             if (ts > slave.getDate(slaveTimestampIndex)) {
                 recordHolder.write(slave);
             } else {
-                record.setBoff(recordHolder.peek() == null);
+                nullableRecord.set_null(recordHolder.peek() == null);
                 recordHolder.clear();
                 delayedHolder.write(slave);
                 return record;
             }
         }
-        record.setBoff(recordHolder.peek() == null);
+        nullableRecord.set_null(recordHolder.peek() == null);
         return record;
     }
 

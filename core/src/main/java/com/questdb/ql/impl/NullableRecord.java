@@ -21,136 +21,118 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.join;
+package com.questdb.ql.impl;
 
 import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
 import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
-import com.questdb.std.IntList;
-import com.questdb.std.ObjList;
 
 import java.io.OutputStream;
 
-class SplitRecord extends AbstractRecord {
-    private final ObjList<Record> records = new ObjList<>();
-    private final IntList indices = new IntList();
+public class NullableRecord extends AbstractRecord {
+    private final Record record;
+    private boolean _null = false;
 
-    SplitRecord(int countA, int countB, Record recordA, Record recordB) {
-        addRecord(recordA, countA);
-        addRecord(recordB, countB);
+    public NullableRecord(Record record) {
+        this.record = record;
     }
 
     @Override
     public byte get(int col) {
-        return getRec(col).get(idx(col));
+        return rec().get(col);
     }
 
     @Override
     public void getBin(int col, OutputStream s) {
-        getRec(col).getBin(idx(col), s);
+        rec().getBin(col, s);
     }
 
     @Override
     public DirectInputStream getBin(int col) {
-        return getRec(col).getBin(idx(col));
+        return rec().getBin(col);
     }
 
     @Override
     public long getBinLen(int col) {
-        return getRec(col).getBinLen(idx(col));
+        return rec().getBinLen(col);
     }
 
     @Override
     public boolean getBool(int col) {
-        return getRec(col).getBool(idx(col));
+        return rec().getBool(col);
     }
 
     @Override
     public long getDate(int col) {
-        return getRec(col).getDate(idx(col));
+        return rec().getDate(col);
     }
 
     @Override
     public double getDouble(int col) {
-        return getRec(col).getDouble(idx(col));
+        return rec().getDouble(col);
     }
 
     @Override
     public float getFloat(int col) {
-        return getRec(col).getFloat(idx(col));
+        return rec().getFloat(col);
     }
 
     @Override
     public CharSequence getFlyweightStr(int col) {
-        return getRec(col).getFlyweightStr(idx(col));
+        return rec().getFlyweightStr(col);
     }
 
     @Override
     public CharSequence getFlyweightStrB(int col) {
-        return getRec(col).getFlyweightStrB(idx(col));
+        return rec().getFlyweightStrB(col);
     }
 
     @Override
     public int getInt(int col) {
-        return getRec(col).getInt(idx(col));
+        return rec().getInt(col);
     }
 
     @Override
     public long getLong(int col) {
-        return getRec(col).getLong(idx(col));
+        return rec().getLong(col);
     }
 
     @Override
     public long getRowId() {
-        return -1;
+        return rec().getRowId();
     }
 
     @Override
     public short getShort(int col) {
-        return getRec(col).getShort(idx(col));
+        return rec().getShort(col);
     }
 
     @Override
     public CharSequence getStr(int col) {
-        return getRec(col).getStr(idx(col));
+        return rec().getStr(col);
     }
 
     @Override
     public void getStr(int col, CharSink sink) {
-        getRec(col).getStr(idx(col), sink);
+        rec().getStr(col, sink);
     }
 
     @Override
     public int getStrLen(int col) {
-        return getRec(col).getStrLen(idx(col));
+        return rec().getStrLen(col);
     }
 
     @Override
     public String getSym(int col) {
-        return getRec(col).getSym(idx(col));
+        return rec().getSym(col);
     }
 
-    public Record getRec(int col) {
-        return records.getQuick(col);
+    public void set_null(boolean _null) {
+        this._null = _null;
     }
 
-    private void addRecord(Record rec, int count) {
-        if (rec instanceof SplitRecord) {
-            ObjList<Record> theirRecords = ((SplitRecord) rec).records;
-            for (int i = 0, n = theirRecords.size(); i < n; i++) {
-                records.add(theirRecords.getQuick(i));
-                indices.add(((SplitRecord) rec).indices.getQuick(i));
-            }
-        } else {
-            for (int i = 0; i < count; i++) {
-                records.add(rec);
-                indices.add(i);
-            }
-        }
-    }
-
-    private int idx(int col) {
-        return indices.getQuick(col);
+    private Record rec() {
+        return _null ? NullRecord.INSTANCE : record;
     }
 }

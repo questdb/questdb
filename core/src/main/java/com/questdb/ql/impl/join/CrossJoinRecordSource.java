@@ -27,6 +27,7 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
+import com.questdb.ql.impl.NullableRecord;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
@@ -37,6 +38,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     private final SplitRecordMetadata metadata;
     private final SplitRecord record;
     private final SplitRecordStorageFacade storageFacade;
+    private final NullableRecord nullableRecord;
     private JournalReaderFactory factory;
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
@@ -47,7 +49,8 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
         this.slaveSource = slaveSource;
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
         int split = masterSource.getMetadata().getColumnCount();
-        this.record = new SplitRecord(split, slaveSource.getMetadata().getColumnCount(), masterSource.getRecord(), slaveSource.getRecord());
+        this.nullableRecord = new NullableRecord(slaveSource.getRecord());
+        this.record = new SplitRecord(split, slaveSource.getMetadata().getColumnCount(), masterSource.getRecord(), nullableRecord);
         this.storageFacade = new SplitRecordStorageFacade(split);
     }
 
@@ -95,10 +98,10 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
         }
 
         if (nextSlave || slaveCursor.hasNext()) {
-            record.setBoff(slaveCursor.next() == null);
+            nullableRecord.set_null(slaveCursor.next() == null);
             nextSlave = slaveCursor.hasNext();
         } else {
-            record.setBoff(true);
+            nullableRecord.set_null(true);
             nextSlave = false;
         }
         return record;

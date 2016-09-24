@@ -28,6 +28,7 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
+import com.questdb.ql.impl.NullableRecord;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.join.hash.MultiRecordMap;
@@ -54,6 +55,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private final boolean byRowId;
     private final boolean outer;
     private final MultiRecordMap recordMap;
+    private final NullableRecord nullableRecord;
     private RecordCursor slaveCursor;
     private RecordCursor masterCursor;
     private RecordCursor hashTableCursor;
@@ -75,7 +77,8 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         this.masterColIndex = masterColIndices;
         this.slaveColIndex = slaveColIndices;
         this.recordMap = createRecordMap(master, slave, keyPageSize, dataPageSize, rowIdPageSize);
-        this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), byRowId ? slave.getRecord() : recordMap.getRecord());
+        this.nullableRecord = new NullableRecord(byRowId ? slave.getRecord() : recordMap.getRecord());
+        this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), nullableRecord);
         this.outer = outer;
         this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
     }
@@ -117,8 +120,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     @Override
     public boolean hasNext() {
         if (hashTableCursor != null && hashTableCursor.hasNext()) {
-            Record rec = hashTableCursor.next();
-            record.setBoff((byRowId ? slaveCursor.recordAt(rec.getLong(0)) : rec) == null);
+            advanceSlaveCursor();
             return true;
         }
         return hasNext0();
@@ -159,6 +161,11 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         sink.put("]]}");
     }
 
+    private void advanceSlaveCursor() {
+        Record rec = hashTableCursor.next();
+        nullableRecord.set_null((byRowId ? slaveCursor.recordAt(rec.getLong(0)) : rec) == null);
+    }
+
     private void buildHashTable(CancellationHandler cancellationHandler) {
         for (Record r : slaveCursor) {
             cancellationHandler.check();
@@ -195,15 +202,11 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             Record r = masterCursor.next();
             hashTableCursor = recordMap.get(populateKey(r, masterColIndex, masterColumns));
             if (hashTableCursor.hasNext()) {
-                if (byRowId) {
-                    record.setBoff(slaveCursor.recordAt(hashTableCursor.next().getLong(0)) == null);
-                } else {
-                    record.setBoff(hashTableCursor.next() == null);
-                }
+                advanceSlaveCursor();
                 return true;
             } else if (outer) {
                 hashTableCursor = null;
-                record.setBoff(true);
+                nullableRecord.set_null(true);
                 return true;
             }
         }

@@ -1247,6 +1247,40 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testOuterJoin() throws Exception {
+        assertThat("ZKX\tGZW\t857841416\t1083\n" +
+                        "ZKX\tGZW\t1032890405\tNaN\n" +
+                        "ZKX\tGZW\t783791714\t927\n" +
+                        "ZKX\tGZW\t783791714\t586\n" +
+                        "ZKX\tGZW\t783791714\t1065\n" +
+                        "ZKX\tGZW\t1662033722\t542\n" +
+                        "ZKX\tGZW\t1662033722\t389\n" +
+                        "ZKX\tGZW\t337191226\t1472\n" +
+                        "ZKX\tGZW\t337191226\t1577\n" +
+                        "ZKX\tGZW\t337191226\t393\n" +
+                        "ZKX\tGZW\t1360393259\t1615\n" +
+                        "ZKX\tGZW\t1360393259\t778\n" +
+                        "ZKX\tGZW\t163580596\t1256\n" +
+                        "ZKX\tGZW\t163580596\t1017\n" +
+                        "ZKX\tGZW\t163580596\t612\n" +
+                        "ZKX\tGZW\t1569321724\t1464\n" +
+                        "ZKX\tGZW\t115845726\t1922\n" +
+                        "ZKX\tGZW\t115845726\t1360\n" +
+                        "ZKX\tGZW\t115845726\t1192\n" +
+                        "ZKX\tGZW\t115845726\t1485\n" +
+                        "ZKX\tGZW\t1565417569\t1122\n" +
+                        "ZKX\tGZW\t1565417569\t1803\n" +
+                        "ZKX\tGZW\t1678218138\t1686\n" +
+                        "ZKX\tGZW\t1678218138\t969\n" +
+                        "ZKX\tGZW\t1315811593\t1398\n" +
+                        "ZKX\tGZW\t1315811593\t25\n",
+                "select country, customerName, o.orderId, d.productId from orders o " +
+                        "outer join customers c on c.customerId = o.customerId " +
+                        "outer join (orderDetails where orderId != 1032890405) d on o.orderId = d.orderId" +
+                        " where country ~ '^Z' and customerName = 'GZW'");
+    }
+
+    @Test
     public void testRegexConstantTransitivityRhs() throws Exception {
         assertPlan("+ 0[ cross ] c (filter: c.customerId ~ '100')\n" +
                         "+ 1[ outer ] o (filter: o.customerId ~ '100') ON o.customerId = c.customerId\n" +
