@@ -522,6 +522,13 @@ public class QueryCompiler {
                 rs = new VirtualColumnRecordSource(rs, virtualColumns);
             }
 
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                QueryColumn col = columnHashMap.get(orderBy.getQuick(i).token);
+                if (col != null && col.getAst().type == ExprNode.LITERAL && col.getAlias() != null) {
+                    orderBy.getQuick(i).token = col.getAst().token;
+                }
+            }
+
             rs = order(rs, model);
             model.getOrderBy().clear();
             return rs;

@@ -1167,6 +1167,108 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 " where o.orderId = NaN and c.customerId > 400 and c.customerId < 1200 order by o.customerId";
 
         assertThat(expected, sql);
+
+        assertPlan2("{\n" +
+                "  \"op\": \"RBTreeSortedRecordSource\",\n" +
+                "  \"byRowId\": false,\n" +
+                "  \"src\": {\n" +
+                "    \"op\": \"FilteredRecordSource\",\n" +
+                "    \"src\": {\n" +
+                "      \"op\": \"HashJoinRecordSource\",\n" +
+                "      \"master\": {\n" +
+                "        \"op\": \"JournalRecordSource\",\n" +
+                "        \"psrc\": {\n" +
+                "          \"op\": \"JournalPartitionSource\",\n" +
+                "          \"journal\": \"customers\"\n" +
+                "        },\n" +
+                "        \"rsrc\": {\n" +
+                "          \"op\": \"FilteredRowSource\",\n" +
+                "          \"rsrc\": {\n" +
+                "            \"op\": \"AllRowSource\"\n" +
+                "          }\n" +
+                "        }\n" +
+                "      },\n" +
+                "      \"slave\": {\n" +
+                "        \"op\": \"JournalRecordSource\",\n" +
+                "        \"psrc\": {\n" +
+                "          \"op\": \"JournalPartitionSource\",\n" +
+                "          \"journal\": \"orders\"\n" +
+                "        },\n" +
+                "        \"rsrc\": {\n" +
+                "          \"op\": \"AllRowSource\"\n" +
+                "        }\n" +
+                "      },\n" +
+                "      \"joinOn\": [\n" +
+                "        [\n" +
+                "          \"customerId\"\n" +
+                "        ],\n" +
+                "        [\n" +
+                "          \"customerId\"\n" +
+                "        ]\n" +
+                "      ]\n" +
+                "    },\n" +
+                "    \"filter\": \"o.orderId \\u003d NaN\"\n" +
+                "  }\n" +
+                "}", sql);
+    }
+
+    @Test
+    public void testOrderByOptimisation3() throws Exception {
+        String expected = "410\tUWWBTOWPJTW\n" +
+                "805\tJDD\n" +
+                "810\tJNDVPITEWCB\n" +
+                "1162\tZJSXCVDFRBBYP\n";
+
+        String sql = "select c.customerId x, c.customerName from customers c" +
+                " outer join orders o on c.customerId = o.customerId " +
+                " where o.orderId = NaN and c.customerId > 400 and c.customerId < 1200 order by x";
+
+        assertThat(expected, sql);
+        assertPlan2("{\n" +
+                "  \"op\": \"SelectedColumnsRecordSource\",\n" +
+                "  \"src\": {\n" +
+                "    \"op\": \"FilteredRecordSource\",\n" +
+                "    \"src\": {\n" +
+                "      \"op\": \"HashJoinRecordSource\",\n" +
+                "      \"master\": {\n" +
+                "        \"op\": \"RBTreeSortedRecordSource\",\n" +
+                "        \"byRowId\": true,\n" +
+                "        \"src\": {\n" +
+                "          \"op\": \"JournalRecordSource\",\n" +
+                "          \"psrc\": {\n" +
+                "            \"op\": \"JournalPartitionSource\",\n" +
+                "            \"journal\": \"customers\"\n" +
+                "          },\n" +
+                "          \"rsrc\": {\n" +
+                "            \"op\": \"FilteredRowSource\",\n" +
+                "            \"rsrc\": {\n" +
+                "              \"op\": \"AllRowSource\"\n" +
+                "            }\n" +
+                "          }\n" +
+                "        }\n" +
+                "      },\n" +
+                "      \"slave\": {\n" +
+                "        \"op\": \"JournalRecordSource\",\n" +
+                "        \"psrc\": {\n" +
+                "          \"op\": \"JournalPartitionSource\",\n" +
+                "          \"journal\": \"orders\"\n" +
+                "        },\n" +
+                "        \"rsrc\": {\n" +
+                "          \"op\": \"AllRowSource\"\n" +
+                "        }\n" +
+                "      },\n" +
+                "      \"joinOn\": [\n" +
+                "        [\n" +
+                "          \"customerId\"\n" +
+                "        ],\n" +
+                "        [\n" +
+                "          \"customerId\"\n" +
+                "        ]\n" +
+                "      ]\n" +
+                "    },\n" +
+                "    \"filter\": \"o.orderId \\u003d NaN\"\n" +
+                "  }\n" +
+                "}", sql);
     }
 
     @Test

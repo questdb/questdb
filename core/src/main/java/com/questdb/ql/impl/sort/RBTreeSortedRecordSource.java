@@ -110,6 +110,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     public Record getRecord() {
         return byRowId ? sourceRecord : recordList.getRecord();
     }
+
     public void put(Record record) {
         if (root == -1) {
             putParent(record);
@@ -147,11 +148,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             setRight(parent, p);
         }
         fix(p);
-    }
-
-    @Override
-    public Record newRecord() {
-        return byRowId ? delegate.newRecord() : recordList.newRecord();
     }
 
     public void put(long rowId) {
@@ -199,7 +195,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         cursor.setup();
         return cursor;
     }
-
     @Override
     public void toSink(CharSink sink) {
         sink.put('{');
@@ -207,6 +202,11 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         sink.putQuoted("byRowId").put(':').put(byRowId).put(',');
         sink.putQuoted("src").put(':').put(delegate);
         sink.put('}');
+    }
+
+    @Override
+    public Record newRecord() {
+        return byRowId ? delegate.newRecord() : recordList.newRecord();
     }
 
     private static void setLeft(long blockAddress, long left) {
@@ -417,11 +417,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         }
 
         @Override
-        public Record getRecord() {
-            return RBTreeSortedRecordSource.this.getRecord();
-        }
-
-        @Override
         public void recordAt(Record record, long atRowId) {
             if (byRowId) {
                 sourceCursor.recordAt(record, atRowId);
@@ -429,6 +424,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
                 recordList.recordAt(record, atRowId);
             }
         }
+
         @Override
         public boolean hasNext() {
             if (recordList.hasNext()) {
@@ -443,12 +439,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             recordList.of(topOf(current));
             return true;
         }
-
-        @Override
-        public Record newRecord() {
-            return RBTreeSortedRecordSource.this.newRecord();
-        }
-
         @Override
         public Record next() {
             final Record underlying = recordList.next();
@@ -459,6 +449,11 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             return underlying;
         }
 
+        @Override
+        public Record getRecord() {
+            return RBTreeSortedRecordSource.this.getRecord();
+        }
+
         private void setup() {
             long p = root;
             if (p != -1) {
@@ -467,6 +462,12 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
                 }
             }
             recordList.of(topOf(current = p));
+        }
+
+
+        @Override
+        public Record newRecord() {
+            return RBTreeSortedRecordSource.this.newRecord();
         }
 
 

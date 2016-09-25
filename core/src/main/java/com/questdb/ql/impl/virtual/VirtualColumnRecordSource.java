@@ -46,7 +46,7 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
         this.delegate = delegate;
         RecordMetadata dm = delegate.getMetadata();
         this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
-        this.record = new VirtualRecord(dm.getColumnCount(), virtualColumns);
+        this.record = new VirtualRecord(dm.getColumnCount(), virtualColumns, delegate.getRecord());
         this.virtualColumnStorageFacade = VirtualColumnStorageFacade.INSTANCE;
         this.storageFacade = new SplitRecordStorageFacade(dm.getColumnCount());
     }
@@ -86,18 +86,18 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public Record next() {
-        record.of(recordCursor.next());
+        recordCursor.next();
         return record;
     }
 
     @Override
     public Record newRecord() {
-        return record.copy().of(delegate.newRecord());
+        return record.copy(delegate.newRecord());
     }
 
     @Override
     public Record recordAt(long rowId) {
-        record.of(recordCursor.recordAt(rowId));
+        recordCursor.recordAt(rowId);
         return record;
     }
 

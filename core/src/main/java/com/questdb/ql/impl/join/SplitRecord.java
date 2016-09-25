@@ -32,7 +32,7 @@ import com.questdb.std.ObjList;
 
 import java.io.OutputStream;
 
-class SplitRecord extends AbstractRecord {
+public class SplitRecord extends AbstractRecord {
     private final ObjList<Record> records = new ObjList<>();
     private final IntList indices = new IntList();
 

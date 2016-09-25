@@ -36,16 +36,17 @@ import java.io.OutputStream;
 class VirtualRecord extends AbstractRecord {
     private final int split;
     private final ObjList<VirtualColumn> virtualColumns;
-    private Record base;
+    private final Record base;
 
-    VirtualRecord(int split, ObjList<VirtualColumn> virtualColumns) {
+    VirtualRecord(int split, ObjList<VirtualColumn> virtualColumns, Record base) {
         this.split = split;
         this.virtualColumns = virtualColumns;
+        this.base = base;
     }
 
     @Override
     public byte get(int col) {
-        return col < split ? base.get(col) : virtualColumns.get(col - split).get(base);
+        return col < split ? base.get(col) : getVc(col).get(base);
     }
 
     @Override
@@ -53,58 +54,58 @@ class VirtualRecord extends AbstractRecord {
         if (col < split) {
             base.getBin(col, s);
         } else {
-            virtualColumns.get(col - split).getBin(base, s);
+            getVc(col).getBin(base, s);
         }
     }
 
     @Override
     public DirectInputStream getBin(int col) {
-        return col < split ? base.getBin(col) : virtualColumns.get(col - split).getBin(base);
+        return col < split ? base.getBin(col) : getVc(col).getBin(base);
     }
 
     @Override
     public long getBinLen(int col) {
-        return col < split ? base.getBinLen(col) : virtualColumns.get(col - split).getBinLen(base);
+        return col < split ? base.getBinLen(col) : getVc(col).getBinLen(base);
     }
 
     @Override
     public boolean getBool(int col) {
-        return col < split ? base.getBool(col) : virtualColumns.get(col - split).getBool(base);
+        return col < split ? base.getBool(col) : getVc(col).getBool(base);
     }
 
     @Override
     public long getDate(int col) {
-        return col < split ? base.getDate(col) : virtualColumns.get(col - split).getDate(base);
+        return col < split ? base.getDate(col) : getVc(col).getDate(base);
     }
 
     @Override
     public double getDouble(int col) {
-        return col < split ? base.getDouble(col) : virtualColumns.get(col - split).getDouble(base);
+        return col < split ? base.getDouble(col) : getVc(col).getDouble(base);
     }
 
     @Override
     public float getFloat(int col) {
-        return col < split ? base.getFloat(col) : virtualColumns.get(col - split).getFloat(base);
+        return col < split ? base.getFloat(col) : getVc(col).getFloat(base);
     }
 
     @Override
     public CharSequence getFlyweightStr(int col) {
-        return col < split ? base.getFlyweightStr(col) : virtualColumns.get(col - split).getFlyweightStr(base);
+        return col < split ? base.getFlyweightStr(col) : getVc(col).getFlyweightStr(base);
     }
 
     @Override
     public CharSequence getFlyweightStrB(int col) {
-        return col < split ? base.getFlyweightStrB(col) : virtualColumns.get(col - split).getFlyweightStrB(base);
+        return col < split ? base.getFlyweightStrB(col) : getVc(col).getFlyweightStrB(base);
     }
 
     @Override
     public int getInt(int col) {
-        return col < split ? base.getInt(col) : virtualColumns.get(col - split).getInt(base);
+        return col < split ? base.getInt(col) : getVc(col).getInt(base);
     }
 
     @Override
     public long getLong(int col) {
-        return col < split ? base.getLong(col) : virtualColumns.get(col - split).getLong(base);
+        return col < split ? base.getLong(col) : getVc(col).getLong(base);
     }
 
     @Override
@@ -114,12 +115,12 @@ class VirtualRecord extends AbstractRecord {
 
     @Override
     public short getShort(int col) {
-        return col < split ? base.getShort(col) : virtualColumns.get(col - split).getShort(base);
+        return col < split ? base.getShort(col) : getVc(col).getShort(base);
     }
 
     @Override
     public CharSequence getStr(int col) {
-        return col < split ? base.getStr(col) : virtualColumns.get(col - split).getStr(base);
+        return col < split ? base.getStr(col) : getVc(col).getStr(base);
     }
 
     @Override
@@ -127,27 +128,22 @@ class VirtualRecord extends AbstractRecord {
         if (col < split) {
             base.getStr(col, sink);
         } else {
-            virtualColumns.get(col - split).getStr(base, sink);
+            getVc(col).getStr(base, sink);
         }
     }
 
     @Override
     public int getStrLen(int col) {
-        return col < split ? base.getStrLen(col) : virtualColumns.get(col - split).getStrLen(base);
+        return col < split ? base.getStrLen(col) : getVc(col).getStrLen(base);
     }
 
     @Override
     public String getSym(int col) {
-        return col < split ? base.getSym(col) : virtualColumns.get(col - split).getSym(base);
+        return col < split ? base.getSym(col) : getVc(col).getSym(base);
     }
 
     public Record getBase() {
         return base;
-    }
-
-    public Record of(Record base) {
-        this.base = base;
-        return this;
     }
 
     public void prepare(StorageFacade facade) {
@@ -156,7 +152,11 @@ class VirtualRecord extends AbstractRecord {
         }
     }
 
-    VirtualRecord copy() {
-        return new VirtualRecord(split, virtualColumns);
+    VirtualRecord copy(Record base) {
+        return new VirtualRecord(split, virtualColumns, base);
+    }
+
+    private VirtualColumn getVc(int col) {
+        return virtualColumns.getQuick(col - split);
     }
 }

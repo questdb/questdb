@@ -33,106 +33,106 @@ import java.io.OutputStream;
 public class NullableRecord extends AbstractRecord {
     private final Record record;
     private boolean _null = false;
+    private Record rec;
 
     public NullableRecord(Record record) {
-        this.record = record;
+        this.record = this.rec = record;
     }
 
     @Override
     public byte get(int col) {
-        return rec().get(col);
+        return rec.get(col);
     }
 
     @Override
     public void getBin(int col, OutputStream s) {
-        rec().getBin(col, s);
+        rec.getBin(col, s);
     }
 
     @Override
     public DirectInputStream getBin(int col) {
-        return rec().getBin(col);
+        return rec.getBin(col);
     }
 
     @Override
     public long getBinLen(int col) {
-        return rec().getBinLen(col);
+        return rec.getBinLen(col);
     }
 
     @Override
     public boolean getBool(int col) {
-        return rec().getBool(col);
+        return rec.getBool(col);
     }
 
     @Override
     public long getDate(int col) {
-        return rec().getDate(col);
+        return rec.getDate(col);
     }
 
     @Override
     public double getDouble(int col) {
-        return rec().getDouble(col);
+        return rec.getDouble(col);
     }
 
     @Override
     public float getFloat(int col) {
-        return rec().getFloat(col);
+        return rec.getFloat(col);
     }
 
     @Override
     public CharSequence getFlyweightStr(int col) {
-        return rec().getFlyweightStr(col);
+        return rec.getFlyweightStr(col);
     }
 
     @Override
     public CharSequence getFlyweightStrB(int col) {
-        return rec().getFlyweightStrB(col);
+        return rec.getFlyweightStrB(col);
     }
 
     @Override
     public int getInt(int col) {
-        return rec().getInt(col);
+        return rec.getInt(col);
     }
 
     @Override
     public long getLong(int col) {
-        return rec().getLong(col);
+        return rec.getLong(col);
     }
 
     @Override
     public long getRowId() {
-        return rec().getRowId();
+        return rec.getRowId();
     }
 
     @Override
     public short getShort(int col) {
-        return rec().getShort(col);
+        return rec.getShort(col);
     }
 
     @Override
     public CharSequence getStr(int col) {
-        return rec().getStr(col);
+        return rec.getStr(col);
     }
 
     @Override
     public void getStr(int col, CharSink sink) {
-        rec().getStr(col, sink);
+        rec.getStr(col, sink);
     }
 
     @Override
     public int getStrLen(int col) {
-        return rec().getStrLen(col);
+        return rec.getStrLen(col);
     }
 
     @Override
     public String getSym(int col) {
-        return rec().getSym(col);
+        return rec.getSym(col);
     }
 
     public void set_null(boolean _null) {
-        this._null = _null;
-    }
-
-    private Record rec() {
-        return _null ? NullRecord.INSTANCE : record;
+        if (this._null != _null) {
+            this.rec = _null ? NullRecord.INSTANCE : record;
+            this._null = _null;
+        }
     }
 }
