@@ -53,7 +53,6 @@ public class NullConstant extends AbstractVirtualColumn {
 
     @Override
     public void getStr(Record rec, CharSink sink) {
-        sink.put("null");
     }
 
     @Override

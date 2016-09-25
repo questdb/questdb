@@ -456,6 +456,79 @@ public class QueryCompiler {
         }
     }
 
+    private RecordSource analyseAndCompileOrderBy(QueryModel model, RecordSource recordSource) throws ParserException {
+        literalCollectorANames.clear();
+        literalCollectorAIndexes.clear();
+        literalCollector.withParent(model);
+        literalCollector.resetNullCount();
+
+        // create hash map keyed by column name for fast lookup access
+        CharSequenceObjHashMap<QueryColumn> columnHashMap = new CharSequenceObjHashMap<>();
+        ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn c = columns.getQuick(i);
+            columnHashMap.put(c.getAlias() == null ? c.getName() : c.getAlias(), c);
+        }
+
+        ObjList<ExprNode> orderBy = model.getOrderBy();
+
+        // determine where order by columns belong to
+        innerVirtualColumn.clear();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            QueryColumn col = columnHashMap.get(orderBy.getQuick(i).token);
+            if (col != null) {
+                traversalAlgo.traverse(col.getAst(), literalCollector.lhs());
+                if (col.getAst().type != ExprNode.LITERAL) {
+                    innerVirtualColumn.add(col);
+                }
+            } else {
+                traversalAlgo.traverse(orderBy.getQuick(i), literalCollector.lhs());
+            }
+        }
+
+        // we interested in columns that belong to journal 0 only
+        // abort if we find references to anywhere else
+        boolean canUseOrderByHere = true;
+        for (int i = 0, n = literalCollectorAIndexes.size(); i < n; i++) {
+            if (literalCollectorAIndexes.getQuick(i) != 0) {
+                canUseOrderByHere = false;
+                break;
+            }
+        }
+
+        // we may need to create virtual column record source
+        // if order by refers to an expression
+        if (canUseOrderByHere) {
+
+            RecordSource rs = recordSource;
+            if (innerVirtualColumn.size() > 0) {
+                ObjList<VirtualColumn> virtualColumns = new ObjList<>();
+                for (int i = 0, n = innerVirtualColumn.size(); i < n; i++) {
+                    QueryColumn qc = innerVirtualColumn.getQuick(i);
+                    VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, qc.getAst(), rs.getMetadata());
+                    vc.setName(qc.getAlias());
+                    virtualColumns.add(vc);
+                    // make query column a literal to prevent another virtual column being created
+                    // further down the pipeline
+                    ExprNode expr = qc.getAst();
+                    expr.type = ExprNode.LITERAL;
+                    expr.token = qc.getAlias();
+                    expr.args.clear();
+                    expr.lhs = null;
+                    expr.rhs = null;
+                    expr.position = qc.getAliasPosition();
+                    expr.paramCount = 0;
+                }
+                rs = new VirtualColumnRecordSource(rs, virtualColumns);
+            }
+
+            rs = order(rs, model);
+            model.getOrderBy().clear();
+            return rs;
+        }
+        return recordSource;
+    }
+
     private void analyseEquals(QueryModel parent, ExprNode node) throws ParserException {
         traverseNamesAndIndices(parent, node);
 
@@ -900,7 +973,12 @@ public class QueryCompiler {
 
             // check if this is the root of joins
             if (master == null) {
-                master = slave;
+                // This is an opportunistic check of order by clause
+                // to determine if we can get away ordering main record source only
+                // Ordering main record source could benefit from rowid access thus
+                // making it faster compared to ordering of join record source that
+                // doesn't allow rowid access.
+                master = analyseAndCompileOrderBy(model, slave);
             } else {
                 // not the root, join to "master"
                 switch (m.getJoinType()) {

@@ -946,21 +946,18 @@ public final class Numbers {
     }
 
     private static double parseConst(CharSequence sequence, int p, int lim, String target, double value) throws NumericException {
-
         validateConst(sequence, p, lim, target);
         return value;
     }
 
     private static void validateConst(CharSequence sequence, int p, int lim, String target) throws NumericException {
-        if (lim - p > target.length()) {
+        int len = target.length();
+
+        if (lim - p != len) {
             throw NumericException.INSTANCE;
         }
 
-        for (int i = 0; i < target.length(); i++) {
-            if (p + i >= lim) {
-                throw NumericException.INSTANCE;
-            }
-
+        for (int i = 0; i < len; i++) {
             if (sequence.charAt(p + i) != target.charAt(i)) {
                 throw NumericException.INSTANCE;
             }

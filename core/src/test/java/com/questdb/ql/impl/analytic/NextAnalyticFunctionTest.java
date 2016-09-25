@@ -341,15 +341,15 @@ public class NextAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "-19136\tAX\tKK\t2016-05-01T10:29:00.000Z\t-15331\tAX\tAX\t-4874\n" +
                 "-15331\tBZ\tAX\t2016-05-01T10:30:00.000Z\t-4874\tBZ\tBZ\t5869\n" +
                 "-4874\tXX\tKK\t2016-05-01T10:31:00.000Z\t25102\tAX\tAX\t21781\n" +
-                "25102\tKK\tAX\t2016-05-01T10:32:00.000Z\t-20409\tnull\tnull\t-26951\n" +
+                "25102\tKK\tAX\t2016-05-01T10:32:00.000Z\t-20409\t\t\t-26951\n" +
                 "-20409\tAX\tAX\t2016-05-01T10:33:00.000Z\t-29572\tAX\tAX\t25102\n" +
                 "-29572\tBZ\tBZ\t2016-05-01T10:34:00.000Z\t25974\tBZ\tBZ\t-18600\n" +
                 "25974\tXX\tAX\t2016-05-01T10:35:00.000Z\t5869\tKK\tKK\t-19136\n" +
                 "5869\tAX\tAX\t2016-05-01T10:36:00.000Z\t-22894\tAX\tAX\t-22894\n" +
-                "-22894\tXX\tKK\t2016-05-01T10:37:00.000Z\t-18600\tnull\tnull\t-15458\n" +
-                "-18600\tAX\tAX\t2016-05-01T10:38:00.000Z\t11755\tnull\tnull\t-19127\n" +
+                "-22894\tXX\tKK\t2016-05-01T10:37:00.000Z\t-18600\t\t\t-15458\n" +
+                "-18600\tAX\tAX\t2016-05-01T10:38:00.000Z\t11755\t\t\t-19127\n" +
                 "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-24455\tAX\tAX\t-22934\n" +
-                "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0\tnull\tnull\t-29572\n";
+                "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0\t\t\t-29572\n";
 
         assertThat(result,
                 "select sho, str, sym, timestamp, " +
@@ -582,10 +582,10 @@ public class NextAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
 
     @Test
     public void testStreamingAndTwoPass() throws Exception {
-        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tXX\tnull\n" +
-                "XX\tBZ\t2016-05-01T10:22:00.000Z\tKK\tnull\n" +
-                "KK\tXX\t2016-05-01T10:23:00.000Z\tAX\tnull\n" +
-                "AX\tXX\t2016-05-01T10:24:00.000Z\tXX\tnull\n" +
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tXX\t\n" +
+                "XX\tBZ\t2016-05-01T10:22:00.000Z\tKK\t\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\tAX\t\n" +
+                "AX\tXX\t2016-05-01T10:24:00.000Z\tXX\t\n" +
                 "AX\tXX\t2016-05-01T10:25:00.000Z\tBZ\tXX\n" +
                 "AX\tBZ\t2016-05-01T10:26:00.000Z\tKK\tXX\n" +
                 "BZ\tXX\t2016-05-01T10:27:00.000Z\tKK\tBZ\n" +
@@ -593,15 +593,15 @@ public class NextAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "AX\tKK\t2016-05-01T10:29:00.000Z\tAX\tBZ\n" +
                 "BZ\tAX\t2016-05-01T10:30:00.000Z\tBZ\tKK\n" +
                 "XX\tKK\t2016-05-01T10:31:00.000Z\tAX\tBZ\n" +
-                "KK\tAX\t2016-05-01T10:32:00.000Z\tnull\tXX\n" +
+                "KK\tAX\t2016-05-01T10:32:00.000Z\t\tXX\n" +
                 "AX\tAX\t2016-05-01T10:33:00.000Z\tAX\tKK\n" +
                 "BZ\tBZ\t2016-05-01T10:34:00.000Z\tBZ\tAX\n" +
                 "XX\tAX\t2016-05-01T10:35:00.000Z\tKK\tKK\n" +
                 "AX\tAX\t2016-05-01T10:36:00.000Z\tAX\tAX\n" +
-                "XX\tKK\t2016-05-01T10:37:00.000Z\tnull\tAX\n" +
-                "AX\tAX\t2016-05-01T10:38:00.000Z\tnull\tAX\n" +
+                "XX\tKK\t2016-05-01T10:37:00.000Z\t\tAX\n" +
+                "AX\tAX\t2016-05-01T10:38:00.000Z\t\tAX\n" +
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\tBZ\n" +
-                "BZ\tAX\t2016-05-01T10:40:00.000Z\tnull\tBZ\n";
+                "BZ\tAX\t2016-05-01T10:40:00.000Z\t\tBZ\n";
         assertThat(expected, "select str, sym, timestamp , next(sym) over (partition by str), prev(sym) over (partition by str) from abc");
     }
 
@@ -626,7 +626,7 @@ public class NextAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "XX\tKK\t2016-05-01T10:37:00.000Z\tAX\n" +
                 "AX\tAX\t2016-05-01T10:38:00.000Z\tBZ\n" +
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\n" +
-                "BZ\tAX\t2016-05-01T10:40:00.000Z\tnull\n";
+                "BZ\tAX\t2016-05-01T10:40:00.000Z\t\n";
         assertThat(expected, "select str, sym, timestamp , next(sym) over () from abc");
     }
 
@@ -643,15 +643,15 @@ public class NextAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "AX\tKK\t2016-05-01T10:29:00.000Z\tAX\n" +
                 "BZ\tAX\t2016-05-01T10:30:00.000Z\tBZ\n" +
                 "XX\tKK\t2016-05-01T10:31:00.000Z\tAX\n" +
-                "KK\tAX\t2016-05-01T10:32:00.000Z\tnull\n" +
+                "KK\tAX\t2016-05-01T10:32:00.000Z\t\n" +
                 "AX\tAX\t2016-05-01T10:33:00.000Z\tAX\n" +
                 "BZ\tBZ\t2016-05-01T10:34:00.000Z\tBZ\n" +
                 "XX\tAX\t2016-05-01T10:35:00.000Z\tKK\n" +
                 "AX\tAX\t2016-05-01T10:36:00.000Z\tAX\n" +
-                "XX\tKK\t2016-05-01T10:37:00.000Z\tnull\n" +
-                "AX\tAX\t2016-05-01T10:38:00.000Z\tnull\n" +
+                "XX\tKK\t2016-05-01T10:37:00.000Z\t\n" +
+                "AX\tAX\t2016-05-01T10:38:00.000Z\t\n" +
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tAX\n" +
-                "BZ\tAX\t2016-05-01T10:40:00.000Z\tnull\n";
+                "BZ\tAX\t2016-05-01T10:40:00.000Z\t\n";
         assertThat(expected, "select str, sym, timestamp , next(sym) over (partition by str) from abc");
     }
 
@@ -677,7 +677,7 @@ public class NextAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "-22894\tXX\tKK\t2016-05-01T10:37:00.000Z\t-18600\tAX\n" +
                 "-18600\tAX\tAX\t2016-05-01T10:38:00.000Z\t11755\tBZ\n" +
                 "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-24455\tAX\n" +
-                "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0\tnull\n";
+                "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0\t\n";
         assertThat(result, "select sho, str, sym, timestamp, next(sho) blah over (order by timestamp), next(sym) over () from '*!*abc'", true);
     }
 
@@ -694,15 +694,15 @@ public class NextAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "-19136\tAX\tKK\t2016-05-01T10:29:00.000Z\t-20409\tAX\n" +
                 "-15331\tBZ\tAX\t2016-05-01T10:30:00.000Z\t-29572\tBZ\n" +
                 "-4874\tXX\tKK\t2016-05-01T10:31:00.000Z\t25974\tAX\n" +
-                "25102\tKK\tAX\t2016-05-01T10:32:00.000Z\t0\tnull\n" +
+                "25102\tKK\tAX\t2016-05-01T10:32:00.000Z\t0\t\n" +
                 "-20409\tAX\tAX\t2016-05-01T10:33:00.000Z\t5869\tAX\n" +
                 "-29572\tBZ\tBZ\t2016-05-01T10:34:00.000Z\t11755\tBZ\n" +
                 "25974\tXX\tAX\t2016-05-01T10:35:00.000Z\t-22894\tKK\n" +
                 "5869\tAX\tAX\t2016-05-01T10:36:00.000Z\t-18600\tAX\n" +
-                "-22894\tXX\tKK\t2016-05-01T10:37:00.000Z\t0\tnull\n" +
-                "-18600\tAX\tAX\t2016-05-01T10:38:00.000Z\t0\tnull\n" +
+                "-22894\tXX\tKK\t2016-05-01T10:37:00.000Z\t0\t\n" +
+                "-18600\tAX\tAX\t2016-05-01T10:38:00.000Z\t0\t\n" +
                 "11755\tBZ\tBZ\t2016-05-01T10:39:00.000Z\t-24455\tAX\n" +
-                "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0\tnull\n";
+                "-24455\tBZ\tAX\t2016-05-01T10:40:00.000Z\t0\t\n";
         assertThat(result, "select sho, str, sym, timestamp, " +
                 "next(sho) blah over (partition by str order by timestamp), " +
                 "next(sym) over (partition by str order by timestamp) from abc");

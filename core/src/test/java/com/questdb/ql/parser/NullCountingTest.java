@@ -140,7 +140,7 @@ public class NullCountingTest extends AbstractOptimiserTest {
     @Test
     public void testStrConcat() throws Exception {
         assertThat("customerId\tcol0\n" +
-                        "437\txnull-\n",
+                        "437\tx-\n",
                 "select customerId, 'x'+productId+'-' from orders where customerId = 437 and productId = null", true);
     }
 

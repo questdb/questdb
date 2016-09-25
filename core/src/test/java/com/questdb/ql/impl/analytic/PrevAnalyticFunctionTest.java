@@ -307,7 +307,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     @Test
     public void testColumnNameGeneration() throws Exception {
         assertThat("str\tsym\ttimestamp\tcol0\n" +
-                        "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
+                        "BZ\tBZ\t2016-05-01T10:21:00.000Z\t\n" +
                         "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
                         "KK\tXX\t2016-05-01T10:23:00.000Z\tBZ\n" +
                         "AX\tXX\t2016-05-01T10:24:00.000Z\tXX\n" +
@@ -861,7 +861,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     @Test
     public void testMultipleNoPart() throws Exception {
         final String expected = "str\tsym\ttimestamp\tcol0\tcol1\n" +
-                "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\t\n" +
+                "BZ\tBZ\t2016-05-01T10:21:00.000Z\t\t\n" +
                 "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\tBZ\n" +
                 "KK\tXX\t2016-05-01T10:23:00.000Z\tBZ\tXX\n" +
                 "AX\tXX\t2016-05-01T10:24:00.000Z\tXX\tKK\n" +
@@ -957,7 +957,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
 
     @Test
     public void testPrevMixed() throws Exception {
-        final String expected = "8920866532787660373\tBZ\t2016-05-01T10:21:00.000Z\tnull\tAX\n" +
+        final String expected = "8920866532787660373\tBZ\t2016-05-01T10:21:00.000Z\t\tAX\n" +
                 "-6943924477733600060\tBZ\t2016-05-01T10:22:00.000Z\tBZ\tKK\n" +
                 "-6856503215590263904\tXX\t2016-05-01T10:23:00.000Z\tBZ\tBZ\n" +
                 "8416773233910814357\tXX\t2016-05-01T10:24:00.000Z\tXX\tBZ\n" +
@@ -971,7 +971,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "7122109662042058469\tAX\t2016-05-01T10:32:00.000Z\tKK\tAX\n" +
                 "-6626590012581323602\tAX\t2016-05-01T10:33:00.000Z\tAX\tXX\n" +
                 "8611582118025429627\tBZ\t2016-05-01T10:34:00.000Z\tAX\tXX\n" +
-                "-8082754367165748693\tAX\t2016-05-01T10:35:00.000Z\tBZ\tnull\n" +
+                "-8082754367165748693\tAX\t2016-05-01T10:35:00.000Z\tBZ\t\n" +
                 "6574958665733670985\tAX\t2016-05-01T10:36:00.000Z\tAX\tBZ\n" +
                 "3446015290144635451\tKK\t2016-05-01T10:37:00.000Z\tAX\tAX\n" +
                 "8889492928577876455\tAX\t2016-05-01T10:38:00.000Z\tKK\tBZ\n" +
@@ -983,10 +983,10 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
 
     @Test
     public void testPrevMixed2() throws Exception {
-        final String expected = "BZ\t8920866532787660373\tBZ\t2016-05-01T10:21:00.000Z\tnull\tAX\n" +
-                "XX\t-6943924477733600060\tBZ\t2016-05-01T10:22:00.000Z\tnull\tKK\n" +
-                "KK\t-6856503215590263904\tXX\t2016-05-01T10:23:00.000Z\tnull\tBZ\n" +
-                "AX\t8416773233910814357\tXX\t2016-05-01T10:24:00.000Z\tnull\tBZ\n" +
+        final String expected = "BZ\t8920866532787660373\tBZ\t2016-05-01T10:21:00.000Z\t\tAX\n" +
+                "XX\t-6943924477733600060\tBZ\t2016-05-01T10:22:00.000Z\t\tKK\n" +
+                "KK\t-6856503215590263904\tXX\t2016-05-01T10:23:00.000Z\t\tBZ\n" +
+                "AX\t8416773233910814357\tXX\t2016-05-01T10:24:00.000Z\t\tBZ\n" +
                 "AX\t7199909180655756830\tXX\t2016-05-01T10:25:00.000Z\tXX\tAX\n" +
                 "AX\t6270672455202306717\tBZ\t2016-05-01T10:26:00.000Z\tXX\tKK\n" +
                 "BZ\t-6253307669002054137\tXX\t2016-05-01T10:27:00.000Z\tBZ\tAX\n" +
@@ -997,7 +997,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "KK\t7122109662042058469\tAX\t2016-05-01T10:32:00.000Z\tXX\tAX\n" +
                 "AX\t-6626590012581323602\tAX\t2016-05-01T10:33:00.000Z\tKK\tXX\n" +
                 "BZ\t8611582118025429627\tBZ\t2016-05-01T10:34:00.000Z\tAX\tXX\n" +
-                "XX\t-8082754367165748693\tAX\t2016-05-01T10:35:00.000Z\tKK\tnull\n" +
+                "XX\t-8082754367165748693\tAX\t2016-05-01T10:35:00.000Z\tKK\t\n" +
                 "AX\t6574958665733670985\tAX\t2016-05-01T10:36:00.000Z\tAX\tBZ\n" +
                 "XX\t3446015290144635451\tKK\t2016-05-01T10:37:00.000Z\tAX\tAX\n" +
                 "AX\t8889492928577876455\tAX\t2016-05-01T10:38:00.000Z\tAX\tBZ\n" +
@@ -1009,10 +1009,10 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
 
     @Test
     public void testPrevNextMixed() throws Exception {
-        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\tXX\n" +
-                "XX\tBZ\t2016-05-01T10:22:00.000Z\tnull\tKK\n" +
-                "KK\tXX\t2016-05-01T10:23:00.000Z\tnull\tAX\n" +
-                "AX\tXX\t2016-05-01T10:24:00.000Z\tnull\tXX\n" +
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\t\tXX\n" +
+                "XX\tBZ\t2016-05-01T10:22:00.000Z\t\tKK\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\t\tAX\n" +
+                "AX\tXX\t2016-05-01T10:24:00.000Z\t\tXX\n" +
                 "AX\tXX\t2016-05-01T10:25:00.000Z\tXX\tBZ\n" +
                 "AX\tBZ\t2016-05-01T10:26:00.000Z\tXX\tKK\n" +
                 "BZ\tXX\t2016-05-01T10:27:00.000Z\tBZ\tKK\n" +
@@ -1020,15 +1020,15 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "AX\tKK\t2016-05-01T10:29:00.000Z\tBZ\tAX\n" +
                 "BZ\tAX\t2016-05-01T10:30:00.000Z\tKK\tBZ\n" +
                 "XX\tKK\t2016-05-01T10:31:00.000Z\tBZ\tAX\n" +
-                "KK\tAX\t2016-05-01T10:32:00.000Z\tXX\tnull\n" +
+                "KK\tAX\t2016-05-01T10:32:00.000Z\tXX\t\n" +
                 "AX\tAX\t2016-05-01T10:33:00.000Z\tKK\tAX\n" +
                 "BZ\tBZ\t2016-05-01T10:34:00.000Z\tAX\tBZ\n" +
                 "XX\tAX\t2016-05-01T10:35:00.000Z\tKK\tKK\n" +
                 "AX\tAX\t2016-05-01T10:36:00.000Z\tAX\tAX\n" +
-                "XX\tKK\t2016-05-01T10:37:00.000Z\tAX\tnull\n" +
-                "AX\tAX\t2016-05-01T10:38:00.000Z\tAX\tnull\n" +
+                "XX\tKK\t2016-05-01T10:37:00.000Z\tAX\t\n" +
+                "AX\tAX\t2016-05-01T10:38:00.000Z\tAX\t\n" +
                 "BZ\tBZ\t2016-05-01T10:39:00.000Z\tBZ\tAX\n" +
-                "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\tnull\n";
+                "BZ\tAX\t2016-05-01T10:40:00.000Z\tBZ\t\n";
         assertThat(expected, "select str, sym, timestamp , prev(sym) over(partition by str), next(sym) over (partition by str) from abc");
         assertThat(expected, "select str, sym, timestamp , prev(sym) over(partition by str), next(sym) over (partition by str) from '*!*abc'");
     }
@@ -1326,7 +1326,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
 
     @Test
     public void testSymNonPart() throws Exception {
-        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\t\n" +
                 "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
                 "KK\tXX\t2016-05-01T10:23:00.000Z\tBZ\n" +
                 "AX\tXX\t2016-05-01T10:24:00.000Z\tXX\n" +
@@ -1366,7 +1366,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
                 "7122109662042058469\tAX\t2016-05-01T10:32:00.000Z\tAX\n" +
                 "-6626590012581323602\tAX\t2016-05-01T10:33:00.000Z\tXX\n" +
                 "8611582118025429627\tBZ\t2016-05-01T10:34:00.000Z\tXX\n" +
-                "-8082754367165748693\tAX\t2016-05-01T10:35:00.000Z\tnull\n" +
+                "-8082754367165748693\tAX\t2016-05-01T10:35:00.000Z\t\n" +
                 "6574958665733670985\tAX\t2016-05-01T10:36:00.000Z\tBZ\n" +
                 "3446015290144635451\tKK\t2016-05-01T10:37:00.000Z\tAX\n" +
                 "8889492928577876455\tAX\t2016-05-01T10:38:00.000Z\tBZ\n" +
@@ -1378,10 +1378,10 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
 
     @Test
     public void testSymbol() throws Exception {
-        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
-                "XX\tBZ\t2016-05-01T10:22:00.000Z\tnull\n" +
-                "KK\tXX\t2016-05-01T10:23:00.000Z\tnull\n" +
-                "AX\tXX\t2016-05-01T10:24:00.000Z\tnull\n" +
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\t\n" +
+                "XX\tBZ\t2016-05-01T10:22:00.000Z\t\n" +
+                "KK\tXX\t2016-05-01T10:23:00.000Z\t\n" +
+                "AX\tXX\t2016-05-01T10:24:00.000Z\t\n" +
                 "AX\tXX\t2016-05-01T10:25:00.000Z\tXX\n" +
                 "AX\tBZ\t2016-05-01T10:26:00.000Z\tXX\n" +
                 "BZ\tXX\t2016-05-01T10:27:00.000Z\tBZ\n" +
@@ -1404,7 +1404,7 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
 
     @Test
     public void testSymbol2() throws Exception {
-        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\tnull\n" +
+        final String expected = "BZ\tBZ\t2016-05-01T10:21:00.000Z\t\n" +
                 "XX\tBZ\t2016-05-01T10:22:00.000Z\tBZ\n" +
                 "KK\tXX\t2016-05-01T10:23:00.000Z\tBZ\n" +
                 "AX\tXX\t2016-05-01T10:24:00.000Z\tXX\n" +
@@ -1439,10 +1439,10 @@ public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
     @Test
     public void testSymbolSubQuery() throws Exception {
         final String expectd = "str\tsym\tp\n" +
-                "BZ\tBZ\tnull\n" +
-                "XX\tBZ\tnull\n" +
-                "KK\tXX\tnull\n" +
-                "AX\tXX\tnull\n" +
+                "BZ\tBZ\t\n" +
+                "XX\tBZ\t\n" +
+                "KK\tXX\t\n" +
+                "AX\tXX\t\n" +
                 "AX\tXX\tXX\n" +
                 "AX\tBZ\tXX\n" +
                 "BZ\tXX\tBZ\n" +

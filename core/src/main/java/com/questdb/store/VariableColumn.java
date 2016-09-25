@@ -182,7 +182,6 @@ public class VariableColumn extends AbstractColumn {
         int len = Unsafe.getUnsafe().getInt(mappedFile.addressOf(offset, 4));
 
         if (len == NULL_LEN) {
-            sink.put("null");
             return;
         }
 
