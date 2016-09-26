@@ -27,44 +27,65 @@ import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.regex.Matcher;
 import com.questdb.regex.Pattern;
+import com.questdb.std.CharSink;
+import com.questdb.std.FlyweightCharSequence;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
 
-public class StrRegexOperator extends AbstractBinaryOperator {
+public class MatchStrFunction extends AbstractBinaryOperator {
 
     public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
         @Override
         public Function newInstance() {
-            return new StrRegexOperator();
+            return new MatchStrFunction();
         }
     };
-
+    private final FlyweightCharSequence csA = new FlyweightCharSequence();
+    private final FlyweightCharSequence csB = new FlyweightCharSequence();
     private Matcher matcher;
 
-    private StrRegexOperator() {
-        super(ColumnType.BOOLEAN);
-    }
-
-    public static void main(String[] args) {
-//        String x= "Hello (Java)";
-        String x = "Marjoe (1972)";
-        Matcher m = Pattern.compile("\\((.*?)\\)").matcher("");
-        m.reset(x);
-        if (m.find()) {
-            System.out.println(m.group(1));
-        }
+    private MatchStrFunction() {
+        super(ColumnType.STRING);
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        CharSequence cs = lhs.getFlyweightStr(rec);
-        return cs != null && matcher.reset(cs).find();
+    public CharSequence getFlyweightStr(Record rec) {
+        return getFlyweightStr0(rhs.getFlyweightStr(rec), csA);
+    }
+
+    @Override
+    public CharSequence getFlyweightStrB(Record rec) {
+        return getFlyweightStr0(rhs.getFlyweightStrB(rec), csB);
+    }
+
+    @Override
+    public CharSequence getStr(Record rec) {
+        return getFlyweightStr(rec).toString();
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+        sink.put(getFlyweightStr(rec));
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        return getFlyweightStr(rec).length();
+    }
+
+    public CharSequence getFlyweightStr0(CharSequence base, FlyweightCharSequence to) {
+        if (base != null && matcher.reset(base).find() && matcher.groupCount() > 0) {
+            int lo = matcher.firstStartQuick();
+            int hi = matcher.firstEndQuick();
+            return to.of(base, lo, hi - lo);
+        }
+        return null;
     }
 
     @Override
     public void prepare(StorageFacade facade) {
         super.prepare(facade);
-        matcher = Pattern.compile(rhs.getStr(null).toString()).matcher("");
+        matcher = Pattern.compile(lhs.getStr(null).toString()).matcher("");
     }
 }

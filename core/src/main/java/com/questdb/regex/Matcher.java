@@ -25,6 +25,8 @@
 package com.questdb.regex;
 
 
+import com.questdb.misc.Unsafe;
+
 import java.util.Arrays;
 import java.util.Objects;
 
@@ -323,7 +325,7 @@ public final class Matcher implements MatchResult {
                     throw new IllegalArgumentException(
                             "Illegal group reference: group index is missing");
                 nextChar = replacement.charAt(cursor);
-                int refNum = -1;
+                int refNum;
                 if (nextChar == '{') {
                     cursor++;
                     StringBuilder gsb = new StringBuilder();
@@ -625,6 +627,14 @@ public final class Matcher implements MatchResult {
             throw new IndexOutOfBoundsException("Illegal start index");
         reset();
         return search(start);
+    }
+
+    public int firstEndQuick() {
+        return Unsafe.arrayGet(groups, 3);
+    }
+
+    public int firstStartQuick() {
+        return Unsafe.arrayGet(groups, 2);
     }
 
     /**
@@ -983,9 +993,9 @@ public final class Matcher implements MatchResult {
     public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append("java.util.regex.Matcher");
-        sb.append("[pattern=" + pattern());
+        sb.append("[pattern=").append(pattern());
         sb.append(" region=");
-        sb.append(regionStart() + "," + regionEnd());
+        sb.append(regionStart()).append(',').append(regionEnd());
         sb.append(" lastmatch=");
         if ((first >= 0) && (group() != null)) {
             sb.append(group());

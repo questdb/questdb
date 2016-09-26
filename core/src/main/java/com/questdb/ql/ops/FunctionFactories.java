@@ -385,5 +385,8 @@ public final class FunctionFactories {
         unSigAgg("count", ColumnType.DATE, CountLongAggregator.FACTORY);
         unSigAgg("count", ColumnType.STRING, CountStrAggregator.FACTORY);
         unSigAgg("count", ColumnType.SYMBOL, CountSymAggregator.FACTORY);
+
+        factories.put(new Signature().setName("match").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, false), MatchStrFunction.FACTORY);
+        factories.put(new Signature().setName("match").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true), MatchStrFunction.FACTORY);
     }
 }

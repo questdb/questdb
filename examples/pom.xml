@@ -87,25 +87,11 @@
         </dependency>
 
         <dependency>
-            <groupId>com.lmax</groupId>
-            <artifactId>disruptor</artifactId>
-            <version>3.3.4</version>
-        </dependency>
-
-        <dependency>
             <groupId>com.intellij</groupId>
             <artifactId>annotations</artifactId>
             <version>12.0</version>
             <scope>provided</scope>
         </dependency>
-
-        <dependency>
-            <groupId>com.google.code.findbugs</groupId>
-            <artifactId>annotations</artifactId>
-            <version>3.0.1</version>
-            <scope>provided</scope>
-        </dependency>
-
 
         <dependency>
             <groupId>junit</groupId>
