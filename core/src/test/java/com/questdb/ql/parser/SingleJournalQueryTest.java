@@ -1617,6 +1617,30 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testMatch1() throws Exception {
+        createTabWithNaNs();
+        assertThat("BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n",
+                "select id, match('(?<=^.{3})(.)',id) from tab where z >= 250 and id ~ 'ULIGY'");
+    }
+
+    @Test
     public void testMinusInt() throws Exception {
         createTabWithNaNs2();
 
