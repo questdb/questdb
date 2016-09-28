@@ -28,20 +28,20 @@ import com.questdb.misc.Dates;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class Time24ToMillisFunction extends AbstractUnaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new Time24ToMillisFunction();
+        public Function newInstance(int position) {
+            return new Time24ToMillisFunction(position);
         }
     };
 
-    private Time24ToMillisFunction() {
-        super(ColumnType.LONG);
+    private Time24ToMillisFunction(int position) {
+        super(ColumnType.LONG, position);
     }
 
     @Override

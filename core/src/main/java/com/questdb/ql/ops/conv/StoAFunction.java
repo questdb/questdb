@@ -26,22 +26,22 @@ package com.questdb.ql.ops.conv;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.std.CharSink;
-import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
 
 public class StoAFunction extends AbstractUnaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new StoAFunction();
+        public Function newInstance(int position) {
+            return new StoAFunction(position);
         }
     };
 
-    private StoAFunction() {
-        super(ColumnType.STRING);
+    private StoAFunction(int position) {
+        super(ColumnType.STRING, position);
     }
 
     @Override

@@ -31,8 +31,8 @@ import com.questdb.store.ColumnType;
 public class BoolRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
 
-    public BoolRecordSourceColumn(int index) {
-        super(ColumnType.BOOLEAN);
+    public BoolRecordSourceColumn(int index, int position) {
+        super(ColumnType.BOOLEAN, position);
         this.index = index;
     }
 

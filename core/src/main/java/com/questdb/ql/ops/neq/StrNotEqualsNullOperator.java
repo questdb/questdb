@@ -26,21 +26,21 @@ package com.questdb.ql.ops.neq;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
 
 public class StrNotEqualsNullOperator extends AbstractBinaryOperator {
 
-    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new StrNotEqualsNullOperator();
+        public Function newInstance(int position) {
+            return new StrNotEqualsNullOperator(position);
         }
     };
 
-    private StrNotEqualsNullOperator() {
-        super(ColumnType.BOOLEAN);
+    private StrNotEqualsNullOperator(int position) {
+        super(ColumnType.BOOLEAN, position);
     }
 
     @Override

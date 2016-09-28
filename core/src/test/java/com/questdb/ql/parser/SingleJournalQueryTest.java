@@ -2255,6 +2255,16 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testRegexSyntaxError() throws Exception {
+        createTabWithNaNs2();
+        try {
+            expectFailure("select id, w from tab where id ~ 'SQS)'");
+        } catch (ParserException e) {
+            Assert.assertEquals(37, QueryError.getPosition());
+        }
+    }
+
+    @Test
     public void testScaledDoubleComparison() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").

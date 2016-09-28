@@ -31,8 +31,8 @@ import com.questdb.store.ColumnType;
 public class FloatRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
 
-    public FloatRecordSourceColumn(int index) {
-        super(ColumnType.FLOAT);
+    public FloatRecordSourceColumn(int index, int position) {
+        super(ColumnType.FLOAT, position);
         this.index = index;
     }
 

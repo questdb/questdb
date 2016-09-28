@@ -28,16 +28,15 @@ import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
-import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public class SymInOperator extends AbstractVirtualColumn implements Function {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new SymInOperator();
+        public Function newInstance(int position) {
+            return new SymInOperator(position);
         }
     };
 
@@ -45,8 +44,8 @@ public class SymInOperator extends AbstractVirtualColumn implements Function {
     private final CharSequenceHashSet values = new CharSequenceHashSet();
     private VirtualColumn lhs;
 
-    private SymInOperator() {
-        super(ColumnType.BOOLEAN);
+    private SymInOperator(int position) {
+        super(ColumnType.BOOLEAN, position);
     }
 
     @Override

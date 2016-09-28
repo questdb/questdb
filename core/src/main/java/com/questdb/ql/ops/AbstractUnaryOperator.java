@@ -30,8 +30,8 @@ import com.questdb.ql.parser.QueryError;
 public abstract class AbstractUnaryOperator extends AbstractVirtualColumn implements Function {
     protected VirtualColumn value;
 
-    protected AbstractUnaryOperator(int columnType) {
-        super(columnType);
+    protected AbstractUnaryOperator(int columnType, int position) {
+        super(columnType, position);
     }
 
     @Override

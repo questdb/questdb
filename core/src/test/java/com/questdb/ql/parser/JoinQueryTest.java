@@ -1493,6 +1493,28 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testSymRegex() throws Exception {
+        try {
+            expectFailure("select country, avg(quantity) from orders o " +
+                    "join customers c on c.customerId = o.customerId " +
+                    "join orderDetails d on o.orderId = d.orderId" +
+                    " where country ~ null");
+        } catch (ParserException e) {
+            Assert.assertEquals(153, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testSymRegexSyntaxError() throws Exception {
+        try {
+            expectFailure("select country, avg(quantity) from orders o join customers c on c.customerId = o.customerId join orderDetails d on o.orderId = d.orderId where country ~ '^Z)'");
+        } catch (ParserException e) {
+            Assert.assertEquals(156, QueryError.getPosition());
+            Assert.assertTrue(QueryError.getMessage().toString().contains("Regex syntax"));
+        }
+    }
+
+    @Test
     public void testThreeWayNoSelect() throws Exception {
         assertThat("customerId\tcustomerName\tcontactName\taddress\tcity\tpostalCode\tcountry\ttimestamp\torderId\tcustomerId\tproductId\temployeeId\torderDate\tshipper\tproductId\tproductName\tsupplier\tcategory\tprice\ttimestamp\n" +
                         "2\tQELQ\tWQGMZBPHETSLOIMSUFXYIWEODDBH\t\tVGXYHJUXBWYWRLHUHJECIDLRBIDSTDTFBY\tS\tDCQSCMONRC\t2015-07-10T00:00:00.002Z\t1575627983\t2\t1923\t\t2015-07-10T00:00:31.796Z\tFBLGGTZEN\t1923\tVXZESTU\tLFQNDNRHKUHE\tDDKZCNBOGWTL\t992.000000000000\t2015-07-10T00:00:14.123Z\n" +

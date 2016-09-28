@@ -62,10 +62,10 @@ public class VirtualColumnTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance();
+        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(0);
         plus.setName("plus");
-        plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid")));
-        plus.setRhs(new DoubleConstant(12.5));
+        plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid"), 0));
+        plus.setRhs(new DoubleConstant(12.5, 0));
 
         // select ccy, bid, bid+12.5 plus from xyz
         try (VirtualColumnRecordSource src = new VirtualColumnRecordSource(compile("xyz"), new ObjList<VirtualColumn>() {{
@@ -199,10 +199,10 @@ public class VirtualColumnTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance();
+        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(0);
         plus.setName("plus");
-        plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid")));
-        plus.setRhs(new DoubleConstant(12.5));
+        plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid"), 0));
+        plus.setRhs(new DoubleConstant(12.5, 0));
 
         // select ccy, bid+12.5 plus from xyz
         try (RecordSource src = new SelectedColumnsRecordSource(

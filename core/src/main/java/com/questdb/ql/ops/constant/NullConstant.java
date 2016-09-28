@@ -32,8 +32,8 @@ import com.questdb.store.VariableColumn;
 
 public class NullConstant extends AbstractVirtualColumn {
 
-    public NullConstant() {
-        super(ColumnType.STRING);
+    public NullConstant(int position) {
+        super(ColumnType.STRING, position);
     }
 
     @Override

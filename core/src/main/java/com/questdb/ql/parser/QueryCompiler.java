@@ -71,7 +71,7 @@ public class QueryCompiler {
     private static final CharSequenceObjHashMap<Parameter> EMPTY_PARAMS = new CharSequenceObjHashMap<>();
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static ObjObjHashMap<Signature, LatestByLambdaRowSourceFactory> LAMBDA_ROW_SOURCE_FACTORIES = new ObjObjHashMap<>();
-    private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L);
+    private final static LongConstant LONG_ZERO_CONST = new LongConstant(0L, 0);
     private final static IntHashSet joinBarriers;
     private static final int ORDER_BY_UNKNOWN = 0;
     private static final int ORDER_BY_REQUIRED = 1;
@@ -955,61 +955,61 @@ public class QueryCompiler {
         IntList ordered = model.getOrderedJoinModels();
         RecordSource master = null;
 
-        boolean needColumnNameHistogram = model.getColumns().size() > 0;
-
-        model.getColumnNameHistogram().clear();
-
-        for (int i = 0, n = ordered.size(); i < n; i++) {
-            int index = ordered.getQuick(i);
-            QueryModel m = joinModels.getQuick(index);
-
-            // compile
-            RecordSource slave = m.getRecordSource();
-
-            if (slave == null) {
-                // subquery would have been compiled already
-                slave = compileJournal(m, factory);
-                if (m.getAlias() != null) {
-                    slave.getMetadata().setAlias(m.getAlias().token);
-                }
-            }
-
-            if (needColumnNameHistogram) {
-                model.createColumnNameHistogram(slave);
-            }
-
-            // check if this is the root of joins
-            if (master == null) {
-                // This is an opportunistic check of order by clause
-                // to determine if we can get away ordering main record source only
-                // Ordering main record source could benefit from rowid access thus
-                // making it faster compared to ordering of join record source that
-                // doesn't allow rowid access.
-                master = analyseAndCompileOrderBy(model, slave);
-            } else {
-                // not the root, join to "master"
-                switch (m.getJoinType()) {
-                    case QueryModel.JOIN_CROSS:
-                        // there are fields to analyse
-                        master = new CrossJoinRecordSource(master, slave);
-                        break;
-                    case QueryModel.JOIN_ASOF:
-                        master = createAsOfJoin(model.getTimestamp(), m, master, slave);
-                        break;
-                    default:
-                        master = createHashJoin(m, master, slave);
-                        break;
-                }
-            }
-
-            // check if there are post-filters
-            ExprNode filter = m.getPostJoinWhereClause();
-            if (filter != null) {
-                master = new FilteredRecordSource(master, virtualColumnBuilder.createVirtualColumn(model, filter, master.getMetadata()), filter);
-            }
-        }
-
         try {
+            boolean needColumnNameHistogram = model.getColumns().size() > 0;
+
+            model.getColumnNameHistogram().clear();
+
+            for (int i = 0, n = ordered.size(); i < n; i++) {
+                int index = ordered.getQuick(i);
+                QueryModel m = joinModels.getQuick(index);
+
+                // compile
+                RecordSource slave = m.getRecordSource();
+
+                if (slave == null) {
+                    // subquery would have been compiled already
+                    slave = compileJournal(m, factory);
+                    if (m.getAlias() != null) {
+                        slave.getMetadata().setAlias(m.getAlias().token);
+                    }
+                }
+
+                if (needColumnNameHistogram) {
+                    model.createColumnNameHistogram(slave);
+                }
+
+                // check if this is the root of joins
+                if (master == null) {
+                    // This is an opportunistic check of order by clause
+                    // to determine if we can get away ordering main record source only
+                    // Ordering main record source could benefit from rowid access thus
+                    // making it faster compared to ordering of join record source that
+                    // doesn't allow rowid access.
+                    master = analyseAndCompileOrderBy(model, slave);
+                } else {
+                    // not the root, join to "master"
+                    switch (m.getJoinType()) {
+                        case QueryModel.JOIN_CROSS:
+                            // there are fields to analyse
+                            master = new CrossJoinRecordSource(master, slave);
+                            break;
+                        case QueryModel.JOIN_ASOF:
+                            master = createAsOfJoin(model.getTimestamp(), m, master, slave);
+                            break;
+                        default:
+                            master = createHashJoin(m, master, slave);
+                            break;
+                    }
+                }
+
+                // check if there are post-filters
+                ExprNode filter = m.getPostJoinWhereClause();
+                if (filter != null) {
+                    master = new FilteredRecordSource(master, virtualColumnBuilder.createVirtualColumn(model, filter, master.getMetadata()), filter);
+                }
+            }
+
             if (joinModelIsFalse(model)) {
                 return new NoOpJournalRecordSource(master);
             }
@@ -1699,7 +1699,7 @@ public class QueryCompiler {
                 break;
             case ExprNode.CONSTANT:
                 try {
-                    return new LongConstant(Numbers.parseLong(node.token));
+                    return new LongConstant(Numbers.parseLong(node.token), node.position);
                 } catch (NumericException e) {
                     throw QueryError.$(node.position, "Long number expected");
                 }

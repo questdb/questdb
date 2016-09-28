@@ -26,20 +26,20 @@ package com.questdb.ql.ops.minus;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class MinusLongOperator extends AbstractBinaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new MinusLongOperator();
+        public Function newInstance(int position) {
+            return new MinusLongOperator(position);
         }
     };
 
-    private MinusLongOperator() {
-        super(ColumnType.LONG);
+    private MinusLongOperator(int position) {
+        super(ColumnType.LONG, position);
     }
 
     @Override

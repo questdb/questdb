@@ -31,8 +31,8 @@ import com.questdb.store.ColumnType;
 public class IntConstant extends AbstractVirtualColumn {
     private final int value;
 
-    public IntConstant(int value) {
-        super(ColumnType.INT);
+    public IntConstant(int value, int position) {
+        super(ColumnType.INT, position);
         this.value = value;
     }
 

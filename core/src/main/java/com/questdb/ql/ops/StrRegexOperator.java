@@ -23,37 +23,28 @@
 
 package com.questdb.ql.ops;
 
+import com.questdb.ex.ParserException;
 import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
+import com.questdb.ql.parser.QueryError;
 import com.questdb.regex.Matcher;
 import com.questdb.regex.Pattern;
-import com.questdb.std.ObjectFactory;
+import com.questdb.regex.PatternSyntaxException;
 import com.questdb.store.ColumnType;
 
 
 public class StrRegexOperator extends AbstractBinaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new StrRegexOperator();
+        public Function newInstance(int position) {
+            return new StrRegexOperator(position);
         }
     };
 
     private Matcher matcher;
 
-    private StrRegexOperator() {
-        super(ColumnType.BOOLEAN);
-    }
-
-    public static void main(String[] args) {
-//        String x= "Hello (Java)";
-        String x = "Marjoe (1972)";
-        Matcher m = Pattern.compile("\\((.*?)\\)").matcher("");
-        m.reset(x);
-        if (m.find()) {
-            System.out.println(m.group(1));
-        }
+    private StrRegexOperator(int position) {
+        super(ColumnType.BOOLEAN, position);
     }
 
     @Override
@@ -63,8 +54,17 @@ public class StrRegexOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public void prepare(StorageFacade facade) {
-        super.prepare(facade);
-        matcher = Pattern.compile(rhs.getStr(null).toString()).matcher("");
+    public void setRhs(VirtualColumn rhs) throws ParserException {
+        super.setRhs(rhs);
+        CharSequence pattern = rhs.getStr(null);
+        if (pattern == null) {
+            throw QueryError.$(rhs.getPosition(), "null regex?");
+        }
+
+        try {
+            matcher = Pattern.compile(pattern.toString()).matcher("");
+        } catch (PatternSyntaxException e) {
+            throw QueryError.position(rhs.getPosition() + e.getIndex() + 2 /* zero based index + quote symbol*/).$("Regex syntax error. ").$(e.getDescription()).$();
+        }
     }
 }

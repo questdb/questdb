@@ -23,28 +23,30 @@
 
 package com.questdb.ql.ops;
 
+import com.questdb.ex.ParserException;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
+import com.questdb.ql.parser.QueryError;
 import com.questdb.regex.Matcher;
 import com.questdb.regex.Pattern;
+import com.questdb.regex.PatternSyntaxException;
 import com.questdb.std.IntHashSet;
-import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public class SymRegexOperator extends AbstractBinaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new SymRegexOperator();
+        public Function newInstance(int position) {
+            return new SymRegexOperator(position);
         }
     };
-
     private final IntHashSet set = new IntHashSet();
+    private Matcher matcher;
 
-    private SymRegexOperator() {
-        super(ColumnType.BOOLEAN);
+    private SymRegexOperator(int position) {
+        super(ColumnType.BOOLEAN, position);
     }
 
     @Override
@@ -55,13 +57,27 @@ public class SymRegexOperator extends AbstractBinaryOperator {
     @Override
     public void prepare(StorageFacade facade) {
         super.prepare(facade);
-        final Matcher matcher = Pattern.compile(rhs.getStr(null).toString()).matcher("");
         set.clear();
         SymbolTable tab = lhs.getSymbolTable();
         for (int i = 0, n = tab.size(); i < n; i++) {
             if (matcher.reset(tab.value(i)).find()) {
                 set.add(i);
             }
+        }
+    }
+
+    @Override
+    public void setRhs(VirtualColumn rhs) throws ParserException {
+        super.setRhs(rhs);
+        CharSequence pattern = rhs.getStr(null);
+        if (pattern == null) {
+            throw QueryError.$(rhs.getPosition(), "null regex?");
+        }
+
+        try {
+            matcher = Pattern.compile(pattern.toString()).matcher("");
+        } catch (PatternSyntaxException e) {
+            throw QueryError.position(rhs.getPosition() + e.getIndex() + 2).$("Regex syntax error. ").$(e.getDescription()).$();
         }
     }
 }

@@ -39,14 +39,14 @@ public class Parameter extends AbstractVirtualColumn {
     private double doubleValue;
     private String stringValue;
 
-    private Parameter() {
-        super(ColumnType.PARAMETER);
+    private Parameter(int position) {
+        super(ColumnType.PARAMETER, position);
     }
 
     public static VirtualColumn getOrCreate(ExprNode node, CharSequenceObjHashMap<Parameter> parameterMap) {
         Parameter p = parameterMap.get(node.token);
         if (p == null) {
-            parameterMap.put(node.token, p = new Parameter());
+            parameterMap.put(node.token, p = new Parameter(node.position));
             p.setName(node.token);
         }
         return p;

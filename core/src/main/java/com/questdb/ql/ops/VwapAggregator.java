@@ -31,15 +31,14 @@ import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.impl.map.MapRecordValueInterceptor;
 import com.questdb.std.ObjList;
-import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
 public final class VwapAggregator extends AbstractBinaryOperator implements AggregatorFunction, MapRecordValueInterceptor {
 
-    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new VwapAggregator();
+        public Function newInstance(int position) {
+            return new VwapAggregator(position);
         }
     };
 
@@ -49,8 +48,8 @@ public final class VwapAggregator extends AbstractBinaryOperator implements Aggr
     private int sumQtyIdx;
     private int vwap;
 
-    private VwapAggregator() {
-        super(ColumnType.DOUBLE);
+    private VwapAggregator(int position) {
+        super(ColumnType.DOUBLE, position);
     }
 
     @Override

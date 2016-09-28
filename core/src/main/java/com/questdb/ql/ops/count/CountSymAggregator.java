@@ -27,21 +27,21 @@ import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public final class CountSymAggregator extends AbstractUnaryAggregator {
 
-    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new CountSymAggregator();
+        public Function newInstance(int position) {
+            return new CountSymAggregator(position);
         }
     };
 
-    private CountSymAggregator() {
-        super(ColumnType.LONG);
+    private CountSymAggregator(int position) {
+        super(ColumnType.LONG, position);
     }
 
     @Override

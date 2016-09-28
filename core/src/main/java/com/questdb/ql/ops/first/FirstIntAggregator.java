@@ -27,20 +27,20 @@ import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public final class FirstIntAggregator extends AbstractUnaryAggregator {
 
-    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new FirstIntAggregator();
+        public Function newInstance(int position) {
+            return new FirstIntAggregator(position);
         }
     };
 
-    private FirstIntAggregator() {
-        super(ColumnType.INT);
+    private FirstIntAggregator(int position) {
+        super(ColumnType.INT, position);
     }
 
     @Override

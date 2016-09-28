@@ -34,8 +34,8 @@ import java.io.OutputStream;
 public class BinaryRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
 
-    public BinaryRecordSourceColumn(int index) {
-        super(ColumnType.DOUBLE);
+    public BinaryRecordSourceColumn(int index, int position) {
+        super(ColumnType.DOUBLE, position);
         this.index = index;
     }
 

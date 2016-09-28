@@ -27,20 +27,20 @@ import com.questdb.misc.Chars;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class StrEqualsOperator extends AbstractBinaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new StrEqualsOperator();
+        public Function newInstance(int position) {
+            return new StrEqualsOperator(position);
         }
     };
 
-    private StrEqualsOperator() {
-        super(ColumnType.BOOLEAN);
+    private StrEqualsOperator(int position) {
+        super(ColumnType.BOOLEAN, position);
     }
 
     @Override

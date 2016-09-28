@@ -27,19 +27,19 @@ import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public final class MinLongAggregator extends AbstractUnaryAggregator {
-    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new MinLongAggregator();
+        public Function newInstance(int position) {
+            return new MinLongAggregator(position);
         }
     };
 
-    private MinLongAggregator() {
-        super(ColumnType.LONG);
+    private MinLongAggregator(int position) {
+        super(ColumnType.LONG, position);
     }
 
     @Override

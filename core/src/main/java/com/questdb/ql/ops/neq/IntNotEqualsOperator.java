@@ -26,20 +26,20 @@ package com.questdb.ql.ops.neq;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class IntNotEqualsOperator extends AbstractBinaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new IntNotEqualsOperator();
+        public Function newInstance(int position) {
+            return new IntNotEqualsOperator(position);
         }
     };
 
-    private IntNotEqualsOperator() {
-        super(ColumnType.BOOLEAN);
+    private IntNotEqualsOperator(int position) {
+        super(ColumnType.BOOLEAN, position);
     }
 
     @Override

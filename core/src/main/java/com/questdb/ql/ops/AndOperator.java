@@ -25,20 +25,19 @@ package com.questdb.ql.ops;
 
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.constant.BooleanConstant;
-import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
 public class AndOperator extends AbstractBinaryOperator {
 
-    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new AndOperator();
+        public Function newInstance(int position) {
+            return new AndOperator(position);
         }
     };
 
-    private AndOperator() {
-        super(ColumnType.BOOLEAN);
+    private AndOperator(int position) {
+        super(ColumnType.BOOLEAN, position);
     }
 
     @Override
@@ -49,7 +48,7 @@ public class AndOperator extends AbstractBinaryOperator {
     @Override
     public boolean isConstant() {
         if (rhs.isConstant() && !rhs.getBool(null)) {
-            lhs = new BooleanConstant(false);
+            lhs = new BooleanConstant(false, rhs.getPosition());
             return true;
         }
         return (lhs.isConstant() && !lhs.getBool(null)) || (lhs.isConstant() && rhs.isConstant());

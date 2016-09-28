@@ -26,20 +26,20 @@ package com.questdb.ql.ops.neg;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class IntNegativeOperator extends AbstractUnaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new IntNegativeOperator();
+        public Function newInstance(int position) {
+            return new IntNegativeOperator(position);
         }
     };
 
-    private IntNegativeOperator() {
-        super(ColumnType.INT);
+    private IntNegativeOperator(int position) {
+        super(ColumnType.INT, position);
     }
 
     @Override

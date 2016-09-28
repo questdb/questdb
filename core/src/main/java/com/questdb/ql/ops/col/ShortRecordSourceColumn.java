@@ -31,8 +31,8 @@ import com.questdb.store.ColumnType;
 public class ShortRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
 
-    public ShortRecordSourceColumn(int index) {
-        super(ColumnType.SHORT);
+    public ShortRecordSourceColumn(int index, int position) {
+        super(ColumnType.SHORT, position);
         this.index = index;
     }
 

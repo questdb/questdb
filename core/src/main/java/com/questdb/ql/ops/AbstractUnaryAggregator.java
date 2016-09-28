@@ -31,8 +31,8 @@ public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator impl
 
     protected int valueIndex;
 
-    protected AbstractUnaryAggregator(int type) {
-        super(type);
+    protected AbstractUnaryAggregator(int type, int position) {
+        super(type, position);
     }
 
     @Override

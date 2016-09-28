@@ -57,6 +57,8 @@ public interface VirtualColumn extends RecordColumnMetadata {
 
     long getLong(Record rec);
 
+    int getPosition();
+
     short getShort(Record rec);
 
     CharSequence getStr(Record rec);

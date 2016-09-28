@@ -29,24 +29,23 @@ import com.questdb.regex.Matcher;
 import com.questdb.regex.Pattern;
 import com.questdb.std.CharSink;
 import com.questdb.std.FlyweightCharSequence;
-import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
 
 public class MatchStrFunction extends AbstractBinaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new MatchStrFunction();
+        public Function newInstance(int position) {
+            return new MatchStrFunction(position);
         }
     };
     private final FlyweightCharSequence csA = new FlyweightCharSequence();
     private final FlyweightCharSequence csB = new FlyweightCharSequence();
     private Matcher matcher;
 
-    private MatchStrFunction() {
-        super(ColumnType.STRING);
+    private MatchStrFunction(int position) {
+        super(ColumnType.STRING, position);
     }
 
     @Override

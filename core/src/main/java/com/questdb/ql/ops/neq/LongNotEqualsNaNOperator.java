@@ -27,20 +27,20 @@ import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class LongNotEqualsNaNOperator extends AbstractBinaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new LongNotEqualsNaNOperator();
+        public Function newInstance(int position) {
+            return new LongNotEqualsNaNOperator(position);
         }
     };
 
-    private LongNotEqualsNaNOperator() {
-        super(ColumnType.BOOLEAN);
+    private LongNotEqualsNaNOperator(int position) {
+        super(ColumnType.BOOLEAN, position);
     }
 
     @Override

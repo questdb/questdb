@@ -34,8 +34,8 @@ import com.questdb.store.VariableColumn;
 public class StrConstant extends AbstractVirtualColumn {
     private final String value;
 
-    public StrConstant(CharSequence value) {
-        super(ColumnType.STRING);
+    public StrConstant(CharSequence value, int position) {
+        super(ColumnType.STRING, position);
         this.value = Chars.toString(value);
     }
 

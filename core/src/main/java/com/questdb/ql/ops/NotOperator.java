@@ -24,20 +24,19 @@
 package com.questdb.ql.ops;
 
 import com.questdb.ql.Record;
-import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
 public class NotOperator extends AbstractUnaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new NotOperator();
+        public Function newInstance(int position) {
+            return new NotOperator(position);
         }
     };
 
-    private NotOperator() {
-        super(ColumnType.BOOLEAN);
+    private NotOperator(int position) {
+        super(ColumnType.BOOLEAN, position);
     }
 
     @Override

@@ -31,23 +31,23 @@ import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.std.ObjList;
-import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
 public final class CountAggregator extends AbstractVirtualColumn implements AggregatorFunction, Function {
 
-    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new CountAggregator();
+        public Function newInstance(int position) {
+            return new CountAggregator(position);
         }
     };
 
     private int index;
 
-    private CountAggregator() {
-        super(ColumnType.LONG);
+    private CountAggregator(int position) {
+        super(ColumnType.LONG, position);
     }
 
     @Override

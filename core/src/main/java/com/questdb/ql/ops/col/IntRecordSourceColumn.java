@@ -31,8 +31,8 @@ import com.questdb.store.ColumnType;
 public class IntRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
 
-    public IntRecordSourceColumn(int index) {
-        super(ColumnType.INT);
+    public IntRecordSourceColumn(int index, int position) {
+        super(ColumnType.INT, position);
         this.index = index;
     }
 

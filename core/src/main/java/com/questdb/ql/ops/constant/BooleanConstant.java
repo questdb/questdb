@@ -31,8 +31,8 @@ import com.questdb.store.ColumnType;
 public class BooleanConstant extends AbstractVirtualColumn {
     private final boolean value;
 
-    public BooleanConstant(boolean value) {
-        super(ColumnType.BOOLEAN);
+    public BooleanConstant(boolean value, int position) {
+        super(ColumnType.BOOLEAN, position);
         this.value = value;
     }
 

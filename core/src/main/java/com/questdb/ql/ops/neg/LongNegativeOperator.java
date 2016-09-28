@@ -29,22 +29,22 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class LongNegativeOperator extends AbstractVirtualColumn implements Function {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new LongNegativeOperator();
+        public Function newInstance(int position) {
+            return new LongNegativeOperator(position);
         }
     };
 
     private VirtualColumn value;
 
-    private LongNegativeOperator() {
-        super(ColumnType.LONG);
+    private LongNegativeOperator(int position) {
+        super(ColumnType.LONG, position);
     }
 
     @Override

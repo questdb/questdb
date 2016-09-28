@@ -21,33 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.sum;
+package com.questdb.ql.ops;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.ops.AbstractUnaryAggregator;
-import com.questdb.ql.ops.Function;
-import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.store.ColumnType;
-
-public final class SumIntAggregator extends AbstractUnaryAggregator {
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position) {
-            return new SumIntAggregator(position);
-        }
-    };
-
-    private SumIntAggregator(int position) {
-        super(ColumnType.INT, position);
-    }
-
-    @Override
-    public void calculate(Record rec, DirectMapValues values) {
-        if (values.isNew()) {
-            values.putInt(valueIndex, value.getInt(rec));
-        } else {
-            values.putInt(valueIndex, values.getInt(valueIndex) + value.getInt(rec));
-        }
-    }
+public interface VirtualColumnFactory<T extends VirtualColumn> {
+    T newInstance(int position);
 }

@@ -24,20 +24,19 @@
 package com.questdb.ql.ops;
 
 import com.questdb.ql.Record;
-import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
 public class RoundFunction extends AbstractUnaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new RoundFunction();
+        public Function newInstance(int position) {
+            return new RoundFunction(position);
         }
     };
 
-    private RoundFunction() {
-        super(ColumnType.LONG);
+    private RoundFunction(int position) {
+        super(ColumnType.LONG, position);
     }
 
     @Override

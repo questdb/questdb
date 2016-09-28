@@ -31,8 +31,8 @@ import com.questdb.store.ColumnType;
 public class ByteRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
 
-    public ByteRecordSourceColumn(int index) {
-        super(ColumnType.BYTE);
+    public ByteRecordSourceColumn(int index, int position) {
+        super(ColumnType.BYTE, position);
         this.index = index;
     }
 

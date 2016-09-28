@@ -35,8 +35,8 @@ public class SymRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
     private SymbolTable symbolTable;
 
-    public SymRecordSourceColumn(int index) {
-        super(ColumnType.SYMBOL);
+    public SymRecordSourceColumn(int index, int position) {
+        super(ColumnType.SYMBOL, position);
         this.index = index;
     }
 

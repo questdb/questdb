@@ -26,20 +26,20 @@ package com.questdb.ql.ops.mult;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class MultDoubleOperator extends AbstractBinaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new MultDoubleOperator();
+        public Function newInstance(int position) {
+            return new MultDoubleOperator(position);
         }
     };
 
-    private MultDoubleOperator() {
-        super(ColumnType.DOUBLE);
+    private MultDoubleOperator(int position) {
+        super(ColumnType.DOUBLE, position);
     }
 
     @Override

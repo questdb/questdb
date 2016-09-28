@@ -31,8 +31,8 @@ public abstract class AbstractBinaryOperator extends AbstractVirtualColumn imple
     protected VirtualColumn lhs;
     protected VirtualColumn rhs;
 
-    protected AbstractBinaryOperator(int type) {
-        super(type);
+    protected AbstractBinaryOperator(int type, int position) {
+        super(type, position);
     }
 
     @Override
@@ -64,7 +64,7 @@ public abstract class AbstractBinaryOperator extends AbstractVirtualColumn imple
         this.lhs = lhs;
     }
 
-    public void setRhs(VirtualColumn rhs) {
+    public void setRhs(VirtualColumn rhs) throws ParserException {
         this.rhs = rhs;
     }
 }

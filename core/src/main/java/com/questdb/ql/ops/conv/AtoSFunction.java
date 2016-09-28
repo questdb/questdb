@@ -26,21 +26,21 @@ package com.questdb.ql.ops.conv;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 import com.questdb.store.MMappedSymbolTable;
 
 public class AtoSFunction extends AbstractUnaryOperator {
 
-    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new AtoSFunction();
+        public Function newInstance(int position) {
+            return new AtoSFunction(position);
         }
     };
 
-    private AtoSFunction() {
-        super(ColumnType.SYMBOL);
+    private AtoSFunction(int position) {
+        super(ColumnType.SYMBOL, position);
     }
 
     @Override

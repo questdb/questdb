@@ -29,23 +29,23 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements Function {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new DoubleScaledEqualsOperator();
+        public Function newInstance(int position) {
+            return new DoubleScaledEqualsOperator(position);
         }
     };
     private VirtualColumn lhs;
     private VirtualColumn rhs;
     private VirtualColumn scale;
 
-    private DoubleScaledEqualsOperator() {
-        super(ColumnType.BOOLEAN);
+    private DoubleScaledEqualsOperator(int position) {
+        super(ColumnType.BOOLEAN, position);
     }
 
     @Override

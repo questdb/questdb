@@ -26,20 +26,20 @@ package com.questdb.ql.ops.lte;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class DoubleLessOrEqualOperator extends AbstractBinaryOperator {
 
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new DoubleLessOrEqualOperator();
+        public Function newInstance(int position) {
+            return new DoubleLessOrEqualOperator(position);
         }
     };
 
-    private DoubleLessOrEqualOperator() {
-        super(ColumnType.BOOLEAN);
+    private DoubleLessOrEqualOperator(int position) {
+        super(ColumnType.BOOLEAN, position);
     }
 
     @Override

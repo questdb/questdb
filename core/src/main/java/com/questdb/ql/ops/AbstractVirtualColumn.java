@@ -32,10 +32,12 @@ import java.io.OutputStream;
 
 public abstract class AbstractVirtualColumn implements VirtualColumn {
     private final int columnType;
+    private final int position;
     private String name;
 
-    protected AbstractVirtualColumn(int columnType) {
+    protected AbstractVirtualColumn(int columnType, int position) {
         this.columnType = columnType;
+        this.position = position;
     }
 
     @Override
@@ -96,6 +98,11 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     @Override
     public long getLong(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getPosition() {
+        return position;
     }
 
     @Override

@@ -26,25 +26,25 @@ package com.questdb.ql.ops.plus;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.std.CharSink;
-import com.questdb.std.ObjectFactory;
 import com.questdb.std.SplitCharSequence;
 import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
 
 public class StrConcatOperator extends AbstractBinaryOperator {
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new StrConcatOperator();
+        public Function newInstance(int position) {
+            return new StrConcatOperator(position);
         }
     };
 
     private final SplitCharSequence csA = new SplitCharSequence();
     private final SplitCharSequence csB = new SplitCharSequence();
 
-    private StrConcatOperator() {
-        super(ColumnType.STRING);
+    private StrConcatOperator(int position) {
+        super(ColumnType.STRING, position);
     }
 
     @Override

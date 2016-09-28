@@ -26,20 +26,20 @@ package com.questdb.ql.ops.plus;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.std.ObjectFactory;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class AddIntOperator extends AbstractBinaryOperator {
 
-    public static final ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new AddIntOperator();
+        public Function newInstance(int position) {
+            return new AddIntOperator(position);
         }
     };
 
-    private AddIntOperator() {
-        super(ColumnType.INT);
+    private AddIntOperator(int position) {
+        super(ColumnType.INT, position);
     }
 
     @Override

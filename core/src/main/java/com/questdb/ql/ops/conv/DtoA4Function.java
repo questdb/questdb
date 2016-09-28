@@ -28,22 +28,22 @@ import com.questdb.misc.Dates;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.std.CharSink;
-import com.questdb.std.ObjectFactory;
 import com.questdb.store.ColumnType;
 
 public class DtoA4Function extends AbstractUnaryOperator {
-    public final static ObjectFactory<Function> FACTORY = new ObjectFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance() {
-            return new DtoA4Function();
+        public Function newInstance(int position) {
+            return new DtoA4Function(position);
         }
     };
     private final StringSink sinkA = new StringSink();
     private final StringSink sinkB = new StringSink();
 
-    private DtoA4Function() {
-        super(ColumnType.STRING);
+    private DtoA4Function(int position) {
+        super(ColumnType.STRING, position);
     }
 
     @Override

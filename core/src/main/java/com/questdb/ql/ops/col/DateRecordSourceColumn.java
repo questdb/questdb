@@ -31,8 +31,8 @@ import com.questdb.store.ColumnType;
 public class DateRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
 
-    public DateRecordSourceColumn(int index) {
-        super(ColumnType.DATE);
+    public DateRecordSourceColumn(int index, int position) {
+        super(ColumnType.DATE, position);
         this.index = index;
     }
 

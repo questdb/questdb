@@ -31,8 +31,8 @@ import com.questdb.store.ColumnType;
 public class DoubleConstant extends AbstractVirtualColumn {
     private final double value;
 
-    public DoubleConstant(double value) {
-        super(ColumnType.DOUBLE);
+    public DoubleConstant(double value, int position) {
+        super(ColumnType.DOUBLE, position);
         this.value = value;
     }
 
