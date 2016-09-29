@@ -58,7 +58,7 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        rowSource.reset();
+        rowSource.toTop();
         cursor = null;
         this.partitionCursor = partitionSource.prepareCursor(factory);
         this.rowSource.prepare(factory, partitionCursor.getStorageFacade(), cancellationHandler);
@@ -71,8 +71,19 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record newRecord() {
+        return new JournalRecord();
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return partitionCursor.getStorageFacade();
+    }
+
+    @Override
+    public void toTop() {
+        cursor = null;
+        partitionCursor.toTop();
     }
 
     @Override
@@ -84,11 +95,6 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
     public JournalRecord next() {
         record.rowid = cursor.next();
         return record;
-    }
-
-    @Override
-    public Record newRecord() {
-        return new JournalRecord();
     }
 
     @Override

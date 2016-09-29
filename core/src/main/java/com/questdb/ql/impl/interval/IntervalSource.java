@@ -29,5 +29,5 @@ import com.questdb.std.Sinkable;
 import java.util.Iterator;
 
 public interface IntervalSource extends Iterator<Interval>, Iterable<Interval>, Sinkable {
-    void reset();
+    void toTop();
 }

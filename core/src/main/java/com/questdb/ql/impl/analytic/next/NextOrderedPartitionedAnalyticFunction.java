@@ -59,6 +59,10 @@ public class NextOrderedPartitionedAnalyticFunction extends AbstractOrderedAnaly
     }
 
     @Override
+    public void toTop() {
+    }
+
+    @Override
     public void close() throws IOException {
         if (closed) {
             return;

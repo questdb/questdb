@@ -83,7 +83,7 @@ public class KvIndexIntLookupRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void reset() {
+    public void toTop() {
         indexCursor = null;
         hasNext = false;
     }

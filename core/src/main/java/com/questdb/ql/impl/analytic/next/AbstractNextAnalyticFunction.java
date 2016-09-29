@@ -166,4 +166,9 @@ public abstract class AbstractNextAnalyticFunction implements AnalyticFunction, 
     public void reset() {
         pages.clear();
     }
+
+    @Override
+    public void toTop() {
+        this.offset = 0;
+    }
 }

@@ -78,11 +78,7 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this.cursor = delegate.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(cursor.getStorageFacade());
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            AnalyticFunction f = functions.getQuick(i);
-            f.reset();
-            f.prepare(cursor);
-        }
+        prepareFunctions();
         return this;
     }
 
@@ -92,8 +88,21 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record newRecord() {
+        return new AnalyticRecord(split, functions);
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
+    }
+
+    @Override
+    public void toTop() {
+        this.cursor.toTop();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).toTop();
+        }
     }
 
     @Override
@@ -114,17 +123,20 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public Record newRecord() {
-        return new AnalyticRecord(split, functions);
-    }
-
-    @Override
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("AnalyticRecordSource").put(',');
         sink.putQuoted("functions").put(':').put(functions.size()).put(',');
         sink.putQuoted("src").put(':').put(delegate);
         sink.put('}');
+    }
+
+    private void prepareFunctions() {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            AnalyticFunction f = functions.getQuick(i);
+            f.reset();
+            f.prepare(cursor);
+        }
     }
 
 }

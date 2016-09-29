@@ -202,8 +202,21 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
     }
 
     @Override
+    public Record newRecord() {
+        return new AnalyticRecord(split, functions);
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
+    }
+
+    @Override
+    public void toTop() {
+        this.recordList.toTop();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).toTop();
+        }
     }
 
     @Override
@@ -222,11 +235,6 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
     @Override
     public Record next() {
         return record;
-    }
-
-    @Override
-    public Record newRecord() {
-        return new AnalyticRecord(split, functions);
     }
 
     @Override

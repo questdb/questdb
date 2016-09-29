@@ -46,6 +46,11 @@ public class PrevOrderedAnalyticFunction extends AbstractOrderedAnalyticFunction
     }
 
     @Override
+    public void toTop() {
+        prevRow = -1;
+    }
+
+    @Override
     public void reset() {
         super.reset();
         prevRow = -1;

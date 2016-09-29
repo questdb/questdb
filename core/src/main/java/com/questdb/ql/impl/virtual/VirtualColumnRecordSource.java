@@ -40,7 +40,7 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     private final VirtualRecord record;
     private final SplitRecordStorageFacade storageFacade;
     private final VirtualColumnStorageFacade virtualColumnStorageFacade;
-    private RecordCursor recordCursor;
+    private RecordCursor cursor;
 
     public VirtualColumnRecordSource(RecordSource delegate, ObjList<VirtualColumn> virtualColumns) {
         this.delegate = delegate;
@@ -63,8 +63,8 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        this.recordCursor = delegate.prepareCursor(factory, cancellationHandler);
-        storageFacade.prepare(recordCursor.getStorageFacade(), this.virtualColumnStorageFacade);
+        this.cursor = delegate.prepareCursor(factory, cancellationHandler);
+        storageFacade.prepare(cursor.getStorageFacade(), this.virtualColumnStorageFacade);
         record.prepare(storageFacade);
         return this;
     }
@@ -75,35 +75,40 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return storageFacade;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return recordCursor.hasNext();
-    }
-
-    @Override
-    public Record next() {
-        recordCursor.next();
-        return record;
-    }
-
-    @Override
     public Record newRecord() {
         return record.copy(delegate.newRecord());
     }
 
     @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
+    }
+
+    @Override
+    public void toTop() {
+        this.cursor.toTop();
+    }
+
+    @Override
+    public boolean hasNext() {
+        return cursor.hasNext();
+    }
+
+    @Override
+    public Record next() {
+        cursor.next();
+        return record;
+    }
+
+    @Override
     public Record recordAt(long rowId) {
-        recordCursor.recordAt(rowId);
+        cursor.recordAt(rowId);
         return record;
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        recordCursor.recordAt(((VirtualRecord) record).getBase(), atRowId);
+        cursor.recordAt(((VirtualRecord) record).getBase(), atRowId);
     }
 
     @Override

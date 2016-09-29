@@ -39,6 +39,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     private final SplitRecord record;
     private final SplitRecordStorageFacade storageFacade;
     private final NullableRecord nullableRecord;
+    private final int split;
     private JournalReaderFactory factory;
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
@@ -48,7 +49,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
         this.metadata = new SplitRecordMetadata(masterSource.getMetadata(), slaveSource.getMetadata());
-        int split = masterSource.getMetadata().getColumnCount();
+        this.split = masterSource.getMetadata().getColumnCount();
         this.nullableRecord = new NullableRecord(slaveSource.getRecord());
         this.record = new SplitRecord(split, slaveSource.getMetadata().getColumnCount(), masterSource.getRecord(), nullableRecord);
         this.storageFacade = new SplitRecordStorageFacade(split);
@@ -81,8 +82,8 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return storageFacade;
+    public Record newRecord() {
+        return new SplitRecord(split, slaveSource.getMetadata().getColumnCount(), masterSource.getRecord(), nullableRecord);
     }
 
     @Override
@@ -114,5 +115,17 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
         sink.putQuoted("master").put(':').put(masterSource).put(',');
         sink.putQuoted("slave").put(':').put(slaveSource);
         sink.put('}');
+    }
+
+    @Override
+    public void toTop() {
+        nextSlave = false;
+        masterCursor.toTop();
+        slaveCursor.toTop();
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
     }
 }

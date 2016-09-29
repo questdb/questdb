@@ -57,12 +57,6 @@ public class MillisIntervalSource extends AbstractImmutableIterator<Interval> im
     }
 
     @Override
-    public void reset() {
-        pos = 0;
-        next.update(start.getLo(), start.getHi());
-    }
-
-    @Override
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("MillisIntervalSource").put(',');
@@ -70,5 +64,11 @@ public class MillisIntervalSource extends AbstractImmutableIterator<Interval> im
         sink.putQuoted("period").put(':').put(period).put(',');
         sink.putQuoted("count").put(':').put(count);
         sink.put('}');
+    }
+
+    @Override
+    public void toTop() {
+        pos = 0;
+        next.update(start.getLo(), start.getHi());
     }
 }

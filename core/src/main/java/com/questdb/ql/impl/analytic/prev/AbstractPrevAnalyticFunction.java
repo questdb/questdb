@@ -149,6 +149,11 @@ public abstract class AbstractPrevAnalyticFunction implements AnalyticFunction, 
     }
 
     @Override
+    public void toTop() {
+        this.nextNull = true;
+    }
+
+    @Override
     public void close() throws IOException {
         if (closed) {
             return;

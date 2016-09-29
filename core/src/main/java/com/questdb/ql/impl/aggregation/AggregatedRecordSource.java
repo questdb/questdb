@@ -46,7 +46,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     private final DirectMapStorageFacade storageFacade;
     private final DirectMapRecord record;
     private final ObjList<MapRecordValueInterceptor> interceptors;
-    private RecordCursor recordCursor;
+    private RecordCursor cursor;
     private Iterator<DirectMapEntry> mapCursor;
 
     public AggregatedRecordSource(
@@ -105,8 +105,8 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         map.clear();
-        this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
-        this.storageFacade.prepare(this.recordCursor);
+        this.cursor = recordSource.prepareCursor(factory, cancellationHandler);
+        this.storageFacade.prepare(this.cursor);
         buildMap(cancellationHandler);
         return this;
     }
@@ -117,8 +117,18 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     }
 
     @Override
+    public Record newRecord() {
+        return new DirectMapRecord(storageFacade);
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
+    }
+
+    @Override
+    public void toTop() {
+        mapCursor = map.iterator();
     }
 
     @Override
@@ -133,11 +143,6 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
             notifyInterceptors(entry);
         }
         return record.of(entry);
-    }
-
-    @Override
-    public Record newRecord() {
-        return new DirectMapRecord(storageFacade);
     }
 
     @Override
@@ -170,11 +175,11 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
     private void buildMap(CancellationHandler cancellationHandler) {
 
-        while (recordCursor.hasNext()) {
+        while (cursor.hasNext()) {
 
             cancellationHandler.check();
 
-            Record rec = recordCursor.next();
+            Record rec = cursor.next();
 
             // we are inside of time window, compute aggregates
             DirectMap.KeyWriter keyWriter = map.keyWriter();

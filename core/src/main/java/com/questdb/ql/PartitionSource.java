@@ -28,6 +28,7 @@ import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.std.Sinkable;
 
 public interface PartitionSource extends Sinkable {
+
     JournalMetadata getMetadata();
 
     PartitionCursor prepareCursor(JournalReaderFactory readerFactory);

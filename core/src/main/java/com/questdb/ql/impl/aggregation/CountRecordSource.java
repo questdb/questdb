@@ -71,8 +71,18 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record newRecord() {
+        return new CountRecord();
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return null;
+    }
+
+    @Override
+    public void toTop() {
+        done = false;
     }
 
     @SuppressWarnings("ConstantConditions")

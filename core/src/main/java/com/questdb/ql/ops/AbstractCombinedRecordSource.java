@@ -36,11 +36,6 @@ public abstract class AbstractCombinedRecordSource extends AbstractRecordSource 
     }
 
     @Override
-    public Record newRecord() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public Record recordAt(long rowId) {
         throw new UnsupportedOperationException();
     }

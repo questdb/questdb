@@ -112,7 +112,7 @@ public class KvIndexSymListHeadRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void reset() {
+    public void toTop() {
     }
 
     @Override

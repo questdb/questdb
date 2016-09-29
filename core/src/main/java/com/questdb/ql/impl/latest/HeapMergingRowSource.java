@@ -70,10 +70,10 @@ public class HeapMergingRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void reset() {
-        heap.clear();
+    public void toTop() {
+//        heap.clear();
         for (RowSource src : sources) {
-            src.reset();
+            src.toTop();
         }
     }
 

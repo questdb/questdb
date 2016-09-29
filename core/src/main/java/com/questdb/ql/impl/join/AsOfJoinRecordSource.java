@@ -132,8 +132,21 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
+    public Record newRecord() {
+        return new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), nullableRecord);
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
+    }
+
+    @Override
+    public void toTop() {
+        this.recordHolder.clear();
+        this.delayedHolder.clear();
+        this.masterCursor.toTop();
+        this.slaveCursor.toTop();
     }
 
     @Override

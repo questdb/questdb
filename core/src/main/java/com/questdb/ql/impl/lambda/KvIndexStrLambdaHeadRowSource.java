@@ -112,7 +112,7 @@ abstract class KvIndexStrLambdaHeadRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void reset() {
+    public void toTop() {
     }
 
     @Override

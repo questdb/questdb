@@ -85,6 +85,11 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     }
 
     @Override
+    public void toTop() {
+        this.partitionIndex = 0;
+    }
+
+    @Override
     public boolean hasNext() {
         return partitionIndex < partitionCount;
     }

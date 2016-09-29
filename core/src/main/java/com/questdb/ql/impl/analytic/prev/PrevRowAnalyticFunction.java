@@ -159,6 +159,11 @@ public class PrevRowAnalyticFunction implements AnalyticFunction {
         this.prevRowId = this.currentRowId = -1;
     }
 
+    @Override
+    public void toTop() {
+        reset();
+    }
+
     private Record getParentRecord() {
         parent.recordAt(record, prevRowId);
         return record;

@@ -49,15 +49,15 @@ public class SingleIntervalSource extends AbstractImmutableIterator<Interval> im
     }
 
     @Override
-    public void reset() {
-        next = interval;
-    }
-
-    @Override
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("SingleIntervalSource").put(',');
         sink.putQuoted("interval").put(':').put(interval);
         sink.put('}');
+    }
+
+    @Override
+    public void toTop() {
+        next = interval;
     }
 }

@@ -113,8 +113,20 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
+    public Record newRecord() {
+        return new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), slave.getRecord());
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
+    }
+
+    @Override
+    public void toTop() {
+        this.slaveCursor.toTop();
+        this.masterCursor.toTop();
+        this.hashTableCursor = null;
     }
 
     @Override
@@ -129,11 +141,6 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     @Override
     public SplitRecord next() {
         return record;
-    }
-
-    @Override
-    public Record newRecord() {
-        return new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), slave.getRecord());
     }
 
     @Override

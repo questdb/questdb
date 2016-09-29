@@ -60,8 +60,8 @@ public class FilteredRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void reset() {
-        delegate.reset();
+    public void toTop() {
+        delegate.toTop();
     }
 
     @Override

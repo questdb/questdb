@@ -40,4 +40,9 @@ public class DenseRankAnalyticFunction extends AbstractRankAnalyticFunction {
     public void reset() {
         rank = -1;
     }
+
+    @Override
+    public void toTop() {
+        reset();
+    }
 }

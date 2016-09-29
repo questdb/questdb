@@ -130,8 +130,8 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return storageFacade;
+    public Record newRecord() {
+        return new DirectMapRecord(this.storageFacade);
     }
 
     @Override
@@ -151,17 +151,24 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public Record newRecord() {
-        return new DirectMapRecord(this.storageFacade);
-    }
-
-    @Override
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("ResampledRecordSource").put(',');
         sink.putQuoted("src").put(':').put(recordSource).put(',');
         sink.putQuoted("sampler").put(':').put(sampler);
         sink.put('}');
+    }
+
+    @Override
+    public void toTop() {
+        nextRecord = null;
+        mapCursor = null;
+        this.recordCursor.toTop();
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
     }
 
     private boolean buildMap() {

@@ -68,4 +68,9 @@ public abstract class AbstractRankOrderedAnalyticFunction extends AbstractRankAn
         map.clear();
         rank = -1;
     }
+
+    @Override
+    public void toTop() {
+        rank = -1;
+    }
 }

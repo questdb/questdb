@@ -66,4 +66,10 @@ public class NextPartitionedAnalyticFunction extends AbstractNextAnalyticFunctio
         super.reset();
         map.clear();
     }
+
+    @Override
+    public void toTop() {
+        super.toTop();
+        map.clear();
+    }
 }

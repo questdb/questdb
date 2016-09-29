@@ -61,7 +61,7 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        intervalSource.reset();
+        intervalSource.toTop();
         needInterval = true;
         needRecord = true;
         this.cursor = delegate.prepareCursor(factory, cancellationHandler);
@@ -74,8 +74,21 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record newRecord() {
+        return delegate.newRecord();
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return cursor.getStorageFacade();
+    }
+
+    @Override
+    public void toTop() {
+        needInterval = true;
+        needRecord = true;
+        intervalSource.toTop();
+        this.cursor.toTop();
     }
 
     @Override
@@ -122,11 +135,6 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
     @Override
     public Record next() {
         return record;
-    }
-
-    @Override
-    public Record newRecord() {
-        return delegate.newRecord();
     }
 
     @Override

@@ -66,4 +66,9 @@ public class DenseRankPartitionedAnalyticFunction extends AbstractRankAnalyticFu
     public void reset() {
         map.clear();
     }
+
+    @Override
+    public void toTop() {
+        reset();
+    }
 }

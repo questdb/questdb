@@ -179,7 +179,7 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
         }
 
         recordList.toTop();
-        setCursorAndPrepareFunctions(recordList);
+        setCursorAndPrepareFunctions();
         return this;
     }
 
@@ -189,8 +189,21 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record newRecord() {
+        return new AnalyticRecord(split, functions);
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
+    }
+
+    @Override
+    public void toTop() {
+        this.cursor.toTop();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).toTop();
+        }
     }
 
     @Override
@@ -211,11 +224,6 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public Record newRecord() {
-        return new AnalyticRecord(split, functions);
-    }
-
-    @Override
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("CachedAnalyticRecordSource").put(',');
@@ -225,7 +233,7 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
         sink.put('}');
     }
 
-    private void setCursorAndPrepareFunctions(RecordList recordList) {
+    private void setCursorAndPrepareFunctions() {
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).prepare(recordList);
         }

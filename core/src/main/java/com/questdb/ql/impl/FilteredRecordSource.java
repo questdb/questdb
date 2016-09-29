@@ -74,8 +74,8 @@ public class FilteredRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return cursor.getStorageFacade();
+    public Record newRecord() {
+        return delegate.newRecord();
     }
 
     @Override
@@ -92,11 +92,6 @@ public class FilteredRecordSource extends AbstractCombinedRecordSource {
     @Override
     public Record next() {
         return record;
-    }
-
-    @Override
-    public Record newRecord() {
-        return delegate.newRecord();
     }
 
     @Override
@@ -121,5 +116,15 @@ public class FilteredRecordSource extends AbstractCombinedRecordSource {
         sink.putQuoted("src").put(':').put(delegate).put(',');
         sink.putQuoted("filter").put(':').put('"').put(filterNode).put('"');
         sink.put('}');
+    }
+
+    @Override
+    public void toTop() {
+        this.cursor.toTop();
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return cursor.getStorageFacade();
     }
 }

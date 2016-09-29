@@ -29,6 +29,7 @@ import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Files;
 import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
+import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import org.junit.Assert;
@@ -67,15 +68,25 @@ public abstract class AbstractTest {
     }
 
     protected void assertThat(String expected, String query, boolean header) throws ParserException, IOException {
-        sink.clear();
         long memUsed = Unsafe.getMemUsed();
         try (RecordSource src = compiler.compile(factory, query)) {
-            printer.print(src, factory, header);
+            RecordCursor cursor = src.prepareCursor(factory);
+
+            sink.clear();
+            printer.print(cursor, header, src.getMetadata());
             TestUtils.assertEquals(expected, sink);
+
+            cursor.toTop();
+
+            sink.clear();
+            printer.print(cursor, header, src.getMetadata());
+            TestUtils.assertEquals(expected, sink);
+
             TestUtils.assertStrings(src, factory);
         }
         Assert.assertEquals(memUsed, Unsafe.getMemUsed());
     }
+
 
     protected void assertThat(String expected, String query) throws ParserException, IOException {
         assertThat(expected, query, false);

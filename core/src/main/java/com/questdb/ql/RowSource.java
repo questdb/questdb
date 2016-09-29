@@ -35,5 +35,5 @@ public interface RowSource extends Sinkable {
 
     RowCursor prepareCursor(PartitionSlice slice);
 
-    void reset();
+    void toTop();
 }

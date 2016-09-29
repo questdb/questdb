@@ -135,6 +135,12 @@ public class PrevStrRowPartitionedAnalyticFunction extends AbstractPrevAnalyticF
     }
 
     @Override
+    public void toTop() {
+        super.toTop();
+        map.clear();
+    }
+
+    @Override
     public void close() throws IOException {
         if (closed) {
             return;

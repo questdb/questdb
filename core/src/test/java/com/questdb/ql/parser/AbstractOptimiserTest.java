@@ -153,9 +153,18 @@ public abstract class AbstractOptimiserTest {
     }
 
     protected void assertThat(String expected, RecordSource rs, boolean header) throws IOException {
+        RecordCursor cursor = rs.prepareCursor(factory);
+
         sink.clear();
-        printer.print(rs, factory, header);
+        printer.print(cursor, header, rs.getMetadata());
         TestUtils.assertEquals(expected, sink);
+
+        cursor.toTop();
+
+        sink.clear();
+        printer.print(cursor, header, rs.getMetadata());
+        TestUtils.assertEquals(expected, sink);
+
         TestUtils.assertStrings(rs, factory);
     }
 

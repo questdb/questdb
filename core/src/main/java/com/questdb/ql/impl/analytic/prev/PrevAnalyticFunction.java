@@ -89,6 +89,12 @@ public class PrevAnalyticFunction extends AbstractPrevAnalyticFunction implement
     }
 
     @Override
+    public void toTop() {
+        super.toTop();
+        firstPass = true;
+    }
+
+    @Override
     public void close() throws IOException {
         if (closed) {
             return;

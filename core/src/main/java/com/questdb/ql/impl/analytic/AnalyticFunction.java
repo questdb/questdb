@@ -75,4 +75,6 @@ public interface AnalyticFunction {
     void prepareFor(Record record);
 
     void reset();
+
+    void toTop();
 }

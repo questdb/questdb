@@ -38,7 +38,7 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
     private final VirtualColumn hi;
     private long _top;
     private long _count;
-    private RecordCursor recordCursor;
+    private RecordCursor cursor;
 
     public TopRecordSource(RecordSource delegate, VirtualColumn lo, VirtualColumn hi) {
         this.delegate = delegate;
@@ -60,7 +60,7 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         this._top = lo.getLong(null);
         this._count = hi.getLong(null) - this._top;
-        this.recordCursor = delegate.prepareCursor(factory, cancellationHandler);
+        this.cursor = delegate.prepareCursor(factory, cancellationHandler);
         return this;
     }
 
@@ -70,8 +70,20 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public Record newRecord() {
+        return delegate.newRecord();
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
-        return recordCursor.getStorageFacade();
+        return cursor.getStorageFacade();
+    }
+
+    @Override
+    public void toTop() {
+        this._top = lo.getLong(null);
+        this._count = hi.getLong(null) - this._top;
+        this.cursor.toTop();
     }
 
     @Override
@@ -79,29 +91,24 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
         if (_top > 0) {
             return scrollToStart();
         } else {
-            return _count > 0 && recordCursor.hasNext();
+            return _count > 0 && cursor.hasNext();
         }
     }
 
     @Override
     public Record next() {
         _count--;
-        return recordCursor.next();
-    }
-
-    @Override
-    public Record newRecord() {
-        return delegate.newRecord();
+        return cursor.next();
     }
 
     @Override
     public Record recordAt(long rowId) {
-        return recordCursor.recordAt(rowId);
+        return cursor.recordAt(rowId);
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        recordCursor.recordAt(record, atRowId);
+        cursor.recordAt(record, atRowId);
     }
 
     @Override
@@ -121,11 +128,11 @@ public class TopRecordSource extends AbstractCombinedRecordSource {
     private boolean scrollToStart() {
         if (_count > 0) {
             long top = this._top;
-            while (top > 0 && recordCursor.hasNext()) {
-                recordCursor.next();
+            while (top > 0 && cursor.hasNext()) {
+                cursor.next();
                 top--;
             }
-            return (_top = top) == 0 && recordCursor.hasNext();
+            return (_top = top) == 0 && cursor.hasNext();
         }
         return false;
     }

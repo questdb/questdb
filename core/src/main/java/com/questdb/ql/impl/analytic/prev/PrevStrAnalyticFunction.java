@@ -213,6 +213,11 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     }
 
     @Override
+    public void toTop() {
+        reset();
+    }
+
+    @Override
     public void close() throws IOException {
         if (closed) {
             return;

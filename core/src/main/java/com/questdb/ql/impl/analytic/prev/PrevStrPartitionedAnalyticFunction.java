@@ -188,6 +188,12 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
     }
 
     @Override
+    public void toTop() {
+        freeMapEntrie();
+        map.clear();
+    }
+
+    @Override
     public void close() throws IOException {
         if (closed) {
             return;

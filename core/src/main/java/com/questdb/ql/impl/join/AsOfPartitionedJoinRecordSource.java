@@ -135,8 +135,21 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
     }
 
     @Override
+    public Record newRecord() {
+        return new SplitRecord(master.getMetadata().getColumnCount(), map.getMetadata().getColumnCount(), master.getRecord(), nullableRecord);
+    }
+
+    @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
+    }
+
+    @Override
+    public void toTop() {
+        this.map.reset();
+        this.holder.clear();
+        this.masterCursor.toTop();
+        this.slaveCursor.toTop();
     }
 
     @Override

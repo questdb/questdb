@@ -63,9 +63,9 @@ public class MergingRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void reset() {
-        this.lhs.reset();
-        this.rhs.reset();
+    public void toTop() {
+        this.lhs.toTop();
+        this.rhs.toTop();
         this.nxtl = -1;
         this.nxtr = -1;
     }

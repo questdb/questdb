@@ -38,7 +38,7 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     private final RecordMetadata metadata;
     private final SelectedColumnsRecord record;
     private final SelectedColumnsStorageFacade storageFacade;
-    private RecordCursor recordCursor;
+    private RecordCursor cursor;
 
     public SelectedColumnsRecordSource(RecordSource delegate, @Transient ObjList<CharSequence> names, @Transient CharSequenceHashSet aliases) {
         this.delegate = delegate;
@@ -68,8 +68,8 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        this.recordCursor = delegate.prepareCursor(factory, cancellationHandler);
-        this.storageFacade.of(recordCursor.getStorageFacade());
+        this.cursor = delegate.prepareCursor(factory, cancellationHandler);
+        this.storageFacade.of(cursor.getStorageFacade());
         return this;
     }
 
@@ -79,33 +79,28 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return storageFacade;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return recordCursor.hasNext();
-    }
-
-    @Override
-    public Record next() {
-        return record.of(recordCursor.next());
-    }
-
-    @Override
     public Record newRecord() {
         return record.copy().of(delegate.newRecord());
     }
 
     @Override
+    public boolean hasNext() {
+        return cursor.hasNext();
+    }
+
+    @Override
+    public Record next() {
+        return record.of(cursor.next());
+    }
+
+    @Override
     public Record recordAt(long rowId) {
-        return record.of(recordCursor.recordAt(rowId));
+        return record.of(cursor.recordAt(rowId));
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        recordCursor.recordAt(((SelectedColumnsRecord) record).getBase(), atRowId);
+        cursor.recordAt(((SelectedColumnsRecord) record).getBase(), atRowId);
     }
 
     @Override
@@ -119,5 +114,15 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
         sink.putQuoted("op").put(':').putQuoted("SelectedColumnsRecordSource").put(',');
         sink.putQuoted("src").put(':').put(delegate);
         sink.put('}');
+    }
+
+    @Override
+    public void toTop() {
+        this.cursor.toTop();
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
     }
 }

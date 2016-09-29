@@ -55,7 +55,7 @@ public class AllRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void reset() {
+    public void toTop() {
 
     }
 
