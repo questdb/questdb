@@ -275,6 +275,8 @@ public final class FunctionFactories {
         binSig("+", AddDoubleOperator.FACTORY, AddLongOperator.FACTORY, AddIntOperator.FACTORY, StrConcatOperator.FACTORY);
         binSig("+", ColumnType.DATE, ColumnType.LONG, AddDateOperator.FACTORY);
         binSig("+", ColumnType.LONG, ColumnType.DATE, AddDateOperator.FACTORY);
+        binSig("+", ColumnType.DATE, ColumnType.INT, AddDateDayLOperator.FACTORY);
+        binSig("+", ColumnType.INT, ColumnType.DATE, AddDateDayROperator.FACTORY);
 
         binSig("*", MultDoubleOperator.FACTORY, MultLongOperator.FACTORY, MultIntOperator.FACTORY);
         binSig("/", DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY);

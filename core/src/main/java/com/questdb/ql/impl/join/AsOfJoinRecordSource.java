@@ -97,7 +97,11 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
             }
         }
         this.nullableRecord = new NullableRecord(slaveRecord);
-        this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), nullableRecord);
+        this.record = new SplitRecord(
+                master.getMetadata().getColumnCount(),
+                slave.getMetadata().getColumnCount(),
+                master.getRecord(),
+                nullableRecord);
         this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
     }
 
@@ -173,9 +177,9 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
             if (ts > slave.getDate(slaveTimestampIndex)) {
                 recordHolder.write(slave);
             } else {
+                delayedHolder.write(slave);
                 nullableRecord.set_null(recordHolder.peek() == null);
                 recordHolder.clear();
-                delayedHolder.write(slave);
                 return record;
             }
         }

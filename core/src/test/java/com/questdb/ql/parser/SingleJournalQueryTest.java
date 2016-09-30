@@ -956,6 +956,12 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testIntrinsicFalseModel() throws Exception {
+        createTabWithNaNs2();
+        assertEmpty("(select timestamp+1 ts, sum(y) from tab sample by 1d) timestamp(ts) where ts != ts");
+    }
+
+    @Test
     public void testInvalidInterval() throws Exception {
         createTabWithNaNs2();
         try {

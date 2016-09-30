@@ -70,12 +70,122 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
+    public void testBadCountInInterval() throws Exception {
+        try {
+            modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m;10;z'");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(12, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testBadDate() throws Exception {
+        try {
+            modelOf("timestamp = '2015-02-23T10:00:55.00z;30m'");
+            Assert.fail();
+        } catch (ParserException e1) {
+            Assert.assertEquals(12, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testBadDateInGreater() throws Exception {
+        try {
+            modelOf("'2014-0x-01T12:30:00.000Z' > timestamp");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(0, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testBadDateInGreater2() throws Exception {
+        try {
+            modelOf("timestamp > '2014-0x-01T12:30:00.000Z'");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(12, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testBadDateInInterval() throws Exception {
+        try {
+            modelOf("timestamp = '2014-0x-01T12:30:00.000Z'");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(12, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testBadDateInLess1() throws Exception {
+        try {
+            modelOf("timestamp < '2014-0x-01T12:30:00.000Z'");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(12, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testBadDateInLess2() throws Exception {
+        try {
+            modelOf("'2014-0x-01T12:30:00.000Z' < timestamp");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(0, QueryError.getPosition());
+        }
+    }
+
+    @Test
     public void testBadEndDate() throws Exception {
         try {
             modelOf("timestamp in (\"2014-01-02T12:30:00.000Z\", \"2014-01Z\")");
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Unknown date format"));
+        }
+    }
+
+    @Test
+    public void testBadOperators() throws Exception {
+        testBadOperator(">");
+        testBadOperator(">=");
+        testBadOperator("<");
+        testBadOperator("<=");
+        testBadOperator("=");
+        testBadOperator("!=");
+    }
+
+    @Test
+    public void testBadPeriodInInterval() throws Exception {
+        try {
+            modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m;x;5'");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(12, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testBadPeriodInInterval2() throws Exception {
+        try {
+            modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m;10x;5'");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(12, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testBadRangeInInterval() throws Exception {
+        try {
+            modelOf("timestamp = '2014-03-01T12:30:00.000Z;x'");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(12, QueryError.getPosition());
         }
     }
 
@@ -133,6 +243,30 @@ public class QueryFilterAnalyserTest extends AbstractTest {
         Assert.assertTrue(m.keyValuesIsLambda);
         Assert.assertNotNull(m.filter);
         Assert.assertEquals("sym12in", TestUtils.toRpn(m.filter));
+    }
+
+    @Test
+    public void testDubiousEquals() throws Exception {
+        IntrinsicModel m = modelOf("sum(ts) = sum(ts)");
+        Assert.assertNull(m.filter);
+    }
+
+    @Test
+    public void testDubiousGreater() throws Exception {
+        IntrinsicModel m = modelOf("ts > ts");
+        Assert.assertEquals(IntrinsicValue.FALSE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testDubiousLess() throws Exception {
+        IntrinsicModel m = modelOf("ts < ts");
+        Assert.assertEquals(IntrinsicValue.FALSE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testDubiousNotEquals() throws Exception {
+        IntrinsicModel m = modelOf("ts != ts");
+        Assert.assertEquals(IntrinsicValue.FALSE, m.intrinsicValue);
     }
 
     @Test
@@ -748,6 +882,23 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws ParserException {
         p.parseExpr(seq, ast);
         return e.extract(ast.poll(), w.getMetadata(), preferredColumn);
+    }
+
+    private void testBadOperator(String op) {
+        try {
+            modelOf("sum(ts) " + op);
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(8, QueryError.getPosition());
+        }
+
+        try {
+            modelOf(op + " sum(ts)");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(0, QueryError.getPosition());
+        }
+
     }
 
     private CharSequence toRpn(ExprNode node) throws ParserException {

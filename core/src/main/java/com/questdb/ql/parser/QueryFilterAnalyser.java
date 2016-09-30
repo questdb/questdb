@@ -56,13 +56,21 @@ final class QueryFilterAnalyser {
     private String timestamp;
     private String preferredKeyColumn;
 
+    private static void checkNodeValid(ExprNode node) throws ParserException {
+        if (node.lhs == null || node.rhs == null) {
+            throw QueryError.$(node.position, "Argument expected");
+        }
+    }
+
     private boolean analyzeEquals(IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
-        return node.paramCount == 2 && (analyzeEquals0(model, node, node.lhs, node.rhs, m) || analyzeEquals0(model, node, node.rhs, node.lhs, m));
+        checkNodeValid(node);
+        return analyzeEquals0(model, node, node.lhs, node.rhs, m) || analyzeEquals0(model, node, node.rhs, node.lhs, m);
     }
 
     private boolean analyzeEquals0(IntrinsicModel model, ExprNode node, ExprNode a, ExprNode b, RecordMetadata m) throws ParserException {
-        if (a == null || b == null) {
-            throw QueryError.$(node.position, "Argument expected");
+        if (Chars.equals(a.token, b.token)) {
+            node.intrinsicValue = IntrinsicValue.TRUE;
+            return true;
         }
 
         if (a.type == ExprNode.LITERAL && b.type == ExprNode.CONSTANT) {
@@ -143,6 +151,12 @@ final class QueryFilterAnalyser {
     }
 
     private boolean analyzeGreater(IntrinsicModel model, ExprNode node, int inc) throws ParserException {
+        checkNodeValid(node);
+
+        if (Chars.equals(node.lhs.token, node.rhs.token)) {
+            model.intrinsicValue = IntrinsicValue.FALSE;
+            return false;
+        }
 
         if (timestamp == null) {
             return false;
@@ -252,6 +266,7 @@ final class QueryFilterAnalyser {
             if (model.keyColumn != null
                     && (!model.keyColumn.equals(col))
                     && colMeta.getBucketCount() <= meta.getColumn(model.keyColumn).getBucketCount()) {
+                // todo: no test hit
                 return false;
             }
 
@@ -280,6 +295,14 @@ final class QueryFilterAnalyser {
     }
 
     private boolean analyzeLess(IntrinsicModel model, ExprNode node, int inc) throws ParserException {
+
+        checkNodeValid(node);
+
+        if (Chars.equals(node.lhs.token, node.rhs.token)) {
+            model.intrinsicValue = IntrinsicValue.FALSE;
+            return false;
+        }
+
         if (timestamp == null) {
             return false;
         }
@@ -294,7 +317,6 @@ final class QueryFilterAnalyser {
                 timestampNodes.add(node);
                 return true;
             } catch (NumericException e) {
-                // todo: not hit by test
                 throw QueryError.$(node.rhs.position, "Not a date");
             }
         }
@@ -309,7 +331,6 @@ final class QueryFilterAnalyser {
                 timestampNodes.add(node);
                 return true;
             } catch (NumericException e) {
-                // todo: not hit by test
                 throw QueryError.$(node.lhs.position, "Not a date");
             }
         }
@@ -382,6 +403,16 @@ final class QueryFilterAnalyser {
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             }
+        }
+        return false;
+    }
+
+    private boolean analyzeNotEquals(IntrinsicModel model, ExprNode node) throws ParserException {
+
+        checkNodeValid(node);
+
+        if (Chars.equals(node.lhs.token, node.rhs.token)) {
+            model.intrinsicValue = IntrinsicValue.FALSE;
         }
         return false;
     }
@@ -497,7 +528,6 @@ final class QueryFilterAnalyser {
                     model.clearInterval();
                     return false;
                 } catch (NumericException e) {
-                    // todo: not hit by test
                     throw QueryError.$(position, "Not a date");
                 }
             case 0:
@@ -559,7 +589,7 @@ final class QueryFilterAnalyser {
         try {
             period = Numbers.parseInt(seq, p + 1, lim - 1);
         } catch (NumericException e) {
-            throw QueryError.$(position, "Period not a number");
+            throw QueryError.$(position, "Range not a number");
         }
         try {
             Interval interval = Dates.parseInterval(seq, lo, p);
@@ -577,10 +607,6 @@ final class QueryFilterAnalyser {
     }
 
     private boolean removeAndIntrinsics(IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
-        if (node == null) {
-            return true;
-        }
-
         switch (node.token) {
             case "in":
                 return analyzeIn(model, node, m);
@@ -594,6 +620,8 @@ final class QueryFilterAnalyser {
                 return analyzeLess(model, node, 0);
             case "=":
                 return analyzeEquals(model, node, m);
+            case "!=":
+                return analyzeNotEquals(model, node);
             default:
                 return false;
         }

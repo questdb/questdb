@@ -1360,7 +1360,8 @@ public class QueryCompiler {
         int slaveTimestampIndex = getTimestampIndex(model, slaveTimestampNode, slaveMetadata);
         int masterTimestampIndex = getTimestampIndex(model, masterTimestampNode, masterMetadata);
 
-        if (jc == null) {
+        if (jc.bIndexes.size() == 0) {
+//            if (jc == null) {
             return new AsOfJoinRecordSource(master, masterTimestampIndex, slave, slaveTimestampIndex);
         } else {
             int sz = jc.aNames.size();
