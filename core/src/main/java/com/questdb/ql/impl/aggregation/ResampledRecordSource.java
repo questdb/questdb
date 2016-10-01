@@ -119,6 +119,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
         map.clear();
         nextRecord = null;
+        mapCursor = null;
         this.recordCursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(this.recordCursor);
         return this;
@@ -132,6 +133,18 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     @Override
     public Record newRecord() {
         return new DirectMapRecord(this.storageFacade);
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
+    }
+
+    @Override
+    public void toTop() {
+        nextRecord = null;
+        mapCursor = null;
+        this.recordCursor.toTop();
     }
 
     @Override
@@ -157,18 +170,6 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
         sink.putQuoted("src").put(':').put(recordSource).put(',');
         sink.putQuoted("sampler").put(':').put(sampler);
         sink.put('}');
-    }
-
-    @Override
-    public void toTop() {
-        nextRecord = null;
-        mapCursor = null;
-        this.recordCursor.toTop();
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return storageFacade;
     }
 
     private boolean buildMap() {

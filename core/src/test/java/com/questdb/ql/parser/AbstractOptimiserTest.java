@@ -58,6 +58,18 @@ public abstract class AbstractOptimiserTest {
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private static final JsonParser jp = new JsonParser();
 
+    public static void assertSymbol(String query, int columnIndex) throws ParserException {
+        try (RecordSource src = compiler.compile(factory, query)) {
+            RecordCursor cursor = src.prepareCursor(factory);
+            SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
+            Assert.assertNotNull(factory);
+            while (cursor.hasNext()) {
+                Record r = cursor.next();
+                TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));
+            }
+        }
+    }
+
     protected static void assertRowId(String query, String longColumn) throws ParserException {
         RecordSource src = compiler.compile(factory, query);
         try {
@@ -124,18 +136,6 @@ public abstract class AbstractOptimiserTest {
                     Assert.assertNull(r.getFlyweightStr(columnIndex));
                     Assert.assertNull(r.getFlyweightStrB(columnIndex));
                 }
-            }
-        }
-    }
-
-    protected void assertSymbol(String query, int columnIndex) throws ParserException {
-        try (RecordSource src = compiler.compile(factory, query)) {
-            RecordCursor cursor = src.prepareCursor(factory);
-            SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
-            Assert.assertNotNull(factory);
-            while (cursor.hasNext()) {
-                Record r = cursor.next();
-                TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));
             }
         }
     }

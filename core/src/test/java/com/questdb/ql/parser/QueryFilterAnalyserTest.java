@@ -881,7 +881,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
 
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws ParserException {
         p.parseExpr(seq, ast);
-        return e.extract(ast.poll(), w.getMetadata(), preferredColumn);
+        return e.extract(ast.poll(), w.getMetadata(), preferredColumn, w.getMetadata().getTimestampIndex());
     }
 
     private void testBadOperator(String op) {

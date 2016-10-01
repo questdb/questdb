@@ -1086,7 +1086,12 @@ public class QueryCompiler {
 
         ExprNode where = model.getWhereClause();
         if (where != null) {
-            IntrinsicModel im = queryFilterAnalyser.extract(where, journalMetadata, latestByCol);
+            IntrinsicModel im = queryFilterAnalyser.extract(
+                    where,
+                    journalMetadata,
+                    latestByCol,
+                    getTimestampIndexQuiet(model, model.getTimestamp(), journalMetadata)
+            );
 
             VirtualColumn filter = im.filter != null ? virtualColumnBuilder.createVirtualColumn(model, im.filter, journalMetadata) : null;
 
@@ -1261,7 +1266,7 @@ public class QueryCompiler {
                     nm.setRecordSource(rs);
                 }
             }
-            return limit(order(selectColumns(rs, model), model), model);
+            return limit(timestamp(order(selectColumns(rs, model), model), model), model);
         } catch (ParserException e) {
             freeModelRecordSources(model);
             throw e;
@@ -1534,19 +1539,28 @@ public class QueryCompiler {
             m.setAlias(model.getAlias().token);
         }
 
-        IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null);
+        IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null, getTimestampIndexQuiet(model, model.getTimestamp(), m));
 
         if (im.intrinsicValue == IntrinsicValue.FALSE) {
             return new NoOpJournalRecordSource(rs);
         }
 
+        if (im.intervalHi < Long.MAX_VALUE || im.intervalLo > Long.MIN_VALUE) {
+            rs = new IntervalRecordSource(rs,
+                    new SingleIntervalSource(new Interval(im.intervalLo, im.intervalHi))
+            );
+        }
+
         if (im.intervalSource != null) {
+            // todo: not hit by test
             rs = new IntervalRecordSource(rs, im.intervalSource);
         }
 
         if (im.filter != null) {
             VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, im.filter, m);
             if (vc.isConstant()) {
+                // todo: not hit by test
+
                 if (vc.getBool(null)) {
                     return rs;
                 } else {
@@ -1576,6 +1590,15 @@ public class QueryCompiler {
     }
 
     private int getTimestampIndex(QueryModel model, ExprNode node, RecordMetadata m) throws ParserException {
+        int index = getTimestampIndexQuiet(model, node, m);
+        if (index == -1) {
+            throw QueryError.position(model.getJournalName() != null ? model.getJournalName().position : 0).$("Missing timestamp").$();
+        }
+        return index;
+
+    }
+
+    private int getTimestampIndexQuiet(QueryModel model, ExprNode node, RecordMetadata m) throws ParserException {
         int pos = model.getJournalName() != null ? model.getJournalName().position : 0;
         if (node != null) {
             if (node.type != ExprNode.LITERAL) {
@@ -1584,6 +1607,7 @@ public class QueryCompiler {
 
             int index = m.getColumnIndexQuiet(node.token);
             if (index == -1) {
+                // todo: not hit by test
                 throw QueryError.position(node.position).$("Invalid column: ").$(node.token).$();
             }
             return index;
@@ -1601,10 +1625,6 @@ public class QueryCompiler {
                         throw QueryError.position(pos).$("Ambiguous timestamp column").$();
                     }
                 }
-            }
-
-            if (index == -1) {
-                throw QueryError.position(pos).$("Missing timestamp").$();
             }
             return index;
         }
@@ -1702,11 +1722,13 @@ public class QueryCompiler {
                 try {
                     return new LongConstant(Numbers.parseLong(node.token), node.position);
                 } catch (NumericException e) {
+                    // todo: not hit by test
                     throw QueryError.$(node.position, "Long number expected");
                 }
             default:
                 break;
         }
+        // todo: not hit by test
         throw QueryError.$(node.position, "Constant expected");
     }
 
@@ -1734,6 +1756,7 @@ public class QueryCompiler {
             for (int k = 0, z = a.aNames.size(); k < z; k++) {
 
                 if (deletedContexts.contains(k)) {
+                    // todo: not hit by test
                     continue;
                 }
 
@@ -1823,6 +1846,7 @@ public class QueryCompiler {
         int m = positions.size();
 
         if (m == 0) {
+            // todo: not hit by test
             return from;
         }
 
@@ -1938,6 +1962,7 @@ public class QueryCompiler {
                 // sub-query ordering is not needed
                 model.getOrderBy().clear();
                 if (model.getSampleBy() != null) {
+                    // todo: not hit by test
                     subQueryOrderByState = ORDER_BY_REQUIRED;
                 } else {
                     subQueryOrderByState = ORDER_BY_INVARIANT;
@@ -2051,6 +2076,7 @@ public class QueryCompiler {
             if (clauses == joinClausesSwap1) {
                 emittedJoinClauses = joinClausesSwap2;
             } else {
+                // todo: not hit by test
                 emittedJoinClauses = joinClausesSwap1;
             }
             emittedJoinClauses.clear();
@@ -2190,6 +2216,7 @@ public class QueryCompiler {
         }
 
         if (root == -1) {
+            // todo: not hit by test
             throw QueryError.$(0, "Cycle");
         }
     }
@@ -2226,6 +2253,7 @@ public class QueryCompiler {
 
             switch (m.getJoinType()) {
                 case QueryModel.JOIN_CROSS:
+                    // todo: not hit by test
                     cost += 10;
                     break;
                 default:
@@ -2328,6 +2356,7 @@ public class QueryCompiler {
             RecordMetadata m = joinModels.getQuick(index).getMetadata();
 
             if (m.getColumnIndexQuiet(column) == -1) {
+                // todo: not hit by test
                 throw QueryError.invalidColumn(position, column);
             }
 
@@ -2407,6 +2436,7 @@ public class QueryCompiler {
 
                 if (analytic) {
                     if (qc.getAst().type != ExprNode.FUNCTION) {
+                        // todo: not hit by test
                         throw QueryError.$(qc.getAst().position, "Analytic function expected");
                     }
 
@@ -2555,10 +2585,25 @@ public class QueryCompiler {
         return true;
     }
 
+    private RecordSource timestamp(RecordSource rs, QueryModel model) throws ParserException {
+        ExprNode timestamp = model.getTimestamp();
+        if (timestamp == null) {
+            return rs;
+        }
+
+        int index = rs.getMetadata().getColumnIndexQuiet(timestamp.token);
+        if (index == -1) {
+            throw QueryError.invalidColumn(timestamp.position, timestamp.token);
+        }
+
+        return new TimestampRelocatingRecordSource(rs, index);
+    }
+
     private int toInt(CharSequence cs, int pos) throws ParserException {
         try {
             return Numbers.parseInt(cs);
         } catch (NumericException e) {
+            // todo: not hit by test
             throw QueryError.$(pos, "int value expected");
         }
     }
@@ -2567,6 +2612,7 @@ public class QueryCompiler {
         try {
             return Numbers.parseLong(cs);
         } catch (NumericException e) {
+            // todo: not hit by test
             throw QueryError.$(pos, "long value expected");
         }
     }
@@ -2642,7 +2688,9 @@ public class QueryCompiler {
                         incompatible = false;
                         break;
                     default:
+                        // todo: not hit by test
                         incompatible = true;
+                        break;
                 }
                 break;
             default:

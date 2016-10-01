@@ -441,11 +441,10 @@ final class QueryFilterAnalyser {
         return node;
     }
 
-    IntrinsicModel extract(ExprNode node, RecordMetadata m, String preferredKeyColumn) throws ParserException {
+    IntrinsicModel extract(ExprNode node, RecordMetadata m, String preferredKeyColumn, int timestampIndex) throws ParserException {
         this.stack.clear();
         this.keyNodes.clear();
         this.timestampNodes.clear();
-        int timestampIndex = m.getTimestampIndex();
         this.timestamp = timestampIndex == -1 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
 

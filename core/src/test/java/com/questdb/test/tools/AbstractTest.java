@@ -29,9 +29,12 @@ import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Files;
 import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
+import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
+import com.questdb.ql.parser.QueryError;
+import com.questdb.store.SymbolTable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -45,6 +48,18 @@ public abstract class AbstractTest {
     protected final StringSink sink = new StringSink();
     protected final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
     private final QueryCompiler compiler = new QueryCompiler();
+
+    public void assertSymbol(String query, int columnIndex) throws ParserException {
+        try (RecordSource src = compiler.compile(factory, query)) {
+            RecordCursor cursor = src.prepareCursor(factory);
+            SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
+            Assert.assertNotNull(factory);
+            while (cursor.hasNext()) {
+                Record r = cursor.next();
+                TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));
+            }
+        }
+    }
 
     @Before
     public void setUp2() throws Exception {
@@ -83,10 +98,13 @@ public abstract class AbstractTest {
             TestUtils.assertEquals(expected, sink);
 
             TestUtils.assertStrings(src, factory);
+        } catch (ParserException e) {
+            System.out.println(QueryError.getMessage());
+            System.out.println(QueryError.getPosition());
+            throw e;
         }
         Assert.assertEquals(memUsed, Unsafe.getMemUsed());
     }
-
 
     protected void assertThat(String expected, String query) throws ParserException, IOException {
         assertThat(expected, query, false);

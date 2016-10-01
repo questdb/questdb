@@ -1078,38 +1078,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testLatestByStrFilterOnSym() throws Exception {
-        JournalWriter w = factory.writer(
-                new JournalStructure("tab").
-                        $str("id").index().buckets(16).
-                        $sym("sym").
-                        $double("x").
-                        $double("y").
-                        $ts()
-
-        );
-
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 1024);
-
-        ObjHashSet<String> syms = new ObjHashSet<>();
-        for (int i = 0; i < 64; i++) {
-            syms.add(rnd.nextString(10));
-        }
-
-        int mask = 1023;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDouble(3, rnd.nextDouble());
-            ew.putDate(4, t += 10);
-            ew.putSym(1, syms.get(rnd.nextInt() & 63));
-            ew.append();
-        }
-        w.commit();
-
+        createTabWithSymbol();
         final String expected = "TEHIOFKMQPUNEUD\tMRFPKLNWQL\t0.020352731459\t0.165701057762\t2015-03-12T00:01:22.640Z\n";
         assertThat(expected, "select id, sym, x, y, timestamp from tab latest by id where id = 'TEHIOFKMQPUNEUD' and sym in ('MRFPKLNWQL')");
         assertThat(expected, "select id, sym, x, y, timestamp from tab latest by id where id = 'TEHIOFKMQPUNEUD' and sym = ('MRFPKLNWQL')");
@@ -3291,6 +3260,45 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testSubQueryIntervalSearch() throws Exception {
+        createTabWithNaNs2();
+        assertThat("2015-03-18T00:00:00.000Z\t662.930252075195\n" +
+                        "2015-03-18T01:00:00.000Z\t0.000001096262\n" +
+                        "2015-03-18T02:00:00.000Z\t0.000001078617\n" +
+                        "2015-03-18T03:00:00.000Z\t-119.000000000000\n" +
+                        "2015-03-18T04:00:00.000Z\t-290.255371093750\n" +
+                        "2015-03-18T05:00:00.000Z\t-50.148437500000\n" +
+                        "2015-03-18T06:00:00.000Z\t0.002493287437\n" +
+                        "2015-03-18T07:00:00.000Z\t222.294685363770\n" +
+                        "2015-03-18T08:00:00.000Z\tNaN\n" +
+                        "2015-03-18T09:00:00.000Z\t58.412302017212\n" +
+                        "2015-03-18T10:00:00.000Z\t-948.394042968750\n" +
+                        "2015-03-18T11:00:00.000Z\t960.000000000000\n" +
+                        "2015-03-18T12:00:00.000Z\t467.771606445313\n" +
+                        "2015-03-18T13:00:00.000Z\t-384.000000000000\n" +
+                        "2015-03-18T14:00:00.000Z\t0.000034461837\n" +
+                        "2015-03-18T15:00:00.000Z\t-1024.000000000000\n" +
+                        "2015-03-18T16:00:00.000Z\t61.995271682739\n" +
+                        "2015-03-18T17:00:00.000Z\t0.000000780048\n" +
+                        "2015-03-18T18:00:00.000Z\t0.000000773129\n" +
+                        "2015-03-18T19:00:00.000Z\t-560.250000000000\n" +
+                        "2015-03-18T20:00:00.000Z\t0.000000963666\n" +
+                        "2015-03-18T21:00:00.000Z\t52.090820312500\n" +
+                        "2015-03-18T22:00:00.000Z\t445.687500000000\n" +
+                        "2015-03-18T23:00:00.000Z\tNaN\n",
+                "(select timestamp+1 ts, sum(y) sum_y from tab sample by 1d) timestamp(ts) where ts = '2015-03-18'");
+    }
+
+    @Test
+    public void testSubQueryIntervalSearch2() throws Exception {
+        createTabWithNaNs2();
+        assertThat("2015-03-18T01:00:00.000Z\t0.000001096262\n" +
+                        "2015-03-18T02:00:00.000Z\t0.000001078617\n",
+                "(select timestamp+1 ts, sum(y) from tab sample by 1d) timestamp(ts) where ts = '2015-03-18T01;1h'");
+
+    }
+
+    @Test
     public void testSymRegex() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
@@ -3331,6 +3339,12 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testSymbolInIntervalSource() throws Exception {
+        createTabWithSymbol();
+        assertSymbol("(select sym, timestamp+1 ts, sum(y) from tab sample by 1d) timestamp(ts) where ts = '2015-03-13T00:01:39'", 0);
+    }
+
+    @Test
     public void testTime24() throws Exception {
         createTabWithNullsAndTime();
         assertThat("\t2015-03-12T00:00:00.000Z\t2:52\t2015-03-12T00:00:00.000Z\n" +
@@ -3344,6 +3358,25 @@ public class SingleJournalQueryTest extends AbstractTest {
                         "\t2015-03-12T00:00:00.000Z\t21:49\t2015-03-12T21:49:00.000Z\n" +
                         "\t2015-03-12T00:00:00.000Z\t7:16\t2015-03-12T00:00:00.000Z\n",
                 "select id, date, time, date + time24(time) from tab where id = null limit 10");
+    }
+
+    @Test
+    public void testTimestampOverride() throws Exception {
+        createTabWithNaNs2();
+
+        assertThat("2015-03-18T00:00:00.000Z\t662.930253171457\n" +
+                        "2015-03-18T02:00:00.000Z\t-118.999998921383\n" +
+                        "2015-03-18T04:00:00.000Z\t-340.403808593750\n" +
+                        "2015-03-18T06:00:00.000Z\t222.297178651206\n" +
+                        "2015-03-18T08:00:00.000Z\tNaN\n" +
+                        "2015-03-18T10:00:00.000Z\t11.605957031250\n" +
+                        "2015-03-18T12:00:00.000Z\t83.771606445313\n" +
+                        "2015-03-18T14:00:00.000Z\t-1023.999965538164\n" +
+                        "2015-03-18T16:00:00.000Z\t61.995272462788\n" +
+                        "2015-03-18T18:00:00.000Z\t-560.249999226871\n" +
+                        "2015-03-18T20:00:00.000Z\t52.090821276166\n" +
+                        "2015-03-18T22:00:00.000Z\tNaN\n",
+                "select ts, sum(sum_y) from ((select timestamp+1 ts, sum(y) sum_y from tab sample by 1d) timestamp(ts) where ts = '2015-03-18') sample by 2h");
     }
 
     @Test
@@ -3746,6 +3779,40 @@ public class SingleJournalQueryTest extends AbstractTest {
             }
             w.commit();
         }
+    }
+
+    private void createTabWithSymbol() throws JournalException, NumericException {
+        JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $str("id").index().buckets(16).
+                        $sym("sym").
+                        $double("x").
+                        $double("y").
+                        $ts()
+
+        );
+
+        Rnd rnd = new Rnd();
+        ObjHashSet<String> names = getNames(rnd, 1024);
+
+        ObjHashSet<String> syms = new ObjHashSet<>();
+        for (int i = 0; i < 64; i++) {
+            syms.add(rnd.nextString(10));
+        }
+
+        int mask = 1023;
+        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+        for (int i = 0; i < 10000; i++) {
+            JournalEntryWriter ew = w.entryWriter();
+            ew.putStr(0, names.get(rnd.nextInt() & mask));
+            ew.putDouble(2, rnd.nextDouble());
+            ew.putDouble(3, rnd.nextDouble());
+            ew.putDate(4, t += 10);
+            ew.putSym(1, syms.get(rnd.nextInt() & 63));
+            ew.append();
+        }
+        w.commit();
     }
 
     private ObjHashSet<String> getNames(Rnd r, int n) {
