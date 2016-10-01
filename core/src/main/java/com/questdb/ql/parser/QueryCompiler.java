@@ -1530,46 +1530,51 @@ public class QueryCompiler {
     }
 
     private RecordSource filter(QueryModel model, RecordSource rs) throws ParserException {
-        if (model.getWhereClause() == null) {
-            return rs;
-        }
-
-        RecordMetadata m = rs.getMetadata();
-        if (model.getAlias() != null) {
-            m.setAlias(model.getAlias().token);
-        }
-
-        IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null, getTimestampIndexQuiet(model, model.getTimestamp(), m));
-
-        if (im.intrinsicValue == IntrinsicValue.FALSE) {
-            return new NoOpJournalRecordSource(rs);
-        }
-
-        if (im.intervalHi < Long.MAX_VALUE || im.intervalLo > Long.MIN_VALUE) {
-            rs = new IntervalRecordSource(rs,
-                    new SingleIntervalSource(new Interval(im.intervalLo, im.intervalHi))
-            );
-        }
-
-        if (im.intervalSource != null) {
-            // todo: not hit by test
-            rs = new IntervalRecordSource(rs, im.intervalSource);
-        }
-
-        if (im.filter != null) {
-            VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, im.filter, m);
-            if (vc.isConstant()) {
-                // todo: not hit by test
-
-                if (vc.getBool(null)) {
-                    return rs;
-                } else {
-                    return new NoOpJournalRecordSource(rs);
-                }
+        try {
+            if (model.getWhereClause() == null) {
+                return rs;
             }
-            return new FilteredRecordSource(rs, vc, im.filter);
-        } else {
-            return rs;
+
+            RecordMetadata m = rs.getMetadata();
+            if (model.getAlias() != null) {
+                m.setAlias(model.getAlias().token);
+            }
+
+            IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null, getTimestampIndexQuiet(model, model.getTimestamp(), m));
+
+            if (im.intrinsicValue == IntrinsicValue.FALSE) {
+                return new NoOpJournalRecordSource(rs);
+            }
+
+            if (im.intervalHi < Long.MAX_VALUE || im.intervalLo > Long.MIN_VALUE) {
+                rs = new IntervalRecordSource(rs,
+                        new SingleIntervalSource(new Interval(im.intervalLo, im.intervalHi))
+                );
+            }
+
+            if (im.intervalSource != null) {
+                // todo: not hit by test
+                rs = new IntervalRecordSource(rs, im.intervalSource);
+            }
+
+            if (im.filter != null) {
+                VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, im.filter, m);
+                if (vc.isConstant()) {
+                    // todo: not hit by test
+
+                    if (vc.getBool(null)) {
+                        return rs;
+                    } else {
+                        return new NoOpJournalRecordSource(rs);
+                    }
+                }
+                return new FilteredRecordSource(rs, vc, im.filter);
+            } else {
+                return rs;
+            }
+        } catch (ParserException e) {
+            Misc.free(rs);
+            throw e;
         }
     }
 
@@ -1591,15 +1596,18 @@ public class QueryCompiler {
 
     private int getTimestampIndex(QueryModel model, ExprNode node, RecordMetadata m) throws ParserException {
         int index = getTimestampIndexQuiet(model, node, m);
-        if (index == -1) {
-            throw QueryError.position(model.getJournalName() != null ? model.getJournalName().position : 0).$("Missing timestamp").$();
+        int pos = model.getJournalName() != null ? model.getJournalName().position : 0;
+        switch (index) {
+            case -1:
+                throw QueryError.position(pos).$("Missing timestamp").$();
+            case -2:
+                throw QueryError.position(pos).$("Ambiguous timestamp column").$();
+            default:
+                return index;
         }
-        return index;
-
     }
 
     private int getTimestampIndexQuiet(QueryModel model, ExprNode node, RecordMetadata m) throws ParserException {
-        int pos = model.getJournalName() != null ? model.getJournalName().position : 0;
         if (node != null) {
             if (node.type != ExprNode.LITERAL) {
                 throw QueryError.position(node.position).$("Literal expression expected").$();
@@ -1622,7 +1630,7 @@ public class QueryCompiler {
                     if (index == -1) {
                         index = i;
                     } else {
-                        throw QueryError.position(pos).$("Ambiguous timestamp column").$();
+                        return -2;
                     }
                 }
             }
@@ -2586,17 +2594,22 @@ public class QueryCompiler {
     }
 
     private RecordSource timestamp(RecordSource rs, QueryModel model) throws ParserException {
-        ExprNode timestamp = model.getTimestamp();
-        if (timestamp == null) {
-            return rs;
-        }
+        try {
+            ExprNode timestamp = model.getTimestamp();
+            if (timestamp == null) {
+                return rs;
+            }
 
-        int index = rs.getMetadata().getColumnIndexQuiet(timestamp.token);
-        if (index == -1) {
-            throw QueryError.invalidColumn(timestamp.position, timestamp.token);
-        }
+            int index = rs.getMetadata().getColumnIndexQuiet(timestamp.token);
+            if (index == -1) {
+                throw QueryError.invalidColumn(timestamp.position, timestamp.token);
+            }
 
-        return new TimestampRelocatingRecordSource(rs, index);
+            return new TimestampRelocatingRecordSource(rs, index);
+        } catch (ParserException e) {
+            Misc.free(rs);
+            throw e;
+        }
     }
 
     private int toInt(CharSequence cs, int pos) throws ParserException {

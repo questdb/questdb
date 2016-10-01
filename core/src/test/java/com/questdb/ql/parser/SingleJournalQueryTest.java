@@ -1016,6 +1016,16 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testInvalidTimestamp() throws Exception {
+        createTabWithNaNs2();
+        try {
+            expectFailure("(select timestamp+1 ts, sum(y) from tab sample by 1d) timestamp(ts1) where ts != ts");
+        } catch (ParserException e) {
+            Assert.assertEquals(64, QueryError.getPosition());
+        }
+    }
+
+    @Test
     public void testInvalidVirtualColumn() throws Exception {
         factory.writer(Quote.class, "q");
         try {

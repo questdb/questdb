@@ -445,7 +445,7 @@ final class QueryFilterAnalyser {
         this.stack.clear();
         this.keyNodes.clear();
         this.timestampNodes.clear();
-        this.timestamp = timestampIndex == -1 ? null : m.getColumnName(timestampIndex);
+        this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
 
         IntrinsicModel model = models.next();
