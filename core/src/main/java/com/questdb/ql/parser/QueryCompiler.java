@@ -48,6 +48,7 @@ import com.questdb.ql.impl.join.CrossJoinRecordSource;
 import com.questdb.ql.impl.join.HashJoinRecordSource;
 import com.questdb.ql.impl.lambda.*;
 import com.questdb.ql.impl.latest.*;
+import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.ql.impl.sort.ComparatorCompiler;
 import com.questdb.ql.impl.sort.RBTreeSortedRecordSource;
@@ -76,6 +77,7 @@ public class QueryCompiler {
     private static final int ORDER_BY_UNKNOWN = 0;
     private static final int ORDER_BY_REQUIRED = 1;
     private static final int ORDER_BY_INVARIANT = 2;
+    private final BytecodeAssembler asm = new BytecodeAssembler();
     private final QueryParser parser = new QueryParser();
     private final QueryFilterAnalyser queryFilterAnalyser = new QueryFilterAnalyser();
     private final StringSink columnNameAssembly = new StringSink();
@@ -121,14 +123,14 @@ public class QueryCompiler {
     private final ObjList<QueryColumn> innerVirtualColumn = new ObjList<>();
     private final ObjList<AnalyticColumn> analyticColumns = new ObjList<>();
     private final ObjHashSet<String> groupKeyColumns = new ObjHashSet<>();
-    private final ComparatorCompiler cc = new ComparatorCompiler();
+    private final ComparatorCompiler cc = new ComparatorCompiler(asm);
     private final LiteralMatcher literalMatcher = new LiteralMatcher(traversalAlgo);
     private final ServerConfiguration configuration;
     private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> grouppedAnalytic = new ObjObjHashMap<>();
-    private final CopyHelperCompiler copyHelperCompiler = new CopyHelperCompiler();
+    private final CopyHelperCompiler copyHelperCompiler = new CopyHelperCompiler(asm);
+    private final RecordKeyCopierCompiler recordKeyCopierCompiler = new RecordKeyCopierCompiler(asm);
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
-
 
     public QueryCompiler() {
         this(new ServerConfiguration());
@@ -819,7 +821,7 @@ public class QueryCompiler {
 
         RecordSource out;
         if (sampleBy == null) {
-            out = new AggregatedRecordSource(rs, groupKeyColumns, af, configuration.getDbAggregatePage());
+            out = new AggregatedRecordSource(rs, groupKeyColumns, af, configuration.getDbAggregatePage(), recordKeyCopierCompiler);
         } else {
             TimestampSampler sampler = SamplerFactory.from(sampleBy.token);
             if (sampler == null) {
@@ -830,7 +832,8 @@ public class QueryCompiler {
                     groupKeyColumns,
                     af,
                     sampler,
-                    configuration.getDbAggregatePage());
+                    configuration.getDbAggregatePage(),
+                    recordKeyCopierCompiler);
         }
         return out;
     }
@@ -1090,7 +1093,7 @@ public class QueryCompiler {
                     where,
                     journalMetadata,
                     latestByCol,
-                    getTimestampIndexQuiet(model, model.getTimestamp(), journalMetadata)
+                    getTimestampIndexQuiet(model.getTimestamp(), journalMetadata)
             );
 
             VirtualColumn filter = im.filter != null ? virtualColumnBuilder.createVirtualColumn(model, im.filter, journalMetadata) : null;
@@ -1429,7 +1432,8 @@ public class QueryCompiler {
                 model.getJoinType() == QueryModel.JOIN_OUTER,
                 configuration.getDbHashKeyPage(),
                 configuration.getDbHashDataPage(),
-                configuration.getDbHashRowPage()
+                configuration.getDbHashRowPage(),
+                new RecordKeyCopierCompiler(new BytecodeAssembler())
         );
     }
 
@@ -1540,7 +1544,7 @@ public class QueryCompiler {
                 m.setAlias(model.getAlias().token);
             }
 
-            IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null, getTimestampIndexQuiet(model, model.getTimestamp(), m));
+            IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null, getTimestampIndexQuiet(model.getTimestamp(), m));
 
             if (im.intrinsicValue == IntrinsicValue.FALSE) {
                 return new NoOpJournalRecordSource(rs);
@@ -1595,7 +1599,7 @@ public class QueryCompiler {
     }
 
     private int getTimestampIndex(QueryModel model, ExprNode node, RecordMetadata m) throws ParserException {
-        int index = getTimestampIndexQuiet(model, node, m);
+        int index = getTimestampIndexQuiet(node, m);
         int pos = model.getJournalName() != null ? model.getJournalName().position : 0;
         switch (index) {
             case -1:
@@ -1607,7 +1611,7 @@ public class QueryCompiler {
         }
     }
 
-    private int getTimestampIndexQuiet(QueryModel model, ExprNode node, RecordMetadata m) throws ParserException {
+    private int getTimestampIndexQuiet(ExprNode node, RecordMetadata m) throws ParserException {
         if (node != null) {
             if (node.type != ExprNode.LITERAL) {
                 throw QueryError.position(node.position).$("Literal expression expected").$();

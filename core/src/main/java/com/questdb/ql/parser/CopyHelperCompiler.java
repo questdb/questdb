@@ -32,7 +32,11 @@ import com.questdb.ql.impl.sort.ComparatorCompiler;
 import com.questdb.store.ColumnType;
 
 public class CopyHelperCompiler {
-    private final BytecodeAssembler asm = new BytecodeAssembler();
+    private final BytecodeAssembler asm;
+
+    public CopyHelperCompiler(BytecodeAssembler asm) {
+        this.asm = asm;
+    }
 
     public CopyHelper compile(RecordMetadata from, RecordMetadata to) {
         int tsIndex = to.getTimestampIndex();

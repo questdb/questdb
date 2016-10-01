@@ -24,7 +24,6 @@
 package com.questdb.ql.impl.join;
 
 import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
@@ -34,10 +33,11 @@ import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.join.hash.MultiRecordMap;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.MapUtils;
+import com.questdb.ql.impl.map.RecordKeyCopier;
+import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSink;
 import com.questdb.std.IntList;
-import com.questdb.std.ObjList;
 
 import java.io.Closeable;
 
@@ -47,8 +47,6 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private final SplitRecordMetadata metadata;
     private final SplitRecord record;
     private final SplitRecordStorageFacade storageFacade;
-    private final ObjList<RecordColumnMetadata> masterColumns = new ObjList<>();
-    private final ObjList<RecordColumnMetadata> slaveColumns = new ObjList<>();
     private final IntList masterColIndex;
     private final IntList slaveColIndex;
     private final FakeRecord fakeRecord = new FakeRecord();
@@ -56,6 +54,8 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private final boolean outer;
     private final MultiRecordMap recordMap;
     private final NullableRecord nullableRecord;
+    private final RecordKeyCopier masterCopier;
+    private final RecordKeyCopier slaveCopier;
     private RecordCursor slaveCursor;
     private RecordCursor masterCursor;
     private RecordCursor hashTableCursor;
@@ -68,7 +68,8 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             boolean outer,
             int keyPageSize,
             int dataPageSize,
-            int rowIdPageSize
+            int rowIdPageSize,
+            RecordKeyCopierCompiler compiler
     ) {
         this.master = master;
         this.slave = slave;
@@ -76,11 +77,14 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         this.byRowId = slave.supportsRowIdAccess();
         this.masterColIndex = masterColIndices;
         this.slaveColIndex = slaveColIndices;
-        this.recordMap = createRecordMap(master, slave, keyPageSize, dataPageSize, rowIdPageSize);
+        this.recordMap = byRowId ? new MultiRecordMap(slaveColIndex.size(), MapUtils.ROWID_RECORD_METADATA, keyPageSize, rowIdPageSize) :
+                new MultiRecordMap(slaveColIndex.size(), slave.getMetadata(), keyPageSize, dataPageSize);
         this.nullableRecord = new NullableRecord(byRowId ? slave.getRecord() : recordMap.getRecord());
         this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), nullableRecord);
         this.outer = outer;
         this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
+        this.masterCopier = compiler.compile(master.getMetadata(), masterColIndices);
+        this.slaveCopier = compiler.compile(slave.getMetadata(), slaveColIndices);
     }
 
     @Override
@@ -151,19 +155,21 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         sink.putQuoted("slave").put(':').put(slave).put(',');
         sink.putQuoted("joinOn").put(':').put('[');
         sink.put('[');
-        for (int i = 0, n = masterColumns.size(); i < n; i++) {
+        RecordMetadata mm = master.getMetadata();
+        for (int i = 0, n = masterColIndex.size(); i < n; i++) {
             if (i > 0) {
                 sink.put(',');
             }
-            sink.putQuoted(masterColumns.getQuick(i).getName());
+            sink.putQuoted(mm.getColumnQuick(masterColIndex.getQuick(i)).getName());
         }
         sink.put(']').put(',');
         sink.put('[');
-        for (int i = 0, n = slaveColumns.size(); i < n; i++) {
+        RecordMetadata sm = slave.getMetadata();
+        for (int i = 0, n = slaveColIndex.size(); i < n; i++) {
             if (i > 0) {
                 sink.put(',');
             }
-            sink.putQuoted(slaveColumns.getQuick(i).getName());
+            sink.putQuoted(sm.getColumnQuick(slaveColIndex.getQuick(i)).getName());
         }
         sink.put("]]}");
     }
@@ -176,7 +182,8 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private void buildHashTable(CancellationHandler cancellationHandler) {
         for (Record r : slaveCursor) {
             cancellationHandler.check();
-            final DirectMap.KeyWriter key = populateKey(r, slaveColIndex, slaveColumns);
+            final DirectMap.KeyWriter key = recordMap.claimKey();
+            slaveCopier.copy(r, key);
             if (byRowId) {
                 recordMap.add(key, fakeRecord.of(r.getRowId()));
             } else {
@@ -185,29 +192,12 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
         }
     }
 
-    private MultiRecordMap createRecordMap(RecordSource masterSource,
-                                           RecordSource slaveSource,
-                                           int keyPageSize,
-                                           int dataPageSize,
-                                           int rowIdPageSize) {
-        RecordMetadata mm = masterSource.getMetadata();
-        for (int i = 0, k = masterColIndex.size(); i < k; i++) {
-            this.masterColumns.add(mm.getColumnQuick(masterColIndex.getQuick(i)));
-        }
-
-        RecordMetadata sm = slaveSource.getMetadata();
-        for (int i = 0, k = slaveColIndex.size(); i < k; i++) {
-            int index = slaveColIndex.getQuick(i);
-            this.slaveColumns.add(sm.getColumnQuick(index));
-        }
-        return byRowId ? new MultiRecordMap(slaveColumns.size(), MapUtils.ROWID_RECORD_METADATA, keyPageSize, rowIdPageSize) :
-                new MultiRecordMap(slaveColumns.size(), slaveSource.getMetadata(), keyPageSize, dataPageSize);
-    }
-
     private boolean hasNext0() {
         while (masterCursor.hasNext()) {
             Record r = masterCursor.next();
-            hashTableCursor = recordMap.get(populateKey(r, masterColIndex, masterColumns));
+            DirectMap.KeyWriter kw = recordMap.claimKey();
+            masterCopier.copy(r, kw);
+            hashTableCursor = recordMap.get(kw);
             if (hashTableCursor.hasNext()) {
                 advanceSlaveCursor();
                 return true;
@@ -218,13 +208,5 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             }
         }
         return false;
-    }
-
-    private DirectMap.KeyWriter populateKey(Record r, IntList indices, ObjList<RecordColumnMetadata> columns) {
-        DirectMap.KeyWriter key = recordMap.claimKey();
-        for (int i = 0, k = columns.size(); i < k; i++) {
-            MapUtils.putRecord(key, r, indices.getQuick(i), columns.getQuick(i).getType());
-        }
-        return key;
     }
 }

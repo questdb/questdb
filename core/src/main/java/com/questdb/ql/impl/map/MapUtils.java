@@ -53,46 +53,6 @@ public class MapUtils {
         return map.getOrCreateValues(kw);
     }
 
-    public static void putRecord(DirectMap.KeyWriter w, Record r, int columnIndex, int columnType) {
-        switch (columnType) {
-            case ColumnType.BOOLEAN:
-                w.putBool(r.getBool(columnIndex));
-                break;
-            case ColumnType.BYTE:
-                w.putByte(r.get(columnIndex));
-                break;
-            case ColumnType.DOUBLE:
-                w.putDouble(r.getDouble(columnIndex));
-                break;
-            case ColumnType.INT:
-                w.putInt(r.getInt(columnIndex));
-                break;
-            case ColumnType.LONG:
-                w.putLong(r.getLong(columnIndex));
-                break;
-            case ColumnType.SHORT:
-                w.putShort(r.getShort(columnIndex));
-                break;
-            case ColumnType.FLOAT:
-                w.putFloat(r.getFloat(columnIndex));
-                break;
-            case ColumnType.STRING:
-                w.putStr(r.getFlyweightStr(columnIndex));
-                break;
-            case ColumnType.SYMBOL:
-                w.putInt(r.getInt(columnIndex));
-                break;
-            case ColumnType.BINARY:
-                w.putBin(r.getBin(columnIndex));
-                break;
-            case ColumnType.DATE:
-                w.putLong(r.getDate(columnIndex));
-                break;
-            default:
-                throw new JournalRuntimeException("Unsupported type: " + columnType);
-        }
-    }
-
     public static IntList toTypeList(int type1, int type2) {
         IntList l = tlTypeList.get();
         l.clear();

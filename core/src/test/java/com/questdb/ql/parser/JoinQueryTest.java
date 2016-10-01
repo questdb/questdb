@@ -29,12 +29,14 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
+import com.questdb.misc.BytecodeAssembler;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.impl.NoRowIdRecordSource;
 import com.questdb.ql.impl.join.HashJoinRecordSource;
+import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
@@ -729,7 +731,8 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 false,
                 4 * 1024 * 1024,
                 4 * 1024 * 1024,
-                1024 * 1024
+                1024 * 1024,
+                new RecordKeyCopierCompiler(new BytecodeAssembler())
         );
         sink.clear();
         printer.print(r, factory);

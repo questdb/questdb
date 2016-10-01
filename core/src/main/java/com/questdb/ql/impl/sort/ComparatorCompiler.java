@@ -37,7 +37,7 @@ import com.questdb.std.Transient;
 import com.questdb.store.ColumnType;
 
 public class ComparatorCompiler {
-    private final BytecodeAssembler asm = new BytecodeAssembler();
+    private final BytecodeAssembler asm;
     private final CharSequenceIntHashMap typeMap = new CharSequenceIntHashMap();
     private final CharSequenceIntHashMap methodMap = new CharSequenceIntHashMap();
     private final CharSequenceIntHashMap comparatorMap = new CharSequenceIntHashMap();
@@ -48,6 +48,10 @@ public class ComparatorCompiler {
     private final IntList fieldRecordAccessorIndicesB = new IntList();
     private final IntList comparatorAccessorIndices = new IntList();
     private final IntList branches = new IntList();
+
+    public ComparatorCompiler(BytecodeAssembler asm) {
+        this.asm = asm;
+    }
 
     public RecordComparator compile(RecordMetadata m, @Transient IntList keyColumnIndices) {
 

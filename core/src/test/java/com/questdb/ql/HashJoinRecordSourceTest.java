@@ -29,6 +29,7 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.StringSink;
+import com.questdb.misc.BytecodeAssembler;
 import com.questdb.misc.Files;
 import com.questdb.model.Album;
 import com.questdb.model.Band;
@@ -37,6 +38,7 @@ import com.questdb.ql.impl.AllRowSource;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.join.HashJoinRecordSource;
+import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
@@ -100,7 +102,8 @@ public class HashJoinRecordSourceTest {
                         false,
                         4 * 1024 * 1024,
                         4 * 1024 * 1024,
-                        1024 * 1024
+                        1024 * 1024,
+                        new RecordKeyCopierCompiler(new BytecodeAssembler())
                 ),
                 new ObjList<CharSequence>() {{
                     add("genre");
@@ -135,7 +138,8 @@ public class HashJoinRecordSourceTest {
                 false,
                 4 * 1024 * 1024,
                 4 * 1024 * 1024,
-                1024 * 1024
+                1024 * 1024,
+                new RecordKeyCopierCompiler(new BytecodeAssembler())
         );
 
         long t = System.currentTimeMillis();
@@ -185,7 +189,8 @@ public class HashJoinRecordSourceTest {
                         false,
                         4 * 1024 * 1024,
                         4 * 1024 * 1024,
-                        1024 * 1024
+                        1024 * 1024,
+                        new RecordKeyCopierCompiler(new BytecodeAssembler())
                 ),
                 new ObjList<CharSequence>() {{
                     add("genre");
@@ -230,7 +235,8 @@ public class HashJoinRecordSourceTest {
                         true,
                         4 * 1024 * 1024,
                         4 * 1024 * 1024,
-                        1024 * 1024
+                        1024 * 1024,
+                        new RecordKeyCopierCompiler(new BytecodeAssembler())
                 ),
                 new ObjList<CharSequence>() {{
                     add("genre");

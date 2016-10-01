@@ -25,6 +25,7 @@ package com.questdb.ql.impl.map;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
+import com.questdb.misc.BytecodeAssembler;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
@@ -74,7 +75,7 @@ public class RecordKeyCopierCompilerTest extends AbstractOptimiserTest {
         w.commit();
 
         RecordSource src = compileSource("x");
-        RecordKeyCopierCompiler cc = new RecordKeyCopierCompiler();
+        RecordKeyCopierCompiler cc = new RecordKeyCopierCompiler(new BytecodeAssembler());
         RecordKeyCopier copier = cc.compile(src.getMetadata(), keyColumns);
 
         IntList valueTypes = new IntList();

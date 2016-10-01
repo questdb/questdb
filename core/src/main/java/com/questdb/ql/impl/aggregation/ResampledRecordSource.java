@@ -36,7 +36,6 @@ import com.questdb.std.*;
 public class ResampledRecordSource extends AbstractCombinedRecordSource {
     private final DirectMap map;
     private final RecordSource recordSource;
-    private final IntList keyIndices;
     private final int tsIndex;
     private final ObjList<AggregatorFunction> aggregators;
     private final TimestampSampler sampler;
@@ -44,6 +43,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     private final DirectMapRecord record;
     private final DirectMapStorageFacade storageFacade;
     private final ObjList<MapRecordValueInterceptor> interceptors;
+    private final RecordKeyCopier copier;
     private RecordCursor recordCursor;
     private DirectMapIterator mapCursor;
     private Record nextRecord = null;
@@ -54,10 +54,11 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
             @Transient ObjHashSet<String> keyColumns,
             ObjList<AggregatorFunction> aggregators,
             TimestampSampler sampler,
-            int pageSize
+            int pageSize,
+            RecordKeyCopierCompiler compiler
     ) {
         int keyColumnsSize = keyColumns.size();
-        this.keyIndices = new IntList(keyColumnsSize);
+        IntList keyIndices = new IntList(keyColumnsSize);
         // define key columns
 
         ObjHashSet<String> keyCols = new ObjHashSet<>();
@@ -75,6 +76,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
 
         this.aggregators = aggregators;
         this.sampler = sampler;
+        this.copier = compiler.compile(rm, keyIndices);
 
         ObjList<MapRecordValueInterceptor> interceptors = null;
         ObjList<RecordColumnMetadata> columns = AggregationUtils.TL_COLUMNS.get();
@@ -202,13 +204,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
             // we are inside of time window, compute aggregates
             DirectMap.KeyWriter kw = map.keyWriter();
             kw.putLong(sample);
-            for (int i = 0, n = keyIndices.size(); i < n; i++) {
-                int index;
-                MapUtils.putRecord(kw, rec,
-                        index = keyIndices.getQuick(i),
-                        recordSource.getMetadata().getColumnQuick(index).getType());
-            }
-
+            copier.copy(rec, kw);
             DirectMapValues values = map.getOrCreateValues(kw);
             for (int i = 0, sz = aggregators.size(); i < sz; i++) {
                 aggregators.getQuick(i).calculate(rec, values);

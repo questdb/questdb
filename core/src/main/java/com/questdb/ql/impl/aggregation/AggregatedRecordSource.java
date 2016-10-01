@@ -40,12 +40,12 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
     private final DirectMap map;
     private final RecordSource recordSource;
-    private final IntList keyIndices;
     private final ObjList<AggregatorFunction> aggregators;
     private final RecordMetadata metadata;
     private final DirectMapStorageFacade storageFacade;
     private final DirectMapRecord record;
     private final ObjList<MapRecordValueInterceptor> interceptors;
+    private final RecordKeyCopier copier;
     private RecordCursor cursor;
     private Iterator<DirectMapEntry> mapCursor;
 
@@ -53,16 +53,19 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
             RecordSource recordSource,
             @Transient ObjHashSet<String> keyColumns,
             ObjList<AggregatorFunction> aggregators,
-            int pageSize
+            int pageSize,
+            RecordKeyCopierCompiler compiler
     ) {
         int keyColumnsSize = keyColumns.size();
-        this.keyIndices = new IntList(keyColumnsSize);
+        IntList keyIndices = new IntList(keyColumnsSize);
         this.aggregators = aggregators;
 
         RecordMetadata rm = recordSource.getMetadata();
         for (int i = 0; i < keyColumnsSize; i++) {
             keyIndices.add(rm.getColumnIndex(keyColumns.get(i)));
         }
+
+        this.copier = compiler.compile(rm, keyIndices);
 
         ObjList<MapRecordValueInterceptor> interceptors = null;
         ObjList<RecordColumnMetadata> columns = AggregationUtils.TL_COLUMNS.get();
@@ -177,22 +180,13 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
         int sz = aggregators.size();
         while (cursor.hasNext()) {
-
             cancellationHandler.check();
-
-            Record rec = cursor.next();
-
-            // we are inside of time window, compute aggregates
-            DirectMap.KeyWriter keyWriter = map.keyWriter();
-            for (int i = 0; i < keyIndices.size(); i++) {
-                int index;
-                MapUtils.putRecord(keyWriter, rec, index = keyIndices.getQuick(i),
-                        recordSource.getMetadata().getColumnQuick(index).getType());
-            }
-
-            DirectMapValues values = map.getOrCreateValues(keyWriter);
+            Record r = cursor.next();
+            DirectMap.KeyWriter kw = map.keyWriter();
+            copier.copy(r, kw);
+            DirectMapValues values = map.getOrCreateValues(kw);
             for (int i = 0; i < sz; i++) {
-                aggregators.getQuick(i).calculate(rec, values);
+                aggregators.getQuick(i).calculate(r, values);
             }
         }
         mapCursor = map.iterator();

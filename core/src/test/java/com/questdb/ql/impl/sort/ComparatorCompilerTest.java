@@ -28,6 +28,7 @@ import com.questdb.JournalWriter;
 import com.questdb.factory.configuration.AbstractRecordMetadata;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.misc.BytecodeAssembler;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
@@ -41,7 +42,7 @@ import org.junit.Test;
 
 public class ComparatorCompilerTest extends AbstractOptimiserTest {
 
-    private final ComparatorCompiler cc = new ComparatorCompiler();
+    private final ComparatorCompiler cc = new ComparatorCompiler(new BytecodeAssembler());
 
     @Test
     public void testAllGetters() throws Exception {

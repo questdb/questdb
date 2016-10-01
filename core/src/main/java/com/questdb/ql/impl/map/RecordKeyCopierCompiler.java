@@ -31,7 +31,11 @@ import com.questdb.std.IntList;
 import com.questdb.store.ColumnType;
 
 public class RecordKeyCopierCompiler {
-    private final BytecodeAssembler asm = new BytecodeAssembler();
+    private final BytecodeAssembler asm;
+
+    public RecordKeyCopierCompiler(BytecodeAssembler asm) {
+        this.asm = asm;
+    }
 
     public RecordKeyCopier compile(RecordMetadata meta, IntList columns) {
         asm.clear();
