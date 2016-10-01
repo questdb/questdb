@@ -56,7 +56,7 @@ public class MapUtils {
     public static void putRecord(DirectMap.KeyWriter w, Record r, int columnIndex, int columnType) {
         switch (columnType) {
             case ColumnType.BOOLEAN:
-                w.putBoolean(r.getBool(columnIndex));
+                w.putBool(r.getBool(columnIndex));
                 break;
             case ColumnType.BYTE:
                 w.putByte(r.get(columnIndex));
@@ -111,7 +111,7 @@ public class MapUtils {
     public static void writeVirtualColumn(DirectMap.KeyWriter w, Record r, VirtualColumn vc) {
         switch (vc.getType()) {
             case ColumnType.BOOLEAN:
-                w.putBoolean(vc.getBool(r));
+                w.putBool(vc.getBool(r));
                 break;
             case ColumnType.BYTE:
                 w.putByte(vc.get(r));

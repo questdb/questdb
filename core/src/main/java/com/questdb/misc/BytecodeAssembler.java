@@ -45,6 +45,7 @@ public class BytecodeAssembler implements Mutable {
     public static final int return_ = 177;
     public static final int getfield = 180;
     public static final int putfield = 181;
+    public static final int invokevirtual = 182;
     public static final int invokestatic = 184;
     public static final int invokeinterface = 185;
     public static final int i2l = 0x85;
@@ -158,6 +159,16 @@ public class BytecodeAssembler implements Mutable {
         put(0);
     }
 
+    public void invokeStatic(int index) {
+        put(invokestatic);
+        putShort(index);
+    }
+
+    public void invokeVirtual(int index) {
+        put(invokevirtual);
+        putShort(index);
+    }
+
     @SuppressWarnings("unchecked")
     public <T> Class<T> loadClass(Class<?> host) {
         byte b[] = new byte[position()];
@@ -169,6 +180,25 @@ public class BytecodeAssembler implements Mutable {
         put(0x07);
         putShort(classIndex);
         return poolCount++;
+    }
+
+    public int poolClass(Class clazz) {
+        String name = clazz.getName();
+        put(0x01);
+        int n;
+        putShort(n = name.length());
+        for (int i = 0; i < n; i++) {
+            char c = name.charAt(i);
+            switch (c) {
+                case '.':
+                    put('/');
+                    break;
+                default:
+                    put(c);
+                    break;
+            }
+        }
+        return poolClass(this.poolCount++);
     }
 
     public int poolField(int classIndex, int nameAndTypeIndex) {
@@ -265,7 +295,7 @@ public class BytecodeAssembler implements Mutable {
         putShort(0);
 
         // add standard stuff
-        objectClassIndex = poolClass(poolUtf8("java/lang/Object"));
+        objectClassIndex = poolClass(Object.class);
         defaultConstructorMethodIndex = poolMethod(objectClassIndex, poolNameAndType(
                 defaultConstructorNameIndex = poolUtf8("<init>"),
                 defaultConstructorDescIndex = poolUtf8("()V"))

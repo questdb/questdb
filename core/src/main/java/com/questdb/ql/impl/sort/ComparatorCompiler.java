@@ -27,6 +27,9 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.JournalUnsupportedTypeException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.BytecodeAssembler;
+import com.questdb.misc.Chars;
+import com.questdb.misc.Numbers;
+import com.questdb.ql.Record;
 import com.questdb.ql.parser.QueryParser;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.IntList;
@@ -54,8 +57,8 @@ public class ComparatorCompiler {
         asm.setupPool();
         int stackMapTableIndex = asm.poolUtf8("StackMapTable");
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
-        int interfaceClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/ql/impl/sort/RecordComparator"));
-        int recordClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/ql/Record"));
+        int interfaceClassIndex = asm.poolClass(RecordComparator.class);
+        int recordClassIndex = asm.poolClass(Record.class);
         // this is name re-use, it used on all static interfaces that compare values
         int compareNameIndex = asm.poolUtf8("compare");
         // our compare method signature
@@ -112,8 +115,7 @@ public class ComparatorCompiler {
             int index = keyColumns.getQuick(i);
             asm.putConstant((index > 0 ? index : -index) - 1);
             asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 1);
-            asm.put(BytecodeAssembler.invokestatic);
-            asm.putShort(comparatorAccessorIndices.getQuick(i));
+            asm.invokeStatic(comparatorAccessorIndices.getQuick(i));
             if (index < 0) {
                 asm.put(BytecodeAssembler.ineg);
             }
@@ -207,7 +209,7 @@ public class ComparatorCompiler {
             String fieldType;
             String getterNameA;
             String getterNameB = null;
-            String comparatorClass;
+            Class comparatorClass;
             String comparatorDesc = null;
             int index = keyColumnIndices.getQuick(i);
 
@@ -222,53 +224,53 @@ public class ComparatorCompiler {
                 case ColumnType.BOOLEAN:
                     fieldType = "Z";
                     getterNameA = "getBool";
-                    comparatorClass = "java/lang/Boolean";
+                    comparatorClass = Boolean.class;
                     break;
                 case ColumnType.BYTE:
                     fieldType = "B";
                     getterNameA = "get";
-                    comparatorClass = "java/lang/Byte";
+                    comparatorClass = Byte.class;
                     break;
                 case ColumnType.DOUBLE:
                     fieldType = "D";
                     getterNameA = "getDouble";
-                    comparatorClass = "com/questdb/misc/Numbers";
+                    comparatorClass = Numbers.class;
                     break;
                 case ColumnType.FLOAT:
                     fieldType = "F";
                     getterNameA = "getFloat";
-                    comparatorClass = "com/questdb/misc/Numbers";
+                    comparatorClass = Numbers.class;
                     break;
                 case ColumnType.INT:
                     fieldType = "I";
                     getterNameA = "getInt";
-                    comparatorClass = "java/lang/Integer";
+                    comparatorClass = Integer.class;
                     break;
                 case ColumnType.LONG:
                 case ColumnType.DATE:
                     fieldType = "J";
                     getterNameA = "getLong";
-                    comparatorClass = "java/lang/Long";
+                    comparatorClass = Long.class;
                     break;
                 case ColumnType.SHORT:
                     fieldType = "S";
                     getterNameA = "getShort";
-                    comparatorClass = "java/lang/Short";
+                    comparatorClass = Short.class;
                     break;
                 case ColumnType.STRING:
                     getterNameA = "getFlyweightStr";
                     getterNameB = "getFlyweightStrB";
                     fieldType = "Ljava/lang/CharSequence;";
-                    comparatorClass = "com/questdb/misc/Chars";
+                    comparatorClass = Chars.class;
                     break;
                 case ColumnType.SYMBOL:
                     getterNameA = "getSym";
                     fieldType = "Ljava/lang/String;";
-                    comparatorClass = "com/questdb/misc/Chars";
+                    comparatorClass = Chars.class;
                     comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
                     break;
                 default:
-                    throw new JournalUnsupportedTypeException(ColumnType.nameOf(m.getColumn(index).getType()).toString());
+                    throw new JournalUnsupportedTypeException(ColumnType.nameOf(m.getColumn(index).getType()));
             }
 
             int nameIndex;
@@ -294,9 +296,9 @@ public class ComparatorCompiler {
             }
             fieldRecordAccessorIndicesB.add(methodIndex);
 
-            int comparatorIndex = comparatorMap.get(comparatorClass);
+            int comparatorIndex = comparatorMap.get(comparatorClass.getName());
             if (comparatorIndex == -1) {
-                int cc = asm.poolClass(asm.poolUtf8(comparatorClass));
+                int cc = asm.poolClass(comparatorClass);
                 int nt = asm.poolNameAndType(compareMethodIndex, comparatorDesc == null ? asm.poolUtf8().put('(').put(fieldType).put(fieldType).put(")I").$() : asm.poolUtf8(comparatorDesc));
                 comparatorIndex = asm.poolMethod(cc, nt);
             }

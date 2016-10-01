@@ -91,7 +91,7 @@ public class DirectMapTest {
 
             w.put(tmp, Chars.put(tmp, cs));
             w.putLong(l);
-            w.putBoolean(b);
+            w.putBool(b);
             w.putInt(ii);
             w.putShort(s);
             w.putByte(by);

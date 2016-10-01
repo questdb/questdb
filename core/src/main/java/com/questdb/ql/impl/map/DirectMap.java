@@ -315,7 +315,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
             appendAddr += length;
         }
 
-        public void putBoolean(boolean value) {
+        public void putBool(boolean value) {
             checkSize(1);
             Unsafe.getUnsafe().putByte(appendAddr, (byte) (value ? 1 : 0));
             appendAddr += 1;

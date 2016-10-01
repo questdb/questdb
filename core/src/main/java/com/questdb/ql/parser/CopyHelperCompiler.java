@@ -23,9 +23,11 @@
 
 package com.questdb.ql.parser;
 
+import com.questdb.JournalEntryWriter;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.BytecodeAssembler;
+import com.questdb.ql.Record;
 import com.questdb.ql.impl.sort.ComparatorCompiler;
 import com.questdb.store.ColumnType;
 
@@ -37,9 +39,9 @@ public class CopyHelperCompiler {
         asm.clear();
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
-        int interfaceClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/ql/parser/CopyHelper"));
-        int recordClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/ql/Record"));
-        int writerClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/JournalEntryWriter"));
+        int interfaceClassIndex = asm.poolClass(CopyHelper.class);
+        int recordClassIndex = asm.poolClass(Record.class);
+        int writerClassIndex = asm.poolClass(JournalEntryWriter.class);
 
         int rGetInt = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getInt"), asm.poolUtf8("(I)I")));
         // shared sig

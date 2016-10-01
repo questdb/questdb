@@ -52,7 +52,7 @@ final class RecordUtils {
                     kw.putDouble(record.getDouble(idx));
                     break;
                 case ColumnType.BOOLEAN:
-                    kw.putBoolean(record.getBool(idx));
+                    kw.putBool(record.getBool(idx));
                     break;
                 case ColumnType.BYTE:
                     kw.putByte(record.get(idx));

@@ -175,6 +175,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
     private void buildMap(CancellationHandler cancellationHandler) {
 
+        int sz = aggregators.size();
         while (cursor.hasNext()) {
 
             cancellationHandler.check();
@@ -190,7 +191,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
             }
 
             DirectMapValues values = map.getOrCreateValues(keyWriter);
-            for (int i = 0, sz = aggregators.size(); i < sz; i++) {
+            for (int i = 0; i < sz; i++) {
                 aggregators.getQuick(i).calculate(rec, values);
             }
         }
