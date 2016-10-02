@@ -49,4 +49,9 @@ public final class MinLongAggregator extends AbstractUnaryAggregator {
             values.putLong(valueIndex, v);
         }
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

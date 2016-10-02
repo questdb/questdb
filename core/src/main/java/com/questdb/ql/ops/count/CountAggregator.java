@@ -43,7 +43,6 @@ public final class CountAggregator extends AbstractVirtualColumn implements Aggr
             return new CountAggregator(position);
         }
     };
-
     private int index;
 
     private CountAggregator(int position) {
@@ -63,6 +62,16 @@ public final class CountAggregator extends AbstractVirtualColumn implements Aggr
     public void prepare(ObjList<RecordColumnMetadata> columns, int offset) {
         columns.add(this);
         index = offset;
+    }
+
+    @Override
+    public void onIterationBegin(int pass) {
+
+    }
+
+    @Override
+    public int getPassCount() {
+        return 1;
     }
 
     @Override

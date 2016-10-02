@@ -41,11 +41,13 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     private final DirectMap map;
     private final RecordSource recordSource;
     private final ObjList<AggregatorFunction> aggregators;
+    private final ObjList<AggregatorFunction> remainingAggregators = new ObjList<>();
     private final RecordMetadata metadata;
     private final DirectMapStorageFacade storageFacade;
     private final DirectMapRecord record;
     private final ObjList<MapRecordValueInterceptor> interceptors;
     private final RecordKeyCopier copier;
+    private ObjList<MapRecordValueInterceptor> interceptorWorkingSet;
     private RecordCursor cursor;
     private Iterator<DirectMapEntry> mapCursor;
 
@@ -107,6 +109,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+        this.interceptorWorkingSet = interceptors;
         map.clear();
         this.cursor = recordSource.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(this.cursor);
@@ -131,6 +134,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
     @Override
     public void toTop() {
+        interceptorWorkingSet = null;
         mapCursor = map.iterator();
     }
 
@@ -142,7 +146,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     @Override
     public Record next() {
         DirectMapEntry entry = mapCursor.next();
-        if (interceptors != null) {
+        if (interceptorWorkingSet != null) {
             notifyInterceptors(entry);
         }
         return record.of(entry);
@@ -157,7 +161,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     @Override
     public void recordAt(Record record, long atRowId) {
         DirectMapEntry entry = map.entryAt(atRowId);
-        if (interceptors != null) {
+        if (interceptorWorkingSet != null) {
             notifyInterceptors(entry);
         }
         ((DirectMapRecord) record).of(entry);
@@ -178,22 +182,46 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
     private void buildMap(CancellationHandler cancellationHandler) {
 
+        int passCount = 1;
+        this.remainingAggregators.addAll(aggregators);
         int sz = aggregators.size();
-        while (cursor.hasNext()) {
-            cancellationHandler.check();
-            Record r = cursor.next();
-            DirectMap.KeyWriter kw = map.keyWriter();
-            copier.copy(r, kw);
-            DirectMapValues values = map.getOrCreateValues(kw);
+        do {
+
             for (int i = 0; i < sz; i++) {
-                aggregators.getQuick(i).calculate(r, values);
+                remainingAggregators.getQuick(i).onIterationBegin(passCount);
             }
-        }
+
+            while (cursor.hasNext()) {
+                cancellationHandler.check();
+                Record r = cursor.next();
+                DirectMap.KeyWriter kw = map.keyWriter();
+                copier.copy(r, kw);
+                DirectMapValues values = map.getOrCreateValues(kw);
+                for (int i = 0; i < sz; i++) {
+                    remainingAggregators.getQuick(i).calculate(r, values);
+                }
+            }
+
+            int i = 0;
+            while (i < remainingAggregators.size()) {
+                if (remainingAggregators.getQuick(i).getPassCount() == passCount) {
+                    remainingAggregators.remove(i);
+                } else {
+                    i++;
+                }
+            }
+            sz = remainingAggregators.size();
+            if (sz > 0) {
+                cursor.toTop();
+            }
+            passCount++;
+        } while (sz > 0);
+
         mapCursor = map.iterator();
     }
 
     private void notifyInterceptors(DirectMapEntry entry) {
-        for (int i = 0, n = interceptors.size(); i < n; i++) {
+        for (int i = 0, n = interceptorWorkingSet.size(); i < n; i++) {
             interceptors.getQuick(i).beforeRecord(entry.values());
         }
     }

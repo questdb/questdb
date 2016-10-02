@@ -47,4 +47,9 @@ public final class LastDateAggregator extends AbstractUnaryAggregator {
     public void calculate(Record rec, DirectMapValues values) {
         values.putLong(valueIndex, value.getDate(rec));
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

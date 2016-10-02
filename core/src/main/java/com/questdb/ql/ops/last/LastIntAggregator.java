@@ -47,4 +47,9 @@ public final class LastIntAggregator extends AbstractUnaryAggregator {
     public void calculate(Record rec, DirectMapValues values) {
         values.putInt(valueIndex, value.getInt(rec));
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

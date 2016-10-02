@@ -49,4 +49,9 @@ public final class MinDateAggregator extends AbstractUnaryAggregator {
             values.putLong(valueIndex, v);
         }
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

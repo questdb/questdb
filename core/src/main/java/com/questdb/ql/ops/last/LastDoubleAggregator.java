@@ -47,4 +47,9 @@ public final class LastDoubleAggregator extends AbstractUnaryAggregator {
     public void calculate(Record rec, DirectMapValues values) {
         values.putDouble(valueIndex, value.getDouble(rec));
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

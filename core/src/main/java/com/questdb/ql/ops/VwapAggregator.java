@@ -81,6 +81,15 @@ public final class VwapAggregator extends AbstractBinaryOperator implements Aggr
     }
 
     @Override
+    public void onIterationBegin(int pass) {
+    }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }

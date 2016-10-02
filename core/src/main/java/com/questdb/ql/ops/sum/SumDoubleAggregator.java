@@ -51,4 +51,9 @@ public final class SumDoubleAggregator extends AbstractUnaryAggregator {
             values.putDouble(valueIndex, values.getDouble(valueIndex) + value.getDouble(rec));
         }
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

@@ -30,6 +30,7 @@ import com.questdb.std.ObjList;
 public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator implements AggregatorFunction {
 
     protected int valueIndex;
+    protected int pass;
 
     protected AbstractUnaryAggregator(int type, int position) {
         super(type, position);
@@ -44,5 +45,10 @@ public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator impl
     public void prepare(ObjList<RecordColumnMetadata> columns, int offset) {
         columns.add(this);
         valueIndex = offset;
+    }
+
+    @Override
+    public void onIterationBegin(int pass) {
+        this.pass = pass;
     }
 }

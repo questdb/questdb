@@ -49,4 +49,9 @@ public final class FirstIntAggregator extends AbstractUnaryAggregator {
             values.putInt(valueIndex, value.getInt(rec));
         }
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

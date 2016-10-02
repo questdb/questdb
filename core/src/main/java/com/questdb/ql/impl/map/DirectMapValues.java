@@ -87,7 +87,7 @@ public final class DirectMapValues {
     }
 
     private long address0(int index) {
-        return address + valueOffsets[index];
+        return address + Unsafe.arrayGet(valueOffsets, index);
     }
 
     DirectMapValues of(long address, boolean _new) {

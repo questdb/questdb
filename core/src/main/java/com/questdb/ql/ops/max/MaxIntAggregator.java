@@ -49,4 +49,9 @@ public final class MaxIntAggregator extends AbstractUnaryAggregator {
             values.putInt(valueIndex, v);
         }
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

@@ -50,4 +50,9 @@ public final class MinDoubleAggregator extends AbstractUnaryAggregator {
             values.putDouble(valueIndex, v);
         }
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

@@ -47,4 +47,9 @@ public final class LastFloatAggregator extends AbstractUnaryAggregator {
     public void calculate(Record rec, DirectMapValues values) {
         values.putFloat(valueIndex, value.getFloat(rec));
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

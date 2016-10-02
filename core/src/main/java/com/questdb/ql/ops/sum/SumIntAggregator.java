@@ -50,4 +50,9 @@ public final class SumIntAggregator extends AbstractUnaryAggregator {
             values.putInt(valueIndex, values.getInt(valueIndex) + value.getInt(rec));
         }
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

@@ -53,4 +53,9 @@ public final class CountStrAggregator extends AbstractUnaryAggregator {
             values.putLong(valueIndex, values.getLong(valueIndex) + 1);
         }
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

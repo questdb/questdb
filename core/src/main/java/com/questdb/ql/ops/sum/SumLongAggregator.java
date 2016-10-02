@@ -51,4 +51,9 @@ public final class SumLongAggregator extends AbstractUnaryAggregator {
             values.putLong(valueIndex, values.getLong(valueIndex) + value.getLong(rec));
         }
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }

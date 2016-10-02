@@ -49,4 +49,9 @@ public final class FirstFloatAggregator extends AbstractUnaryAggregator {
             values.putFloat(valueIndex, value.getFloat(rec));
         }
     }
+
+    @Override
+    public int getPassCount() {
+        return 1;
+    }
 }
