@@ -3309,6 +3309,15 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testSubQueryIntervalSearch3() throws Exception {
+        createTabWithNaNs2();
+        assertThat("2015-03-18T01:00:00.000Z\t0.000001096262\n" +
+                        "2015-03-18T02:00:00.000Z\t0.000001078617\n",
+                "(select 1+timestamp ts, sum(y) from tab sample by 1d) timestamp(ts) where ts = '2015-03-18T01;1h'");
+
+    }
+
+    @Test
     public void testSymRegex() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").
