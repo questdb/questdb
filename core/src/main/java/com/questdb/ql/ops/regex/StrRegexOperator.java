@@ -21,10 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops;
+package com.questdb.ql.ops.regex;
 
 import com.questdb.ex.ParserException;
 import com.questdb.ql.Record;
+import com.questdb.ql.ops.AbstractBinaryOperator;
+import com.questdb.ql.ops.Function;
+import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.regex.Matcher;
 import com.questdb.regex.Pattern;

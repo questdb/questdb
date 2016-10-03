@@ -21,10 +21,13 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops;
+package com.questdb.ql.ops.regex;
 
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
+import com.questdb.ql.ops.AbstractBinaryOperator;
+import com.questdb.ql.ops.Function;
+import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.regex.Matcher;
 import com.questdb.regex.Pattern;
 import com.questdb.std.CharSink;
@@ -32,19 +35,19 @@ import com.questdb.std.FlyweightCharSequence;
 import com.questdb.store.ColumnType;
 
 
-public class MatchStrFunction extends AbstractBinaryOperator {
+public class PluckStrFunction extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position) {
-            return new MatchStrFunction(position);
+            return new PluckStrFunction(position);
         }
     };
     private final FlyweightCharSequence csA = new FlyweightCharSequence();
     private final FlyweightCharSequence csB = new FlyweightCharSequence();
     private Matcher matcher;
 
-    private MatchStrFunction(int position) {
+    private PluckStrFunction(int position) {
         super(ColumnType.STRING, position);
     }
 

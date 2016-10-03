@@ -38,6 +38,7 @@ import com.questdb.std.ObjHashSet;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -1602,30 +1603,6 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
-    public void testMatch1() throws Exception {
-        createTabWithNaNs();
-        assertThat("BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n" +
-                        "BROMNXKUIZULIGY\tM\n",
-                "select id, match('(?<=^.{3})(.)',id) from tab where z >= 250 and id ~ 'ULIGY'");
-    }
-
-    @Test
     public void testMinusInt() throws Exception {
         createTabWithNaNs2();
 
@@ -2234,6 +2211,30 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testPluck() throws Exception {
+        createTabWithNaNs();
+        assertThat("BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n" +
+                        "BROMNXKUIZULIGY\tM\n",
+                "select id, pluck('(?<=^.{3})(.)',id) from tab where z >= 250 and id ~ 'ULIGY'");
+    }
+
+    @Test
     public void testRegexNull() throws Exception {
         createTabWithNullsAndTime();
         assertThat("IBBTGPGWFFYUDEYYQEHBHF\t19:36\t2015-03-12T00:00:00.000Z\n", "tab where id ~ 'BT'");
@@ -2247,6 +2248,14 @@ public class SingleJournalQueryTest extends AbstractTest {
         } catch (ParserException e) {
             Assert.assertEquals(37, QueryError.getPosition());
         }
+    }
+
+    @Test
+    @Ignore
+    public void testReplace() throws Exception {
+        createTabWithNaNs();
+//        assertThat("", "select replace('(.+) ', '$1', dtoa4(timestamp)) from tab", true);
+        assertThat("", "select replace('(.+) ', '$0 b', dtoa4(timestamp)) from tab", true);
     }
 
     @Test
