@@ -65,6 +65,8 @@ import com.questdb.ql.ops.neg.LongNegativeOperator;
 import com.questdb.ql.ops.neq.*;
 import com.questdb.ql.ops.plus.*;
 import com.questdb.ql.ops.stat.AvgAggregator;
+import com.questdb.ql.ops.stat.StdDevAggregator;
+import com.questdb.ql.ops.stat.VarAggregator;
 import com.questdb.ql.ops.sum.SumDoubleAggregator;
 import com.questdb.ql.ops.sum.SumIntAggregator;
 import com.questdb.ql.ops.sum.SumLongAggregator;
@@ -364,6 +366,16 @@ public final class FunctionFactories {
         unSigAgg("avg", ColumnType.INT, AvgAggregator.FACTORY);
         unSigAgg("avg", ColumnType.LONG, AvgAggregator.FACTORY);
         unSigAgg("avg", ColumnType.FLOAT, AvgAggregator.FACTORY);
+
+        unSigAgg("var", ColumnType.DOUBLE, VarAggregator.FACTORY);
+        unSigAgg("var", ColumnType.INT, VarAggregator.FACTORY);
+        unSigAgg("var", ColumnType.LONG, VarAggregator.FACTORY);
+        unSigAgg("var", ColumnType.FLOAT, VarAggregator.FACTORY);
+
+        unSigAgg("stddev", ColumnType.DOUBLE, StdDevAggregator.FACTORY);
+        unSigAgg("stddev", ColumnType.INT, StdDevAggregator.FACTORY);
+        unSigAgg("stddev", ColumnType.LONG, StdDevAggregator.FACTORY);
+        unSigAgg("stddev", ColumnType.FLOAT, StdDevAggregator.FACTORY);
 
         binSigAgg("vwap", VwapAggregator.FACTORY, VwapAggregator.FACTORY, VwapAggregator.FACTORY);
 

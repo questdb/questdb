@@ -100,6 +100,28 @@ public class AggregationTest extends AbstractOptimiserTest {
             }
             stars.commit();
         }
+
+        try (JournalWriter stars = factory.writer(
+                new JournalStructure("stars2").
+                        $int("galaxy").
+                        $int("star").
+                        $double("diameter").
+                        $()
+        )) {
+            Rnd rnd = new Rnd();
+            double r = Math.sqrt(Double.MAX_VALUE);
+            long timestamp = Dates.parseDateTime("2014-05-04T10:30:00.000Z");
+            int tsIncrement = 10000;
+            for (int i = 0; i < recordCount; i++) {
+                JournalEntryWriter w = stars.entryWriter(timestamp += tsIncrement);
+                w.putInt(0, rnd.nextPositiveInt() % 10);
+                w.putInt(1, rnd.nextPositiveInt());
+                int dividend = (rnd.nextPositiveInt() % 10);
+                w.putDouble(2, r / (double) (dividend == 0 ? 1 : dividend));
+                w.append();
+            }
+            stars.commit();
+        }
     }
 
     @Test
@@ -163,7 +185,6 @@ public class AggregationTest extends AbstractOptimiserTest {
                         "6\t7.051044382735928E307\n" +
                         "3\t7.088674983313755E307\n",
                 "select galaxy, avg(diameter) d from stars");
-
     }
 
     @Test
@@ -342,6 +363,21 @@ public class AggregationTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testStdDevOverflow() throws Exception {
+        assertThat("0\t1.9559640924336714E307\t4.4226282824059176E153\n" +
+                        "1\t1.879534937588584E307\t4.335360351330191E153\n" +
+                        "2\t1.9686634860114622E307\t4.436962346032995E153\n" +
+                        "8\t2.0009174148155284E307\t4.473161538347937E153\n" +
+                        "4\t2.0331647100026274E307\t4.5090627740170434E153\n" +
+                        "5\t1.951822822449265E307\t4.417943891053015E153\n" +
+                        "7\t1.931400940102605E307\t4.3947706881049034E153\n" +
+                        "9\t1.841320042762572E307\t4.291060524815016E153\n" +
+                        "6\t1.9512460199745866E307\t4.4172910476609834E153\n" +
+                        "3\t1.9942851937157214E307\t4.4657420365665115E153\n",
+                "select galaxy, var(diameter), stddev(diameter) d from stars2");
+    }
+
+    @Test
     public void testSumConst() throws Exception {
         assertThat("employeeId\tsum\tcol0\tcol1\n" +
                         "TGPGWFFYU\t983\t10\t20\n" +
@@ -433,5 +469,35 @@ public class AggregationTest extends AbstractOptimiserTest {
                         "YRXPEHNRX\t-9.386559884214\t-9.386559884214\n" +
                         "VTJWCPSWH\t-12.402215320133\t-12.402215320133\n",
                 "select employeeId, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders");
+    }
+
+    @Test
+    public void testVarianceOverflow() throws Exception {
+        assertThat("0\tNaN\n" +
+                        "1\tNaN\n" +
+                        "2\tNaN\n" +
+                        "8\tNaN\n" +
+                        "4\tNaN\n" +
+                        "5\tNaN\n" +
+                        "7\tNaN\n" +
+                        "9\tNaN\n" +
+                        "6\tNaN\n" +
+                        "3\tNaN\n",
+                "select galaxy, var(diameter) d from stars");
+    }
+
+    @Test
+    public void testVarianceOverflow2() throws Exception {
+        assertThat("0\t1.9559640924336714E307\n" +
+                        "1\t1.879534937588584E307\n" +
+                        "2\t1.9686634860114622E307\n" +
+                        "8\t2.0009174148155284E307\n" +
+                        "4\t2.0331647100026274E307\n" +
+                        "5\t1.951822822449265E307\n" +
+                        "7\t1.931400940102605E307\n" +
+                        "9\t1.841320042762572E307\n" +
+                        "6\t1.9512460199745866E307\n" +
+                        "3\t1.9942851937157214E307\n",
+                "select galaxy, var(diameter) d from stars2");
     }
 }

@@ -178,7 +178,6 @@ public class QueryParserTest extends AbstractTest {
             parser.parse("select a,b, f(c) my over (partition by b order by ,ts) from xyz");
             Assert.fail();
         } catch (ParserException e) {
-            System.out.println(QueryError.getMessage());
             Assert.assertEquals(50, QueryError.getPosition());
         }
     }

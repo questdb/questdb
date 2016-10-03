@@ -70,21 +70,9 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
 
     @Override
     public void beforeRecord(DirectMapValues values) {
-        long ref = values.getLong(oListHead);
-        if (ref == -1) {
-            values.putDouble(oAvg, values.getDouble(oSum) / (double) values.getLong(oLocalTotal));
-        } else {
-            double total = (double) values.getLong(oTotal);
-            double count = (double) values.getLong(oLocalTotal);
-            double avg = (count / total) * (values.getDouble(oSum) / count);
-            records.of(ref);
-            while (records.hasNext()) {
-                Record r = records.next();
-                double sum = r.getDouble(0);
-                count = r.getLong(1);
-                avg += (count / total) * (sum / count);
-            }
-            values.putDouble(oAvg, avg);
+        double d = values.getDouble(oAvg);
+        if (d != d) {
+            computeAvg(values);
         }
     }
 
@@ -94,22 +82,27 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
         double sum;
 
         if (values.isNew()) {
+            // set initial values for new group
             values.putLong(oTotal, 1);
-            values.putDouble(oAvg, 0);
+            values.putDouble(oAvg, Double.NaN);
             localTotal = 0;
             sum = 0;
             values.putLong(oListHead, -1);
             values.putLong(oListTail, -1);
         } else {
+            // increment total record count for existing group and retrieve existing sum and partial count
             values.putLong(oTotal, values.getLong(oTotal) + 1);
             localTotal = values.getLong(oLocalTotal);
             sum = values.getDouble(oSum);
         }
 
-        double value1 = this.value.getDouble(rec);
-        double x = sum + value1;
+        double value = this.value.getDouble(rec);
+        double x = sum + value;
 
+        // check if the new sum overflows double
         if (x == Double.POSITIVE_INFINITY || x == Double.NEGATIVE_INFINITY) {
+
+            // save partial sum to record list
             long head = values.getLong(oListHead);
             long tail = values.getLong(oListTail);
             tail = records.beginRecord(tail);
@@ -117,12 +110,15 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
             if (head == -1) {
                 values.putLong(oListHead, tail);
             }
-
             records.appendDouble(sum);
             records.appendLong(localTotal);
+
+            // reset partial sum with new value
             values.putLong(oLocalTotal, 1);
-            values.putDouble(oSum, value1);
+            values.putDouble(oSum, value);
         } else {
+
+            // in case of no overflow carry on with sum and count
             values.putLong(oLocalTotal, localTotal + 1);
             values.putDouble(oSum, x);
         }
@@ -157,6 +153,30 @@ public final class AvgAggregator extends AbstractUnaryOperator implements Aggreg
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    private void computeAvg(DirectMapValues values) {
+        long ref = values.getLong(oListHead);
+        if (ref == -1) {
+            // no partial sums found, compute average of what we have accumulated so far
+            values.putDouble(oAvg, values.getDouble(oSum) / (double) values.getLong(oLocalTotal));
+        } else {
+            // there are partial sums
+            // compute average of last partial sum (which hasn't been added to record list)
+            double total = (double) values.getLong(oTotal);
+            double count = (double) values.getLong(oLocalTotal);
+            double avg = (count / total) * (values.getDouble(oSum) / count);
+
+            // add partial sums together using weight of each sum
+            // weight = partial count / total count
+            records.of(ref);
+            while (records.hasNext()) {
+                Record r = records.next();
+                count = r.getLong(1);
+                avg += (count / total) * (r.getDouble(0) / count);
+            }
+            values.putDouble(oAvg, avg);
+        }
     }
 
     static {
