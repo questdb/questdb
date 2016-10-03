@@ -38,7 +38,8 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
-import com.sun.xml.internal.ws.Closeable;
+
+import java.io.Closeable;
 
 public class VarAggregator extends AbstractUnaryOperator implements AggregatorFunction, MapRecordValueInterceptor, Closeable {
 
