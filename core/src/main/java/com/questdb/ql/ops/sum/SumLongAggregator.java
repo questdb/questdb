@@ -52,8 +52,4 @@ public final class SumLongAggregator extends AbstractUnaryAggregator {
         }
     }
 
-    @Override
-    public int getPassCount() {
-        return 1;
-    }
 }

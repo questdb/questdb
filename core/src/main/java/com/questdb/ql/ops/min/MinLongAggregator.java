@@ -50,8 +50,4 @@ public final class MinLongAggregator extends AbstractUnaryAggregator {
         }
     }
 
-    @Override
-    public int getPassCount() {
-        return 1;
-    }
 }

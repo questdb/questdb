@@ -51,8 +51,4 @@ public final class MinDoubleAggregator extends AbstractUnaryAggregator {
         }
     }
 
-    @Override
-    public int getPassCount() {
-        return 1;
-    }
 }

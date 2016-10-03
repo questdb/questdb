@@ -53,8 +53,4 @@ public final class CountDoubleAggregator extends AbstractUnaryAggregator {
         }
     }
 
-    @Override
-    public int getPassCount() {
-        return 1;
-    }
 }

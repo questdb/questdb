@@ -31,10 +31,7 @@ public interface AggregatorFunction {
 
     void calculate(Record rec, DirectMapValues values);
 
-    // number of passes over data that is required to compute function
-    int getPassCount();
-
-    void onIterationBegin(int pass);
+    void clear();
 
     void prepare(ObjList<RecordColumnMetadata> columns, int offset);
 }

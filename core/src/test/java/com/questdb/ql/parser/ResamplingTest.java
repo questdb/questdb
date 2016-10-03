@@ -224,6 +224,31 @@ public class ResamplingTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testResamplingAvg() throws Exception {
+        assertThat("2014-05-04T00:00:00.000Z\tTGPGWFFYU\t-41.304426677644\t-41.304426677644\n" +
+                        "2014-05-04T00:00:00.000Z\tDEYYQEHBH\t7.372452128965\t7.372452128965\n" +
+                        "2014-05-04T00:00:00.000Z\tSRYRFBVTM\t-12.203630788820\t-12.203630788820\n" +
+                        "2014-05-04T00:00:00.000Z\tGZSXUXIBB\t4.115922051504\t4.115922051504\n" +
+                        "2014-05-04T00:00:00.000Z\tUEDRQQULO\t-24.365014628709\t-24.365014628709\n" +
+                        "2014-05-04T00:00:00.000Z\tFOWLPDXYS\t-29.996629348333\t-29.996629348333\n" +
+                        "2014-05-04T00:00:00.000Z\tFJGETJRSZ\t-4.318969422717\t-4.318969422717\n" +
+                        "2014-05-04T00:00:00.000Z\tBEOUOJSHR\t7.502717136654\t7.502717136654\n" +
+                        "2014-05-04T00:00:00.000Z\tYRXPEHNRX\t0.601852660663\t0.601852660663\n" +
+                        "2014-05-04T00:00:00.000Z\tVTJWCPSWH\t-9.734968411374\t-9.734968411374\n" +
+                        "2014-05-05T00:00:00.000Z\tDEYYQEHBH\t-16.135037390878\t-16.135037390878\n" +
+                        "2014-05-05T00:00:00.000Z\tSRYRFBVTM\t14.227762047291\t14.227762047291\n" +
+                        "2014-05-05T00:00:00.000Z\tVTJWCPSWH\t-21.138005372460\t-21.138005372460\n" +
+                        "2014-05-05T00:00:00.000Z\tBEOUOJSHR\t-20.797434613016\t-20.797434613016\n" +
+                        "2014-05-05T00:00:00.000Z\tFJGETJRSZ\t-5.417172028476\t-5.417172028476\n" +
+                        "2014-05-05T00:00:00.000Z\tGZSXUXIBB\t3.389333554052\t3.389333554052\n" +
+                        "2014-05-05T00:00:00.000Z\tFOWLPDXYS\t-21.249544800002\t-21.249544800002\n" +
+                        "2014-05-05T00:00:00.000Z\tYRXPEHNRX\t-12.965791501497\t-12.965791501497\n" +
+                        "2014-05-05T00:00:00.000Z\tUEDRQQULO\t12.717803509177\t12.717803509177\n" +
+                        "2014-05-05T00:00:00.000Z\tTGPGWFFYU\t-4.258237623021\t-4.258237623021\n",
+                "select orderDate, employeeId, sum(price)/count(), avg(price) sum from orders2 timestamp(orderDate) sample by 1d");
+    }
+
+    @Test
     public void testResamplingBySymbol() throws Exception {
         assertSymbol("select employeeId, vwap(price, quantity) sum from orders4 sample by 1d", 0);
     }

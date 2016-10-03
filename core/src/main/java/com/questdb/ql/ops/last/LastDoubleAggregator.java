@@ -48,8 +48,4 @@ public final class LastDoubleAggregator extends AbstractUnaryAggregator {
         values.putDouble(valueIndex, value.getDouble(rec));
     }
 
-    @Override
-    public int getPassCount() {
-        return 1;
-    }
 }

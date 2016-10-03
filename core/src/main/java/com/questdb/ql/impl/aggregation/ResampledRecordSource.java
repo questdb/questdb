@@ -110,6 +110,10 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     public void close() {
         Misc.free(map);
         Misc.free(recordSource);
+        for (int i = 0, n = aggregators.size(); i < n; i++) {
+            Misc.free(aggregators.getQuick(i));
+        }
+        aggregators.clear();
     }
 
     @Override
@@ -178,20 +182,16 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
 
         long current = 0;
         boolean first = true;
-        Record rec;
+        int sz = aggregators.size();
 
         map.clear();
-
-        if (nextRecord != null) {
-            rec = nextRecord;
-        } else {
-            if (!recordCursor.hasNext()) {
-                return false;
-            }
-            rec = recordCursor.next();
+        for (int i = 0; i < sz; i++) {
+            aggregators.getQuick(i).clear();
         }
 
-        do {
+        Record rec;
+        while ((rec = fetchNext()) != null) {
+
             long sample = sampler.resample(rec.getLong(tsIndex));
             if (first) {
                 current = sample;
@@ -206,20 +206,25 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
             kw.putLong(sample);
             copier.copy(rec, kw);
             DirectMapValues values = map.getOrCreateValues(kw);
-            for (int i = 0, sz = aggregators.size(); i < sz; i++) {
+            for (int i = 0; i < sz; i++) {
                 aggregators.getQuick(i).calculate(rec, values);
             }
-
-            if (!recordCursor.hasNext()) {
-                nextRecord = null;
-                break;
-            }
-
-            rec = recordCursor.next();
-
-        } while (true);
+        }
 
         mapCursor = map.iterator();
         return mapCursor.hasNext();
+    }
+
+    private Record fetchNext() {
+        if (nextRecord != null) {
+            Record r = nextRecord;
+            nextRecord = null;
+            return r;
+        } else {
+            if (!recordCursor.hasNext()) {
+                return null;
+            }
+            return recordCursor.next();
+        }
     }
 }

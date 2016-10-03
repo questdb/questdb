@@ -79,6 +79,27 @@ public class AggregationTest extends AbstractOptimiserTest {
             }
             orders.commit();
         }
+
+        try (JournalWriter stars = factory.writer(
+                new JournalStructure("stars").
+                        $int("galaxy").
+                        $int("star").
+                        $double("diameter").
+                        $()
+        )) {
+            Rnd rnd = new Rnd();
+            long timestamp = Dates.parseDateTime("2014-05-04T10:30:00.000Z");
+            int tsIncrement = 10000;
+            for (int i = 0; i < recordCount; i++) {
+                JournalEntryWriter w = stars.entryWriter(timestamp += tsIncrement);
+                w.putInt(0, rnd.nextPositiveInt() % 10);
+                w.putInt(1, rnd.nextPositiveInt());
+                int dividend = (rnd.nextPositiveInt() % 10);
+                w.putDouble(2, Double.MAX_VALUE / (double) (dividend == 0 ? 1 : dividend));
+                w.append();
+            }
+            stars.commit();
+        }
     }
 
     @Test
@@ -127,6 +148,22 @@ public class AggregationTest extends AbstractOptimiserTest {
                         "YRXPEHNRX\t100.300000000002\n" +
                         "VTJWCPSWH\t100.300000000002\n",
                 "select employeeId, avg(100.3) from orders", true);
+    }
+
+    @Test
+    public void testAvgOverflow() throws Exception {
+        assertThat("0\t6.873337142147506E307\n" +
+                        "1\t6.873164995098181E307\n" +
+                        "2\t6.942020245747746E307\n" +
+                        "8\t7.080135168048353E307\n" +
+                        "4\t7.139261077288051E307\n" +
+                        "5\t6.98887936996273E307\n" +
+                        "7\t6.903112119100632E307\n" +
+                        "9\t6.731706356699814E307\n" +
+                        "6\t7.051044382735928E307\n" +
+                        "3\t7.088674983313755E307\n",
+                "select galaxy, avg(diameter) d from stars");
+
     }
 
     @Test

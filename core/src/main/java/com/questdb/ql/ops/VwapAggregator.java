@@ -71,6 +71,10 @@ public final class VwapAggregator extends AbstractBinaryOperator implements Aggr
     }
 
     @Override
+    public void clear() {
+    }
+
+    @Override
     public void prepare(ObjList<RecordColumnMetadata> columns, int offset) {
         columns.add(INTERNAL_COL_AMOUNT);
         columns.add(INTERNAL_COL_QUANTITY);
@@ -78,15 +82,6 @@ public final class VwapAggregator extends AbstractBinaryOperator implements Aggr
         sumAmtIdx = offset;
         sumQtyIdx = offset + 1;
         vwap = offset + 2;
-    }
-
-    @Override
-    public void onIterationBegin(int pass) {
-    }
-
-    @Override
-    public int getPassCount() {
-        return 1;
     }
 
     @Override

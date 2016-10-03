@@ -48,8 +48,4 @@ public final class LastIntAggregator extends AbstractUnaryAggregator {
         values.putInt(valueIndex, value.getInt(rec));
     }
 
-    @Override
-    public int getPassCount() {
-        return 1;
-    }
 }

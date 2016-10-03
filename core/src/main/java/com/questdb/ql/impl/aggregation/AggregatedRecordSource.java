@@ -41,7 +41,6 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     private final DirectMap map;
     private final RecordSource recordSource;
     private final ObjList<AggregatorFunction> aggregators;
-    private final ObjList<AggregatorFunction> remainingAggregators = new ObjList<>();
     private final RecordMetadata metadata;
     private final DirectMapStorageFacade storageFacade;
     private final DirectMapRecord record;
@@ -100,6 +99,10 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     public void close() {
         Misc.free(this.map);
         Misc.free(recordSource);
+        for (int i = 0, n = aggregators.size(); i < n; i++) {
+            Misc.free(aggregators.getQuick(i));
+        }
+        aggregators.clear();
     }
 
     @Override
@@ -182,41 +185,17 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
 
     private void buildMap(CancellationHandler cancellationHandler) {
 
-        int passCount = 1;
-        this.remainingAggregators.addAll(aggregators);
         int sz = aggregators.size();
-        do {
-
+        while (cursor.hasNext()) {
+            cancellationHandler.check();
+            Record r = cursor.next();
+            DirectMap.KeyWriter kw = map.keyWriter();
+            copier.copy(r, kw);
+            DirectMapValues values = map.getOrCreateValues(kw);
             for (int i = 0; i < sz; i++) {
-                remainingAggregators.getQuick(i).onIterationBegin(passCount);
+                aggregators.getQuick(i).calculate(r, values);
             }
-
-            while (cursor.hasNext()) {
-                cancellationHandler.check();
-                Record r = cursor.next();
-                DirectMap.KeyWriter kw = map.keyWriter();
-                copier.copy(r, kw);
-                DirectMapValues values = map.getOrCreateValues(kw);
-                for (int i = 0; i < sz; i++) {
-                    remainingAggregators.getQuick(i).calculate(r, values);
-                }
-            }
-
-            int i = 0;
-            while (i < remainingAggregators.size()) {
-                if (remainingAggregators.getQuick(i).getPassCount() == passCount) {
-                    remainingAggregators.remove(i);
-                } else {
-                    i++;
-                }
-            }
-            sz = remainingAggregators.size();
-            if (sz > 0) {
-                cursor.toTop();
-            }
-            passCount++;
-        } while (sz > 0);
-
+        }
         mapCursor = map.iterator();
     }
 

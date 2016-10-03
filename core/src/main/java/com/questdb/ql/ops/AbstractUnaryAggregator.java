@@ -30,15 +30,13 @@ import com.questdb.std.ObjList;
 public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator implements AggregatorFunction {
 
     protected int valueIndex;
-    protected int pass;
 
     protected AbstractUnaryAggregator(int type, int position) {
         super(type, position);
     }
 
     @Override
-    public boolean isConstant() {
-        return false;
+    public void clear() {
     }
 
     @Override
@@ -48,7 +46,7 @@ public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator impl
     }
 
     @Override
-    public void onIterationBegin(int pass) {
-        this.pass = pass;
+    public boolean isConstant() {
+        return false;
     }
 }

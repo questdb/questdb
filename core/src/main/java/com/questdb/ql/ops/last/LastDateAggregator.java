@@ -48,8 +48,4 @@ public final class LastDateAggregator extends AbstractUnaryAggregator {
         values.putLong(valueIndex, value.getDate(rec));
     }
 
-    @Override
-    public int getPassCount() {
-        return 1;
-    }
 }
