@@ -40,12 +40,12 @@ import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 import com.sun.xml.internal.ws.Closeable;
 
-public final class StableAvgAggregator2 extends AbstractUnaryOperator implements AggregatorFunction, MapRecordValueInterceptor, Closeable {
+public final class AvgAggregator extends AbstractUnaryOperator implements AggregatorFunction, MapRecordValueInterceptor, Closeable {
 
     public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position) {
-            return new StableAvgAggregator2(position);
+            return new AvgAggregator(position);
         }
     };
 
@@ -63,7 +63,7 @@ public final class StableAvgAggregator2 extends AbstractUnaryOperator implements
     private int oListTail;
     private int oAvg;
 
-    private StableAvgAggregator2(int position) {
+    private AvgAggregator(int position) {
         super(ColumnType.DOUBLE, position);
         this.records = new RecordList(listMetadata, 1024 * 1024);
     }
