@@ -23,6 +23,7 @@
 
 package com.questdb.std;
 
+import com.questdb.misc.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class ConcatCharSequence implements CharSequence {
@@ -49,12 +50,24 @@ public class ConcatCharSequence implements CharSequence {
         delegates.add(cs);
     }
 
+    public int computeLen() {
+        int l = 0;
+        for (int i = 0, n = delegates.size(); i < n; i++) {
+            CharSequence d = delegates.getQuick(i);
+            if (d == lastSeq) {
+                lastSeqLen = d.length();
+            }
+            l += d.length();
+        }
+        return len = l;
+    }
+
     @Override
     public int length() {
         if (len > -1) {
             return len;
         }
-        return len = computeLen();
+        return computeLen();
     }
 
     @Override
@@ -78,18 +91,9 @@ public class ConcatCharSequence implements CharSequence {
     @NotNull
     @Override
     public String toString() {
-//        StringBuilder b = Misc.getThreadLocalBuilder();
-//        b.append(this);
-//        return b.toString();
-        return "";
-    }
-
-    private int computeLen() {
-        int l = 0;
-        for (int i = 0, n = delegates.size(); i < n; i++) {
-            l += delegates.getQuick(i).length();
-        }
-        return l;
+        StringBuilder b = Misc.getThreadLocalBuilder();
+        b.append(this);
+        return b.toString();
     }
 
     private char next(int index) {

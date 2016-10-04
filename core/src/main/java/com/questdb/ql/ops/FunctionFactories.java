@@ -65,7 +65,7 @@ import com.questdb.ql.ops.neg.LongNegativeOperator;
 import com.questdb.ql.ops.neq.*;
 import com.questdb.ql.ops.plus.*;
 import com.questdb.ql.ops.regex.PluckStrFunction;
-import com.questdb.ql.ops.regex.ReplaceStrFunction;
+import com.questdb.ql.ops.regex.ReplaceStrWrapper;
 import com.questdb.ql.ops.regex.StrRegexOperator;
 import com.questdb.ql.ops.stat.AvgAggregator;
 import com.questdb.ql.ops.stat.StdDevAggregator;
@@ -407,7 +407,7 @@ public final class FunctionFactories {
         factories.put(new Signature().setName("pluck").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true), PluckStrFunction.FACTORY);
 
 
-        factories.put(new Signature().setName("replace").setParamCount(3).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, false), ReplaceStrFunction.FACTORY);
-        factories.put(new Signature().setName("replace").setParamCount(3).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), ReplaceStrFunction.FACTORY);
+        factories.put(new Signature().setName("replace").setParamCount(3).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, false), ReplaceStrWrapper.FACTORY);
+        factories.put(new Signature().setName("replace").setParamCount(3).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), ReplaceStrWrapper.FACTORY);
     }
 }

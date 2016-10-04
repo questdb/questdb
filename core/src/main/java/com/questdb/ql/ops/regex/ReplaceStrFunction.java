@@ -29,7 +29,6 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.regex.Matcher;
 import com.questdb.regex.Pattern;
@@ -39,34 +38,51 @@ import com.questdb.std.ConcatCharSequence;
 import com.questdb.std.FlyweightCharSequence;
 import com.questdb.store.ColumnType;
 
-public class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position) {
-            return new ReplaceStrFunction(position);
-        }
-    };
-    private CharSequence replacePatten;
+class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
+    private ConcatCharSequence replacePatten;
     private VirtualColumn value;
     private Matcher matcher;
-    private CharSequence base;
+    private FlyweightCharSequence base = new FlyweightCharSequence();
 
     public ReplaceStrFunction(int position) {
         super(ColumnType.STRING, position);
     }
 
+    public static void main(String[] args) {
+        String a = "2015-12-20";
+
+        System.out.println(a.replaceAll("(.+)-", "x"));
+    }
+
     @Override
     public CharSequence getFlyweightStr(Record rec) {
-        this.base = value.getFlyweightStr(rec);
+        this.base.of(value.getFlyweightStr(rec));
         if (matcher.reset(base).find() && matcher.groupCount() > 0) {
+            replacePatten.computeLen();
             return replacePatten;
         }
         return null;
     }
 
     @Override
+    public CharSequence getFlyweightStrB(Record rec) {
+        return getFlyweightStr(rec);
+    }
+
+    @Override
+    public CharSequence getStr(Record rec) {
+        return getFlyweightStr(rec);
+    }
+
+    @Override
     public void getStr(Record rec, CharSink sink) {
         sink.put(getFlyweightStr(rec));
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        CharSequence cs = getFlyweightStr(rec);
+        return cs == null ? -1 : cs.length();
     }
 
     @Override
@@ -154,29 +170,39 @@ public class ReplaceStrFunction extends AbstractVirtualColumn implements Functio
                     break;
             }
         }
-        if (start < n) {
+
+        if (collectIndex) {
+            if (n == dollar + 1) {
+                throw QueryError.$(pos + n, "missing index");
+            }
+            concat.add(new GroupCharSequence(index));
+        } else if (start < n) {
             concat.add(new FlyweightCharSequence().of(pattern, start, n - start));
         }
         this.replacePatten = concat;
     }
 
     private class GroupCharSequence implements CharSequence {
-        private final int group;
+        private final int lo;
+        private final int hi;
+        private final int max;
 
         public GroupCharSequence(int group) {
-            this.group = group;
+            this.lo = group * 2;
+            this.hi = this.lo + 1;
+            this.max = group - 1;
         }
 
         @Override
         public int length() {
-            if (base == null) {
+            if (base.length() == -1) {
                 return 0;
             }
 
-            if (group < matcher.groupCount()) {
-                int lo = matcher.start(group);
-                int hi = matcher.end(group);
-                return hi - lo;
+            if (max < matcher.groupCount()) {
+                int l = matcher.groupQuick(lo);
+                int h = matcher.groupQuick(hi);
+                return h - l;
             } else {
                 return 0;
             }
@@ -184,7 +210,7 @@ public class ReplaceStrFunction extends AbstractVirtualColumn implements Functio
 
         @Override
         public char charAt(int index) {
-            return base.charAt(index + matcher.start(group));
+            return base.charAt(index + matcher.groupQuick(lo));
         }
 
         @Override

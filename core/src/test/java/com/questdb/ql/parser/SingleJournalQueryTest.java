@@ -2118,6 +2118,23 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testOrderByReplace() throws Exception {
+        tabOfDates();
+        assertThat("x\n" +
+                        "2016, Oct 8\n" +
+                        "2016, Oct 9\n" +
+                        "2016, Nov 1\n" +
+                        "2016, Nov 2\n" +
+                        "2016, Nov 3\n" +
+                        "2016, Nov 4\n" +
+                        "2016, Nov 5\n" +
+                        "2016, Nov 6\n" +
+                        "2016, Nov 7\n" +
+                        "2016, Nov 8\n",
+                "select replace('(.+) (.+)$', '$2, $1', dtoa4(timestamp)) x from tab order by x asc limit 10", true);
+    }
+
+    @Test
     public void testParamInLimit() throws Exception {
         createTabWithNaNs2();
 
@@ -2251,11 +2268,114 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
-    @Ignore
-    public void testReplace() throws Exception {
+    public void testReplace1() throws Exception {
         createTabWithNaNs();
-//        assertThat("", "select replace('(.+) ', '$1', dtoa4(timestamp)) from tab", true);
-        assertThat("", "select replace('(.+) ', '$0 b', dtoa4(timestamp)) from tab", true);
+        assertThat("col0\n" +
+                        "10 03 2015 x\n" +
+                        "10 03 2015 x\n",
+                "select replace('(.+)-(.+)-(.+)$', '$3 $2 $1 x', '2015-03-10') from tab limit 2", true);
+    }
+
+    @Test
+    public void testReplace2() throws Exception {
+        createTabWithNaNs();
+        assertThat("col0\n" +
+                        "10 03 2015\n" +
+                        "10 03 2015\n",
+                "select replace('(.+)-(.+)-(.+)$', '$3 $2 $1', '2015-03-10') from tab limit 2", true);
+
+
+    }
+
+    @Test
+    public void testReplace3() throws Exception {
+        createTabWithNaNs();
+        assertThat("col0\n" +
+                        "10 03 \n" +
+                        "10 03 \n",
+                "select replace('(.+)-(.+)-(.+)$', '$3 $2 $10', '2015-03-10') from tab limit 2", true);
+    }
+
+    @Test
+    public void testReplaceMissingIndexInside() throws Exception {
+        createTabWithNaNs();
+        try {
+            expectFailure("select replace('(.+)-(.+)-(.+)$', '$3 $ $1', '2015-03-10') from tab limit 2");
+        } catch (ParserException e) {
+            Assert.assertEquals(38, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testReplaceMissingIndexOnEdge() throws Exception {
+        createTabWithNaNs();
+        try {
+            expectFailure("select replace('(.+)-(.+)-(.+)$', '$3 $2 $', '2015-03-10') from tab limit 2");
+        } catch (ParserException e) {
+            Assert.assertEquals(41, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testReplaceNomatch() throws Exception {
+        tabOfDates();
+        assertThat("col0\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
+                "select replace('(.+)-(.+)$', '$2, $1', dtoa4(timestamp)) from tab limit 10", true);
+    }
+
+    @Test
+    public void testReplaceNullPattern() throws Exception {
+        createTabWithNaNs();
+        try {
+            expectFailure("select replace('x', null, '2015-03-10') from tab limit 2");
+        } catch (ParserException e) {
+            Assert.assertEquals(20, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testReplaceNullRegex() throws Exception {
+        createTabWithNaNs();
+        try {
+            expectFailure("select replace(null, '$3 $ $1', '2015-03-10') from tab limit 2");
+        } catch (ParserException e) {
+            Assert.assertEquals(15, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    @Ignore
+    public void testReplaceSimple() throws Exception {
+        tabOfDates();
+        assertThat("",
+                "select replace('(.+) ', 'x', dtoa4(timestamp)) from tab limit 10", true);
+    }
+
+    @Test
+    public void testReplaceVar() throws Exception {
+        tabOfDates();
+        assertThat("col0\n" +
+                        "2016, Oct 8\n" +
+                        "2016, Oct 9\n" +
+                        "2016, Oct 10\n" +
+                        "2016, Oct 11\n" +
+                        "2016, Oct 12\n" +
+                        "2016, Oct 13\n" +
+                        "2016, Oct 14\n" +
+                        "2016, Oct 15\n" +
+                        "2016, Oct 16\n" +
+                        "2016, Oct 17\n",
+                "select replace('(.+) (.+)$', '$2, $1', dtoa4(timestamp)) from tab limit 10", true);
     }
 
     @Test
@@ -3849,5 +3969,22 @@ public class SingleJournalQueryTest extends AbstractTest {
             names.add(r.nextString(15));
         }
         return names;
+    }
+
+    private void tabOfDates() throws JournalException, NumericException {
+        long t = Dates.parseDateTime("2016-10-08T00:00:00.000Z");
+        try (JournalWriter w = factory.writer(
+                new JournalStructure("tab").
+                        $ts().
+                        recordCountHint(100)
+
+        )) {
+            for (int i = 0; i < 100; i++) {
+                JournalEntryWriter ew = w.entryWriter(t);
+                ew.append();
+                t += 1000 * 60 * 60 * 24;
+            }
+            w.commit();
+        }
     }
 }

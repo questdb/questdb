@@ -33,7 +33,7 @@ public class FlyweightCharSequence extends AbstractCharSequence implements Mutab
 
     private CharSequence delegate;
     private int lo;
-    private int len;
+    private int len = -1;
 
     @Override
     public void clear() {
@@ -48,6 +48,10 @@ public class FlyweightCharSequence extends AbstractCharSequence implements Mutab
     @Override
     public char charAt(int index) {
         return delegate.charAt(index + lo);
+    }
+
+    public FlyweightCharSequence of(CharSequence delegate) {
+        return of(delegate, 0, delegate.length());
     }
 
     public FlyweightCharSequence of(CharSequence delegate, int lo, int len) {
