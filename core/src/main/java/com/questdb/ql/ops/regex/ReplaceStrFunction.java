@@ -142,6 +142,7 @@ class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
         int start = 0;
         int index = -1;
         int dollar = -2;
+        int dollarCount = 0;
 
         ConcatCharSequence concat = new ConcatCharSequence();
         boolean collectIndex = false;
@@ -160,6 +161,7 @@ class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
                     collectIndex = true;
                     index = 0;
                     dollar = i;
+                    dollarCount++;
                     break;
                 default:
                     if (collectIndex) {
@@ -189,7 +191,7 @@ class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
             concat.add(new FlyweightCharSequence().of(pattern, start, n - start));
         }
 
-        if (trivial = (concat.partCount() == 1)) {
+        if (trivial = (dollarCount == 0)) {
             left = new FlyweightCharSequence();
             right = new FlyweightCharSequence();
             concat.surroundWith(left, right);

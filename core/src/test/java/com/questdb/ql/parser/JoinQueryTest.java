@@ -478,6 +478,13 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testFilterOnSubquery() throws Exception {
+        assertEmpty("(select customerId, customerName, count() count from customers) c" +
+                " outer join orders o on c.customerId = o.customerId " +
+                " where o.orderId = NaN and c.customerId > 400 and c.customerId < 1200 and count > 1 order by c.customerId");
+    }
+
+    @Test
     public void testGenericPreFilterPlacement() throws Exception {
         assertPlan("+ 0[ cross ] customers (filter: customerName ~ 'WTBHZVPVZZ')\n" +
                         "+ 1[ inner ] orders ON orders.customerId = customers.customerId\n" +

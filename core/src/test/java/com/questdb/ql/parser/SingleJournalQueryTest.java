@@ -2353,6 +2353,23 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testReplaceOnlyGroup() throws Exception {
+        tabOfDates();
+        assertThat("col0\n" +
+                        "8\n" +
+                        "9\n" +
+                        "10\n" +
+                        "11\n" +
+                        "12\n" +
+                        "13\n" +
+                        "14\n" +
+                        "15\n" +
+                        "16\n" +
+                        "17\n",
+                "select replace(' ([0-9]+) ', '$1', dtoa4(timestamp)) from tab limit 10", true);
+    }
+
+    @Test
     public void testReplaceSimple() throws Exception {
         tabOfDates();
         assertThat("col0\n" +
@@ -2384,6 +2401,23 @@ public class SingleJournalQueryTest extends AbstractTest {
                         "Oct 16 2016\n" +
                         "Oct 17 2016\n",
                 "select replace('2017', 'x', dtoa4(timestamp)) from tab limit 10", true);
+    }
+
+    @Test
+    public void testReplaceSimpleWithEmpty() throws Exception {
+        tabOfDates();
+        assertThat("col0\n" +
+                        "2016\n" +
+                        "2016\n" +
+                        "2016\n" +
+                        "2016\n" +
+                        "2016\n" +
+                        "2016\n" +
+                        "2016\n" +
+                        "2016\n" +
+                        "2016\n" +
+                        "2016\n",
+                "select replace('(.+) ', '', dtoa4(timestamp)) from tab limit 10", true);
     }
 
     @Test

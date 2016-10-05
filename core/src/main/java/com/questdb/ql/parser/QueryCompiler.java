@@ -971,11 +971,13 @@ public class QueryCompiler {
                 RecordSource slave = m.getRecordSource();
 
                 if (slave == null) {
-                    // subquery would have been compiled already
                     slave = compileJournal(m, factory);
-                    if (m.getAlias() != null) {
-                        slave.getMetadata().setAlias(m.getAlias().token);
-                    }
+                } else {
+                    slave = filter(m, slave);
+                }
+
+                if (m.getAlias() != null) {
+                    slave.getMetadata().setAlias(m.getAlias().token);
                 }
 
                 if (needColumnNameHistogram) {
