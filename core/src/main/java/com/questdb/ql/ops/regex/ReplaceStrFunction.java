@@ -39,10 +39,13 @@ import com.questdb.std.FlyweightCharSequence;
 import com.questdb.store.ColumnType;
 
 class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
-    private ConcatCharSequence replacePatten;
+    private FlyweightCharSequence left;
+    private FlyweightCharSequence right;
+    private ConcatCharSequence replacePattern;
     private VirtualColumn value;
     private Matcher matcher;
-    private FlyweightCharSequence base = new FlyweightCharSequence();
+    private CharSequence base;
+    private boolean trivial;
 
     public ReplaceStrFunction(int position) {
         super(ColumnType.STRING, position);
@@ -56,12 +59,18 @@ class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
 
     @Override
     public CharSequence getFlyweightStr(Record rec) {
-        this.base.of(value.getFlyweightStr(rec));
-        if (matcher.reset(base).find() && matcher.groupCount() > 0) {
-            replacePatten.computeLen();
-            return replacePatten;
+        base = value.getFlyweightStr(rec);
+        boolean found = matcher.reset(base).find();
+        if (trivial) {
+            if (found) {
+                left.of(base, 0, matcher.start());
+                right.of(base, matcher.end(), base.length() - matcher.end());
+            } else {
+                return base;
+            }
         }
-        return null;
+        replacePattern.computeLen();
+        return replacePattern;
     }
 
     @Override
@@ -179,7 +188,13 @@ class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
         } else if (start < n) {
             concat.add(new FlyweightCharSequence().of(pattern, start, n - start));
         }
-        this.replacePatten = concat;
+
+        if (trivial = (concat.partCount() == 1)) {
+            left = new FlyweightCharSequence();
+            right = new FlyweightCharSequence();
+            concat.surroundWith(left, right);
+        }
+        this.replacePattern = concat;
     }
 
     private class GroupCharSequence implements CharSequence {
@@ -195,7 +210,7 @@ class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
 
         @Override
         public int length() {
-            if (base.length() == -1) {
+            if (base == null) {
                 return 0;
             }
 

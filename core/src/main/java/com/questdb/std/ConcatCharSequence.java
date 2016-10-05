@@ -88,6 +88,21 @@ public class ConcatCharSequence implements CharSequence {
         return null;
     }
 
+    public int partCount() {
+        return delegates.size();
+    }
+
+    public void surroundWith(CharSequence left, CharSequence right) {
+        // assume we have only one delegate
+        CharSequence delegate = delegates.get(0);
+        delegates.ensureCapacity(3);
+        delegates.extendAndSet(0, left);
+        delegates.extendAndSet(1, delegate);
+        delegates.extendAndSet(2, right);
+        lastSeq = left;
+        lastSeqLen = left.length();
+    }
+
     @NotNull
     @Override
     public String toString() {

@@ -38,7 +38,6 @@ import com.questdb.std.ObjHashSet;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -2320,16 +2319,16 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testReplaceNomatch() throws Exception {
         tabOfDates();
         assertThat("col0\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n",
+                        ", \n" +
+                        ", \n" +
+                        ", \n" +
+                        ", \n" +
+                        ", \n" +
+                        ", \n" +
+                        ", \n" +
+                        ", \n" +
+                        ", \n" +
+                        ", \n",
                 "select replace('(.+)-(.+)$', '$2, $1', dtoa4(timestamp)) from tab limit 10", true);
     }
 
@@ -2354,11 +2353,37 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
-    @Ignore
     public void testReplaceSimple() throws Exception {
         tabOfDates();
-        assertThat("",
+        assertThat("col0\n" +
+                        "x2016\n" +
+                        "x2016\n" +
+                        "x2016\n" +
+                        "x2016\n" +
+                        "x2016\n" +
+                        "x2016\n" +
+                        "x2016\n" +
+                        "x2016\n" +
+                        "x2016\n" +
+                        "x2016\n",
                 "select replace('(.+) ', 'x', dtoa4(timestamp)) from tab limit 10", true);
+    }
+
+    @Test
+    public void testReplaceSimpleNoFound() throws Exception {
+        tabOfDates();
+        assertThat("col0\n" +
+                        "Oct 8 2016\n" +
+                        "Oct 9 2016\n" +
+                        "Oct 10 2016\n" +
+                        "Oct 11 2016\n" +
+                        "Oct 12 2016\n" +
+                        "Oct 13 2016\n" +
+                        "Oct 14 2016\n" +
+                        "Oct 15 2016\n" +
+                        "Oct 16 2016\n" +
+                        "Oct 17 2016\n",
+                "select replace('2017', 'x', dtoa4(timestamp)) from tab limit 10", true);
     }
 
     @Test
