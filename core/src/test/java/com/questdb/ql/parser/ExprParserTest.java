@@ -34,11 +34,13 @@ import org.junit.Test;
 public class ExprParserTest {
 
     private final ObjectPool<ExprNode> exprNodeObjectPool = new ObjectPool<>(ExprNode.FACTORY, 128);
+    private final Lexer lexer = new Lexer();
     private final ExprParser parser = new ExprParser(exprNodeObjectPool);
 
     @Before
     public void setUp() {
         exprNodeObjectPool.clear();
+        ExprParser.configureLexer(lexer);
     }
 
     @Test
@@ -158,7 +160,8 @@ public class ExprParserTest {
 
     private void x(CharSequence expectedRpn, String content) throws ParserException {
         RpnBuilder r = new RpnBuilder();
-        parser.parseExpr(content, r);
+        lexer.setContent(content);
+        parser.parseExpr(lexer, r);
         TestUtils.assertEquals(expectedRpn, r.rpn());
     }
 }

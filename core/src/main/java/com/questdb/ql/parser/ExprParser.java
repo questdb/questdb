@@ -44,14 +44,15 @@ public class ExprParser {
     private static final int BRANCH_OPERATOR = 5;
     private static final int BRANCH_LITERAL = 6;
     private static final int BRANCH_LAMBDA = 7;
-    private final Lexer lexer;
     private final Deque<ExprNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
     private final ObjectPool<ExprNode> exprNodePool;
 
-    public ExprParser(Lexer lexer, ObjectPool<ExprNode> exprNodePool) {
-        this.lexer = lexer;
+    public ExprParser(ObjectPool<ExprNode> exprNodePool) {
         this.exprNodePool = exprNodePool;
+    }
+
+    public static void configureLexer(Lexer lexer) {
         lexer.defineSymbol("(");
         lexer.defineSymbol(")");
         lexer.defineSymbol(",");
@@ -66,17 +67,8 @@ public class ExprParser {
         }
     }
 
-    public ExprParser(ObjectPool<ExprNode> exprNodePool) {
-        this(new Lexer(), exprNodePool);
-    }
-
-    public void parseExpr(CharSequence in, ExprListener listener) throws ParserException {
-        lexer.setContent(in);
-        parseExpr(listener);
-    }
-
     @SuppressWarnings("ConstantConditions")
-    public void parseExpr(ExprListener listener) throws ParserException {
+    public void parseExpr(Lexer lexer, ExprListener listener) throws ParserException {
 
         opStack.clear();
         paramCountStack.clear();

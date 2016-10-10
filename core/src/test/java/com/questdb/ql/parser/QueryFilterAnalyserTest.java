@@ -43,6 +43,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
 
     private final RpnBuilder rpn = new RpnBuilder();
     private final ObjectPool<ExprNode> exprNodeObjectPool = new ObjectPool<>(ExprNode.FACTORY, 128);
+    private final Lexer lexer = new Lexer();
     private final ExprParser p = new ExprParser(exprNodeObjectPool);
     private final ExprAstBuilder ast = new ExprAstBuilder();
     private final QueryFilterAnalyser e = new QueryFilterAnalyser();
@@ -59,6 +60,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     public void setUp() throws Exception {
         w = factory.writer(Quote.class);
         exprNodeObjectPool.clear();
+        ExprParser.configureLexer(lexer);
     }
 
     @Test
@@ -880,7 +882,8 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws ParserException {
-        p.parseExpr(seq, ast);
+        lexer.setContent(seq);
+        p.parseExpr(lexer, ast);
         return e.extract(ast.poll(), w.getMetadata(), preferredColumn, w.getMetadata().getTimestampIndex());
     }
 

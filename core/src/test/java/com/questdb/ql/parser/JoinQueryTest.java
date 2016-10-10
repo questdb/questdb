@@ -1089,6 +1089,37 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testMultipleWithClauseReuse() throws Exception {
+        assertThat("1\t\tKZBSS\t2015-07-10T00:00:10.102Z\t1\t\tKZBSS\t2015-07-10T00:00:10.102Z\n" +
+                        "1\t\tKZBSS\t2015-07-10T00:00:10.102Z\t1\t\tUBKVY\t2015-07-10T00:00:10.121Z\n" +
+                        "1\t\tKZBSS\t2015-07-10T00:00:10.102Z\t1\t\tN\t2015-07-10T00:00:10.142Z\n" +
+                        "1\t\tKZBSS\t2015-07-10T00:00:10.102Z\t1\t\tMTEVNUE\t2015-07-10T00:00:10.165Z\n" +
+                        "1\t\tKZBSS\t2015-07-10T00:00:10.102Z\t1\t\tRKMLOG\t2015-07-10T00:00:10.168Z\n" +
+                        "1\t\tUBKVY\t2015-07-10T00:00:10.121Z\t1\t\tKZBSS\t2015-07-10T00:00:10.102Z\n" +
+                        "1\t\tUBKVY\t2015-07-10T00:00:10.121Z\t1\t\tUBKVY\t2015-07-10T00:00:10.121Z\n" +
+                        "1\t\tUBKVY\t2015-07-10T00:00:10.121Z\t1\t\tN\t2015-07-10T00:00:10.142Z\n" +
+                        "1\t\tUBKVY\t2015-07-10T00:00:10.121Z\t1\t\tMTEVNUE\t2015-07-10T00:00:10.165Z\n" +
+                        "1\t\tUBKVY\t2015-07-10T00:00:10.121Z\t1\t\tRKMLOG\t2015-07-10T00:00:10.168Z\n" +
+                        "1\t\tN\t2015-07-10T00:00:10.142Z\t1\t\tKZBSS\t2015-07-10T00:00:10.102Z\n" +
+                        "1\t\tN\t2015-07-10T00:00:10.142Z\t1\t\tUBKVY\t2015-07-10T00:00:10.121Z\n" +
+                        "1\t\tN\t2015-07-10T00:00:10.142Z\t1\t\tN\t2015-07-10T00:00:10.142Z\n" +
+                        "1\t\tN\t2015-07-10T00:00:10.142Z\t1\t\tMTEVNUE\t2015-07-10T00:00:10.165Z\n" +
+                        "1\t\tN\t2015-07-10T00:00:10.142Z\t1\t\tRKMLOG\t2015-07-10T00:00:10.168Z\n" +
+                        "1\t\tMTEVNUE\t2015-07-10T00:00:10.165Z\t1\t\tKZBSS\t2015-07-10T00:00:10.102Z\n" +
+                        "1\t\tMTEVNUE\t2015-07-10T00:00:10.165Z\t1\t\tUBKVY\t2015-07-10T00:00:10.121Z\n" +
+                        "1\t\tMTEVNUE\t2015-07-10T00:00:10.165Z\t1\t\tN\t2015-07-10T00:00:10.142Z\n" +
+                        "1\t\tMTEVNUE\t2015-07-10T00:00:10.165Z\t1\t\tMTEVNUE\t2015-07-10T00:00:10.165Z\n" +
+                        "1\t\tMTEVNUE\t2015-07-10T00:00:10.165Z\t1\t\tRKMLOG\t2015-07-10T00:00:10.168Z\n" +
+                        "1\t\tRKMLOG\t2015-07-10T00:00:10.168Z\t1\t\tKZBSS\t2015-07-10T00:00:10.102Z\n" +
+                        "1\t\tRKMLOG\t2015-07-10T00:00:10.168Z\t1\t\tUBKVY\t2015-07-10T00:00:10.121Z\n" +
+                        "1\t\tRKMLOG\t2015-07-10T00:00:10.168Z\t1\t\tN\t2015-07-10T00:00:10.142Z\n" +
+                        "1\t\tRKMLOG\t2015-07-10T00:00:10.168Z\t1\t\tMTEVNUE\t2015-07-10T00:00:10.165Z\n" +
+                        "1\t\tRKMLOG\t2015-07-10T00:00:10.168Z\t1\t\tRKMLOG\t2015-07-10T00:00:10.168Z\n",
+                "with o as (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName limit 5)" +
+                        "o cross join o");
+    }
+
+    @Test
     public void testNullInsteadOfNaN() throws Exception {
         assertThat("1406\tVQHYIIQL\tKJE\t\tDYQFLMPNGEJKKJCRCKNPUTHTVNYXM\tDFDISBFBRCCQDV\tXTGNJ\t2015-07-10T00:00:01.406Z\tNaN\tNaN\tNaN\t\t\t\n" +
                         "1414\tDHMTF\tRTGV\t\tHMDJSBGPXQTKPGGWFSTJSKSZSBEPDVNMFEVEMQCOHDBK\tJKBVDSERXZ\tOEENNEBQQEMXD\t2015-07-10T00:00:01.414Z\tNaN\tNaN\tNaN\t\t\t\n" +
@@ -1566,6 +1597,58 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         " outer join orders o on customers.customerId = o.customerId " +
                         " join products p on o.productId = p.productId" +
                         " limit 25,30", true);
+    }
+
+    @Test
+    public void testWithClauseErrorOffset() throws Exception {
+        try {
+            expectFailure("with o as (select '1' blah, lastName, employeeId customerId, timestamp from employees where lastName ~ '(' order by lastName)," +
+                    " a as (select '1' blah, lastName, employeeId customerId, timestamp from employees where lastName ~ 'UBB' order by lastName)" +
+                    " select lastName from a x join o on (customerId)");
+        } catch (ParserException e) {
+            Assert.assertEquals(106, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testWithClauseInJoin() throws Exception {
+        assertPlan2("{\n" +
+                        "  \"op\": \"AsOfPartitionedJoinRecordSource\",\n" +
+                        "  \"master\": {\n" +
+                        "    \"op\": \"JournalRecordSource\",\n" +
+                        "    \"psrc\": {\n" +
+                        "      \"op\": \"JournalPartitionSource\",\n" +
+                        "      \"journal\": \"customers\"\n" +
+                        "    },\n" +
+                        "    \"rsrc\": {\n" +
+                        "      \"op\": \"AllRowSource\"\n" +
+                        "    }\n" +
+                        "  },\n" +
+                        "  \"slave\": {\n" +
+                        "    \"op\": \"RBTreeSortedRecordSource\",\n" +
+                        "    \"byRowId\": true,\n" +
+                        "    \"src\": {\n" +
+                        "      \"op\": \"SelectedColumnsRecordSource\",\n" +
+                        "      \"src\": {\n" +
+                        "        \"op\": \"VirtualColumnRecordSource\",\n" +
+                        "        \"src\": {\n" +
+                        "          \"op\": \"JournalRecordSource\",\n" +
+                        "          \"psrc\": {\n" +
+                        "            \"op\": \"JournalPartitionSource\",\n" +
+                        "            \"journal\": \"employees\"\n" +
+                        "          },\n" +
+                        "          \"rsrc\": {\n" +
+                        "            \"op\": \"AllRowSource\"\n" +
+                        "          }\n" +
+                        "        }\n" +
+                        "      }\n" +
+                        "    }\n" +
+                        "  },\n" +
+                        "  \"masterTsIndex\": 7,\n" +
+                        "  \"slaveTsIndex\": 3\n" +
+                        "}",
+                "with o as (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName)" +
+                        "customers c asof join o on (customerId)");
     }
 
     private static void generateJoinData() throws JournalException, NumericException {

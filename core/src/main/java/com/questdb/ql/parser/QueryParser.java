@@ -45,8 +45,6 @@ public final class QueryParser {
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
     private static final CharSequenceIntHashMap joinStartSet = new CharSequenceIntHashMap();
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 128);
-    private final Lexer lexer = new Lexer();
-    private final ExprParser exprParser = new ExprParser(lexer, exprNodePool);
     private final ExprAstBuilder astBuilder = new ExprAstBuilder();
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
     private final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
@@ -55,6 +53,15 @@ public final class QueryParser {
     private final ObjectPool<ColumnIndexModel> columnIndexModelPool = new ObjectPool<>(ColumnIndexModel.FACTORY, 8);
     private final ObjectPool<ColumnCastModel> columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, 8);
     private final ObjectPool<RenameJournalModel> renameJournalModelPool = new ObjectPool<>(RenameJournalModel.FACTORY, 8);
+    private final ObjectPool<WithClauseModel> withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, 16);
+    private final Lexer secondaryLexer = new Lexer();
+    private Lexer lexer = new Lexer();
+    private ExprParser exprParser = new ExprParser(exprNodePool);
+
+    public QueryParser() {
+        ExprParser.configureLexer(lexer);
+        ExprParser.configureLexer(secondaryLexer);
+    }
 
     public ParsedModel parse(CharSequence query) throws ParserException {
         clear();
@@ -70,6 +77,7 @@ public final class QueryParser {
         columnIndexModelPool.clear();
         columnCastModelPool.clear();
         renameJournalModelPool.clear();
+        withClauseModelPool.clear();
     }
 
     private ParserException err(String msg) {
@@ -113,8 +121,25 @@ public final class QueryParser {
 
     private ExprNode expr() throws ParserException {
         astBuilder.reset();
-        exprParser.parseExpr(astBuilder);
+        exprParser.parseExpr(lexer, astBuilder);
         return astBuilder.poll();
+    }
+
+    private QueryModel getOrParseQueryModelFromWithClause(WithClauseModel wcm) throws ParserException {
+        QueryModel m = wcm.popModel();
+        if (m != null) {
+            return m;
+        }
+
+        secondaryLexer.setContent(lexer.getContent(), wcm.getLo(), wcm.getHi());
+
+        Lexer tmp = this.lexer;
+        this.lexer = secondaryLexer;
+        try {
+            return parseQuery(true);
+        } finally {
+            lexer = tmp;
+        }
     }
 
     private boolean isFieldTerm(CharSequence tok) {
@@ -340,7 +365,7 @@ public final class QueryParser {
         return parseQuery(false);
     }
 
-    private QueryModel parseJoin(CharSequence tok, int joinType) throws ParserException {
+    private QueryModel parseJoin(CharSequence tok, int joinType, QueryModel parent) throws ParserException {
         QueryModel joinModel = queryModelPool.next();
         joinModel.setJoinType(joinType);
 
@@ -355,7 +380,7 @@ public final class QueryParser {
             expectTok(')');
         } else {
             lexer.unparse();
-            joinModel.setJournalName(expr());
+            parseWithClauseOrJournalName(joinModel, parent);
         }
 
         tok = lexer.optionTok();
@@ -384,7 +409,7 @@ public final class QueryParser {
             case QueryModel.JOIN_OUTER:
                 expectTok(tok, "on");
                 astBuilder.reset();
-                exprParser.parseExpr(astBuilder);
+                exprParser.parseExpr(lexer, astBuilder);
                 ExprNode expr;
                 switch (astBuilder.size()) {
                     case 0:
@@ -497,8 +522,13 @@ public final class QueryParser {
 
         tok = tok();
 
+        if (Chars.equals(tok, "with")) {
+            parseWithClauses(model);
+            tok = tok();
+        }
+
         // [select]
-        if (tok != null && Chars.equals(tok, "select")) {
+        if (Chars.equals(tok, "select")) {
             parseSelectColumns(model);
             tok = tok();
         }
@@ -532,9 +562,7 @@ public final class QueryParser {
 
             lexer.unparse();
 
-            // expect (journal name)
-
-            model.setJournalName(literal());
+            parseWithClauseOrJournalName(model, model);
 
             tok = lexer.optionTok();
 
@@ -564,7 +592,7 @@ public final class QueryParser {
 
         int joinType;
         while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
-            model.addJoinModel(parseJoin(tok, joinType));
+            model.addJoinModel(parseJoin(tok, joinType, model));
             tok = lexer.optionTok();
         }
 
@@ -761,6 +789,43 @@ public final class QueryParser {
             return result;
         }
         return null;
+    }
+
+    private void parseWithClauseOrJournalName(QueryModel target, QueryModel parent) throws ParserException {
+        ExprNode journalName = literal();
+        WithClauseModel withClause = journalName != null ? parent.getWithClause(journalName.token) : null;
+        if (withClause != null) {
+            target.setNestedModel(getOrParseQueryModelFromWithClause(withClause));
+        } else {
+            target.setJournalName(journalName);
+        }
+    }
+
+    private void parseWithClauses(QueryModel model) throws ParserException {
+        do {
+            ExprNode name = expectLiteral();
+
+            if (model.getWithClause(name.token) != null) {
+                throw QueryError.$(name.position, "duplicate name");
+            }
+
+            expectTok(tok(), "as");
+            expectTok('(');
+            int lo, hi;
+            lo = lexer.position();
+            QueryModel m = parseQuery(true);
+            hi = lexer.position();
+            WithClauseModel wcm = withClauseModelPool.next();
+            wcm.of(lo + 1, hi, m);
+            expectTok(')');
+            model.addWithClause(name.token, wcm);
+
+            CharSequence tok = lexer.optionTok();
+            if (tok == null || !Chars.equals(tok, ',')) {
+                lexer.unparse();
+                break;
+            }
+        } while (true);
     }
 
     private void resolveJoinColumns(QueryModel model) {

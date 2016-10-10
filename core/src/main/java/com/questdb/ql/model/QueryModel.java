@@ -73,6 +73,7 @@ public class QueryModel implements Mutable, ParsedModel {
     private final CharSequenceIntHashMap orderHash = new CharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExprNode> joinColumns = new ObjList<>(4);
     private CharSequenceObjHashMap<Parameter> parameterMap = new CharSequenceObjHashMap<>();
+    private CharSequenceObjHashMap<WithClauseModel> withClauses = new CharSequenceObjHashMap<>();
     private ExprNode whereClause;
     private ExprNode postJoinWhereClause;
     private QueryModel nestedModel;
@@ -92,7 +93,6 @@ public class QueryModel implements Mutable, ParsedModel {
     private VirtualColumn limitLoVc;
     private VirtualColumn limitHiVc;
     private JournalMetadata journalMetadata;
-
 
     private QueryModel() {
         joinModels.add(this);
@@ -139,6 +139,10 @@ public class QueryModel implements Mutable, ParsedModel {
         parsedWhere.add(node);
     }
 
+    public void addWithClause(String name, WithClauseModel model) {
+        withClauses.put(name, model);
+    }
+
     public void clear() {
         columns.clear();
         joinModels.clear();
@@ -174,6 +178,7 @@ public class QueryModel implements Mutable, ParsedModel {
         exprNodeStack.clear();
         journalMetadata = null;
         joinColumns.clear();
+        withClauses.clear();
     }
 
     public RecordMetadata collectJournalMetadata(JournalReaderFactory factory) throws ParserException {
@@ -215,7 +220,6 @@ public class QueryModel implements Mutable, ParsedModel {
     }
 
     public void createColumnNameHistogram(RecordSource rs) {
-//        columnNameHistogram.clear();
         RecordMetadata m = rs.getMetadata();
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
             columnNameHistogram.increment(m.getColumnName(i));
@@ -408,6 +412,10 @@ public class QueryModel implements Mutable, ParsedModel {
 
     public void setWhereClause(ExprNode whereClause) {
         this.whereClause = whereClause;
+    }
+
+    public WithClauseModel getWithClause(CharSequence name) {
+        return withClauses.get(name);
     }
 
     /**

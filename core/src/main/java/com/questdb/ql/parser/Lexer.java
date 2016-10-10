@@ -65,6 +65,14 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
         Collections.sort(l, comparator);
     }
 
+    public CharSequence getContent() {
+        return content;
+    }
+
+    public void setContent(CharSequence cs) {
+        setContent(cs, 0, cs == null ? 0 : cs.length());
+    }
+
     @Override
     public boolean hasNext() {
         boolean n = next != null || unparsed != null || (content != null && _pos < _len);
@@ -203,10 +211,10 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
         return _lo;
     }
 
-    public void setContent(CharSequence cs) {
+    public void setContent(CharSequence cs, int lo, int hi) {
         this.content = cs;
-        this._pos = 0;
-        this._len = cs == null ? 0 : cs.length();
+        this._pos = lo;
+        this._len = hi;
         this.next = null;
         this.unparsed = null;
     }
