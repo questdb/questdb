@@ -42,9 +42,9 @@ public final class Lock {
     private RandomAccessFile file;
     private FileLock lock;
     private File lockName;
-    private File location;
+    private String location;
 
-    Lock(File location, boolean shared) {
+    Lock(String location, boolean shared) {
 
         try {
             this.location = location;
@@ -94,7 +94,7 @@ public final class Lock {
         }
     }
 
-    File getLocation() {
+    String getLocation() {
         return location;
     }
 

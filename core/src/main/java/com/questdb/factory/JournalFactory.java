@@ -124,4 +124,8 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     @Override
     public void close() {
     }
+
+    public void rename(CharSequence from, CharSequence to) throws JournalException {
+        getConfiguration().rename(from, to);
+    }
 }

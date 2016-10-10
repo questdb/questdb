@@ -21,31 +21,45 @@
  *
  ******************************************************************************/
 
-package com.questdb.factory.configuration;
+package com.questdb.ql.model;
 
-import com.questdb.JournalKey;
-import com.questdb.ex.JournalException;
+import com.questdb.std.Mutable;
+import com.questdb.std.ObjectFactory;
 
-import java.io.File;
+public class RenameJournalModel implements Mutable, ParsedModel {
+    public static final ObjectFactory<RenameJournalModel> FACTORY = new ObjectFactory<RenameJournalModel>() {
+        @Override
+        public RenameJournalModel newInstance() {
+            return new RenameJournalModel();
+        }
+    };
 
-public interface JournalConfiguration {
+    private ExprNode from;
+    private ExprNode to;
 
-    String FILE_NAME = "_meta2";
+    @Override
+    public void clear() {
+        from = to = null;
+    }
 
-    int EXISTS = 1;
-    int DOES_NOT_EXIST = 2;
-    int EXISTS_FOREIGN = 4;
+    public ExprNode getFrom() {
+        return from;
+    }
 
-    <T> JournalMetadata<T> buildWithRootLocation(MetadataBuilder<T> builder) throws JournalException;
+    public void setFrom(ExprNode from) {
+        this.from = from;
+    }
 
-    <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
+    @Override
+    public int getModelType() {
+        return ParsedModel.RENAME_JOURNAL;
+    }
 
-    void delete(CharSequence location) throws JournalException;
+    public ExprNode getTo() {
+        return to;
+    }
 
-    int exists(CharSequence location);
-
-    File getJournalBase();
-
-    void rename(CharSequence location, CharSequence to) throws JournalException;
-
+    public void setTo(ExprNode to) {
+        this.to = to;
+    }
 }

@@ -26,7 +26,6 @@ package com.questdb.store;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 
-import java.io.File;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -38,7 +37,7 @@ public final class LockManager {
     private LockManager() {
     }
 
-    public static Lock lockExclusive(File location) {
+    public static Lock lockExclusive(String location) {
         String sharedKey = getKey(location, true);
         String exclusiveKey = getKey(location, false);
 
@@ -54,7 +53,7 @@ public final class LockManager {
         return lock;
     }
 
-    public static Lock lockShared(File location) {
+    public static Lock lockShared(String location) {
         String sharedKey = getKey(location, true);
         String exclusiveKey = getKey(location, false);
 
@@ -81,7 +80,7 @@ public final class LockManager {
             return;
         }
 
-        File loc = lock.getLocation();
+        String loc = lock.getLocation();
         String sharedKey = getKey(loc, true);
         String exclusiveKey = getKey(loc, false);
 
@@ -107,7 +106,7 @@ public final class LockManager {
         }
     }
 
-    private static String getKey(File location, boolean shared) {
-        return (shared ? "ShLck:" : "ExLck:") + location.getAbsolutePath();
+    private static String getKey(String location, boolean shared) {
+        return (shared ? "ShLck:" : "ExLck:") + location;
     }
 }

@@ -24,9 +24,9 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.ex.*;
+import com.questdb.factory.JournalCachingFactory;
 import com.questdb.factory.JournalFactory;
 import com.questdb.factory.JournalFactoryPool;
-import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -73,7 +73,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     long skip;
     long stop;
     Record record;
-    JournalReaderFactory factory;
+    JournalCachingFactory factory;
     int queryState = QUERY_PREFIX;
     int columnIndex;
 
@@ -117,7 +117,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
             this.factory = pool.get();
             recordSource = CACHE.get().poll(query);
             if (recordSource == null) {
-                recordSource = executeQuery(r, writerFactory);
+                recordSource = executeQuery(r, writerFactory, pool);
                 misses.incrementAndGet();
             } else {
                 hits.incrementAndGet();
@@ -206,25 +206,26 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
         return LOG.error().$('[').$(fd).$("] ");
     }
 
-    private RecordSource executeQuery(ChunkedResponse r, JournalFactory writerFactory) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
+    private RecordSource executeQuery(ChunkedResponse r, JournalFactory writerFactory, JournalFactoryPool pool) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
         QueryCompiler compiler = COMPILER.get();
         ParsedModel model = compiler.parse(query);
-        if (model.isQuery()) {
-            return compiler.compile(factory, model);
+        switch (model.getModelType()) {
+            case ParsedModel.QUERY:
+                return compiler.compile(factory, model);
+            default:
+                if (writerFactory != null) {
+                    try {
+                        compiler.execute(writerFactory, factory, pool, model);
+                    } catch (JournalException e) {
+                        error().$("Server error executing statement ").$(query).$(e).$();
+                        sendException(r, 0, e.getMessage(), 500);
+                    }
+                } else {
+                    error().$("Statement execution is not supported: ").$(query).$();
+                    sendException(r, 0, "Statement execution is not supported", 400);
+                }
+                return null;
         }
-
-        if (writerFactory != null) {
-            try {
-                compiler.execute(writerFactory, model);
-            } catch (JournalException e) {
-                error().$("Server error executing statement ").$(query).$(e).$();
-                sendException(r, 0, e.getMessage(), 500);
-            }
-        } else {
-            error().$("Statement execution is not supported: ").$(query).$();
-            sendException(r, 0, "Statement execution is not supported", 400);
-        }
-        return null;
     }
 
     protected abstract void header(ChunkedResponse r, int code) throws DisconnectedChannelException, SlowWritableChannelException;

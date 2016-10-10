@@ -98,6 +98,24 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         return false;
     }
 
+    public void remove(CharSequence key) {
+        int index = Chars.hashCode(key) & mask;
+
+        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+            return;
+        }
+
+        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+            Unsafe.arrayPut(keys, index, noEntryValue);
+            Unsafe.arrayPut(values, index, null);
+            list.remove(key);
+            free++;
+            return;
+        }
+
+        probeRemove(key, index);
+    }
+
     public int size() {
         return list.size();
     }
@@ -135,6 +153,22 @@ public class CharSequenceObjHashMap<V> implements Mutable {
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
                 Unsafe.arrayPut(values, index, value);
                 return false;
+            }
+        } while (true);
+    }
+
+    private void probeRemove(CharSequence key, int index) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+                return;
+            }
+            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+                Unsafe.arrayPut(keys, index, noEntryValue);
+                Unsafe.arrayPut(values, index, null);
+                list.remove(key);
+                free++;
+                return;
             }
         } while (true);
     }

@@ -54,6 +54,7 @@ public final class QueryParser {
     private final ObjectPool<CreateJournalModel> createJournalModelPool = new ObjectPool<>(CreateJournalModel.FACTORY, 4);
     private final ObjectPool<ColumnIndexModel> columnIndexModelPool = new ObjectPool<>(ColumnIndexModel.FACTORY, 8);
     private final ObjectPool<ColumnCastModel> columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, 8);
+    private final ObjectPool<RenameJournalModel> renameJournalModelPool = new ObjectPool<>(RenameJournalModel.FACTORY, 8);
 
     public ParsedModel parse(CharSequence query) throws ParserException {
         clear();
@@ -68,6 +69,7 @@ public final class QueryParser {
         createJournalModelPool.clear();
         columnIndexModelPool.clear();
         columnCastModelPool.clear();
+        renameJournalModelPool.clear();
     }
 
     private ParserException err(String msg) {
@@ -166,7 +168,7 @@ public final class QueryParser {
 
     private ParsedModel parseCreateJournal() throws ParserException {
         ExprNode name = exprNodePool.next();
-        name.token = tok().toString();
+        name.token = Chars.stripQuotes(tok().toString());
         name.position = lexer.position();
         name.type = ExprNode.LITERAL;
 
@@ -325,8 +327,13 @@ public final class QueryParser {
     ParsedModel parseInternal(CharSequence query) throws ParserException {
         lexer.setContent(query);
         CharSequence tok = tok();
+
         if (Chars.equals(tok, "create")) {
             return parseCreateStatement();
+        }
+
+        if (Chars.equals(tok, "rename")) {
+            return parseRenameStatement();
         }
 
         lexer.unparse();
@@ -647,6 +654,24 @@ public final class QueryParser {
             return hint;
         }
         return null;
+    }
+
+    private ParsedModel parseRenameStatement() throws ParserException {
+        expectTok(tok(), "table");
+        RenameJournalModel model = renameJournalModelPool.next();
+        ExprNode e = expectExpr();
+        if (e.type != ExprNode.LITERAL && e.type != ExprNode.CONSTANT) {
+            throw QueryError.$(e.position, "literal or constant expected");
+        }
+        model.setFrom(e);
+        expectTok(tok(), "to");
+
+        e = expectExpr();
+        if (e.type != ExprNode.LITERAL && e.type != ExprNode.CONSTANT) {
+            throw QueryError.$(e.position, "literal or constant expected");
+        }
+        model.setTo(e);
+        return model;
     }
 
     private void parseSelectColumns(QueryModel model) throws ParserException {

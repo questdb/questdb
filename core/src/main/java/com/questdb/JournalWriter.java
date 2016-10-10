@@ -226,7 +226,7 @@ public class JournalWriter<T> extends Journal<T> {
 
     @Override
     protected void configure() throws JournalException {
-        writeLock = LockManager.lockExclusive(getLocation());
+        writeLock = LockManager.lockExclusive(getLocation().getAbsolutePath());
         if (writeLock == null || !writeLock.isValid()) {
             close();
             throw new JournalException("Journal is already open for APPEND at %s", getLocation());
@@ -975,7 +975,7 @@ public class JournalWriter<T> extends Journal<T> {
                                             }
 
                                             // get exclusive lock
-                                            Lock lock = LockManager.lockExclusive(files[i]);
+                                            Lock lock = LockManager.lockExclusive(files[i].getAbsolutePath());
                                             try {
                                                 if (lock != null && lock.isValid()) {
                                                     LOG.debug().$("Purging :").$(files[i].getAbsolutePath()).$();

@@ -77,7 +77,7 @@ class JournalConfigurationImpl implements JournalConfiguration {
             // 2. key represents a class that can be introspected
 
             if (mn == null && key.getModelClass() == null) {
-                throw new JournalException("There is not enough information to create journal: " + key.getId());
+                throw new JournalException("Journal does not exist");
             }
 
             MetadataBuilder<T> builder;
@@ -122,7 +122,7 @@ class JournalConfigurationImpl implements JournalConfiguration {
     @Override
     public void delete(CharSequence location) throws JournalException {
         File l = new File(journalBase, location.toString());
-        Lock lock = LockManager.lockExclusive(l);
+        Lock lock = LockManager.lockExclusive(l.getAbsolutePath());
         try {
             if (lock == null || !lock.isValid()) {
                 throw new JournalException("Journal is open for APPEND at %s", l);
@@ -152,6 +152,39 @@ class JournalConfigurationImpl implements JournalConfiguration {
     @Override
     public File getJournalBase() {
         return journalBase;
+    }
+
+    @Override
+    public void rename(CharSequence location, CharSequence to) throws JournalException {
+        File rl = new File(journalBase, location.toString());
+        Lock lock = LockManager.lockExclusive(rl.getAbsolutePath());
+        try {
+            if (lock == null || !lock.isValid()) {
+                throw new JournalException("Journal is already open for APPEND at %s", rl);
+            }
+
+            File wl = new File(journalBase, to.toString());
+            if (wl.exists()) {
+                throw new JournalException("Destination directory already exists");
+            }
+
+
+            Lock writeLock = LockManager.lockExclusive(wl.getAbsolutePath());
+            try {
+
+                if (writeLock == null || !writeLock.isValid()) {
+                    throw new JournalException("Journal is already open for APPEND at %s", rl);
+                }
+
+                if (!rl.renameTo(wl)) {
+                    throw new JournalException("Cannot rename journal");
+                }
+            } finally {
+                LockManager.release(writeLock);
+            }
+        } finally {
+            LockManager.release(lock);
+        }
     }
 
     private String getLocation(JournalKey key) {

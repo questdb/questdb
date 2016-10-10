@@ -76,6 +76,11 @@ public class CreateJournalModel implements Mutable, ParsedModel {
         return columnIndexModels;
     }
 
+    @Override
+    public int getModelType() {
+        return ParsedModel.CREATE_JOURNAL;
+    }
+
     public ExprNode getName() {
         return name;
     }
@@ -122,10 +127,5 @@ public class CreateJournalModel implements Mutable, ParsedModel {
 
     public void setTimestamp(ExprNode timestamp) {
         this.timestamp = timestamp;
-    }
-
-    @Override
-    public boolean isQuery() {
-        return false;
     }
 }

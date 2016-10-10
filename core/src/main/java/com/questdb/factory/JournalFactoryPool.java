@@ -26,25 +26,44 @@ package com.questdb.factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.std.ObjList;
 
 import java.io.Closeable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class JournalFactoryPool implements Closeable {
     private static final Log LOG = LogFactory.getLog(JournalFactoryPool.class);
+    private final static Object NULL = new Object();
     private final ConcurrentLinkedDeque<JournalCachingFactory> pool;
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final JournalConfiguration configuration;
     private final AtomicInteger openCount = new AtomicInteger();
     private final int capacity;
+    private final ConcurrentMap<String, Object> stopList = new ConcurrentHashMap<>();
 
     @SuppressWarnings("unchecked")
     public JournalFactoryPool(JournalConfiguration configuration, int capacity) {
         this.configuration = configuration;
         this.capacity = capacity;
         this.pool = new ConcurrentLinkedDeque<>();
+    }
+
+    public void blockName(String name) {
+        stopList.putIfAbsent(name, NULL);
+        JournalCachingFactory factory;
+        ObjList<JournalCachingFactory> list = new ObjList<>();
+        while ((factory = pool.poll()) != null) {
+            list.add(factory);
+            factory.closeJournal(name);
+        }
+
+        for (int i = 0, n = list.size(); i < n; i++) {
+            pool.push(list.getQuick(i));
+        }
     }
 
     @Override
@@ -87,6 +106,14 @@ public class JournalFactoryPool implements Closeable {
 
     public int getOpenCount() {
         return openCount.get();
+    }
+
+    public boolean isBlocked(String name) {
+        return stopList.containsKey(name);
+    }
+
+    public void unblockName(String name) {
+        stopList.remove(name);
     }
 
     void release(final JournalCachingFactory factory) {

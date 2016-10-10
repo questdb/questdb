@@ -65,6 +65,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
         JournalMetadata<T> metadata = configuration.createMetadata(key);
         File location = new File(metadata.getLocation());
         if (!location.exists()) {
+            // create blank journal
             new JournalWriter<>(metadata, key).close();
         }
         return metadata;

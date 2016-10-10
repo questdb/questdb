@@ -29,7 +29,9 @@ import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
+import com.questdb.factory.JournalCachingFactory;
 import com.questdb.factory.JournalFactory;
+import com.questdb.factory.JournalFactoryPool;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.*;
 import com.questdb.io.sink.StringSink;
@@ -148,7 +150,7 @@ public class QueryCompiler {
     }
 
     public RecordSource compile(JournalReaderFactory factory, ParsedModel model) throws ParserException {
-        if (model.isQuery()) {
+        if (model.getModelType() == ParsedModel.QUERY) {
             clearState();
             final QueryModel qm = (QueryModel) model;
             qm.setParameterMap(EMPTY_PARAMS);
@@ -160,8 +162,8 @@ public class QueryCompiler {
     }
 
     public JournalWriter createWriter(JournalFactory factory, ParsedModel model) throws ParserException, JournalException {
-        if (model.isQuery()) {
-            throw new IllegalArgumentException("Statement expected");
+        if (model.getModelType() != ParsedModel.CREATE_JOURNAL) {
+            throw new IllegalArgumentException("create table statement expected");
         }
         clearState();
         CreateJournalModel cm = (CreateJournalModel) model;
@@ -262,12 +264,26 @@ public class QueryCompiler {
         return createWriter(factory, parse(statement));
     }
 
-    public void execute(JournalFactory factory, CharSequence statement) throws ParserException, JournalException {
-        createWriter(factory, statement).close();
+    public void execute(JournalFactory factory, JournalCachingFactory cachingFactory, JournalFactoryPool pool, CharSequence statement) throws ParserException, JournalException {
+        execute(factory, cachingFactory, pool, parse(statement));
     }
 
-    public void execute(JournalFactory factory, ParsedModel model) throws ParserException, JournalException {
-        createWriter(factory, model).close();
+    public void execute(JournalFactory factory,
+                        JournalCachingFactory cachingFactory,
+                        JournalFactoryPool pool,
+                        ParsedModel model) throws ParserException, JournalException {
+        switch (model.getModelType()) {
+            case ParsedModel.CREATE_JOURNAL:
+                createWriter(factory, model).close();
+                break;
+            case ParsedModel.QUERY:
+                throw new IllegalArgumentException("Statement expected");
+            case ParsedModel.RENAME_JOURNAL:
+                renameJournal(factory, cachingFactory, pool, (RenameJournalModel) model);
+                break;
+            default:
+                throw new IllegalArgumentException("Unknown statement");
+        }
     }
 
     public ParsedModel parse(CharSequence statement) throws ParserException {
@@ -2177,6 +2193,33 @@ public class QueryCompiler {
     private void processOrConditions(QueryModel parent, ExprNode node) {
         // stub: use filter
         parent.addParsedWhereNode(node);
+    }
+
+    private void renameJournal(
+            JournalFactory factory,
+            JournalCachingFactory cachingFactory,
+            JournalFactoryPool pool,
+            RenameJournalModel model) throws ParserException {
+
+        String from = Chars.stripQuotes(model.getFrom().token);
+        String to = Chars.stripQuotes(model.getTo().token);
+        if (cachingFactory != null) {
+            cachingFactory.closeJournal(from);
+        }
+
+        if (pool != null) {
+            pool.blockName(from);
+        }
+
+        try {
+            factory.getConfiguration().rename(from, to);
+        } catch (JournalException e) {
+            throw QueryError.position(model.getFrom().position).$(e.getMessage()).$();
+        } finally {
+            if (pool != null) {
+                pool.unblockName(from);
+            }
+        }
     }
 
     /**

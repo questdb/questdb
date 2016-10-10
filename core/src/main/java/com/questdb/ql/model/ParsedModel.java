@@ -24,5 +24,9 @@
 package com.questdb.ql.model;
 
 public interface ParsedModel {
-    boolean isQuery();
+    int QUERY = 1;
+    int CREATE_JOURNAL = 2;
+    int RENAME_JOURNAL = 3;
+
+    int getModelType();
 }

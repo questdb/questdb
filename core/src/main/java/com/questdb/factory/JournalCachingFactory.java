@@ -29,15 +29,16 @@ import com.questdb.JournalKey;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.std.ObjObjHashMap;
+import com.questdb.std.CharSequenceObjHashMap;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
-    private final ObjObjHashMap<JournalKey, Journal> readers = new ObjObjHashMap<>();
-    private final ObjObjHashMap<JournalKey, JournalBulkReader> bulkReaders = new ObjObjHashMap<>();
+    private final CharSequenceObjHashMap<Journal> readers = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<JournalBulkReader> bulkReaders = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<JournalMetadata> metadata = new CharSequenceObjHashMap<>();
     private final List<Journal> journalList = new ArrayList<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private JournalFactoryPool pool;
@@ -55,11 +56,13 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     @Override
     @SuppressWarnings("unchecked")
     public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        JournalBulkReader<T> result = bulkReaders.get(key);
+        String name = ((JournalKey) key).derivedLocation();
+        checkBlocked(name);
+        JournalBulkReader<T> result = bulkReaders.get(name);
         if (result == null) {
             result = new JournalBulkReader<>(getOrCreateMetadata(key), key);
             result.setCloseListener(this);
-            bulkReaders.put(key, result);
+            bulkReaders.put(name, result);
             journalList.add(result);
         }
         return result;
@@ -68,11 +71,13 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     @Override
     @SuppressWarnings("unchecked")
     public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        Journal<T> result = readers.get(key);
+        String name = ((JournalKey) key).derivedLocation();
+        checkBlocked(name);
+        Journal<T> result = readers.get(name);
         if (result == null) {
             result = new Journal<>(getOrCreateMetadata(key), key);
             result.setCloseListener(this);
-            readers.put(key, result);
+            readers.put(name, result);
             journalList.add(result);
         }
         return result;
@@ -99,18 +104,50 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         }
     }
 
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
+        String name = ((JournalKey) key).derivedLocation();
+        JournalMetadata m = metadata.get(name);
+        if (m == null) {
+            m = super.getOrCreateMetadata(key);
+            metadata.put(name, m);
+        }
+        return m;
+    }
+
     @SuppressWarnings("unchecked")
     @Override
     public Journal reader(JournalMetadata metadata) throws JournalException {
         JournalKey key = metadata.getKey();
-        Journal result = readers.get(key);
+        String name = key.derivedLocation();
+        Journal result = readers.get(name);
         if (result == null) {
+            if (getConfiguration().exists(name) != JournalConfiguration.EXISTS) {
+                throw new JournalException("Journal does not exist");
+            }
             result = new Journal<>(metadata, key);
             result.setCloseListener(this);
-            readers.put(key, result);
+            readers.put(name, result);
             journalList.add(result);
         }
         return result;
+    }
+
+    public void closeJournal(CharSequence name) {
+        Journal j = readers.get(name);
+        if (j != null) {
+            j.close();
+            readers.remove(name);
+        }
+
+        j = bulkReaders.get(name);
+        if (j != null) {
+            j.close();
+            bulkReaders.remove(name);
+        }
+
+        metadata.remove(name);
     }
 
     @Override
@@ -121,6 +158,12 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     public void refresh() {
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
             journalList.get(i).refresh();
+        }
+    }
+
+    private void checkBlocked(String name) throws JournalException {
+        if (pool != null && pool.isBlocked(name)) {
+            throw new JournalException("Journal %s is being deleted", name);
         }
     }
 

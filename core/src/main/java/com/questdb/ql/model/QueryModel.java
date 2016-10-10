@@ -318,6 +318,11 @@ public class QueryModel implements Mutable, ParsedModel {
         this.metadata = metadata;
     }
 
+    @Override
+    public int getModelType() {
+        return ParsedModel.QUERY;
+    }
+
     public QueryModel getNestedModel() {
         return nestedModel;
     }
@@ -403,11 +408,6 @@ public class QueryModel implements Mutable, ParsedModel {
 
     public void setWhereClause(ExprNode whereClause) {
         this.whereClause = whereClause;
-    }
-
-    @Override
-    public boolean isQuery() {
-        return true;
     }
 
     /**
