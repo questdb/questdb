@@ -186,3 +186,9 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
         (JNIEnv *e, jclass cl, jlong findPtr) {
     return ((FIND *) findPtr)->entry->d_type;
 }
+
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rename
+        (JNIEnv *e, jclass cls, jlong lpszOld, jlong lpszNew) {
+    return (jboolean) (rename((const char *) lpszOld, (const char *) lpszNew) == 0);
+}
