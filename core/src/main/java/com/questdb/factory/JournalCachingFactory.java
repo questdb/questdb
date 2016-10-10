@@ -137,12 +137,14 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     public void closeJournal(CharSequence name) {
         Journal j = readers.get(name);
         if (j != null) {
+            j.setCloseListener(null);
             j.close();
             readers.remove(name);
         }
 
         j = bulkReaders.get(name);
         if (j != null) {
+            j.setCloseListener(null);
             j.close();
             bulkReaders.remove(name);
         }

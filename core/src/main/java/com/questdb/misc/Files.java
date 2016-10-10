@@ -169,6 +169,10 @@ public final class Files {
         }
     }
 
+    public static boolean rename(LPSZ oldName, LPSZ newName) {
+        return rename(oldName.address(), newName.address());
+    }
+
     public static boolean setLastModified(LPSZ lpsz, long millis) {
         return setLastModified(lpsz.address(), millis);
     }
@@ -244,6 +248,8 @@ public final class Files {
 
         return fileInCanonicalDir.getCanonicalFile().equals(fileInCanonicalDir.getAbsoluteFile());
     }
+
+    private static native boolean rename(long lpszOld, long lpszNew);
 
     static {
         UTF_8 = Charset.forName("UTF-8");

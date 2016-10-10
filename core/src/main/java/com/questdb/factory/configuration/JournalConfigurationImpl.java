@@ -28,6 +28,7 @@ import com.questdb.JournalMode;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalMetadataException;
 import com.questdb.misc.Files;
+import com.questdb.misc.Os;
 import com.questdb.std.CompositePath;
 import com.questdb.std.ObjObjHashMap;
 import com.questdb.std.ThreadLocal;
@@ -156,36 +157,47 @@ class JournalConfigurationImpl implements JournalConfiguration {
 
     @Override
     public void rename(CharSequence location, CharSequence to) throws JournalException {
-        File rl = new File(journalBase, location.toString());
-        Lock lock = LockManager.lockExclusive(rl.getAbsolutePath());
-        try {
-            if (lock == null || !lock.isValid()) {
-                throw new JournalException("Journal is already open for APPEND at %s", rl);
-            }
-
-            File wl = new File(journalBase, to.toString());
-            if (wl.exists()) {
-                throw new JournalException("Destination directory already exists");
-            }
-
-
-            Lock writeLock = LockManager.lockExclusive(wl.getAbsolutePath());
-            try {
-
-                if (writeLock == null || !writeLock.isValid()) {
-                    throw new JournalException("Journal is already open for APPEND at %s", rl);
+        try (CompositePath oldName = new CompositePath()) {
+            try (CompositePath newName = new CompositePath()) {
+                if (Os.type == Os.WINDOWS) {
+                    oldName.of("\\\\?\\").concat(journalBase.getAbsolutePath()).concat(location).$();
+                    newName.of("\\\\?\\").concat(journalBase.getAbsolutePath()).concat(to).$();
+                } else {
+                    oldName.of(journalBase.getAbsolutePath()).concat(location).$();
+                    newName.of(journalBase.getAbsolutePath()).concat(to).$();
                 }
 
-                if (!rl.renameTo(wl)) {
-                    throw new JournalException("Cannot rename journal");
+                Lock lock = LockManager.lockExclusive(oldName.toString());
+                try {
+                    if (lock == null || !lock.isValid()) {
+                        throw new JournalException("Journal is already open for APPEND at %s", oldName.toString());
+                    }
+
+                    if (Files.exists(newName)) {
+                        throw new JournalException("Destination directory already exists");
+                    }
+
+
+                    Lock writeLock = LockManager.lockExclusive(newName.toString());
+                    try {
+
+                        if (writeLock == null || !writeLock.isValid()) {
+                            throw new JournalException("Journal is already open for APPEND at %s", newName.toString());
+                        }
+
+                        if (!Files.rename(oldName, newName)) {
+                            throw new JournalException("Cannot rename journal: %d", Os.errno());
+                        }
+                    } finally {
+                        LockManager.release(writeLock);
+                    }
+                } finally {
+                    LockManager.release(lock);
                 }
-            } finally {
-                LockManager.release(writeLock);
             }
-        } finally {
-            LockManager.release(lock);
         }
     }
+
 
     private String getLocation(JournalKey key) {
         String loc = key.getLocation();

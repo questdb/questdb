@@ -238,3 +238,12 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
     return ((FIND *) findPtr)->find_dataa->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ?
            com_questdb_misc_Files_DT_DIR : com_questdb_misc_Files_DT_REG;
 }
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rename
+        (JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
+    BOOL r = MoveFile((LPCSTR) lpszOld, (LPCSTR) lpszNew);
+    if (!r) {
+        printf("error: %lu\n\n", GetLastError());
+    }
+    return (jboolean) r;
+}
