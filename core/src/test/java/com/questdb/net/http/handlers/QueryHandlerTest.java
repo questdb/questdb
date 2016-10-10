@@ -58,6 +58,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUp() throws Exception {
         final ServerConfiguration serverConfiguration = new ServerConfiguration();
+        serverConfiguration.setHttpThreads(1);
         factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
         handler = new QueryHandler(factoryPool, serverConfiguration, factory);
 
@@ -242,6 +243,16 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public void testOrderByEmpty() throws Exception {
         QueryResponse queryResponse = download("tab where 1 = 2 order by y", 0, 1000);
         Assert.assertEquals(0, queryResponse.dataset.size());
+    }
+
+    @Test
+    public void testRename() throws Exception {
+        generateJournal("tab3", new QueryResponse.Tab[0], 100);
+        String query = "tab3 limit 10";
+        QueryResponse queryResponse = download(query, 0, 5);
+        Assert.assertEquals(5, queryResponse.dataset.size());
+        download("rename table tab3 to tab2");
+        TestUtils.assertEquals("{\"query\":\"tab3 limit 10\",\"error\":\"Journal does not exist\",\"position\":0}", downloadStr(query, 0, 5, true, false, temp));
     }
 
     private static void generateJournal(String name, QueryResponse.Tab[] recs, int count) throws JournalException, NumericException {

@@ -415,6 +415,10 @@ public class ServerConfiguration {
         return httpThreads;
     }
 
+    public void setHttpThreads(int httpThreads) {
+        this.httpThreads = httpThreads;
+    }
+
     public int getHttpTimeout() {
         return httpTimeout;
     }

@@ -159,12 +159,13 @@ class JournalConfigurationImpl implements JournalConfiguration {
     public void rename(CharSequence location, CharSequence to) throws JournalException {
         try (CompositePath oldName = new CompositePath()) {
             try (CompositePath newName = new CompositePath()) {
+                String path = journalBase.getAbsolutePath();
                 if (Os.type == Os.WINDOWS) {
-                    oldName.of("\\\\?\\").concat(journalBase.getAbsolutePath()).concat(location).$();
-                    newName.of("\\\\?\\").concat(journalBase.getAbsolutePath()).concat(to).$();
+                    oldName.of("\\\\?\\").concat(path).concat(location).$();
+                    newName.of("\\\\?\\").concat(path).concat(to).$();
                 } else {
-                    oldName.of(journalBase.getAbsolutePath()).concat(location).$();
-                    newName.of(journalBase.getAbsolutePath()).concat(to).$();
+                    oldName.of(path).concat(location).$();
+                    newName.of(path).concat(to).$();
                 }
 
                 Lock lock = LockManager.lockExclusive(oldName.toString());

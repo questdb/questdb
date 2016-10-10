@@ -114,22 +114,40 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
             AtomicLong misses,
             AtomicLong hits) throws IOException {
         try {
-            this.factory = pool.get();
+            factory = pool.get();
             recordSource = CACHE.get().poll(query);
-            if (recordSource == null) {
-                recordSource = executeQuery(r, writerFactory, pool);
-                misses.incrementAndGet();
-            } else {
-                hits.incrementAndGet();
-            }
+            int retryCount = 0;
+            do {
+                if (recordSource == null) {
+                    recordSource = executeQuery(r, writerFactory, pool);
+                    misses.incrementAndGet();
+                } else {
+                    hits.incrementAndGet();
+                }
 
-            header(r, 200);
-            if (recordSource != null) {
-                cursor = recordSource.prepareCursor(factory, cancellationHandler);
-                metadata = recordSource.getMetadata();
-            } else {
-                sendConfirmation(r);
-            }
+                if (recordSource != null) {
+                    try {
+                        cursor = recordSource.prepareCursor(factory, cancellationHandler);
+                        metadata = recordSource.getMetadata();
+                        header(r, 200);
+                        break;
+                    } catch (JournalRuntimeException e) {
+                        if (retryCount == 0) {
+                            CACHE.get().put(query.toString(), null);
+                            recordSource = null;
+                            LOG.error().$("RecordSource execution failed. ").$(e.getMessage()).$(". Retrying ...").$();
+                            retryCount++;
+                        } else {
+                            internalError(r, e);
+                            break;
+                        }
+                    }
+                } else {
+                    header(r, 200);
+                    sendConfirmation(r);
+                    break;
+                }
+            } while (true);
         } catch (ParserException e) {
             syntaxError(r);
         } catch (JournalRuntimeException e) {
