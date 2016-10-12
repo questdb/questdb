@@ -2,7 +2,7 @@
 
 export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
 export QDB_MAX_STOP_ATTEMPTS=5;
-export QDB_DEFAULT_ROOT="/var/lib/questdb"
+export QDB_DEFAULT_ROOT="$HOME/.questdb"
 export QDB_OS=`uname`
 
 case `uname` in
