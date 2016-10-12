@@ -2,7 +2,7 @@
 
 export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
 export QDB_MAX_STOP_ATTEMPTS=5;
-export QDB_DEFAULT_ROOT="qdbroot"
+export QDB_DEFAULT_ROOT="/var/lib/questdb"
 export QDB_OS=`uname`
 
 case `uname` in
@@ -14,6 +14,22 @@ case `uname` in
        ;;
 esac
 
+function read_link {
+    f=$(readlink $1)
+    if [ "$f" != "" ]; then
+
+        if [[ "$f" != /* ]]; then
+            f="$(dirname $1)/$f"
+            f="$(cd $(dirname $f); pwd)/$(basename $f)"
+        fi
+
+        n=$(read_link $f)
+        if [ "$n" != "" ]; then
+             f=$n;
+        fi
+    fi
+    echo "$f"
+}
 
 function usage {
     echo "Usage: $0 start|status|stop [-f] [-d path]"
@@ -26,6 +42,11 @@ function export_pid {
 }
 
 function export_java {
+
+    if [ "$JAVA_HOME" = "" -a -e /usr/libexec/java_home ]; then
+        JAVA_HOME=$(/usr/libexec/java_home -v 1.7+)
+    fi
+
     # check that JAVA_HOME is defined
     if [ "$JAVA_HOME" = "" ]; then
         echo "JAVA_HOME is undefined"
@@ -97,7 +118,14 @@ function start {
     QDB_LOG=${QDB_ROOT}/log
     mkdir -p ${QDB_LOG}
 
-    JAVA_LIB="`dirname $0`/questdb.jar"
+    LINK=$(read_link $0)
+    if [ "$LINK" != "" ]; then
+        BASE=$(dirname $LINK)
+    else
+        BASE=$(dirname $0)
+    fi
+
+    JAVA_LIB="$BASE/questdb.jar"
 
     JAVA_OPTS="
     -D$QDB_PROCESS_LABEL

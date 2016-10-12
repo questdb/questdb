@@ -46,6 +46,7 @@
             <directory>src/main/bin</directory>
             <outputDirectory>questdb-${artifact.version}</outputDirectory>
             <fileMode>755</fileMode>
+            <lineEnding>unix</lineEnding>
         </fileSet>
     </fileSets>
 </assembly>
