@@ -2,7 +2,7 @@
 
 export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
 export QDB_MAX_STOP_ATTEMPTS=5;
-export QDB_DEFAULT_ROOT="$HOME/.questdb"
+export QDB_DEFAULT_ROOT="/usr/local/var/questdb"
 export QDB_OS=`uname`
 
 case `uname` in
@@ -64,6 +64,7 @@ function export_java {
 function export_args {
 
     export QDB_OVERWRITE_PUBLIC=""
+    export QDB_DISABLE_HUP_HANDLER=""
     export QDB_ROOT=${QDB_DEFAULT_ROOT}
 
     while [[ $# -gt 0 ]]; do
@@ -72,6 +73,9 @@ function export_args {
         case ${key} in
             -f)
                 export QDB_OVERWRITE_PUBLIC="-f"
+                ;;
+            -n)
+                export QDB_DISABLE_HUP_HANDLER="-n"
                 ;;
             -d)
                 if [[ $# -eq 1 ]]; then
@@ -146,8 +150,12 @@ function start {
     JAVA_MAIN="com.questdb.BootstrapMain"
     DATE=`date +%Y-%m-%d:%H:%M:%S`
 
-    ${JAVA} ${JAVA_OPTS} -cp ${JAVA_LIB} ${JAVA_MAIN} ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt &
-    sleep 0.5
+    if [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
+        ${JAVA} ${JAVA_OPTS} -cp ${JAVA_LIB} ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt &
+        sleep 0.5
+    else
+        ${JAVA} ${JAVA_OPTS} -cp ${JAVA_LIB} ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt
+    fi
 }
 
 function query {

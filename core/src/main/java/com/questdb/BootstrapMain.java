@@ -34,6 +34,7 @@ import com.questdb.net.http.HttpServer;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.net.http.handlers.*;
+import com.questdb.std.CharSequenceObjHashMap;
 import sun.misc.Signal;
 import sun.misc.SignalHandler;
 
@@ -65,10 +66,15 @@ class BootstrapMain {
             return;
         }
 
-        String dir = args[0];
-        String flag = args.length > 1 ? args[1] : null;
+        final CharSequenceObjHashMap<String> optHash = hashArgs(args);
 
-        extractSite(dir, "-f".equals(flag));
+        // expected flags:
+        // -d <root dir> = sets root directory
+        // -f = forces copy of site to root directory even if site exists
+        // -n = disables handling of HUP signal
+
+        String dir = optHash.get("-d");
+        extractSite(dir, optHash.get("-f") != null);
         File conf = new File(dir, "conf/questdb.conf");
 
         if (!conf.exists()) {
@@ -106,7 +112,7 @@ class BootstrapMain {
             System.err.println(welcome);
             System.out.println(new Date() + " QuestDB is running");
 
-            if (Os.type != Os.WINDOWS) {
+            if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
                 // suppress HUP signal
                 Signal.handle(new Signal("HUP"), new SignalHandler() {
                     public void handle(Signal signal) {
@@ -120,6 +126,35 @@ class BootstrapMain {
                 }
             }));
         }
+    }
+
+    private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
+        CharSequenceObjHashMap<String> optHash = new CharSequenceObjHashMap<>();
+        String flag = null;
+        for (int i = 0, n = args.length; i < n; i++) {
+            String s = args[i];
+
+            if (s.startsWith("-")) {
+                if (flag != null) {
+                    optHash.put(flag, "");
+                }
+                flag = s;
+            } else {
+                if (flag != null) {
+                    optHash.put(flag, s);
+                    flag = null;
+                } else {
+                    System.err.println("Unknown arg: " + s);
+                    System.exit(55);
+                }
+            }
+        }
+
+        if (flag != null) {
+            optHash.put(flag, "");
+        }
+
+        return optHash;
     }
 
     private static void configureLoggers(final ServerConfiguration configuration) {
