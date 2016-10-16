@@ -25,6 +25,7 @@ package com.questdb.ql.ops;
 
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
@@ -37,7 +38,7 @@ public final class VwapAggregator extends AbstractBinaryOperator implements Aggr
 
     public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
+        public Function newInstance(int position, ServerConfiguration configuration) {
             return new VwapAggregator(position);
         }
     };

@@ -23,6 +23,8 @@
 
 package com.questdb.ql.ops;
 
+import com.questdb.net.http.ServerConfiguration;
+
 public interface VirtualColumnFactory<T extends VirtualColumn> {
-    T newInstance(int position);
+    T newInstance(int position, ServerConfiguration configuration);
 }

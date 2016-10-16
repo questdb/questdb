@@ -32,6 +32,7 @@ import com.questdb.misc.Interval;
 import com.questdb.model.Album;
 import com.questdb.model.Band;
 import com.questdb.model.Quote;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
@@ -121,7 +122,7 @@ public class SingleJournalSearchTest {
                 "2013-03-14T22:20:00.000Z\tADM.L\t0.222782760571\t0.713311797139\t273855268\t1241896809\tFast trading\tSK\n" +
                 "2013-03-14T23:43:20.000Z\tABF.L\t0.353620839777\t0.303265005916\t1628633600\t812948041\tFast trading\tSK\n";
 
-        IntEqualsOperator filter = (IntEqualsOperator) IntEqualsOperator.FACTORY.newInstance(0);
+        IntEqualsOperator filter = (IntEqualsOperator) IntEqualsOperator.FACTORY.newInstance(0, new ServerConfiguration());
         filter.setLhs(new SymRecordSourceColumn(journal.getMetadata().getColumnIndex("ex"), 0));
         filter.setRhs(new IntConstant(journal.getSymbolTable("ex").getQuick("SK"), 0));
 

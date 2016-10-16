@@ -24,6 +24,7 @@
 package com.questdb.ql.ops;
 
 import com.questdb.ex.ParserException;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSequenceHashSet;
@@ -33,7 +34,7 @@ public class StrInOperator extends AbstractVirtualColumn implements Function {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
+        public Function newInstance(int position, ServerConfiguration configuration) {
             return new StrInOperator(position);
         }
     };

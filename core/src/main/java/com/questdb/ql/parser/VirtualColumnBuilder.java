@@ -29,6 +29,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.QueryModel;
 import com.questdb.ql.ops.*;
@@ -46,12 +47,14 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
     private final Signature mutableSig = new Signature();
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
     private final PostOrderTreeTraversalAlgo algo;
+    private final ServerConfiguration configuration;
     private RecordMetadata metadata;
     private CharSequenceIntHashMap columnNameHistogram;
     private CharSequenceObjHashMap<Parameter> parameterMap;
 
-    VirtualColumnBuilder(PostOrderTreeTraversalAlgo algo) {
+    VirtualColumnBuilder(PostOrderTreeTraversalAlgo algo, ServerConfiguration configuration) {
         this.algo = algo;
+        this.configuration = configuration;
     }
 
     @Override
@@ -147,7 +150,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
             throw QueryError.$(node.position, "No such function: " + sig.userReadable());
         }
 
-        Function f = factory.newInstance(node.position);
+        Function f = factory.newInstance(node.position, configuration);
         if (args != null) {
             int n = node.paramCount;
             for (int i = 0; i < n; i++) {

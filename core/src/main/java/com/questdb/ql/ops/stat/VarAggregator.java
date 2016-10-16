@@ -26,6 +26,7 @@ package com.questdb.ql.ops.stat;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Misc;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.CollectionRecordMetadata;
@@ -45,8 +46,8 @@ public class VarAggregator extends AbstractUnaryOperator implements AggregatorFu
 
     public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
-            return new VarAggregator(position);
+        public Function newInstance(int position, ServerConfiguration configuration) {
+            return new VarAggregator(position, configuration);
         }
     };
 
@@ -70,10 +71,10 @@ public class VarAggregator extends AbstractUnaryOperator implements AggregatorFu
     private int oValuesTail;
     private int oVariance;
 
-    protected VarAggregator(int position) {
+    protected VarAggregator(int position, ServerConfiguration configuration) {
         super(ColumnType.DOUBLE, position);
-        this.meanPartials = new RecordList(meanPartialsMetadata, 1024 * 1024);
-        this.srcRecords = new RecordList(sourceMetadata, 1024 * 1024);
+        this.meanPartials = new RecordList(meanPartialsMetadata, configuration.getDbFnVarianceMeans());
+        this.srcRecords = new RecordList(sourceMetadata, configuration.getDbFnVarianceData());
     }
 
     @Override

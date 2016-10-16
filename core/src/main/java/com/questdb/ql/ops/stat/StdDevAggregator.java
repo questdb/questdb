@@ -23,6 +23,7 @@
 
 package com.questdb.ql.ops.stat;
 
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
@@ -30,13 +31,13 @@ import com.questdb.ql.ops.VirtualColumnFactory;
 public class StdDevAggregator extends VarAggregator {
     public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
-            return new StdDevAggregator(position);
+        public Function newInstance(int position, ServerConfiguration configuration) {
+            return new StdDevAggregator(position, configuration);
         }
     };
 
-    public StdDevAggregator(int position) {
-        super(position);
+    public StdDevAggregator(int position, ServerConfiguration configuration) {
+        super(position, configuration);
     }
 
     @Override

@@ -24,6 +24,7 @@
 package com.questdb.ql.ops.eq;
 
 import com.questdb.ex.ParserException;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
@@ -36,7 +37,7 @@ public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
+        public Function newInstance(int position, ServerConfiguration configuration) {
             return new DoubleScaledEqualsOperator(position);
         }
     };

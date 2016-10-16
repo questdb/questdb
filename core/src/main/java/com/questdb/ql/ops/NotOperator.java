@@ -23,6 +23,7 @@
 
 package com.questdb.ql.ops;
 
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.store.ColumnType;
 
@@ -30,7 +31,7 @@ public class NotOperator extends AbstractUnaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
+        public Function newInstance(int position, ServerConfiguration configuration) {
             return new NotOperator(position);
         }
     };

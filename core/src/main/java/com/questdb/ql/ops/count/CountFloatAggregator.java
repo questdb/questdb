@@ -23,6 +23,7 @@
 
 package com.questdb.ql.ops.count;
 
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
@@ -34,7 +35,7 @@ public final class CountFloatAggregator extends AbstractUnaryAggregator {
 
     public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
+        public Function newInstance(int position, ServerConfiguration configuration) {
             return new CountFloatAggregator(position);
         }
     };

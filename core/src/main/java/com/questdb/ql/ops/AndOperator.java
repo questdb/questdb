@@ -23,6 +23,7 @@
 
 package com.questdb.ql.ops;
 
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.constant.BooleanConstant;
 import com.questdb.store.ColumnType;
@@ -31,7 +32,7 @@ public class AndOperator extends AbstractBinaryOperator {
 
     public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
+        public Function newInstance(int position, ServerConfiguration configuration) {
             return new AndOperator(position);
         }
     };

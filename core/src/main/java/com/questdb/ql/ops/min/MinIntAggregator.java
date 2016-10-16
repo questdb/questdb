@@ -23,6 +23,7 @@
 
 package com.questdb.ql.ops.min;
 
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
@@ -33,7 +34,7 @@ import com.questdb.store.ColumnType;
 public final class MinIntAggregator extends AbstractUnaryAggregator {
     public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
+        public Function newInstance(int position, ServerConfiguration configuration) {
             return new MinIntAggregator(position);
         }
     };

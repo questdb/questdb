@@ -23,6 +23,7 @@
 
 package com.questdb.ql.ops.conv;
 
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
@@ -33,7 +34,7 @@ public class DtoLFunction extends AbstractUnaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
+        public Function newInstance(int position, ServerConfiguration configuration) {
             return new DtoLFunction(position);
         }
     };

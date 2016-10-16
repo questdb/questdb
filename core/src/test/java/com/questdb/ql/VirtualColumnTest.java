@@ -29,6 +29,7 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.io.RecordSourcePrinter;
 import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Rnd;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.ql.impl.virtual.VirtualColumnRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
@@ -62,7 +63,7 @@ public class VirtualColumnTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(0);
+        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(0, new ServerConfiguration());
         plus.setName("plus");
         plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid"), 0));
         plus.setRhs(new DoubleConstant(12.5, 0));
@@ -199,7 +200,7 @@ public class VirtualColumnTest extends AbstractTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(0);
+        final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(0, new ServerConfiguration());
         plus.setName("plus");
         plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid"), 0));
         plus.setRhs(new DoubleConstant(12.5, 0));

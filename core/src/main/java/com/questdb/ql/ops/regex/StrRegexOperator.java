@@ -24,6 +24,7 @@
 package com.questdb.ql.ops.regex;
 
 import com.questdb.ex.ParserException;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -40,7 +41,7 @@ public class StrRegexOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
+        public Function newInstance(int position, ServerConfiguration configuration) {
             return new StrRegexOperator(position);
         }
     };

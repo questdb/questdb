@@ -24,6 +24,7 @@
 package com.questdb.ql.ops.plus;
 
 import com.questdb.misc.Dates;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -34,7 +35,7 @@ public class AddDateDayROperator extends AbstractBinaryOperator {
 
     public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
+        public Function newInstance(int position, ServerConfiguration configuration) {
             return new AddDateDayROperator(position);
         }
     };

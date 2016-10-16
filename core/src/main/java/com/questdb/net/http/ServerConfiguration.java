@@ -67,6 +67,8 @@ public class ServerConfiguration {
     private int dbCyclesBeforeCancel = 1024 * 1024;
     private int dbAnalyticFuncPage = 2 * 1024 * 1024;
     private int dbAnalyticWindowPage = 4 * 1024 * 1024;
+    private int dbFnVarianceMeans = 1024 * 1024;
+    private int dbFnVarianceData = 64 * 1024 * 1024;
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");
     private File httpPublic = new File("public");
@@ -220,6 +222,14 @@ public class ServerConfiguration {
             this.dbAnalyticWindowPage = n;
         }
 
+        if ((n = parseSize(props, "db.fn.variance.means")) > -1) {
+            this.dbFnVarianceMeans = n;
+        }
+
+        if ((n = parseSize(props, "db.fn.variance.data")) > -1) {
+            this.dbFnVarianceData = n;
+        }
+
         if ((s = props.getProperty("mime.types")) != null) {
             this.mimeTypes = normalize(root, new File(s));
         } else {
@@ -305,6 +315,14 @@ public class ServerConfiguration {
 
     public int getDbCyclesBeforeCancel() {
         return dbCyclesBeforeCancel;
+    }
+
+    public int getDbFnVarianceData() {
+        return dbFnVarianceData;
+    }
+
+    public int getDbFnVarianceMeans() {
+        return dbFnVarianceMeans;
     }
 
     public int getDbHashDataPage() {

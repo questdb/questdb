@@ -91,7 +91,7 @@ public class QueryCompiler {
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
     private final ObjectPool<JoinContext> contextPool = new ObjectPool<>(JoinContext.FACTORY, 16);
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
-    private final VirtualColumnBuilder virtualColumnBuilder = new VirtualColumnBuilder(traversalAlgo);
+    private final VirtualColumnBuilder virtualColumnBuilder;
     private final IntList clausesToSteal = new IntList();
     private final IntList literalCollectorAIndexes = new IntList();
     private final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
@@ -141,6 +141,7 @@ public class QueryCompiler {
     public QueryCompiler(ServerConfiguration configuration) {
         // seed column name assembly with default column prefix, which we will reuse
         this.configuration = configuration;
+        this.virtualColumnBuilder = new VirtualColumnBuilder(traversalAlgo, configuration);
         columnNameAssembly.put("col");
         columnNamePrefixLen = 3;
     }

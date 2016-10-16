@@ -24,6 +24,7 @@
 package com.questdb.ql.ops.neq;
 
 import com.questdb.misc.Numbers;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -34,7 +35,7 @@ public class IntNotEqualsNaNOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
-        public Function newInstance(int position) {
+        public Function newInstance(int position, ServerConfiguration configuration) {
             return new IntNotEqualsNaNOperator(position);
         }
     };
