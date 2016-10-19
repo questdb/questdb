@@ -65,7 +65,7 @@ public class QueryHandlerContext extends AbstractQueryContext {
         header(r, status);
         r.put('{').
                 putQuoted("query").put(':').putUtf8EscapedAndQuoted(query == null ? "" : query).put(',').
-                putQuoted("error").put(':').putQuoted(message).put(',').
+                putQuoted("error").put(':').putUtf8EscapedAndQuoted(message).put(',').
                 putQuoted("position").put(':').put(position);
         r.put('}');
         r.sendChunk();

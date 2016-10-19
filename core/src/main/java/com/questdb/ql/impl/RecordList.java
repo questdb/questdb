@@ -146,6 +146,14 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
         ((RecordListRecord) record).of(atRowId);
     }
 
+    public void toTop() {
+        if (mem.size() == 0L) {
+            readAddress = -1L;
+        } else {
+            readAddress = mem.addressOf(0) + 8;
+        }
+    }
+
     @Override
     public boolean hasNext() {
         return readAddress > -1;
@@ -165,10 +173,6 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
     public void putShort(short value) {
         Unsafe.getUnsafe().putShort(wPtr, value);
         wPtr += 2;
-    }
-
-    public void toTop() {
-        readAddress = mem.addressOf(0) + 8;
     }
 
     private void append0(Record record, long address) {

@@ -42,7 +42,7 @@
     <artifactId>parent</artifactId>
     <packaging>pom</packaging>
 
-    <name>QuestDB</name>
+    <name>parent</name>
 
     <build>
         <plugins>

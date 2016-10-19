@@ -94,6 +94,21 @@ public class RecordListTest extends AbstractTest {
     }
 
     @Test
+    public void testBlankList() throws Exception {
+        writeAndReadRecords(factory.writer(LongValue.class), 0, 450,
+                new RecordGenerator<LongValue>() {
+                    @Override
+                    public void assertRecord(Record value, int i) {
+                    }
+
+                    @Override
+                    public LongValue generate(int i) {
+                        return new LongValue(i);
+                    }
+                });
+    }
+
+    @Test
     public void testCopyBinToAddress() throws JournalException, IOException, ParserException {
         final int pageLen = 1024 * 1024;
         writeAndReadRecords(factory.writer(Binary.class), 1, pageLen,

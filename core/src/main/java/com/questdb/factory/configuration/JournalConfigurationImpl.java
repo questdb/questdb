@@ -168,6 +168,10 @@ class JournalConfigurationImpl implements JournalConfiguration {
                     newName.of(path).concat(to).$();
                 }
 
+                if (!Files.exists(oldName)) {
+                    throw new JournalException("Journal does not exist");
+                }
+
                 Lock lock = LockManager.lockExclusive(oldName.toString());
                 try {
                     if (lock == null || !lock.isValid()) {
@@ -187,7 +191,7 @@ class JournalConfigurationImpl implements JournalConfiguration {
                         }
 
                         if (!Files.rename(oldName, newName)) {
-                            throw new JournalException("Cannot rename journal: %d", Os.errno());
+                            throw new JournalException("Cannot rename journal: %s [%d]", oldName, Os.errno());
                         }
                     } finally {
                         LockManager.release(writeLock);

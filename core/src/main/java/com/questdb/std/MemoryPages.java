@@ -82,6 +82,10 @@ public class MemoryPages implements Closeable, Mutable {
         return pageSize;
     }
 
+    public long size() {
+        return cachePageLo;
+    }
+
     private void allocate0(long index) {
         if (index > Integer.MAX_VALUE) {
             throw new OutOfMemoryError();

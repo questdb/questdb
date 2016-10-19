@@ -139,6 +139,17 @@ public class RenameJournalTest {
     }
 
     @Test
+    public void testSimpleNonExisting() throws Exception {
+        try {
+            compiler.execute(factory, null, null, "rename table x to y");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(13, QueryError.getPosition());
+            TestUtils.assertEquals("Journal does not exist", QueryError.getMessage());
+        }
+    }
+
+    @Test
     public void testSimpleRename() throws Exception {
         createX();
         compiler.execute(factory, null, null, "rename table x to y");

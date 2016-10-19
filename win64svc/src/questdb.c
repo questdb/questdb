@@ -87,7 +87,7 @@ void buildJavaArgs(CONFIG *config) {
     strcat(args, classpath);
     strcat(args, "\" ");
     strcat(args, mainClass);
-    strcat(args, " \"");
+    strcat(args, " -d \"");
     strcat(args, config->dir);
     strcat(args, "\"");
 
