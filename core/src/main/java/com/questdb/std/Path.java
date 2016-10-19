@@ -40,7 +40,7 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
     public Path(CharSequence str) {
         int l = str.length();
         alloc(l);
-        copy(str, l);
+        copy(str, 0, l);
     }
 
     @Override
@@ -67,13 +67,16 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
     }
 
     public Path of(CharSequence str) {
-        int l = str.length();
-        if (l >= capacity) {
+        return of(str, 0, str.length());
+    }
+
+    public Path of(CharSequence str, int from, int len) {
+        if (len >= capacity) {
             Unsafe.free(ptr, capacity + 1);
-            alloc(l);
+            alloc(len);
         }
-        copy(str, l);
-        this.len = l;
+        copy(str, from, len);
+        this.len = len;
         return this;
     }
 
@@ -82,9 +85,9 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
         this.ptr = Unsafe.malloc(len + 1);
     }
 
-    private void copy(CharSequence str, int len) {
+    private void copy(CharSequence str, int from, int len) {
         for (int i = 0; i < len; i++) {
-            char c = str.charAt(i);
+            char c = str.charAt(i + from);
             Unsafe.getUnsafe().putByte(ptr + i, (byte) (Os.type == Os.WINDOWS && c == '/' ? '\\' : c));
         }
         Unsafe.getUnsafe().putByte(ptr + len, (byte) 0);

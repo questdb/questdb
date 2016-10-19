@@ -37,10 +37,8 @@
 #include <sys/stat.h>
 #include <sys/fcntl.h>
 #include <sys/time.h>
-#include <string.h>
 #include <stdlib.h>
 #include <dirent.h>
-#include <utime.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
@@ -68,6 +66,11 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
          jlong offset) {
 
     return pread((int) fd, (void *) address, (size_t) len, (off_t) offset);
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_sequentialRead
+        (JNIEnv *e, jclass cl, jlong fd, jlong address, jint len) {
+    return read((int) fd, (void *) address, (size_t) len);
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getLastModified

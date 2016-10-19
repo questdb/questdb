@@ -173,6 +173,8 @@ public final class Files {
         return rename(oldName.address(), newName.address());
     }
 
+    public native static long sequentialRead(long fd, long address, int len);
+
     public static boolean setLastModified(LPSZ lpsz, long millis) {
         return setLastModified(lpsz.address(), millis);
     }
@@ -188,6 +190,7 @@ public final class Files {
 
     public native static long write(long fd, long address, int len, long offset);
 
+    // used in tests
     public static void writeStringToFile(File file, String s) throws JournalException {
         try {
             try (FileOutputStream fos = new FileOutputStream(file)) {

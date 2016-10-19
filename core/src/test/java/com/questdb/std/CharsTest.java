@@ -23,18 +23,31 @@
 
 package com.questdb.std;
 
+import com.questdb.misc.Chars;
 import com.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class FileNameExtractorCharSequenceTest {
-
+public class CharsTest {
     private static final FileNameExtractorCharSequence extractor = new FileNameExtractorCharSequence();
     private static char separator;
 
     @BeforeClass
     public static void setUp() throws Exception {
         separator = System.getProperty("file.separator").charAt(0);
+    }
+
+    @Test
+    public void testConcat() throws Exception {
+        ConcatCharSequence concat = new ConcatCharSequence();
+        concat.add("this");
+        concat.add(" is ");
+        concat.add("");
+        concat.add("working");
+
+        TestUtils.assertEquals("this is working", concat);
+        Assert.assertEquals('w', concat.charAt(8));
     }
 
     @Test
@@ -50,7 +63,44 @@ public class FileNameExtractorCharSequenceTest {
     }
 
     @Test
+    public void testPathList() throws Exception {
+        assertThat("[abc,d1]", Chars.splitLpsz("abc d1"));
+    }
+
+    @Test
+    public void testPathListLeadingSpaces() throws Exception {
+        assertThat("[abc,d1]", Chars.splitLpsz("   abc d1"));
+    }
+
+    @Test
+    public void testPathListQuotedSpace() throws Exception {
+        assertThat("[abc,d1 cd,x]", Chars.splitLpsz("abc \"d1 cd\" x"));
+    }
+
+    @Test
+    public void testPathListQuotedSpaceEmpty() throws Exception {
+        assertThat("[abc,x]", Chars.splitLpsz("abc \"\" x"));
+    }
+
+    @Test
+    public void testPathListTrailingSpace() throws Exception {
+        assertThat("[abc,d1]", Chars.splitLpsz("abc d1    "));
+    }
+
+    @Test
+    public void testPathListUnclosedQuote() throws Exception {
+        assertThat("[abc,c cd]", Chars.splitLpsz("abc \"c cd"));
+    }
+
+    @Test
     public void testPlainName() throws Exception {
         TestUtils.assertEquals("xyz.txt", extractor.of("xyz.txt"));
+    }
+
+    private void assertThat(String expected, ObjList<Path> list) {
+        Assert.assertEquals(expected, list.toString());
+        for (int i = 0, n = list.size(); i < n; i++) {
+            list.getQuick(i).close();
+        }
     }
 }

@@ -23,7 +23,6 @@
 
 package com.questdb.std;
 
-import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -185,7 +184,7 @@ public class ObjList<T> implements Mutable {
      */
     @Override
     public String toString() {
-        StringBuilder b = Misc.getThreadLocalBuilder();
+        StringBuilder b = new StringBuilder();
 
         b.setLength(0);
         b.append('[');

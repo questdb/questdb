@@ -91,6 +91,14 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
 
 /*
  * Class:     com_questdb_misc_Files
+ * Method:    sequentialRead
+ * Signature: (JJI)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_sequentialRead
+        (JNIEnv *, jclass, jlong, jlong, jint);
+
+/*
+ * Class:     com_questdb_misc_Files
  * Method:    write
  * Signature: (JJIJ)J
  */

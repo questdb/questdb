@@ -19,14 +19,27 @@ extern "C" {
 #define com_questdb_misc_Os_UNKNOWN -1L
 /*
  * Class:     com_questdb_misc_Os
+ * Method:    errno
+ * Signature: ()I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_errno
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_misc_Os
  * Method:    getPid
  * Signature: ()I
  */
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_getPid
         (JNIEnv *, jclass);
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_errno
-        (JNIEnv *, jclass);
+/*
+ * Class:     com_questdb_misc_Os
+ * Method:    forkExec
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Os_forkExec
+        (JNIEnv *, jclass, jlong);
 
 #ifdef __cplusplus
 }

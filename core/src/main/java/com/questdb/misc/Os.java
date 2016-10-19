@@ -24,6 +24,8 @@
 package com.questdb.misc;
 
 import com.questdb.ex.FatalError;
+import com.questdb.std.ObjList;
+import com.questdb.std.Path;
 import com.sun.management.OperatingSystemMXBean;
 
 import java.io.File;
@@ -46,6 +48,41 @@ public final class Os {
 
     public static native int errno();
 
+    public static long forkExec(CharSequence args) {
+        ObjList<Path> paths = Chars.splitLpsz(args);
+        int n = paths.size();
+        try {
+            long argv = Unsafe.malloc(n + 1);
+            try {
+                long p = argv;
+                for (int i = 0; i < n; i++) {
+                    Unsafe.getUnsafe().putLong(p, paths.getQuick(i).address());
+                    p += 8;
+                }
+                Unsafe.getUnsafe().putLong(p, 0);
+                return forkExec(argv);
+            } finally {
+                Unsafe.free(argv, n + 1);
+            }
+        } finally {
+            for (int i = 0; i < n; i++) {
+                paths.getQuick(i).close();
+            }
+        }
+    }
+
+    public static int forkExecPid(long forkExecT) {
+        return Unsafe.getUnsafe().getInt(forkExecT + 8);
+    }
+
+    public static int forkExecReadFd(long forkExecT) {
+        return Unsafe.getUnsafe().getInt(forkExecT);
+    }
+
+    public static int forkExecWriteFd(long forkExecT) {
+        return Unsafe.getUnsafe().getInt(forkExecT + 4);
+    }
+
     public static native int getPid();
 
     public static long getSystemMemory() {
@@ -55,6 +92,19 @@ public final class Os {
     @SuppressWarnings("EmptyMethod")
     public static void init() {
     }
+
+    public static void main(String[] args) {
+        long p = forkExec("/usr/local/bin/kramdown");
+        if (p == 0) {
+            System.out.println(Os.errno());
+        } else {
+            System.out.println(Unsafe.getUnsafe().getInt(p + 8));
+            Unsafe.getUnsafe().freeMemory(p);
+            System.out.println("ok");
+        }
+    }
+
+    private static native long forkExec(long argv);
 
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
