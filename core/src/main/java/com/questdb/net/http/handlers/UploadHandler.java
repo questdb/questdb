@@ -29,10 +29,10 @@ import com.questdb.misc.Unsafe;
 import com.questdb.net.http.IOContext;
 import com.questdb.net.http.RequestHeaderBuffer;
 import com.questdb.net.http.ResponseSink;
-import com.questdb.std.ByteSequence;
-import com.questdb.std.DirectByteCharSequence;
 import com.questdb.std.LocalValue;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.ByteSequence;
+import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.store.PlainFile;
 
 import java.io.Closeable;

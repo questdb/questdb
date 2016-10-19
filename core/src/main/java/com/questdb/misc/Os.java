@@ -25,7 +25,7 @@ package com.questdb.misc;
 
 import com.questdb.ex.FatalError;
 import com.questdb.std.ObjList;
-import com.questdb.std.Path;
+import com.questdb.std.str.Path;
 import com.sun.management.OperatingSystemMXBean;
 
 import java.io.File;

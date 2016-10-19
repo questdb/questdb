@@ -30,7 +30,7 @@ import com.questdb.ql.*;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public class FilteredRecordSource extends AbstractCombinedRecordSource {
 
@@ -79,6 +79,16 @@ public class FilteredRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public StorageFacade getStorageFacade() {
+        return cursor.getStorageFacade();
+    }
+
+    @Override
+    public void toTop() {
+        this.cursor.toTop();
+    }
+
+    @Override
     public boolean hasNext() {
         while (cursor.hasNext()) {
             record = cursor.next();
@@ -116,15 +126,5 @@ public class FilteredRecordSource extends AbstractCombinedRecordSource {
         sink.putQuoted("src").put(':').put(delegate).put(',');
         sink.putQuoted("filter").put(':').put('"').put(filterNode).put('"');
         sink.put('}');
-    }
-
-    @Override
-    public void toTop() {
-        this.cursor.toTop();
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return cursor.getStorageFacade();
     }
 }

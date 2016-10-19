@@ -23,9 +23,9 @@
 
 package com.questdb.store;
 
-import com.questdb.io.sink.DelimitedCharSink;
-import com.questdb.io.sink.FlexBufferSink;
 import com.questdb.std.AbstractImmutableIterator;
+import com.questdb.txt.sink.DelimitedCharSink;
+import com.questdb.txt.sink.FlexBufferSink;
 
 import java.io.File;
 import java.io.FileDescriptor;

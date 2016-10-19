@@ -30,7 +30,7 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.NullableRecord;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource masterSource;
@@ -87,6 +87,18 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
+    }
+
+    @Override
+    public void toTop() {
+        nextSlave = false;
+        masterCursor.toTop();
+        slaveCursor.toTop();
+    }
+
+    @Override
     public boolean hasNext() {
         return nextSlave || masterCursor.hasNext();
     }
@@ -115,17 +127,5 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
         sink.putQuoted("master").put(':').put(masterSource).put(',');
         sink.putQuoted("slave").put(':').put(slaveSource);
         sink.put('}');
-    }
-
-    @Override
-    public void toTop() {
-        nextSlave = false;
-        masterCursor.toTop();
-        slaveCursor.toTop();
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return storageFacade;
     }
 }

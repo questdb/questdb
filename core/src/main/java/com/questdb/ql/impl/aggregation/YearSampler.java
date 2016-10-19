@@ -24,7 +24,7 @@
 package com.questdb.ql.impl.aggregation;
 
 import com.questdb.misc.Dates;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 class YearSampler implements TimestampSampler {
 

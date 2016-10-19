@@ -31,8 +31,8 @@ import com.questdb.ql.PartitionSlice;
 import com.questdb.ql.PartitionSource;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.AbstractImmutableIterator;
-import com.questdb.std.CharSink;
-import com.questdb.std.FileNameExtractorCharSequence;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.FileNameExtractorCharSequence;
 
 public class NoOpJournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
 

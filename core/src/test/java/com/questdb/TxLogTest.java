@@ -23,14 +23,14 @@
 
 package com.questdb;
 
-import com.questdb.io.sink.DelimitedCharSink;
-import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Rows;
 import com.questdb.model.Quote;
 import com.questdb.store.Tx;
 import com.questdb.store.TxLog;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
+import com.questdb.txt.sink.DelimitedCharSink;
+import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;

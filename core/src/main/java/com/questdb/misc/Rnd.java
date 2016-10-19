@@ -23,7 +23,7 @@
 
 package com.questdb.misc;
 
-import com.questdb.io.sink.StringSink;
+import com.questdb.txt.sink.StringSink;
 
 public class Rnd {
     private final StringSink sink = new StringSink();

@@ -25,8 +25,6 @@ package com.questdb.ql;
 
 import com.questdb.JournalWriter;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
-import com.questdb.io.RecordSourcePrinter;
-import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Files;
 import com.questdb.misc.Interval;
 import com.questdb.model.Album;
@@ -43,6 +41,8 @@ import com.questdb.ql.ops.constant.IntConstant;
 import com.questdb.ql.ops.eq.IntEqualsOperator;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestData;
+import com.questdb.txt.RecordSourcePrinter;
+import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;

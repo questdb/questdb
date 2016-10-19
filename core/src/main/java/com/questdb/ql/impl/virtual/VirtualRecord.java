@@ -27,9 +27,9 @@ import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 

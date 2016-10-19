@@ -30,8 +30,8 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.CharSink;
 
 public class AnalyticRecordSource extends AbstractCombinedRecordSource {
 

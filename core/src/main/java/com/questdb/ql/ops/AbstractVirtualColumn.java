@@ -24,8 +24,8 @@
 package com.questdb.ql.ops;
 
 import com.questdb.ql.Record;
-import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.SymbolTable;
 
 import java.io.OutputStream;

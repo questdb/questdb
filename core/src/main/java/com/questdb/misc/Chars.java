@@ -25,7 +25,7 @@ package com.questdb.misc;
 
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.std.ObjList;
-import com.questdb.std.Path;
+import com.questdb.std.str.Path;
 
 public final class Chars {
     private final static ThreadLocal<char[]> builder = new ThreadLocal<>();

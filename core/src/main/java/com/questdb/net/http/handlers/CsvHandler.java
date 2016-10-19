@@ -35,9 +35,9 @@ import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
-import com.questdb.std.CharSink;
 import com.questdb.std.LocalValue;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;

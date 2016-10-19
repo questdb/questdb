@@ -31,9 +31,9 @@ import com.questdb.iter.PartitionBufferedIterator;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
-import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.*;
 
 import java.io.Closeable;

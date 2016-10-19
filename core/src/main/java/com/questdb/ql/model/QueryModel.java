@@ -31,7 +31,6 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Chars;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.impl.sys.SysFactories;
@@ -40,6 +39,7 @@ import com.questdb.ql.ops.Parameter;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.*;
+import com.questdb.txt.sink.StringSink;
 
 import java.util.ArrayDeque;
 

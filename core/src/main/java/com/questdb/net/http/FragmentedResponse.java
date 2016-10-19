@@ -25,7 +25,7 @@ package com.questdb.net.http;
 
 import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.SlowWritableChannelException;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 import java.nio.ByteBuffer;
 

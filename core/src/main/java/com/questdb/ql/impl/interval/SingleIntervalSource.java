@@ -25,7 +25,7 @@ package com.questdb.ql.impl.interval;
 
 import com.questdb.misc.Interval;
 import com.questdb.std.AbstractImmutableIterator;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public class SingleIntervalSource extends AbstractImmutableIterator<Interval> implements IntervalSource {
     private final Interval interval;

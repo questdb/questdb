@@ -32,9 +32,9 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.DirectByteCharSequence;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectPool;
+import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 

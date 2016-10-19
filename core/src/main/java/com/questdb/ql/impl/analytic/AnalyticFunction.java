@@ -26,7 +26,7 @@ package com.questdb.ql.impl.analytic;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.SymbolTable;
 
 public interface AnalyticFunction {

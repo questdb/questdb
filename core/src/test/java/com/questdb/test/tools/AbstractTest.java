@@ -24,8 +24,6 @@
 package com.questdb.test.tools;
 
 import com.questdb.ex.ParserException;
-import com.questdb.io.RecordSourcePrinter;
-import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Files;
 import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
@@ -35,6 +33,8 @@ import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.store.SymbolTable;
+import com.questdb.txt.RecordSourcePrinter;
+import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;

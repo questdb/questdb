@@ -29,9 +29,9 @@ import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
 import com.questdb.std.Transient;
+import com.questdb.std.str.CharSink;
 
 public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource delegate;
@@ -84,6 +84,16 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
+    public StorageFacade getStorageFacade() {
+        return storageFacade;
+    }
+
+    @Override
+    public void toTop() {
+        this.cursor.toTop();
+    }
+
+    @Override
     public boolean hasNext() {
         return cursor.hasNext();
     }
@@ -114,15 +124,5 @@ public class SelectedColumnsRecordSource extends AbstractCombinedRecordSource {
         sink.putQuoted("op").put(':').putQuoted("SelectedColumnsRecordSource").put(',');
         sink.putQuoted("src").put(':').put(delegate);
         sink.put('}');
-    }
-
-    @Override
-    public void toTop() {
-        this.cursor.toTop();
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return storageFacade;
     }
 }

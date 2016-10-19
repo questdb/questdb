@@ -24,8 +24,8 @@
 package com.questdb.ql.parser;
 
 import com.questdb.ex.ParserException;
-import com.questdb.io.sink.StringSink;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
+import com.questdb.txt.sink.StringSink;
 
 public final class QueryError implements QueryErrorBuilder {
     private static final QueryError INSTANCE = new QueryError();

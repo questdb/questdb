@@ -25,8 +25,11 @@ package com.questdb.misc;
 
 import com.questdb.ex.FatalError;
 import com.questdb.ex.NumericException;
-import com.questdb.std.*;
+import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.ObjectFactory;
+import com.questdb.std.ObjectPool;
 import com.questdb.std.ThreadLocal;
+import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 import java.io.IOException;

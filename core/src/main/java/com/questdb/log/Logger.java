@@ -27,7 +27,7 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Net;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 import java.io.File;
 

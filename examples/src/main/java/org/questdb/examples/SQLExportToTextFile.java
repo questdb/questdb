@@ -26,10 +26,10 @@ package org.questdb.examples;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalFactory;
-import com.questdb.io.ExportManager;
-import com.questdb.io.ImportManager;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
+import com.questdb.txt.ExportManager;
+import com.questdb.txt.ImportManager;
 
 import java.io.File;
 import java.io.IOException;

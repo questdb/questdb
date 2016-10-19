@@ -36,8 +36,8 @@ import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.map.RecordKeyCopier;
 import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.CharSink;
 import com.questdb.std.IntList;
+import com.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 

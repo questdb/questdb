@@ -30,8 +30,8 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.join.SplitRecordStorageFacade;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.SymbolTable;
 
 public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {

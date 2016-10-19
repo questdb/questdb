@@ -37,7 +37,11 @@ import com.questdb.ql.impl.interval.YearIntervalSource;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.IntrinsicModel;
 import com.questdb.ql.model.IntrinsicValue;
-import com.questdb.std.*;
+import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.IntList;
+import com.questdb.std.ObjList;
+import com.questdb.std.ObjectPool;
+import com.questdb.std.str.FlyweightCharSequence;
 import com.questdb.store.ColumnType;
 
 import java.util.ArrayDeque;

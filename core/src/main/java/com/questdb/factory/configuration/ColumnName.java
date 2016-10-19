@@ -24,9 +24,9 @@
 package com.questdb.factory.configuration;
 
 import com.questdb.misc.Chars;
-import com.questdb.std.FlyweightCharSequence;
 import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
+import com.questdb.std.str.FlyweightCharSequence;
 import org.jetbrains.annotations.NotNull;
 
 public class ColumnName implements CharSequence {

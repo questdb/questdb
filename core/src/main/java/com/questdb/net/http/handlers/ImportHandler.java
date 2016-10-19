@@ -33,22 +33,27 @@ import com.questdb.factory.JournalWriterFactory;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.io.parser.DelimitedTextParser;
-import com.questdb.io.parser.FormatParser;
-import com.questdb.io.parser.TextParser;
-import com.questdb.io.parser.listener.JournalImportListener;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.IOContext;
 import com.questdb.net.http.RequestHeaderBuffer;
 import com.questdb.net.http.ResponseSink;
-import com.questdb.std.*;
+import com.questdb.std.LocalValue;
+import com.questdb.std.LongList;
+import com.questdb.std.Mutable;
+import com.questdb.std.str.ByteSequence;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.FileNameExtractorCharSequence;
 import com.questdb.store.ColumnType;
+import com.questdb.txt.parser.DelimitedTextParser;
+import com.questdb.txt.parser.FormatParser;
+import com.questdb.txt.parser.TextParser;
+import com.questdb.txt.parser.listener.JournalImportListener;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.lang.ThreadLocal;
 
 public class ImportHandler extends AbstractMultipartHandler {
     private static final int RESPONSE_PREFIX = 1;

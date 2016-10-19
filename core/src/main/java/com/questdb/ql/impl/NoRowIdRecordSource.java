@@ -33,7 +33,7 @@ import com.questdb.ql.RecordSource;
 import com.questdb.ql.ops.AbstractRecordSource;
 import com.questdb.ql.ops.Parameter;
 import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public class NoRowIdRecordSource extends AbstractRecordSource {
     private RecordSource delegate;

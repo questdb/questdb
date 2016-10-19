@@ -29,7 +29,6 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.Constants;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.io.sink.FlexBufferSink;
 import com.questdb.iter.ConcurrentIterator;
 import com.questdb.iter.MergingIterator;
 import com.questdb.iter.PeekingIterator;
@@ -43,6 +42,7 @@ import com.questdb.mp.Sequence;
 import com.questdb.query.ResultSet;
 import com.questdb.std.PeekingListIterator;
 import com.questdb.store.*;
+import com.questdb.txt.sink.FlexBufferSink;
 
 import java.io.File;
 import java.io.FileFilter;

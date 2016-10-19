@@ -24,6 +24,9 @@
 package com.questdb.std;
 
 import com.questdb.misc.Chars;
+import com.questdb.std.str.ConcatCharSequence;
+import com.questdb.std.str.FileNameExtractorCharSequence;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;

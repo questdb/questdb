@@ -23,10 +23,10 @@
 
 package com.questdb.printer.converter;
 
-import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Unsafe;
 import com.questdb.printer.JournalPrinter;
+import com.questdb.txt.sink.StringSink;
 
 public class DateConverter extends AbstractConverter {
     private final StringSink sink = new StringSink();

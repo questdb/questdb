@@ -27,8 +27,6 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.JournalConfigurationException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
-import com.questdb.io.RecordSourcePrinter;
-import com.questdb.io.sink.StringSink;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.misc.Files;
 import com.questdb.model.Album;
@@ -44,6 +42,8 @@ import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
+import com.questdb.txt.RecordSourcePrinter;
+import com.questdb.txt.sink.StringSink;
 import org.junit.*;
 
 public class HashJoinRecordSourceTest {

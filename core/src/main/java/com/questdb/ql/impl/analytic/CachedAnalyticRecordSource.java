@@ -32,10 +32,10 @@ import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.sort.RecordComparator;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
 import com.questdb.std.RedBlackTree;
 import com.questdb.std.Transient;
+import com.questdb.std.str.CharSink;
 
 public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
 

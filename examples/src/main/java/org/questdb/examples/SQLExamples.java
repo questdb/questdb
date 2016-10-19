@@ -26,13 +26,13 @@ package org.questdb.examples;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.JournalFactory;
-import com.questdb.io.ImportManager;
-import com.questdb.io.RecordSourcePrinter;
-import com.questdb.io.sink.StdoutSink;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
+import com.questdb.txt.ImportManager;
+import com.questdb.txt.RecordSourcePrinter;
+import com.questdb.txt.sink.StdoutSink;
 
 import java.io.IOException;
 

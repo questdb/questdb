@@ -27,9 +27,9 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.CharSink;
-import com.questdb.std.DirectCharSequence;
 import com.questdb.std.DirectInputStream;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.DirectCharSequence;
 
 import java.io.IOException;
 import java.io.InputStream;

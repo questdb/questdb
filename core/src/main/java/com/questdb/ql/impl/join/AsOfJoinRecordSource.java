@@ -35,7 +35,7 @@ import com.questdb.ql.impl.join.asof.RecordHolder;
 import com.questdb.ql.impl.join.asof.RowidRecordHolder;
 import com.questdb.ql.impl.join.asof.VarRecordHolder;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;

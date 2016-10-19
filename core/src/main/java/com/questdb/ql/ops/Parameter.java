@@ -29,7 +29,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 
 public class Parameter extends AbstractVirtualColumn {

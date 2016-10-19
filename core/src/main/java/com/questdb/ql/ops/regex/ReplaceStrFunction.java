@@ -33,9 +33,9 @@ import com.questdb.ql.parser.QueryError;
 import com.questdb.regex.Matcher;
 import com.questdb.regex.Pattern;
 import com.questdb.regex.PatternSyntaxException;
-import com.questdb.std.CharSink;
-import com.questdb.std.ConcatCharSequence;
-import com.questdb.std.FlyweightCharSequence;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.ConcatCharSequence;
+import com.questdb.std.str.FlyweightCharSequence;
 import com.questdb.store.ColumnType;
 
 class ReplaceStrFunction extends AbstractVirtualColumn implements Function {

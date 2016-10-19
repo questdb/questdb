@@ -33,9 +33,9 @@ import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.AbstractRecordSource;
 import com.questdb.std.AbstractImmutableIterator;
-import com.questdb.std.CharSink;
 import com.questdb.std.MemoryPages;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
@@ -216,13 +216,13 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_LEFT);
     }
 
+    private static void setParent(long blockAddress, long parent) {
+        Unsafe.getUnsafe().putLong(blockAddress, parent);
+    }
+
     @Override
     public Record newRecord() {
         return byRowId ? delegate.newRecord() : recordList.newRecord();
-    }
-
-    private static void setParent(long blockAddress, long parent) {
-        Unsafe.getUnsafe().putLong(blockAddress, parent);
     }
 
     private static long refOf(long blockAddress) {

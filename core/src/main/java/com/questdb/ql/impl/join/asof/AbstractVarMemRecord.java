@@ -24,8 +24,8 @@
 package com.questdb.ql.impl.join.asof;
 
 import com.questdb.misc.Unsafe;
-import com.questdb.std.CharSink;
-import com.questdb.std.DirectCharSequence;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.DirectCharSequence;
 
 abstract class AbstractVarMemRecord extends AbstractMemRecord {
 

@@ -27,7 +27,7 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public class FilteredRowSource implements RowSource, RowCursor {
 

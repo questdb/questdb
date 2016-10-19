@@ -28,7 +28,7 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.*;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.FixedColumn;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;

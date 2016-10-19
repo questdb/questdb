@@ -26,6 +26,7 @@ package com.questdb.std;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.str.NullCharSequence;
 
 import java.util.Arrays;
 import java.util.Comparator;
@@ -33,7 +34,7 @@ import java.util.Comparator;
 
 public class CharSequenceObjHashMap<V> implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private static final CharSequence noEntryValue = new NullCharSequence();
+    private static final CharSequence noEntryValue = NullCharSequence.INSTANCE;
     private final double loadFactor;
     private final ObjList<CharSequence> list;
     private CharSequence[] keys;

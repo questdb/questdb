@@ -24,8 +24,8 @@
 package com.questdb.ql.impl.map;
 
 import com.questdb.misc.Unsafe;
-import com.questdb.std.CharSink;
-import com.questdb.std.DirectCharSequence;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.DirectCharSequence;
 import com.questdb.store.VariableColumn;
 
 public final class DirectMapEntry {

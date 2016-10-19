@@ -23,9 +23,9 @@
 
 package com.questdb.misc;
 
-import com.questdb.io.sink.AbstractCharSink;
-import com.questdb.std.CharSink;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.CharSink;
+import com.questdb.txt.sink.AbstractCharSink;
 
 import java.io.FileOutputStream;
 import java.io.IOException;

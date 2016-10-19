@@ -25,7 +25,7 @@ package com.questdb.misc;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.std.LPSZ;
+import com.questdb.std.str.LPSZ;
 
 import java.io.File;
 import java.io.FileInputStream;

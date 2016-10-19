@@ -38,10 +38,8 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.MasterStorageFacade;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.ops.AbstractRecordSource;
-import com.questdb.std.*;
+import com.questdb.std.str.*;
 import com.questdb.store.SymbolTable;
-
-import java.lang.ThreadLocal;
 
 public class $ColsRecordSource extends AbstractRecordSource {
     private static final Log LOG = LogFactory.getLog($ColsRecordSource.class);

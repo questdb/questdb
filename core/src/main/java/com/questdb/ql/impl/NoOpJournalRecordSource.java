@@ -28,7 +28,7 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
 

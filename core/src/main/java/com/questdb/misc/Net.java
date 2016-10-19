@@ -25,7 +25,7 @@ package com.questdb.misc;
 
 import com.questdb.ex.NetworkError;
 import com.questdb.ex.NumericException;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public final class Net {
 

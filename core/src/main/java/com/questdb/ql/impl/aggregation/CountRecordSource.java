@@ -29,8 +29,8 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 
 import java.io.OutputStream;

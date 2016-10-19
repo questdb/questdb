@@ -25,10 +25,10 @@ package com.questdb.ql.impl.join;
 
 import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
-import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 

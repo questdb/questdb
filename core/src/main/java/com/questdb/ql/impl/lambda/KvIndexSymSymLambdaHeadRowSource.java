@@ -27,7 +27,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.RowSource;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public class KvIndexSymSymLambdaHeadRowSource extends KvIndexSymLambdaHeadRowSource {
 

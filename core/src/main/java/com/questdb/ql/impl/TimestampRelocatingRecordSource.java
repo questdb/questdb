@@ -31,7 +31,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.ops.AbstractRecordSource;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public class TimestampRelocatingRecordSource extends AbstractRecordSource implements RecordMetadata {
     private final RecordSource delegate;

@@ -27,8 +27,8 @@ import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.*;
-import com.questdb.std.CharSink;
 import com.questdb.std.IntLongPriorityQueue;
+import com.questdb.std.str.CharSink;
 
 public class HeapMergingRowSource implements RowSource, RowCursor {
     private final RowSource[] sources;

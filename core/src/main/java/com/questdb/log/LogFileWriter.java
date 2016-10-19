@@ -32,7 +32,7 @@ import com.questdb.misc.Unsafe;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.mp.SynchronizedJob;
-import com.questdb.std.Path;
+import com.questdb.std.str.Path;
 
 import java.io.Closeable;
 

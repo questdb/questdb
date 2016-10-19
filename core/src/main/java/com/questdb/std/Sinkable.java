@@ -23,6 +23,8 @@
 
 package com.questdb.std;
 
+import com.questdb.std.str.CharSink;
+
 public interface Sinkable {
     void toSink(CharSink sink);
 }

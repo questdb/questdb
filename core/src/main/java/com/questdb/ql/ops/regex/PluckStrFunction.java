@@ -31,8 +31,8 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.regex.Matcher;
 import com.questdb.regex.Pattern;
-import com.questdb.std.CharSink;
-import com.questdb.std.FlyweightCharSequence;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.FlyweightCharSequence;
 import com.questdb.store.ColumnType;
 
 

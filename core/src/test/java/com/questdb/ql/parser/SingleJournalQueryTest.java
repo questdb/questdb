@@ -27,7 +27,6 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.*;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Numbers;
@@ -37,6 +36,7 @@ import com.questdb.ql.RecordSource;
 import com.questdb.std.ObjHashSet;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
+import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 

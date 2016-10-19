@@ -23,7 +23,11 @@
 
 package com.questdb.ql.model;
 
-import com.questdb.std.*;
+import com.questdb.std.Mutable;
+import com.questdb.std.ObjList;
+import com.questdb.std.ObjectFactory;
+import com.questdb.std.Sinkable;
+import com.questdb.std.str.CharSink;
 
 public class ExprNode implements Mutable, Sinkable {
 

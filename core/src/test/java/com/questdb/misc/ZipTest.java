@@ -24,7 +24,7 @@
 package com.questdb.misc;
 
 import com.questdb.ex.FatalError;
-import com.questdb.std.Path;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Rule;
 import org.junit.Test;

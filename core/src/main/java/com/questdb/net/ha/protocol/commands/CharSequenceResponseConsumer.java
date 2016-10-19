@@ -25,7 +25,7 @@ package com.questdb.net.ha.protocol.commands;
 
 import com.questdb.misc.ByteBuffers;
 import com.questdb.net.ha.AbstractImmutableObjectConsumer;
-import com.questdb.std.DirectCharSequence;
+import com.questdb.std.str.DirectCharSequence;
 
 import java.nio.ByteBuffer;
 

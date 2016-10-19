@@ -26,7 +26,7 @@ package com.questdb.net.http;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.DirectByteCharSequence;
+import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 import java.io.File;

@@ -23,7 +23,7 @@
 
 package com.questdb.net.http;
 
-import com.questdb.std.DirectByteCharSequence;
+import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.IOException;
 

@@ -27,10 +27,10 @@ import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
 import com.questdb.net.http.MultipartListener;
 import com.questdb.net.http.RequestHeaderBuffer;
-import com.questdb.std.ByteSequence;
-import com.questdb.std.DirectByteCharSequence;
 import com.questdb.std.LocalValue;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.ByteSequence;
+import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 import java.io.IOException;

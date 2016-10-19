@@ -38,9 +38,7 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.MasterStorageFacade;
 import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.ops.AbstractRecordSource;
-import com.questdb.std.*;
-
-import java.lang.ThreadLocal;
+import com.questdb.std.str.*;
 
 public class $TabsRecordSource extends AbstractRecordSource {
 

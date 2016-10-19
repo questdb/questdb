@@ -29,7 +29,7 @@ import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public class TopRecordSource extends AbstractCombinedRecordSource {
 

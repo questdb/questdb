@@ -25,8 +25,8 @@ package com.questdb.ql.impl.join.asof;
 
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.AbstractRecord;
-import com.questdb.std.CharSink;
 import com.questdb.std.DirectInputStream;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.SymbolTable;
 
 import java.io.OutputStream;

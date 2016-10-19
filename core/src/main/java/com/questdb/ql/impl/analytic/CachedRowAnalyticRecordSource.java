@@ -34,9 +34,9 @@ import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.impl.sort.RecordComparator;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.CharSink;
 import com.questdb.std.ObjList;
 import com.questdb.std.RedBlackTree;
+import com.questdb.std.str.CharSink;
 
 public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource {
     private final RecordList recordList;

@@ -26,6 +26,7 @@ package com.questdb.std;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.str.NullCharSequence;
 
 import java.util.Arrays;
 
@@ -33,7 +34,7 @@ import java.util.Arrays;
 public class CharSequenceIntHashMap implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final int NO_ENTRY_VALUE = -1;
-    private static final CharSequence noEntryKey = new NullCharSequence();
+    private static final CharSequence noEntryKey = NullCharSequence.INSTANCE;
     private final int noEntryValue;
     private final double loadFactor;
     private CharSequence[] keys;

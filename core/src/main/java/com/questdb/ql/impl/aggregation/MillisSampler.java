@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl.aggregation;
 
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 class MillisSampler implements TimestampSampler {
     private final long bucket;

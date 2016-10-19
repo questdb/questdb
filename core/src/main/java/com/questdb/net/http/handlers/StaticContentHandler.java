@@ -28,11 +28,15 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
 import com.questdb.net.http.*;
-import com.questdb.std.*;
+import com.questdb.std.LocalValue;
+import com.questdb.std.Mutable;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.FlyweightCharSequence;
+import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.PrefixedPath;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.lang.ThreadLocal;
 import java.nio.ByteBuffer;
 
 public class StaticContentHandler implements ContextHandler {

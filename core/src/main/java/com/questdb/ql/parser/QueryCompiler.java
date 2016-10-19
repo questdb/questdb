@@ -34,7 +34,6 @@ import com.questdb.factory.JournalFactory;
 import com.questdb.factory.JournalFactoryPool;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.*;
-import com.questdb.io.sink.StringSink;
 import com.questdb.misc.*;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.*;
@@ -65,7 +64,9 @@ import com.questdb.ql.ops.Signature;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.constant.LongConstant;
 import com.questdb.std.*;
+import com.questdb.std.str.FlyweightCharSequence;
 import com.questdb.store.ColumnType;
+import com.questdb.txt.sink.StringSink;
 
 import java.util.ArrayDeque;
 

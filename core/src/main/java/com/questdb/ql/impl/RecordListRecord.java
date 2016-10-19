@@ -28,10 +28,10 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.StorageFacade;
-import com.questdb.std.CharSink;
-import com.questdb.std.DirectCharSequence;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.MemoryPages;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.DirectCharSequence;
 import com.questdb.store.ColumnType;
 
 import java.io.IOException;

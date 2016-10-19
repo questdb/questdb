@@ -31,8 +31,8 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.NullRecord;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.CharSink;
 import com.questdb.std.MemoryPages;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 

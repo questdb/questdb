@@ -26,7 +26,7 @@ package com.questdb.ql.ops.constant;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
 

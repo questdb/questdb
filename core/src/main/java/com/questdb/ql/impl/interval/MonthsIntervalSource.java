@@ -26,7 +26,7 @@ package com.questdb.ql.impl.interval;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Interval;
 import com.questdb.std.AbstractImmutableIterator;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public class MonthsIntervalSource extends AbstractImmutableIterator<Interval> implements IntervalSource {
     private final Interval start;

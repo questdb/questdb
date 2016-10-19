@@ -23,7 +23,7 @@
 
 package com.questdb.net.http;
 
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public interface ResponseSink extends CharSink {
     void status(int status, CharSequence contentType);

@@ -26,8 +26,6 @@ package com.questdb.ql;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.io.RecordSourcePrinter;
-import com.questdb.io.sink.StringSink;
 import com.questdb.misc.Rnd;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
@@ -38,6 +36,8 @@ import com.questdb.ql.ops.constant.DoubleConstant;
 import com.questdb.ql.ops.plus.AddDoubleOperator;
 import com.questdb.std.ObjList;
 import com.questdb.test.tools.AbstractTest;
+import com.questdb.txt.RecordSourcePrinter;
+import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 

@@ -26,7 +26,7 @@ package com.questdb.ql.impl.latest;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.*;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
 
 public class MergingRowSource implements RowSource, RowCursor {
     private final RowSource lhs;

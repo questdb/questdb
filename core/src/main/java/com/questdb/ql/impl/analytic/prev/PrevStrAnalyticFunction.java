@@ -30,8 +30,8 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.CharSink;
-import com.questdb.std.DirectCharSequence;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.DirectCharSequence;
 import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.VariableColumn;
 

@@ -24,10 +24,10 @@
 package com.questdb.ql.parser;
 
 import com.questdb.misc.Chars;
-import com.questdb.std.AbstractCharSequence;
 import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntObjHashMap;
+import com.questdb.std.str.AbstractCharSequence;
 
 import java.util.ArrayList;
 import java.util.Collections;

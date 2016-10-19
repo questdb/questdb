@@ -23,14 +23,14 @@
 
 package com.questdb;
 
-import com.questdb.io.ImportManager;
-import com.questdb.io.parser.DelimitedTextParser;
-import com.questdb.io.parser.TextParser;
-import com.questdb.io.parser.listener.Listener;
-import com.questdb.io.sink.StringSink;
-import com.questdb.std.DirectByteCharSequence;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.test.tools.TestUtils;
+import com.questdb.txt.ImportManager;
+import com.questdb.txt.parser.DelimitedTextParser;
+import com.questdb.txt.parser.TextParser;
+import com.questdb.txt.parser.listener.Listener;
+import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 

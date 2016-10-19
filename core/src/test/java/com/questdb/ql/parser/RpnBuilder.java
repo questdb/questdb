@@ -23,8 +23,8 @@
 
 package com.questdb.ql.parser;
 
-import com.questdb.io.sink.StringSink;
 import com.questdb.ql.model.ExprNode;
+import com.questdb.txt.sink.StringSink;
 
 public class RpnBuilder implements ExprListener {
     private final StringSink sink = new StringSink();

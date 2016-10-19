@@ -23,10 +23,10 @@
 
 package com.questdb.log;
 
-import com.questdb.io.sink.AbstractCharSink;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.CharSink;
+import com.questdb.std.str.CharSink;
+import com.questdb.txt.sink.AbstractCharSink;
 
 public class LogRecordSink extends AbstractCharSink {
     private final long address;
