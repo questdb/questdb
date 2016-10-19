@@ -31,13 +31,13 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
-    <version>1.0.1-SNAPSHOT</version>
+    <version>1.0.1</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb-core</artifactId>
     <packaging>jar</packaging>
 
 
-    <url>http://www.questdb.org</url>
+    <url>https://www.questdb.org</url>
     <licenses>
         <license>
             <name>GNU Affero General Public License 3.0</name>
@@ -79,6 +79,13 @@
                         </goals>
                     </execution>
                 </executions>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                        </manifest>
+                    </archive>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

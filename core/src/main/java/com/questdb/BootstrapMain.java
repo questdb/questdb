@@ -40,6 +40,7 @@ import sun.misc.SignalHandler;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -47,7 +48,10 @@ import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Date;
 import java.util.EnumSet;
+import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.jar.Attributes;
+import java.util.jar.Manifest;
 
 import static java.nio.file.StandardCopyOption.COPY_ATTRIBUTES;
 import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
@@ -55,7 +59,7 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 class BootstrapMain {
 
     public static void main(String[] args) throws Exception {
-        System.err.printf("QuestDB HTTP Server 1.0%nCopyright (C) Appsicle 2014-2016, all rights reserved.%n%n");
+        System.err.printf("QuestDB HTTP Server %s%nCopyright (C) Appsicle 2014-2016, all rights reserved.%n%n", getVersion());
         if (args.length < 1) {
             System.err.println("Root directory name expected");
             return;
@@ -126,6 +130,21 @@ class BootstrapMain {
                 }
             }));
         }
+    }
+
+    private static String getVersion() throws IOException {
+        Enumeration<URL> resources = BootstrapMain.class.getClassLoader()
+                .getResources("META-INF/MANIFEST.MF");
+        while (resources.hasMoreElements()) {
+            try (InputStream is = resources.nextElement().openStream()) {
+                Manifest manifest = new Manifest(is);
+                Attributes attributes = manifest.getMainAttributes();
+                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
+                    return manifest.getMainAttributes().getValue("Implementation-Version");
+                }
+            }
+        }
+        return "[DEVELOPMENT]";
     }
 
     private static CharSequenceObjHashMap<String> hashArgs(String[] args) {
