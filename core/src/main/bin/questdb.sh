@@ -2,15 +2,16 @@
 
 export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
 export QDB_MAX_STOP_ATTEMPTS=5;
-export QDB_DEFAULT_ROOT="/usr/local/var/questdb"
 export QDB_OS=`uname`
 
 case `uname` in
    Darwin)
        export PID_FIELD=3
+       export QDB_DEFAULT_ROOT="/usr/local/var/questdb"
        ;;
    *)
        export PID_FIELD=2
+       export QDB_DEFAULT_ROOT="$HOME/.questdb"
        ;;
 esac
 

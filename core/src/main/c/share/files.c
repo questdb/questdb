@@ -36,7 +36,15 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/fcntl.h>
+
+#ifdef __APPLE__
 #include <sys/time.h>
+#else
+
+#include <utime.h>
+
+#endif
+
 #include <stdlib.h>
 #include <dirent.h>
 #include "files.h"
@@ -127,7 +135,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
     struct utimbuf t;
-    t.modtime = millis/1000;
+    t.modtime = millis / 1000;
     return (jboolean) (utime((const char *) lpszName, &t) == 0);
 }
 
