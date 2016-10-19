@@ -73,6 +73,14 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
            ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL) ? count : 0;
 }
 
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_sequentialRead
+        (JNIEnv *e, jclass cl, jlong fd, jlong address, jint len) {
+    DWORD count;
+    return ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL) ? count : 0;
+
+}
+
+
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong pchar) {
 
