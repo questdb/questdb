@@ -47,7 +47,7 @@ Multi-platform archive can be downloaded from our web site https://www.questdb.o
 <dependency>
     <groupId>org.questdb</groupId>
     <artifactId>questdb-core</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 </dependency>
 ```
 
