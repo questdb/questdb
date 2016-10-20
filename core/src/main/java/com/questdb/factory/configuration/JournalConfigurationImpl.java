@@ -160,17 +160,19 @@ class JournalConfigurationImpl implements JournalConfiguration {
         try (CompositePath oldName = new CompositePath()) {
             try (CompositePath newName = new CompositePath()) {
                 String path = journalBase.getAbsolutePath();
-                if (Os.type == Os.WINDOWS) {
-                    oldName.of("\\\\?\\").concat(path).concat(location).$();
-                    newName.of("\\\\?\\").concat(path).concat(to).$();
-                } else {
-                    oldName.of(path).concat(location).$();
-                    newName.of(path).concat(to).$();
-                }
+
+                oldName.of(path).concat(location).$();
+                newName.of(path).concat(to).$();
 
                 if (!Files.exists(oldName)) {
                     throw new JournalException("Journal does not exist");
                 }
+
+                if (Os.type == Os.WINDOWS) {
+                    oldName.of("\\\\?\\").concat(path).concat(location).$();
+                    newName.of("\\\\?\\").concat(path).concat(to).$();
+                }
+
 
                 Lock lock = LockManager.lockExclusive(oldName.toString());
                 try {
