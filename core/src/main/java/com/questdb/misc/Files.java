@@ -53,6 +53,16 @@ public final class Files {
 
     public native static int close(long fd);
 
+    public static long copy(long fdFrom, long fdTo, long bufPtr, int bufSize) {
+        long total = 0;
+        long l;
+        while ((l = Files.sequentialRead(fdFrom, bufPtr, bufSize)) > 0) {
+            Files.append(fdTo, bufPtr, (int) l);
+            total += l;
+        }
+        return total;
+    }
+
     public static boolean delete(File file) {
         try {
             deleteOrException(file);
@@ -128,7 +138,6 @@ public final class Files {
         } catch (IOException e) {
             throw new JournalRuntimeException(e);
         }
-
     }
 
     public static void mkDirsOrException(File dir) {
@@ -169,6 +178,10 @@ public final class Files {
         }
     }
 
+    public static boolean remove(LPSZ lpsz) {
+        return remove(lpsz.address());
+    }
+
     public static boolean rename(LPSZ oldName, LPSZ newName) {
         return rename(oldName.address(), newName.address());
     }
@@ -188,6 +201,8 @@ public final class Files {
         return result;
     }
 
+    public native static boolean truncate(long fd, long size);
+
     public native static long write(long fd, long address, int len, long offset);
 
     // used in tests
@@ -200,6 +215,8 @@ public final class Files {
             throw new JournalException("Cannot write to %s", e, file.getAbsolutePath());
         }
     }
+
+    private native static boolean remove(long lpsz);
 
     private native static long getLastModified(long lpszName);
 

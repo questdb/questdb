@@ -83,6 +83,22 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
 
 /*
  * Class:     com_questdb_misc_Files
+ * Method:    truncate
+ * Signature: (JJ)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_truncate
+        (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    remove
+ * Signature: (J)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_remove
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
  * Method:    read
  * Signature: (JJIJ)J
  */

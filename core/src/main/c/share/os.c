@@ -79,29 +79,26 @@ fork_exec_t *forkExec(char *argv[]) {
         return NULL;
     }
 
-    fork_exec_t *p = malloc(sizeof(fork_exec_t));
-    p->pid = pid;
-
     if (pid == 0) {
         dup2(childIn[0], STDIN_FILENO);
-        p->fdWrite = childIn[1];
-
         dup2(childOut[1], STDOUT_FILENO);
-        p->fdRead = childOut[0];
 
         close(childIn[0]);
         close(childIn[1]);
         close(childOut[0]);
         close(childOut[1]);
         execv(argv[0], argv);
+        _exit(0);
     } else {
+        fork_exec_t *p = malloc(sizeof(fork_exec_t));
+        p->pid = pid;
         p->fdWrite = childIn[1];
         p->fdRead = childOut[0];
         close(childIn[0]);
         close(childOut[1]);
+        return p;
     }
 
-    return p;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Os_forkExec

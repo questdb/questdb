@@ -29,13 +29,13 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
-    <version>1.0.1</version>
+    <version>1.0.2-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>examples</artifactId>
     <packaging>jar</packaging>
     <description>Code examples and usage scenarios for QuestDB</description>
 
-    <url>http://www.questdb.org</url>
+    <url>https://www.questdb.org</url>
     <licenses>
         <license>
             <name>Apache 2</name>

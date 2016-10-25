@@ -38,7 +38,9 @@
 #include <sys/fcntl.h>
 
 #ifdef __APPLE__
+
 #include <sys/time.h>
+
 #else
 
 #include <utime.h>
@@ -144,6 +146,16 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
         (JNIEnv *e, jclass cl) {
     return (jlong) 1;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_truncate
+        (JNIEnv *e, jclass cl, jlong fd, jlong len) {
+    return (jboolean) (ftruncate((int) fd, len) == 0);
+}
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_remove
+        (JNIEnv *e, jclass cl, jlong lpsz) {
+    return (jboolean) (remove((const char *) lpsz) == 0);
 }
 
 typedef struct {
