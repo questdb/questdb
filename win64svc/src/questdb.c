@@ -74,6 +74,7 @@ void buildJavaArgs(CONFIG *config) {
 
     // put together classpath
     char classpath[strlen(config->exeName) + 64];
+    memset(classpath, 0, sizeof(classpath));
     pathCopy(classpath, config->exeName);
     strcat(classpath, "\\questdb.jar");
 
@@ -247,6 +248,7 @@ FILE *redirectStdout(CONFIG *config) {
 }
 
 int qdbConsole(CONFIG *config) {
+
     if (!makeDir(config->dir)) {
         return 55;
     }
@@ -353,6 +355,7 @@ int qdbRun(int argc, char **argv) {
 
             default:
                 rtn = qdbConsole(&config);
+                break;
         }
     } else {
         logConfigError(&config);
