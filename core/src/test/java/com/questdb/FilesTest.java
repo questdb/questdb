@@ -140,7 +140,6 @@ public class FilesTest {
     }
 
     @Test
-    @Ignore
     public void testRemove() throws Exception {
         try (Path path = new Path(temporaryFolder.newFile().getAbsolutePath())) {
             Assert.assertTrue(Files.touch(path));
@@ -151,7 +150,6 @@ public class FilesTest {
     }
 
     @Test
-    @Ignore
     public void testTruncate() throws Exception {
         File temp = temporaryFolder.newFile();
         Files.writeStringToFile(temp, "abcde");
