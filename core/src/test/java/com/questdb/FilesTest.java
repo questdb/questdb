@@ -35,6 +35,7 @@ import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -136,6 +137,38 @@ public class FilesTest {
             }
         }
         Assert.assertEquals("[.,..,a.txt]", names.toString());
+    }
+
+    @Test
+    @Ignore
+    public void testRemove() throws Exception {
+        try (Path path = new Path(temporaryFolder.newFile().getAbsolutePath())) {
+            Assert.assertTrue(Files.touch(path));
+            Assert.assertTrue(Files.exists(path));
+            Assert.assertTrue(Files.remove(path));
+            Assert.assertFalse(Files.exists(path));
+        }
+    }
+
+    @Test
+    @Ignore
+    public void testTruncate() throws Exception {
+        File temp = temporaryFolder.newFile();
+        Files.writeStringToFile(temp, "abcde");
+        try (Path path = new Path(temp.getAbsolutePath())) {
+            Assert.assertTrue(Files.exists(path));
+            Assert.assertEquals(5, Files.length(path));
+
+            long fd = Files.openRW(path);
+            try {
+                Files.truncate(fd, 3);
+                Assert.assertEquals(3, Files.length(path));
+                Files.truncate(fd, 0);
+                Assert.assertEquals(0, Files.length(path));
+            } finally {
+                Files.close(fd);
+            }
+        }
     }
 
     @Test
