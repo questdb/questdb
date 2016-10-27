@@ -37,7 +37,7 @@ QuestDB is licensed under GNU Affero General Public License (AGPLv3).
 
 ## Documentation
 
-Work in progress. Please stay tuned.
+Documentation is a work in progress, we update it daily. https://doc.questdb.org
 
 ## Releases
 
@@ -47,7 +47,7 @@ Multi-platform archive can be downloaded from our web site https://www.questdb.o
 <dependency>
     <groupId>org.questdb</groupId>
     <artifactId>questdb-core</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
