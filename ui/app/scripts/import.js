@@ -511,14 +511,16 @@ function nopropagation(e) {
         function init() {
             $(document).on('active.panel', handleActivation);
 
-            var input = $('#js-browse-files-input');
+            var input = $('#js-browse-files-input')[0];
 
             $('#js-browse-files').click(function () {
                 input.click();
             });
 
-            input[0].onchange = function () {
-                $(document).trigger('dropbox.files', input[0]);
+            input.onchange = function () {
+                $(document).trigger('dropbox.files', input);
+                // reset to be able to browse same file again
+                input.value = '';
             };
         }
 
