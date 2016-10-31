@@ -59,6 +59,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     private JournalWriter writer;
     private long _size;
     private boolean overwrite;
+    private boolean durable;
 
     public JournalImportListener(JournalWriterFactory factory) {
         this.factory = factory;
@@ -79,7 +80,11 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     public void commit() {
         if (writer != null) {
             try {
-                writer.commit();
+                if (durable) {
+                    writer.commitDurable();
+                } else {
+                    writer.commit();
+                }
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);
             }
@@ -102,9 +107,10 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
         return writer.getMetadata();
     }
 
-    public JournalImportListener of(String location, boolean overwrite) {
+    public JournalImportListener of(String location, boolean overwrite, boolean durable) {
         this.location = location;
         this.overwrite = overwrite;
+        this.durable = durable;
         return this;
     }
 

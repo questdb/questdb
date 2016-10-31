@@ -159,7 +159,11 @@ public class ImportHandler extends AbstractMultipartHandler {
                 throw DisconnectedChannelException.INSTANCE;
             }
             h.analysed = false;
-            h.importer.of(FileNameExtractorCharSequence.get(name).toString(), Chars.equalsNc("true", context.request.getUrlParam("overwrite")));
+            h.importer.of(
+                    FileNameExtractorCharSequence.get(name).toString(),
+                    Chars.equalsNc("true", context.request.getUrlParam("overwrite")),
+                    Chars.equalsNc("true", context.request.getUrlParam("durable"))
+            );
             h.messagePart = MESSAGE_DATA;
         } else if (Chars.equals("schema", hb.getContentDispositionName())) {
             h.messagePart = MESSAGE_SCHEMA;

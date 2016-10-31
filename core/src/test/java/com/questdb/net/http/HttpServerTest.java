@@ -445,7 +445,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
                 f.closeJournal("test-import.csv");
 
-                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true", null, null));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true", null, null));
                 printer.print(qc.compile(f, "select count() from 'test-import.csv'"), f);
                 TestUtils.assertEquals("5\n", sink);
             } finally {
