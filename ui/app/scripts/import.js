@@ -251,7 +251,7 @@ function nopropagation(e) {
         function setupImportRequest() {
             importRequest.url = '/imp?fmt=json';
             if (current.retry === 2) {
-                importRequest.url += '&o=true';
+                importRequest.url += '&overwrite=true';
             }
             importRequest.xhr = setupUploadProgressCallback;
             importRequest.data = new FormData();

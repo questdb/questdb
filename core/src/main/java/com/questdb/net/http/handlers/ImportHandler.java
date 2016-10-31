@@ -150,7 +150,7 @@ public class ImportHandler extends AbstractMultipartHandler {
         ImportHandlerContext h = lvContext.get(context);
         if (Chars.equals("data", hb.getContentDispositionName())) {
 
-            CharSequence name = context.request.getUrlParam("n");
+            CharSequence name = context.request.getUrlParam("name");
             if (name == null) {
                 name = hb.getContentDispositionFilename();
             }
@@ -159,7 +159,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                 throw DisconnectedChannelException.INSTANCE;
             }
             h.analysed = false;
-            h.importer.of(FileNameExtractorCharSequence.get(name).toString(), Chars.equalsNc("true", context.request.getUrlParam("o")));
+            h.importer.of(FileNameExtractorCharSequence.get(name).toString(), Chars.equalsNc("true", context.request.getUrlParam("overwrite")));
             h.messagePart = MESSAGE_DATA;
         } else if (Chars.equals("schema", hb.getContentDispositionName())) {
             h.messagePart = MESSAGE_SCHEMA;
@@ -368,7 +368,7 @@ public class ImportHandler extends AbstractMultipartHandler {
             sink.status(200, CONTENT_TYPE_JSON);
             sink.put('{').putQuoted("status").put(':').putUtf8EscapedAndQuoted(message).put('}');
         } else {
-            sink.status(200, CONTENT_TYPE_TEXT);
+            sink.status(400, CONTENT_TYPE_TEXT);
             sink.putUtf8(message);
         }
         sink.flush();

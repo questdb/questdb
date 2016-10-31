@@ -75,7 +75,6 @@ public final class ImportedColumnType {
         nameTypeMap.put("SHORT", SHORT);
         nameTypeMap.put("STRING", STRING);
         nameTypeMap.put("SYMBOL", SYMBOL);
-        nameTypeMap.put("BINARY", BINARY);
         nameTypeMap.put("DATE_ISO", DATE_ISO);
         nameTypeMap.put("DATE_1", DATE_1);
         nameTypeMap.put("DATE_2", DATE_2);

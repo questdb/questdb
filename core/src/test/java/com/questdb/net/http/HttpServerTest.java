@@ -426,6 +426,35 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testImportOverwrite() throws Exception {
+        final ServerConfiguration configuration = new ServerConfiguration();
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(factory));
+        }});
+        server.start();
+
+        try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
+            try {
+                StringSink sink = new StringSink();
+                RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+                QueryCompiler qc = new QueryCompiler(configuration);
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null, null));
+                printer.print(qc.compile(f, "select count() from 'test-import.csv'"), f);
+                TestUtils.assertEquals("129\n", sink);
+                sink.clear();
+
+                f.closeJournal("test-import.csv");
+
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true", null, null));
+                printer.print(qc.compile(f, "select count() from 'test-import.csv'"), f);
+                TestUtils.assertEquals("5\n", sink);
+            } finally {
+                server.halt();
+            }
+        }
+    }
+
+    @Test
     public void testImportUnknownFormat() throws Exception {
         HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(factory));
@@ -434,7 +463,7 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
         StringBuilder response = new StringBuilder();
         try {
-            Assert.assertEquals(200, HttpTestUtils.upload("/com/questdb/std/AssociativeCache.class", "http://localhost:9000/imp", null, response));
+            Assert.assertEquals(400, HttpTestUtils.upload("/com/questdb/std/AssociativeCache.class", "http://localhost:9000/imp", null, response));
             TestUtils.assertEquals("Unsupported data format", response);
         } catch (IOException e) {
             Assert.assertTrue(e.getMessage().contains("Connection reset"));

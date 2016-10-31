@@ -84,8 +84,26 @@ public class HttpTestUtils {
         return null;
     }
 
-    public static int upload(String resource, String url, String schema, StringBuilder reponse) throws IOException {
-        return upload(resourceFile(resource), url, schema, reponse);
+    public static int upload(String resource, String url, String schema, StringBuilder response) throws IOException {
+        HttpPost post = new HttpPost(url);
+        try (CloseableHttpClient client = HttpClients.createDefault()) {
+            MultipartEntityBuilder b = MultipartEntityBuilder.create();
+            if (schema != null) {
+                b.addPart("schema", new StringBody(schema, ContentType.TEXT_PLAIN));
+            }
+            b.addPart("data", new FileBody(resourceFile(resource)));
+            post.setEntity(b.build());
+            HttpResponse r = client.execute(post);
+            if (response != null) {
+                InputStream is = r.getEntity().getContent();
+                int n;
+                while ((n = is.read()) > 0) {
+                    response.append((char) n);
+                }
+                is.close();
+            }
+            return r.getStatusLine().getStatusCode();
+        }
     }
 
     private static HttpClientBuilder createHttpClient_AcceptsUntrustedCerts() throws Exception {
@@ -125,28 +143,6 @@ public class HttpTestUtils {
 
     private static File resourceFile(String resource) {
         return new File(HttpTestUtils.class.getResource(resource).getFile());
-    }
-
-    private static int upload(File file, String url, String schema, StringBuilder response) throws IOException {
-        HttpPost post = new HttpPost(url);
-        try (CloseableHttpClient client = HttpClients.createDefault()) {
-            MultipartEntityBuilder b = MultipartEntityBuilder.create();
-            if (schema != null) {
-                b.addPart("schema", new StringBody(schema, ContentType.TEXT_PLAIN));
-            }
-            b.addPart("data", new FileBody(file));
-            post.setEntity(b.build());
-            HttpResponse r = client.execute(post);
-            if (response != null) {
-                InputStream is = r.getEntity().getContent();
-                int n;
-                while ((n = is.read()) > 0) {
-                    response.append((char) n);
-                }
-                is.close();
-            }
-            return r.getStatusLine().getStatusCode();
-        }
     }
 
 }

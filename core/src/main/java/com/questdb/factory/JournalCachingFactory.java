@@ -96,7 +96,9 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
                 for (int i = 0, sz = journalList.size(); i < sz; i++) {
                     Journal journal = journalList.get(i);
                     journal.setCloseListener(null);
-                    journal.close();
+                    if (journal.isOpen()) {
+                        journal.close();
+                    }
                 }
                 readers.clear();
                 bulkReaders.clear();

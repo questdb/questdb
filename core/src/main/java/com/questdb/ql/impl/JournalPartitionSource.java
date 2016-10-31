@@ -61,6 +61,7 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     public PartitionCursor prepareCursor(JournalReaderFactory factory) {
         try {
             this.journal = factory.reader(metadata);
+            this.journal.refresh();
         } catch (JournalException e) {
             throw new JournalRuntimeException(e);
         }
