@@ -51,6 +51,7 @@ public class ServerConfiguration {
     private int httpSoRcvSmall = 8 * 1024;
     private int httpSoRcvLarge = 4 * 1024 * 1024;
     private int httpSoRetries = 1024;
+    private boolean httpAbortBrokenUploads = true;
     private String httpIndexFile = "index.html";
     private int dbAsOfDataPage = 4 * 1024 * 1024;
     private int dbAsOfIndexPage = 1024 * 1024;
@@ -128,6 +129,16 @@ public class ServerConfiguration {
 
         if ((n = parseInt(props, "http.so.retries")) > -1) {
             this.httpSoRetries = n;
+        }
+
+        if ((s = props.getProperty("http.abort.broken.uploads")) != null) {
+            if ("true".equals(s)) {
+                httpAbortBrokenUploads = true;
+            } else if ("false".equals(s)) {
+                httpAbortBrokenUploads = false;
+            } else {
+                throw new IllegalArgumentException("http.abort.broken.uploads");
+            }
         }
 
         if ((n = parseSize(props, "http.buf.req.content")) > -1) {
@@ -455,6 +466,10 @@ public class ServerConfiguration {
 
     public SslConfig getSslConfig() {
         return sslConfig;
+    }
+
+    public boolean isHttpAbortBrokenUploads() {
+        return httpAbortBrokenUploads;
     }
 
     @Override

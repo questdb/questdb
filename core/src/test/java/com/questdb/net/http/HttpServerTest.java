@@ -131,8 +131,9 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testConcurrentImport() throws Exception {
-        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(factory));
+        final ServerConfiguration configuration = new ServerConfiguration();
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(configuration, factory));
         }});
         server.start();
 
@@ -334,7 +335,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportAppend() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(factory));
+            put("/imp", new ImportHandler(configuration, factory));
         }});
         server.start();
 
@@ -356,8 +357,9 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testImportIntoBusyJournal() throws Exception {
         try (JournalWriter ignored = factory.writer(new JournalStructure("test-import.csv").$int("x").$())) {
-            HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
-                put("/imp", new ImportHandler(factory));
+            final ServerConfiguration configuration = new ServerConfiguration();
+            HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+                put("/imp", new ImportHandler(configuration, factory));
             }});
             server.start();
 
@@ -384,8 +386,9 @@ public class HttpServerTest extends AbstractJournalTest {
             ew.append();
             w.commit();
 
-            HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
-                put("/imp", new ImportHandler(factory));
+            final ServerConfiguration configuration = new ServerConfiguration();
+            HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+                put("/imp", new ImportHandler(configuration, factory));
             }});
             server.start();
 
@@ -405,7 +408,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportNumberPrefixedColumn() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(factory));
+            put("/imp", new ImportHandler(configuration, factory));
         }});
         server.start();
 
@@ -429,7 +432,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportOverwrite() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(factory));
+            put("/imp", new ImportHandler(configuration, factory));
         }});
         server.start();
 
@@ -456,15 +459,16 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportUnknownFormat() throws Exception {
-        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(factory));
+        final ServerConfiguration configuration = new ServerConfiguration();
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(configuration, factory));
         }});
 
         server.start();
         StringBuilder response = new StringBuilder();
         try {
             Assert.assertEquals(400, HttpTestUtils.upload("/com/questdb/std/AssociativeCache.class", "http://localhost:9000/imp", null, response));
-            TestUtils.assertEquals("Unsupported data format", response);
+            TestUtils.assertEquals("Unsupported Data Format", response);
         } catch (IOException e) {
             Assert.assertTrue(e.getMessage().contains("Connection reset"));
         } finally {
@@ -476,15 +480,15 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportWrongType() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(factory));
+            put("/imp", new ImportHandler(configuration, factory));
         }});
 
         server.start();
 
         try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
             try {
-                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", "IsoDate=DATE&IntCol=DOUBLE", null));
-                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", "IsoDate=DATE", null));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", "IsoDate=DATE_ISO&IntCol=DOUBLE", null));
+                Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", "IsoDate=DATE_ISO", null));
                 StringSink sink = new StringSink();
                 RecordSourcePrinter printer = new RecordSourcePrinter(sink);
                 QueryCompiler qc = new QueryCompiler(configuration);
@@ -501,6 +505,34 @@ public class HttpServerTest extends AbstractJournalTest {
                     Assert.assertEquals(ColumnType.DOUBLE, src2.getMetadata().getColumn("IntCol").getType());
                 } finally {
                     Misc.free(src2);
+                }
+            } finally {
+                server.halt();
+            }
+        }
+    }
+
+    @Test
+    public void testImportWrongTypeStrictAtomicity() throws Exception {
+        final ServerConfiguration configuration = new ServerConfiguration();
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(configuration, factory));
+        }});
+
+        server.start();
+
+        try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
+            try {
+                Assert.assertEquals(400, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?atomicity=strict", "IsoDate=DATE_ISO&IntCol=DATE_ISO", null));
+                StringSink sink = new StringSink();
+                RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+                QueryCompiler qc = new QueryCompiler(configuration);
+                RecordSource src1 = qc.compile(f, "select count() from 'test-import.csv'");
+                try {
+                    printer.print(src1, factory);
+                    TestUtils.assertEquals("0\n", sink);
+                } finally {
+                    Misc.free(src1);
                 }
             } finally {
                 server.halt();

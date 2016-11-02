@@ -51,6 +51,9 @@ import static com.questdb.factory.configuration.JournalConfiguration.DOES_NOT_EX
 import static com.questdb.factory.configuration.JournalConfiguration.EXISTS;
 
 public class JournalImportListener implements InputAnalysisListener, Closeable, Mutable {
+    public static final int ATOMICITY_STRICT = 0;
+    public static final int ATOMICITY_RELAXED = 1;
+
     private static final Log LOG = LogFactory.getLog(JournalImportListener.class);
     private final JournalWriterFactory factory;
     private final LongList errors = new LongList();
@@ -60,6 +63,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     private long _size;
     private boolean overwrite;
     private boolean durable;
+    private int atomicity;
 
     public JournalImportListener(JournalWriterFactory factory) {
         this.factory = factory;
@@ -107,10 +111,11 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
         return writer.getMetadata();
     }
 
-    public JournalImportListener of(String location, boolean overwrite, boolean durable) {
+    public JournalImportListener of(String location, boolean overwrite, boolean durable, int atomicity) {
         this.location = location;
         this.overwrite = overwrite;
         this.durable = durable;
+        this.atomicity = atomicity;
         return this;
     }
 
@@ -171,9 +176,15 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                             break;
                     }
                 } catch (Exception e) {
-                    errors.increment(i);
-                    LOG.debug().$("Error at (").$(line).$(',').$(i).$(") as ").$(metadata.getQuick(i).importedColumnType).$(": ").$(e.getMessage()).$();
-                    append = false;
+                    switch (atomicity) {
+                        case ATOMICITY_STRICT:
+                            LOG.info().$("Error at (").$(line).$(',').$(i).$(')').$();
+                            throw new JournalRuntimeException("Error on line: " + line + ", col: " + i);
+                        default:
+                            errors.increment(i);
+                            LOG.debug().$("Error at (").$(line).$(',').$(i).$(") as ").$(metadata.getQuick(i).importedColumnType).$(": ").$(e.getMessage()).$();
+                            append = false;
+                    }
                     break;
                 }
             }

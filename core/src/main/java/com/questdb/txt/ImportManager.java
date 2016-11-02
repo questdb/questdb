@@ -101,7 +101,7 @@ public final class ImportManager {
                 case JournalConfiguration.EXISTS_FOREIGN:
                     throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
                 default:
-                    try (JournalImportListener l = new JournalImportListener(factory).of(location, false, false)) {
+                    try (JournalImportListener l = new JournalImportListener(factory).of(location, false, false, JournalImportListener.ATOMICITY_RELAXED)) {
                         analyzeAndParse(file, parser, l, schema, sampleSize);
                     }
                     break;

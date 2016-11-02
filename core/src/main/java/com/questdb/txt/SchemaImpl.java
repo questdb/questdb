@@ -23,6 +23,8 @@
 
 package com.questdb.txt;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceObjHashMap;
@@ -35,6 +37,7 @@ import java.io.Closeable;
 
 public class SchemaImpl implements Schema, Closeable, Mutable {
 
+    private final static Log LOG = LogFactory.getLog(SchemaImpl.class);
     private final ObjList<ImportedColumnMetadata> metadata = new ObjList<>();
     private final CharSequenceObjHashMap<CharSequence> map = new CharSequenceObjHashMap<>();
     private final ObjectPool<DirectByteCharSequence> csPool;
@@ -80,6 +83,8 @@ public class SchemaImpl implements Schema, Closeable, Mutable {
                 m.name = name;
                 m.importedColumnType = importedColumnType;
                 metadata.add(m);
+            } else {
+                LOG.info().$("Unknown column type [").$(map.get(name)).$("] for ").$(name).$();
             }
         }
     }

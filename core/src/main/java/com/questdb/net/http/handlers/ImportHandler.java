@@ -35,10 +35,8 @@ import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
-import com.questdb.net.http.ChunkedResponse;
-import com.questdb.net.http.IOContext;
-import com.questdb.net.http.RequestHeaderBuffer;
-import com.questdb.net.http.ResponseSink;
+import com.questdb.net.http.*;
+import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.LocalValue;
 import com.questdb.std.LongList;
 import com.questdb.std.Mutable;
@@ -55,6 +53,7 @@ import com.questdb.txt.parser.listener.JournalImportListener;
 import java.io.Closeable;
 import java.io.IOException;
 
+
 public class ImportHandler extends AbstractMultipartHandler {
     private static final int RESPONSE_PREFIX = 1;
     private static final int RESPONSE_COLUMN = 2;
@@ -68,11 +67,14 @@ public class ImportHandler extends AbstractMultipartHandler {
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final ThreadLocal<FormatParser> PARSER = new ThreadLocal<>();
+    private static CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
     private final JournalFactory factory;
     private final LocalValue<ImportHandlerContext> lvContext = new LocalValue<>();
+    private final ServerConfiguration configuration;
 
-    public ImportHandler(JournalFactory factory) {
+    public ImportHandler(ServerConfiguration configuration, JournalFactory factory) {
         this.factory = factory;
+        this.configuration = configuration;
     }
 
     @Override
@@ -117,23 +119,30 @@ public class ImportHandler extends AbstractMultipartHandler {
 
         switch (h.messagePart) {
             case MESSAGE_DATA:
-                long lo = ((DirectByteCharSequence) data).getLo();
-                if (!h.analysed) {
-                    analyseFormat(h, lo, len);
-                    if (h.dataFormatValid) {
-                        try {
-                            h.textParser.analyseStructure(lo, len, 100, h.importer);
-                        } catch (JournalRuntimeException e) {
-                            sendError(context, e.getMessage());
-                        }
-                        h.analysed = true;
-                    }
+                if (h.state != ImportHandlerContext.STATE_OK) {
+                    break;
                 }
 
-                if (h.dataFormatValid) {
+                long lo = ((DirectByteCharSequence) data).getLo();
+                if (h.analysed) {
                     h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
                 } else {
-                    sendError(context, "Unsupported data format");
+                    analyseFormat(h, lo, len);
+                    if (h.state == ImportHandlerContext.STATE_OK) {
+                        try {
+                            h.textParser.analyseStructure(lo, len, 100, h.importer);
+                            h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
+                        } catch (JournalRuntimeException e) {
+
+                            if (configuration.isHttpAbortBrokenUploads()) {
+                                sendError(context, e.getMessage());
+                                throw e;
+                            }
+                            h.state = ImportHandlerContext.STATE_DATA_ERROR;
+                            h.stateMessage = e.getMessage();
+                        }
+                    }
+                    h.analysed = true;
                 }
                 break;
             case MESSAGE_SCHEMA:
@@ -162,7 +171,8 @@ public class ImportHandler extends AbstractMultipartHandler {
             h.importer.of(
                     FileNameExtractorCharSequence.get(name).toString(),
                     Chars.equalsNc("true", context.request.getUrlParam("overwrite")),
-                    Chars.equalsNc("true", context.request.getUrlParam("durable"))
+                    Chars.equalsNc("true", context.request.getUrlParam("durable")),
+                    getAtomicity(context.request.getUrlParam("atomicity"))
             );
             h.messagePart = MESSAGE_DATA;
         } else if (Chars.equals("schema", hb.getContentDispositionName())) {
@@ -355,14 +365,25 @@ public class ImportHandler extends AbstractMultipartHandler {
         }
     }
 
+    private static int getAtomicity(CharSequence name) {
+        if (name == null) {
+            return JournalImportListener.ATOMICITY_RELAXED;
+        }
+
+        int atomicity = atomicityParamMap.get(name);
+        return atomicity == -1 ? JournalImportListener.ATOMICITY_RELAXED : atomicity;
+    }
+
     private void analyseFormat(ImportHandlerContext context, long address, int len) {
         final FormatParser fmtParser = PARSER.get();
 
         fmtParser.of(address, len);
-        context.dataFormatValid = fmtParser.getDelimiter() != 0 && fmtParser.getStdDev() < 0.5;
-
-        if (context.dataFormatValid) {
+        if (fmtParser.getDelimiter() != 0 && fmtParser.getStdDev() < 0.5) {
+            context.state = ImportHandlerContext.STATE_OK;
             context.textParser.of(fmtParser.getDelimiter());
+        } else {
+            context.state = ImportHandlerContext.STATE_INVALID_FORMAT;
+            context.stateMessage = "Unsupported Data Format";
         }
     }
 
@@ -384,19 +405,30 @@ public class ImportHandler extends AbstractMultipartHandler {
         h.json = Chars.equalsNc("json", context.request.getUrlParam("fmt"));
         ChunkedResponse r = context.chunkedResponse();
 
-        if (h.json) {
-            r.status(200, CONTENT_TYPE_JSON);
-        } else {
-            r.status(200, CONTENT_TYPE_TEXT);
+        switch (h.state) {
+            case ImportHandlerContext.STATE_OK:
+                if (h.json) {
+                    r.status(200, CONTENT_TYPE_JSON);
+                } else {
+                    r.status(200, CONTENT_TYPE_TEXT);
+                }
+                r.sendHeader();
+                resume(context);
+                break;
+            default:
+                sendError(context, h.stateMessage);
+                break;
         }
-        r.sendHeader();
-        resume(context);
     }
 
     private static class ImportHandlerContext implements Mutable, Closeable {
+        public static final int STATE_OK = 0;
+        public static final int STATE_INVALID_FORMAT = 1;
+        public static final int STATE_DATA_ERROR = 2;
         public int columnIndex = 0;
+        private int state;
+        private String stateMessage;
         private boolean analysed = false;
-        private boolean dataFormatValid = false;
         private TextParser textParser = new DelimitedTextParser();
         private JournalImportListener importer;
         private int messagePart = MESSAGE_UNKNOWN;
@@ -413,7 +445,7 @@ public class ImportHandler extends AbstractMultipartHandler {
             columnIndex = 0;
             messagePart = MESSAGE_UNKNOWN;
             analysed = false;
-            dataFormatValid = false;
+            state = STATE_OK;
             textParser.clear();
             importer.clear();
         }
@@ -424,5 +456,10 @@ public class ImportHandler extends AbstractMultipartHandler {
             textParser = Misc.free(textParser);
             importer = Misc.free(importer);
         }
+    }
+
+    static {
+        atomicityParamMap.put("relaxed", JournalImportListener.ATOMICITY_RELAXED);
+        atomicityParamMap.put("strict", JournalImportListener.ATOMICITY_STRICT);
     }
 }
