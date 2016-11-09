@@ -198,7 +198,7 @@
                 renderViewportNoCompute();
                 return;
             }
-            $.get('/js', {query, limit: lo + ',' + hi, nm: true}).done(f);
+            $.get('/exec', {query, limit: lo + ',' + hi, nm: true}).done(f);
         }
 
         function loadPagesDelayed(p1, p2) {

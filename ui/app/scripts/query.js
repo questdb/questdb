@@ -94,7 +94,7 @@
             requestParams.limit = '0,' + batchSize;
             requestParams.count = true;
             time = new Date().getTime();
-            hActiveRequest = $.get('/js', requestParams).done(handleServerResponse).fail(handleServerError);
+            hActiveRequest = $.get('/exec', requestParams).done(handleServerResponse).fail(handleServerError);
             bus.trigger(qdb.MSG_QUERY_RUNNING);
         }
 
@@ -205,7 +205,7 @@
         //noinspection JSUnusedLocalSymbols
         function exportQuery(x, query) {
             if (query) {
-                window.location.href = '/csv?query=' + query;
+                window.location.href = '/exp?query=' + query;
             }
         }
 

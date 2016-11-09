@@ -42,7 +42,7 @@
     var MSG_QUERY_DATASET = 'query.out.dataset';
 
     function toExportUrl(query) {
-        return window.location.protocol + '//' + window.location.host + '/csv?query=' + encodeURIComponent(query);
+        return window.location.protocol + '//' + window.location.host + '/exp?query=' + encodeURIComponent(query);
     }
 
     $.extend(true, window, {

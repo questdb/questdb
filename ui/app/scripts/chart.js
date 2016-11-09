@@ -215,7 +215,7 @@
                 data: [
                     {
                         name: 'accidents',
-                        url: 'http://localhost:9000/csv?query=%0A%0Aselect%20severity%2C%20timestamp%20ts%2C%20count()%20count%20from%20z2%20%20sample%20by%201M',
+                        url: 'http://localhost:9000/exp?query=%0A%0Aselect%20severity%2C%20timestamp%20ts%2C%20count()%20count%20from%20z2%20%20sample%20by%201M',
                         format: {type: 'csv', parse: {ts: 'date', count: 'number'}}
                     }
                 ],
