@@ -163,7 +163,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
         CharSequence query = request.getUrlParam("query");
         if (query == null || query.length() == 0) {
             info().$("Empty query request received. Sending empty reply.").$();
-            sendException(r, 0, "", 200);
+            sendException(r, 0, "No query text", 200);
             return false;
         }
 

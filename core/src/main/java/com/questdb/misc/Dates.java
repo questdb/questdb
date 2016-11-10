@@ -226,21 +226,22 @@ final public class Dates {
         int y = getYear(millis);
         boolean l = isLeapYear(y);
         int m = getMonthOfYear(millis, y, l);
-        sink.put(DAYS_OF_WEEK[getDayOfWeek(millis) - 1])
+        sink
+                .put(DAYS_OF_WEEK[getDayOfWeek(millis) - 1])
                 .put(", ")
                 .put(getDayOfMonth(millis, y, m, l))
                 .put(' ')
                 .put(MONTHS_OF_YEAR[m - 1])
-                .put(' ')
-                .put(y)
-                .put(' ')
-                .put(getHourOfDay(millis))
-                .put(':')
-                .put(getMinuteOfHour(millis))
-                .put(':')
-                .put(getSecondOfMinute(millis))
-                .put(' ')
-                .put("GMT");
+                .put(' ');
+
+        append0000(sink, y);
+        sink.put(' ');
+        append0(sink, getHourOfDay(millis));
+        sink.put(':');
+        append0(sink, getMinuteOfHour(millis));
+        sink.put(':');
+        append0(sink, getSecondOfMinute(millis));
+        sink.put(' ').put("GMT");
     }
 
     public static void formatMMMDYYYY(CharSink sink, long millis) {

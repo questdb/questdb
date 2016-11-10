@@ -277,7 +277,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
             final String expected = "HTTP/1.1 404 Not Found\r\n" +
                     "Server: questDB/1.0\r\n" +
-                    "Date: Sat, 5 Dec 2015 13:30:0 GMT\r\n" +
+                    "Date: Sat, 5 Dec 2015 13:30:00 GMT\r\n" +
                     "Transfer-Encoding: chunked\r\n" +
                     "Content-Type: text/html; charset=utf-8\r\n" +
                     "\r\n" +

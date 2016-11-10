@@ -163,6 +163,12 @@ public class DatesTest {
     }
 
     @Test
+    public void testFormatHTTP2() throws Exception {
+        Dates.formatHTTP(sink, Dates.parseDateTime("2015-12-05T12:04:55.332Z"));
+        TestUtils.assertEquals("Sat, 5 Dec 2015 12:04:55 GMT", sink);
+    }
+
+    @Test
     public void testFormatMMMDYYYY() throws NumericException {
         Dates.formatMMMDYYYY(sink, Dates.parseDateTime("2008-05-10T12:31:02.008Z"));
         TestUtils.assertEquals("May 10 2008", sink);
