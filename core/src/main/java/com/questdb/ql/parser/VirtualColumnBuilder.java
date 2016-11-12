@@ -51,6 +51,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
     private RecordMetadata metadata;
     private CharSequenceIntHashMap columnNameHistogram;
     private CharSequenceObjHashMap<Parameter> parameterMap;
+    private QueryModel model;
 
     VirtualColumnBuilder(PostOrderTreeTraversalAlgo algo, ServerConfiguration configuration) {
         this.algo = algo;
@@ -99,17 +100,19 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
     VirtualColumn createVirtualColumn(QueryModel model, ExprNode node, RecordMetadata metadata) throws ParserException {
         this.columnNameHistogram = model.getColumnNameHistogram();
         this.parameterMap = model.getParameterMap();
+        this.model = model;
         this.metadata = metadata;
         algo.traverse(node, this);
         return stack.poll();
     }
 
     private VirtualColumn lookupColumn(ExprNode node) throws ParserException {
+        CharSequence column = model.translateAlias(node.token);
         try {
-            if (columnNameHistogram.get(node.token) > 0) {
+            if (columnNameHistogram.get(column) > 0) {
                 throw QueryError.ambiguousColumn(node.position);
             }
-            int index = metadata.getColumnIndex(node.token);
+            int index = metadata.getColumnIndex(column);
             switch (metadata.getColumnQuick(index).getType()) {
                 case ColumnType.DOUBLE:
                     return new DoubleRecordSourceColumn(index, node.position);
@@ -137,7 +140,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
                     throw QueryError.$(node.position, "Not yet supported type");
             }
         } catch (NoSuchColumnException e) {
-            throw QueryError.invalidColumn(node.position, node.token);
+            throw QueryError.invalidColumn(node.position, column);
         }
     }
 

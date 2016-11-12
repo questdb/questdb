@@ -23,11 +23,18 @@
 
 package com.questdb.ex;
 
+import com.questdb.ql.parser.QueryError;
+
 @SuppressWarnings("ThrowableInstanceNeverThrown")
 public final class ParserException extends Exception {
 
     public static final ParserException INSTANCE = new ParserException();
 
     private ParserException() {
+    }
+
+    @Override
+    public String getMessage() {
+        return QueryError.getMessage().toString();
     }
 }

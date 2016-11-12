@@ -53,6 +53,7 @@ public class QueryModel implements Mutable, ParsedModel {
     public static final int JOIN_CROSS = 3;
     public static final int JOIN_ASOF = 4;
     private final ObjList<QueryColumn> columns = new ObjList<>();
+    private final CharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new CharSequenceObjHashMap<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
     private final IntList orderByDirection = new IntList();
@@ -112,6 +113,9 @@ public class QueryModel implements Mutable, ParsedModel {
 
     public void addColumn(QueryColumn column) {
         columns.add(column);
+        if (column.getAlias() != null) {
+            aliasToColumnMap.put(column.getAlias(), column);
+        }
     }
 
     public void addDependency(int index) {
@@ -145,6 +149,7 @@ public class QueryModel implements Mutable, ParsedModel {
 
     public void clear() {
         columns.clear();
+        aliasToColumnMap.clear();
         joinModels.clear();
         joinModels.add(this);
         sampleBy = null;
@@ -485,6 +490,17 @@ public class QueryModel implements Mutable, ParsedModel {
     @Override
     public String toString() {
         return alias != null ? alias.token : (journalName != null ? journalName.token : '{' + nestedModel.toString() + '}');
+    }
+
+    public CharSequence translateAlias(CharSequence column) {
+        QueryColumn referent = aliasToColumnMap.get(column);
+        if (referent != null
+                && !(referent instanceof AnalyticColumn)
+                && referent.getAst().type == ExprNode.LITERAL) {
+            return referent.getAst().token;
+        } else {
+            return column;
+        }
     }
 
     private static void createColumnNameHistogram0(CharSequenceIntHashMap histogram, QueryModel model, JournalReaderFactory factory, boolean ignoreJoins) throws ParserException {

@@ -641,6 +641,23 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testJoinColumnAlias() throws Exception {
+        assertThat("162\tNaN\t1\n" +
+                        "209\tNaN\t1\n" +
+                        "233\tNaN\t1\n" +
+                        "381\tNaN\t1\n" +
+                        "396\tNaN\t1\n" +
+                        "410\tNaN\t1\n" +
+                        "805\tNaN\t1\n" +
+                        "810\tNaN\t1\n" +
+                        "1162\tNaN\t1\n" +
+                        "1344\tNaN\t1\n",
+                "select c.customerId, o.customerId kk, count() from customers c" +
+                        " outer join orders o on c.customerId = o.customerId " +
+                        " where kk = NaN limit 10");
+    }
+
+    @Test
     public void testJoinCycle() throws Exception {
         assertPlan("+ 0[ cross ] orders\n" +
                         "+ 1[ inner ] customers ON customers.customerId = orders.customerId\n" +
@@ -676,6 +693,29 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
                         " where country ~ '^Z'");
+
+    }
+
+    @Test
+    public void testJoinGroupByFilter() throws Exception {
+        assertThat("ZHCN\t2.541666666667\n" +
+                        "ZEQGMPLUCFTL\t2.549034175334\n" +
+                        "ZKX\t2.485995457986\n" +
+                        "ZRPFMDVVG\t2.508350730689\n" +
+                        "ZV\t2.485329103886\n" +
+                        "ZEPIHVLTOVLJUM\t2.485179407176\n" +
+                        "ZGKC\t2.525787965616\n" +
+                        "ZHEI\t2.464574898785\n" +
+                        "ZULIG\t2.471938775510\n" +
+                        "ZMZV\t2.470260223048\n" +
+                        "ZI\t2.508435582822\n" +
+                        "ZYNPPBX\t2.454467353952\n" +
+                        "ZEOCVFFKMEKPFOY\t2.414400000000\n",
+
+                "(select country, avg(quantity) avg from orders o " +
+                        "join customers c on c.customerId = o.customerId " +
+                        "join orderDetails d on o.orderId = d.orderId" +
+                        " where country ~ '^Z') where avg > 2");
 
     }
 

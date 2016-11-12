@@ -293,6 +293,44 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testAliasInWhere() throws Exception {
+        createTabWithNaNs();
+        final String expected = "BROMNXKUIZULIGY\t506\t256\n" +
+                "BROMNXKUIZULIGY\t531\t281\n" +
+                "BROMNXKUIZULIGY\t591\t341\n" +
+                "BROMNXKUIZULIGY\t514\t264\n" +
+                "BROMNXKUIZULIGY\t590\t340\n" +
+                "BROMNXKUIZULIGY\t550\t300\n";
+
+        assertThat(expected, "(select id k, z + 250 u, z from tab where z >= 250 and k ~ 'BROM') where u < 600 ");
+    }
+
+    @Test
+    public void testAliasInWhere2() throws Exception {
+        createTabWithNaNs();
+        final String expected = "BROMNXKUIZULIGY\t506\t256\n" +
+                "BROMNXKUIZULIGY\t652\t402\n" +
+                "BROMNXKUIZULIGY\t668\t418\n" +
+                "BROMNXKUIZULIGY\t688\t438\n" +
+                "BROMNXKUIZULIGY\t706\t456\n" +
+                "BROMNXKUIZULIGY\t650\t400\n" +
+                "BROMNXKUIZULIGY\t531\t281\n" +
+                "BROMNXKUIZULIGY\t591\t341\n" +
+                "BROMNXKUIZULIGY\t514\t264\n" +
+                "BROMNXKUIZULIGY\t672\t422\n" +
+                "BROMNXKUIZULIGY\t590\t340\n" +
+                "BROMNXKUIZULIGY\t738\t488\n" +
+                "BROMNXKUIZULIGY\t627\t377\n" +
+                "BROMNXKUIZULIGY\t655\t405\n" +
+                "BROMNXKUIZULIGY\t550\t300\n" +
+                "BROMNXKUIZULIGY\t723\t473\n" +
+                "BROMNXKUIZULIGY\t737\t487\n" +
+                "BROMNXKUIZULIGY\t734\t484\n";
+
+        assertThat(expected, "select id k, z + 250 u, z from tab where z >= 250 and k ~ 'BROM'");
+    }
+
+    @Test
     public void testAtoI() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").$str("intC").$()

@@ -105,7 +105,6 @@ public class QueryCompiler {
     private final IntHashSet postFilterRemoved = new IntHashSet();
     private final IntHashSet journalsSoFar = new IntHashSet();
     private final ObjList<IntList> postFilterJournalRefs = new ObjList<>();
-    private final ObjList<CharSequence> postFilterThrowawayNames = new ObjList<>();
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(new ObjectFactory<IntList>() {
         @Override
         public IntList newInstance() {
@@ -672,10 +671,9 @@ public class QueryCompiler {
         for (int i = 0; i < pc; i++) {
             IntList indexes = intListPool.next();
             literalCollector.resetNullCount();
-            traversalAlgo.traverse(filterNodes.getQuick(i), literalCollector.to(indexes, postFilterThrowawayNames));
+            traversalAlgo.traverse(filterNodes.getQuick(i), literalCollector.to(indexes, null));
             postFilterJournalRefs.add(indexes);
             nullCounts.add(literalCollector.nullCount);
-            postFilterThrowawayNames.clear();
         }
 
         IntList ordered = parent.getOrderedJoinModels();
@@ -2384,7 +2382,8 @@ public class QueryCompiler {
         }
     }
 
-    private int resolveJournalIndex(QueryModel parent, @Transient CharSequence alias, CharSequence column, int position) throws ParserException {
+    private int resolveJournalIndex(QueryModel parent, @Transient CharSequence alias, CharSequence col, int position) throws ParserException {
+        CharSequence column = parent.translateAlias(col);
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         int index = -1;
         if (alias == null) {
@@ -2785,7 +2784,9 @@ public class QueryCompiler {
                     int dot = node.token.indexOf('.');
                     CharSequence name = extractColumnName(node.token, dot);
                     indexes.add(resolveJournalIndex(parent, dot == -1 ? null : csPool.next().of(node.token, 0, dot), name, node.position));
-                    names.add(name);
+                    if (names != null) {
+                        names.add(name);
+                    }
                     break;
                 case ExprNode.CONSTANT:
                     if (nullConstants.contains(node.token)) {
