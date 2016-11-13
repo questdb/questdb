@@ -1574,6 +1574,12 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testSimpleSymToSymLambdaAliased() throws Exception {
+        assertThat("1946\tGROTGCLGILNCXPT\n",
+                "select productId, supplier s from products latest by s where s in (`suppliers where contactName = 'PHT'`)");
+    }
+
+    @Test
     public void testSymRegex() throws Exception {
         try {
             expectFailure("select country, avg(quantity) from orders o " +

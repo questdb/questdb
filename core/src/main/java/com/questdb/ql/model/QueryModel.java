@@ -43,7 +43,7 @@ import com.questdb.txt.sink.StringSink;
 
 import java.util.ArrayDeque;
 
-public class QueryModel implements Mutable, ParsedModel {
+public class QueryModel implements Mutable, ParsedModel, AliasTranslator {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;
@@ -492,6 +492,7 @@ public class QueryModel implements Mutable, ParsedModel {
         return alias != null ? alias.token : (journalName != null ? journalName.token : '{' + nestedModel.toString() + '}');
     }
 
+    @Override
     public CharSequence translateAlias(CharSequence column) {
         QueryColumn referent = aliasToColumnMap.get(column);
         if (referent != null

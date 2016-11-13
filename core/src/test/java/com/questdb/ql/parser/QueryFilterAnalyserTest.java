@@ -29,6 +29,7 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Interval;
 import com.questdb.model.Quote;
+import com.questdb.ql.model.AliasTranslator;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.IntrinsicModel;
 import com.questdb.ql.model.IntrinsicValue;
@@ -884,7 +885,12 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws ParserException {
         lexer.setContent(seq);
         p.parseExpr(lexer, ast);
-        return e.extract(ast.poll(), w.getMetadata(), preferredColumn, w.getMetadata().getTimestampIndex());
+        return e.extract(new AliasTranslator() {
+            @Override
+            public CharSequence translateAlias(CharSequence column) {
+                return column;
+            }
+        }, ast.poll(), w.getMetadata(), preferredColumn, w.getMetadata().getTimestampIndex());
     }
 
     private void testBadOperator(String op) {

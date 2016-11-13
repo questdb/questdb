@@ -1086,7 +1086,9 @@ public class QueryCompiler {
                 throw QueryError.$(latestByNode.position, "Column name expected");
             }
 
-            int colIndex = journalMetadata.getColumnIndexQuiet(latestByNode.token);
+            latestByCol = model.translateAlias(latestByNode.token).toString();
+
+            int colIndex = journalMetadata.getColumnIndexQuiet(latestByCol);
             if (colIndex == -1) {
                 throw QueryError.invalidColumn(latestByNode.position, latestByNode.token);
             }
@@ -1101,13 +1103,12 @@ public class QueryCompiler {
             if (!latestByMetadata.isIndexed()) {
                 throw QueryError.position(latestByNode.position).$("Column is not indexed").$();
             }
-
-            latestByCol = latestByNode.token;
         }
 
         ExprNode where = model.getWhereClause();
         if (where != null) {
             IntrinsicModel im = queryFilterAnalyser.extract(
+                    model,
                     where,
                     journalMetadata,
                     latestByCol,
@@ -1562,7 +1563,7 @@ public class QueryCompiler {
                 m.setAlias(model.getAlias().token);
             }
 
-            IntrinsicModel im = queryFilterAnalyser.extract(model.getWhereClause(), m, null, getTimestampIndexQuiet(model.getTimestamp(), m));
+            IntrinsicModel im = queryFilterAnalyser.extract(model, model.getWhereClause(), m, null, getTimestampIndexQuiet(model.getTimestamp(), m));
 
             if (im.intrinsicValue == IntrinsicValue.FALSE) {
                 return new NoOpJournalRecordSource(rs);

@@ -34,6 +34,7 @@ import com.questdb.misc.Numbers;
 import com.questdb.ql.impl.interval.MillisIntervalSource;
 import com.questdb.ql.impl.interval.MonthsIntervalSource;
 import com.questdb.ql.impl.interval.YearIntervalSource;
+import com.questdb.ql.model.AliasTranslator;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.IntrinsicModel;
 import com.questdb.ql.model.IntrinsicValue;
@@ -66,12 +67,12 @@ final class QueryFilterAnalyser {
         }
     }
 
-    private boolean analyzeEquals(IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
+    private boolean analyzeEquals(AliasTranslator translator, IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
         checkNodeValid(node);
-        return analyzeEquals0(model, node, node.lhs, node.rhs, m) || analyzeEquals0(model, node, node.rhs, node.lhs, m);
+        return analyzeEquals0(translator, model, node, node.lhs, node.rhs, m) || analyzeEquals0(translator, model, node, node.rhs, node.lhs, m);
     }
 
-    private boolean analyzeEquals0(IntrinsicModel model, ExprNode node, ExprNode a, ExprNode b, RecordMetadata m) throws ParserException {
+    private boolean analyzeEquals0(AliasTranslator translator, IntrinsicModel model, ExprNode node, ExprNode a, ExprNode b, RecordMetadata m) throws ParserException {
         if (Chars.equals(a.token, b.token)) {
             node.intrinsicValue = IntrinsicValue.TRUE;
             return true;
@@ -88,10 +89,12 @@ final class QueryFilterAnalyser {
                 }
                 return true;
             } else {
-                if (m.getColumnIndexQuiet(a.token) == -1) {
+                String column = translator.translateAlias(a.token).toString();
+                int index = m.getColumnIndexQuiet(column);
+                if (index == -1) {
                     throw QueryError.invalidColumn(a.position, a.token);
                 }
-                RecordColumnMetadata meta = m.getColumn(a.token);
+                RecordColumnMetadata meta = m.getColumn(index);
 
                 switch (meta.getType()) {
                     case ColumnType.SYMBOL:
@@ -101,21 +104,21 @@ final class QueryFilterAnalyser {
                         if (meta.isIndexed()) {
 
                             // check if we are limited by preferred column
-                            if (preferredKeyColumn != null && !preferredKeyColumn.equals(a.token)) {
+                            if (preferredKeyColumn != null && !preferredKeyColumn.equals(column)) {
                                 return false;
                             }
 
                             boolean newColumn = true;
                             // check if we already have indexed column and it is of worse selectivity
                             if (model.keyColumn != null
-                                    && (newColumn = !model.keyColumn.equals(a.token))
+                                    && (newColumn = !model.keyColumn.equals(column))
                                     && meta.getBucketCount() <= m.getColumn(model.keyColumn).getBucketCount()) {
                                 return false;
                             }
 
                             String value = Chars.equals("null", b.token) ? null : Chars.stripQuotes(b.token);
                             if (newColumn) {
-                                model.keyColumn = a.token;
+                                model.keyColumn = column;
                                 model.keyValues.clear();
                                 model.keyValuePositions.clear();
                                 model.keyValues.add(value);
@@ -194,7 +197,7 @@ final class QueryFilterAnalyser {
         return false;
     }
 
-    private boolean analyzeIn(IntrinsicModel model, ExprNode node, RecordMetadata metadata) throws ParserException {
+    private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExprNode node, RecordMetadata metadata) throws ParserException {
 
         if (node.paramCount < 2) {
             throw QueryError.$(node.position, "Too few arguments for 'in'");
@@ -206,12 +209,14 @@ final class QueryFilterAnalyser {
             throw QueryError.$(col.position, "Column name expected");
         }
 
-        if (metadata.getColumnIndexQuiet(col.token) == -1) {
+        String column = translator.translateAlias(col.token).toString();
+
+        if (metadata.getColumnIndexQuiet(column) == -1) {
             throw QueryError.invalidColumn(col.position, col.token);
         }
         return analyzeInInterval(model, col, node)
-                || analyzeListOfValues(model, col.token, metadata, node)
-                || analyzeInLambda(model, col.token, metadata, node);
+                || analyzeListOfValues(model, column, metadata, node)
+                || analyzeInLambda(model, column, metadata, node);
     }
 
     private boolean analyzeInInterval(IntrinsicModel model, ExprNode col, ExprNode in) throws ParserException {
@@ -445,7 +450,7 @@ final class QueryFilterAnalyser {
         return node;
     }
 
-    IntrinsicModel extract(ExprNode node, RecordMetadata m, String preferredKeyColumn, int timestampIndex) throws ParserException {
+    IntrinsicModel extract(AliasTranslator translator, ExprNode node, RecordMetadata m, String preferredKeyColumn, int timestampIndex) throws ParserException {
         this.stack.clear();
         this.keyNodes.clear();
         this.timestampNodes.clear();
@@ -457,7 +462,7 @@ final class QueryFilterAnalyser {
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        if (removeAndIntrinsics(model, node, m)) {
+        if (removeAndIntrinsics(translator, model, node, m)) {
             return model;
         }
         ExprNode root = node;
@@ -466,10 +471,10 @@ final class QueryFilterAnalyser {
             if (node != null) {
                 switch (node.token) {
                     case "and":
-                        if (!removeAndIntrinsics(model, node.rhs, m)) {
+                        if (!removeAndIntrinsics(translator, model, node.rhs, m)) {
                             stack.push(node.rhs);
                         }
-                        node = removeAndIntrinsics(model, node.lhs, m) ? null : node.lhs;
+                        node = removeAndIntrinsics(translator, model, node.lhs, m) ? null : node.lhs;
                         break;
                     default:
                         node = stack.poll();
@@ -609,10 +614,10 @@ final class QueryFilterAnalyser {
         }
     }
 
-    private boolean removeAndIntrinsics(IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
+    private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
         switch (node.token) {
             case "in":
-                return analyzeIn(model, node, m);
+                return analyzeIn(translator, model, node, m);
             case ">":
                 return analyzeGreater(model, node, 1);
             case ">=":
@@ -622,7 +627,7 @@ final class QueryFilterAnalyser {
             case "<=":
                 return analyzeLess(model, node, 0);
             case "=":
-                return analyzeEquals(model, node, m);
+                return analyzeEquals(translator, model, node, m);
             case "!=":
                 return analyzeNotEquals(model, node);
             default:

@@ -2054,7 +2054,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testNewLine() throws Exception {
         createTabWithNaNs2();
         final String expected = "YDVRVNGSTEQODRZ\t-99\n";
-        assertThat(expected, "select id, z from (tab where not(id in 'GMPLUCFTLNKYTSZ')) \n limit 1");
+        assertThat(expected, "select id, z from (tab where not (id in 'GMPLUCFTLNKYTSZ')) \n limit 1");
     }
 
     @Test
