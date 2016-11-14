@@ -33,7 +33,7 @@ final public class Dates {
     public static final long HOUR_MILLIS = 3600000L;
     public static final long MINUTE_MILLIS = 60000;
     public static final long SECOND_MILLIS = 1000;
-    private static final long AVG_YEAR_MILLIS = (long) (365.25 * DAY_MILLIS);
+    private static final long AVG_YEAR_MILLIS = (long) (365.2425 * DAY_MILLIS);
     private static final long YEAR_MILLIS = 365 * DAY_MILLIS;
     private static final long LEAP_YEAR_MILLIS = 366 * DAY_MILLIS;
     private static final long HALF_YEAR_MILLIS = AVG_YEAR_MILLIS / 2;
@@ -385,23 +385,23 @@ final public class Dates {
         int p = pos;
         int year = Numbers.parseInt(seq, p, p += 4);
         boolean l = isLeapYear(year);
-        if (p < len) {
+        if (checkLen(p, len)) {
             checkChar(seq, p++, lim, '-');
             int month = Numbers.parseInt(seq, p, p += 2);
             checkRange(month, 1, 12);
-            if (p < len) {
+            if (checkLen(p, len)) {
                 checkChar(seq, p++, lim, '-');
                 int day = Numbers.parseInt(seq, p, p += 2);
                 checkRange(day, 1, getDaysPerMonth(month, l));
-                if (p < len) {
+                if (checkLen(p, len)) {
                     checkChar(seq, p++, lim, 'T');
                     int hour = Numbers.parseInt(seq, p, p += 2);
                     checkRange(hour, 0, 23);
-                    if (p < len) {
+                    if (checkLen(p, len)) {
                         checkChar(seq, p++, lim, ':');
                         int min = Numbers.parseInt(seq, p, p += 2);
                         checkRange(min, 0, 59);
-                        if (p < len) {
+                        if (checkLen(p, len)) {
                             checkChar(seq, p++, lim, ':');
                             int sec = Numbers.parseInt(seq, p, p += 2);
                             checkRange(sec, 0, 59);
@@ -595,6 +595,17 @@ final public class Dates {
         return (year * 365L + (leapYears - DAYS_0000_TO_1970)) * DAY_MILLIS;
     }
 
+    private static boolean checkLen(int p, int lim) throws NumericException {
+        if (lim - p > 1) {
+            return true;
+        }
+        if (lim <= p) {
+            return false;
+        }
+
+        throw NumericException.INSTANCE;
+    }
+
     private static int getDayOfMonth(long millis, int year, int month, boolean leap) {
         long dateMillis = yearMillis(year, leap);
         dateMillis += monthOfYearMillis(month, leap);
@@ -663,45 +674,30 @@ final public class Dates {
     }
 
     private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
+        // 2016-01-01T00:00:00Z
         int p = lo;
-        if (p + 4 > lim) {
+        if (lim - p < 20) {
             throw NumericException.INSTANCE;
         }
         int year = Numbers.parseInt(seq, p, p += 4);
         checkChar(seq, p++, lim, '-');
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
         int month = Numbers.parseInt(seq, p, p += 2);
         checkRange(month, 1, 12);
         checkChar(seq, p++, lim, '-');
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
         boolean l = isLeapYear(year);
         int day = Numbers.parseInt(seq, p, p += 2);
         checkRange(day, 1, getDaysPerMonth(month, l));
         checkChar(seq, p++, lim, 'T');
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
         int hour = Numbers.parseInt(seq, p, p += 2);
         checkRange(hour, 0, 23);
         checkChar(seq, p++, lim, ':');
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
         int min = Numbers.parseInt(seq, p, p += 2);
         checkRange(min, 0, 59);
         checkChar(seq, p++, lim, ':');
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
         int sec = Numbers.parseInt(seq, p, p += 2);
         checkRange(sec, 0, 59);
         int mil = 0;
         if (p < lim && seq.charAt(p) == '.') {
-
             if (p + 4 > lim) {
                 throw NumericException.INSTANCE;
             }
@@ -822,27 +818,29 @@ final public class Dates {
     }
 
     private static void append0(CharSink sink, int val) {
-        if (val < 10) {
+        if (Math.abs(val) < 10) {
             sink.put('0');
         }
         Numbers.append(sink, val);
     }
 
     private static void append00(CharSink sink, int val) {
-        if (val < 10) {
+        int v = Math.abs(val);
+        if (v < 10) {
             sink.put('0').put('0');
-        } else if (val < 100) {
+        } else if (v < 100) {
             sink.put('0');
         }
         Numbers.append(sink, val);
     }
 
     private static void append0000(CharSink sink, int val) {
-        if (val < 10) {
+        int v = Math.abs(val);
+        if (v < 10) {
             sink.put('0').put('0').put('0');
-        } else if (val < 100) {
+        } else if (v < 100) {
             sink.put('0').put('0');
-        } else if (val < 1000) {
+        } else if (v < 1000) {
             sink.put('0');
         }
         Numbers.append(sink, val);
@@ -870,4 +868,5 @@ final public class Dates {
             MAX_MONTH_OF_YEAR_MILLIS[i + 1] = maxSum;
         }
     }
+
 }

@@ -37,7 +37,7 @@ public class ParameterTest extends AbstractAnalyticRecordSourceTest {
         try (RecordSource rs = compileSource("abc where eq(d, :value, 0.0000001)")) {
             rs.getParam(":value").set(566.734375);
             assertThat("i\td\tf\tb\tl\tstr\tboo\tsym\tsho\tdate\ttimestamp\n" +
-                            "-2041844972\t566.734375000000\t0.7780\t-120\t-6943924477733600060\tXX\tfalse\tBZ\t-24357\t000-284204894-12-0-2131416T06:37:25.107Z\t2016-05-01T10:22:00.000Z\n",
+                            "-2041844972\t566.734375000000\t0.7780\t-120\t-6943924477733600060\tXX\tfalse\tBZ\t-24357\t-284210729-04-16T06:37:25.107Z\t2016-05-01T10:22:00.000Z\n",
                     rs, true);
         }
 
@@ -45,14 +45,14 @@ public class ParameterTest extends AbstractAnalyticRecordSourceTest {
             rs.getParam(":value").set(566.734375);
             rs.getParam(":scale").set(0.000001);
             assertThat("i\td\tf\tb\tl\tstr\tboo\tsym\tsho\tdate\ttimestamp\n" +
-                            "-2041844972\t566.734375000000\t0.7780\t-120\t-6943924477733600060\tXX\tfalse\tBZ\t-24357\t000-284204894-12-0-2131416T06:37:25.107Z\t2016-05-01T10:22:00.000Z\n",
+                            "-2041844972\t566.734375000000\t0.7780\t-120\t-6943924477733600060\tXX\tfalse\tBZ\t-24357\t-284210729-04-16T06:37:25.107Z\t2016-05-01T10:22:00.000Z\n",
                     rs, true);
         }
 
         try (RecordSource rs = compileSource("abc where eq(d, 566.734375, :scale)")) {
             rs.getParam(":scale").set(0.000001);
             assertThat("i\td\tf\tb\tl\tstr\tboo\tsym\tsho\tdate\ttimestamp\n" +
-                            "-2041844972\t566.734375000000\t0.7780\t-120\t-6943924477733600060\tXX\tfalse\tBZ\t-24357\t000-284204894-12-0-2131416T06:37:25.107Z\t2016-05-01T10:22:00.000Z\n",
+                            "-2041844972\t566.734375000000\t0.7780\t-120\t-6943924477733600060\tXX\tfalse\tBZ\t-24357\t-284210729-04-16T06:37:25.107Z\t2016-05-01T10:22:00.000Z\n",
                     rs, true);
         }
     }
@@ -68,7 +68,7 @@ public class ParameterTest extends AbstractAnalyticRecordSourceTest {
         try (RecordSource rs = compileSource("abc where l = :value")) {
             rs.getParam(":value").set(-6943924477733600060L);
             assertThat("i\td\tf\tb\tl\tstr\tboo\tsym\tsho\tdate\ttimestamp\n" +
-                            "-2041844972\t566.734375000000\t0.7780\t-120\t-6943924477733600060\tXX\tfalse\tBZ\t-24357\t000-284204894-12-0-2131416T06:37:25.107Z\t2016-05-01T10:22:00.000Z\n",
+                            "-2041844972\t566.734375000000\t0.7780\t-120\t-6943924477733600060\tXX\tfalse\tBZ\t-24357\t-284210729-04-16T06:37:25.107Z\t2016-05-01T10:22:00.000Z\n",
                     rs, true);
         }
     }
@@ -78,12 +78,12 @@ public class ParameterTest extends AbstractAnalyticRecordSourceTest {
             rs.getParam(":value").set(1335037859);
 
             assertThat("i\td\tf\tb\tl\tstr\tboo\tsym\tsho\tdate\ttimestamp\n" +
-                            "1335037859\t512.000000000000\t0.8217\t-83\t6574958665733670985\tAX\ttrue\tAX\t5869\t252672790-12-1894671T03:29:33.753Z\t2016-05-01T10:36:00.000Z\n",
+                            "1335037859\t512.000000000000\t0.8217\t-83\t6574958665733670985\tAX\ttrue\tAX\t5869\t252677978-05-07T03:29:33.753Z\t2016-05-01T10:36:00.000Z\n",
                     rs, true);
 
             rs.getParam(":value").set(-572338288);
             assertThat("i\td\tf\tb\tl\tstr\tboo\tsym\tsho\tdate\ttimestamp\n" +
-                            "-572338288\t632.921875000000\t0.5619\t-114\t7122109662042058469\tKK\tfalse\tAX\t25102\t132056646-12-989842T08:27:45.836Z\t2016-05-01T10:32:00.000Z\n",
+                            "-572338288\t632.921875000000\t0.5619\t-114\t7122109662042058469\tKK\tfalse\tAX\t25102\t132059357-01-03T08:27:45.836Z\t2016-05-01T10:32:00.000Z\n",
                     rs, true);
         }
     }

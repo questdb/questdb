@@ -36,6 +36,21 @@ public class NumbersTest {
 
     private Rnd rnd;
 
+    @Test(expected = NumericException.class)
+    public void parseExplicitDouble2() throws Exception {
+        Numbers.parseDouble("1234dx");
+    }
+
+    @Test
+    public void parseExplicitLong() throws Exception {
+        Assert.assertEquals(10000L, Numbers.parseLong("10000L"));
+    }
+
+    @Test(expected = NumericException.class)
+    public void parseExplicitLong2() throws Exception {
+        Numbers.parseLong("10000LL");
+    }
+
     @Before
     public void setUp() {
         rnd = new Rnd();
@@ -260,6 +275,21 @@ public class NumbersTest {
         String s8 = "-Infinity";
         Assert.assertEquals(Double.parseDouble(s8), Numbers.parseDouble(s8), 0.000000001);
 
+    }
+
+    @Test
+    public void testParseExplicitDouble() throws Exception {
+        Assert.assertEquals(1234.123d, Numbers.parseDouble("1234.123d"), 0.000001);
+    }
+
+    @Test
+    public void testParseExplicitFloat() throws Exception {
+        Assert.assertEquals(12345.02f, Numbers.parseFloat("12345.02f"), 0.0001f);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseExplicitFloat2() throws Exception {
+        Numbers.parseFloat("12345.02fx");
     }
 
     @Test

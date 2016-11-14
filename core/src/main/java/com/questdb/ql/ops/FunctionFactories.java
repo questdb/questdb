@@ -284,6 +284,13 @@ public final class FunctionFactories {
         binSig("+", ColumnType.DATE, ColumnType.INT, AddDateDayLOperator.FACTORY);
         binSig("+", ColumnType.INT, ColumnType.DATE, AddDateDayROperator.FACTORY);
 
+        binSig(">", ColumnType.DATE, ColumnType.DATE, LongGreaterThanOperator.FACTORY);
+        binSig(">=", ColumnType.DATE, ColumnType.DATE, LongGreaterOrEqualOperator.FACTORY);
+        binSig("<", ColumnType.DATE, ColumnType.DATE, LongLessThanOperator.FACTORY);
+        binSig("<=", ColumnType.DATE, ColumnType.DATE, LongLessOrEqualOperator.FACTORY);
+        binSig("=", ColumnType.DATE, ColumnType.DATE, LongEqualsOperator.FACTORY);
+        binSig("!=", ColumnType.DATE, ColumnType.DATE, LongNotEqualsOperator.FACTORY);
+
         binSig("*", MultDoubleOperator.FACTORY, MultLongOperator.FACTORY, MultIntOperator.FACTORY);
         binSig("/", DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY);
         binSig("-", MinusDoubleOperator.FACTORY, MinusLongOperator.FACTORY, MinusIntOperator.FACTORY);
@@ -333,10 +340,12 @@ public final class FunctionFactories {
         unSig("atoi", ColumnType.STRING, AtoIFunction.FACTORY);
         unSig("atod", ColumnType.STRING, AtoDFunction.FACTORY);
         unSig("ltod", ColumnType.LONG, LtoDFunction.FACTORY);
+        unSig("ltod", ColumnType.INT, LtoDFunction.FACTORY);
         unSig("dtol", ColumnType.DATE, DtoLFunction.FACTORY);
         unSig("dtoa4", ColumnType.DATE, DtoA4Function.FACTORY);
         unSig("round", ColumnType.DOUBLE, RoundFunction.FACTORY);
         unSig("time24", ColumnType.STRING, Time24ToMillisFunction.FACTORY);
+        unSig("toDate", ColumnType.STRING, ToDateFunction.FACTORY);
 
         factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.STRING, true), StrRegexOperator.FACTORY);
         factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.PARAMETER, true), StrRegexOperator.FACTORY);
@@ -406,8 +415,19 @@ public final class FunctionFactories {
         factories.put(new Signature().setName("pluck").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, false), PluckStrFunction.FACTORY);
         factories.put(new Signature().setName("pluck").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true), PluckStrFunction.FACTORY);
 
-
         factories.put(new Signature().setName("replace").setParamCount(3).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, false), ReplaceStrWrapper.FACTORY);
         factories.put(new Signature().setName("replace").setParamCount(3).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), ReplaceStrWrapper.FACTORY);
+
+        unSig("typeOf", ColumnType.BINARY, TypeOfFunction.FACTORY);
+        unSig("typeOf", ColumnType.BOOLEAN, TypeOfFunction.FACTORY);
+        unSig("typeOf", ColumnType.BYTE, TypeOfFunction.FACTORY);
+        unSig("typeOf", ColumnType.DATE, TypeOfFunction.FACTORY);
+        unSig("typeOf", ColumnType.DOUBLE, TypeOfFunction.FACTORY);
+        unSig("typeOf", ColumnType.FLOAT, TypeOfFunction.FACTORY);
+        unSig("typeOf", ColumnType.INT, TypeOfFunction.FACTORY);
+        unSig("typeOf", ColumnType.LONG, TypeOfFunction.FACTORY);
+        unSig("typeOf", ColumnType.SHORT, TypeOfFunction.FACTORY);
+        unSig("typeOf", ColumnType.STRING, TypeOfFunction.FACTORY);
+        unSig("typeOf", ColumnType.SYMBOL, TypeOfFunction.FACTORY);
     }
 }

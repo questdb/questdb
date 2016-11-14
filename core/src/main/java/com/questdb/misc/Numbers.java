@@ -537,6 +537,15 @@ public final class Numbers {
                         dpe = i;
                     }
                     break out;
+                case 'D':
+                case 'd':
+                    if (i + 1 < lim) {
+                        throw NumericException.INSTANCE;
+                    }
+                    if (dpe == lim) {
+                        dpe = i;
+                    }
+                    break out;
                 default:
                     if (c < '0' || c > '9') {
                         throw NumericException.INSTANCE;
@@ -608,6 +617,16 @@ public final class Numbers {
                 case 'E':
                 case 'e':
                     exp = parseInt(sequence, i + 1, lim);
+                    if (dpe == lim) {
+                        dpe = i;
+                    }
+                    break out;
+                case 'F':
+                case 'f':
+                    if (i + 1 < lim) {
+                        throw NumericException.INSTANCE;
+                    }
+
                     if (dpe == lim) {
                         dpe = i;
                     }
@@ -987,7 +1006,7 @@ public final class Numbers {
 
         int val = 0;
         for (; i < lim; i++) {
-            int c = sequence.charAt(i);
+            char c = sequence.charAt(i);
             if (c < '0' || c > '9') {
                 throw NumericException.INSTANCE;
             }
@@ -1025,6 +1044,12 @@ public final class Numbers {
         long val = 0;
         for (; i < lim; i++) {
             int c = sequence.charAt(i);
+            if (c == 'L' || c == 'l') {
+                if (i + 1 < lim) {
+                    throw NumericException.INSTANCE;
+                }
+                break;
+            }
             if (c < '0' || c > '9') {
                 throw NumericException.INSTANCE;
             }

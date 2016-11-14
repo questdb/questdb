@@ -32,17 +32,17 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
-public class Time24ToMillisFunction extends AbstractUnaryOperator {
+public class ToDateFunction extends AbstractUnaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new Time24ToMillisFunction(position);
+            return new ToDateFunction(position);
         }
     };
 
-    private Time24ToMillisFunction(int position) {
-        super(ColumnType.LONG, position);
+    private ToDateFunction(int position) {
+        super(ColumnType.DATE, position);
     }
 
     @Override
@@ -59,7 +59,7 @@ public class Time24ToMillisFunction extends AbstractUnaryOperator {
     public long getLong(Record rec) {
         try {
             CharSequence s = value.getFlyweightStr(rec);
-            return s == null ? Long.MIN_VALUE : Dates.parseTime24(s);
+            return s == null ? Long.MIN_VALUE : Dates.parseDateTime(s);
         } catch (NumericException ignore) {
             return 0;
         }

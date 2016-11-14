@@ -40,14 +40,16 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     private final VirtualRecord record;
     private final SplitRecordStorageFacade storageFacade;
     private final VirtualColumnStorageFacade virtualColumnStorageFacade;
+    private final ObjList<VirtualColumn> virtualColumns;
     private RecordCursor cursor;
 
     public VirtualColumnRecordSource(RecordSource delegate, ObjList<VirtualColumn> virtualColumns) {
         this.delegate = delegate;
+        this.virtualColumns = virtualColumns;
         RecordMetadata dm = delegate.getMetadata();
         this.metadata = new VirtualRecordMetadata(dm, virtualColumns);
         this.record = new VirtualRecord(dm.getColumnCount(), virtualColumns, delegate.getRecord());
-        this.virtualColumnStorageFacade = VirtualColumnStorageFacade.INSTANCE;
+        this.virtualColumnStorageFacade = new VirtualColumnStorageFacade();
         this.storageFacade = new SplitRecordStorageFacade(dm.getColumnCount());
     }
 
@@ -124,13 +126,11 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
         sink.put('}');
     }
 
-    private static class VirtualColumnStorageFacade implements StorageFacade {
-
-        private static final VirtualColumnStorageFacade INSTANCE = new VirtualColumnStorageFacade();
+    private class VirtualColumnStorageFacade implements StorageFacade {
 
         @Override
         public SymbolTable getSymbolTable(int index) {
-            return null;
+            return virtualColumns.getQuick(index).getSymbolTable();
         }
     }
 }

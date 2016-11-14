@@ -21,47 +21,37 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.conv;
+package com.questdb.ql.ops.constant;
 
-import com.questdb.ex.NumericException;
-import com.questdb.misc.Dates;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
-import com.questdb.ql.ops.AbstractUnaryOperator;
-import com.questdb.ql.ops.Function;
-import com.questdb.ql.ops.VirtualColumnFactory;
+import com.questdb.ql.StorageFacade;
+import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.store.ColumnType;
 
-public class Time24ToMillisFunction extends AbstractUnaryOperator {
+public class FloatConstant extends AbstractVirtualColumn {
+    private final float value;
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new Time24ToMillisFunction(position);
-        }
-    };
-
-    private Time24ToMillisFunction(int position) {
-        super(ColumnType.LONG, position);
-    }
-
-    @Override
-    public long getDate(Record rec) {
-        return getLong(rec);
+    public FloatConstant(float value, int position) {
+        super(ColumnType.FLOAT, position);
+        this.value = value;
     }
 
     @Override
     public double getDouble(Record rec) {
-        return getLong(rec);
+        return value;
     }
 
     @Override
-    public long getLong(Record rec) {
-        try {
-            CharSequence s = value.getFlyweightStr(rec);
-            return s == null ? Long.MIN_VALUE : Dates.parseTime24(s);
-        } catch (NumericException ignore) {
-            return 0;
-        }
+    public float getFloat(Record rec) {
+        return value;
+    }
+
+    @Override
+    public boolean isConstant() {
+        return true;
+    }
+
+    @Override
+    public void prepare(StorageFacade facade) {
     }
 }

@@ -34,6 +34,16 @@ public class DatesTest {
 
     private final StringSink sink = new StringSink();
 
+    @Test(expected = NumericException.class)
+    public void parseBrokenInterval1() throws Exception {
+        Dates.parseInterval("2016-01-01T10:25:32.34");
+    }
+
+    @Test(expected = NumericException.class)
+    public void parseBrokenInterval2() throws Exception {
+        Dates.parseInterval("2016-01-01T1");
+    }
+
     @Before
     public void setUp() {
         sink.clear();
@@ -188,6 +198,11 @@ public class DatesTest {
     public void testIntervalParseBadValue() throws Exception {
         Dates.parseInterval("2014-31");
 
+    }
+
+    @Test
+    public void testOverflowDate() throws Exception {
+        Assert.assertEquals("4509540-01-02T00:00:00.000Z", Dates.toString(142245170150400000L));
     }
 
     @Test

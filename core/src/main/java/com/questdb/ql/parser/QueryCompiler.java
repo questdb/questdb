@@ -1144,6 +1144,13 @@ public class QueryCompiler {
                                     )
                             )
                     );
+                } else if (im.millis > Long.MIN_VALUE) {
+                    ps = new MultiIntervalPartitionSource(ps,
+                            new SingleIntervalSource(
+                                    new Interval(im.millis, im.millis
+                                    )
+                            )
+                    );
                 }
 
                 if (im.intervalSource != null) {

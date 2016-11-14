@@ -180,19 +180,21 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
         try {
             return new IntConstant(Numbers.parseInt(node.token), node.position);
         } catch (NumericException ignore) {
-
         }
 
         try {
             return new LongConstant(Numbers.parseLong(node.token), node.position);
         } catch (NumericException ignore) {
-
         }
 
         try {
             return new DoubleConstant(Numbers.parseDouble(node.token), node.position);
         } catch (NumericException ignore) {
+        }
 
+        try {
+            return new FloatConstant(Numbers.parseFloat(node.token), node.position);
+        } catch (NumericException ignore) {
         }
 
         throw QueryError.$(node.position, "Unknown value type: " + node.token);

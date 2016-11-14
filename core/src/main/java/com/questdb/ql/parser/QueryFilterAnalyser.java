@@ -170,6 +170,11 @@ final class QueryFilterAnalyser {
         }
 
         if (node.lhs.type == ExprNode.LITERAL && node.lhs.token.equals(timestamp)) {
+
+            if (node.rhs.type != ExprNode.CONSTANT) {
+                return false;
+            }
+
             try {
                 long lo = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + inc;
                 if (lo > model.intervalLo) {
@@ -183,6 +188,11 @@ final class QueryFilterAnalyser {
         }
 
         if (node.rhs.type == ExprNode.LITERAL && node.rhs.token.equals(timestamp)) {
+
+            if (node.lhs.type != ExprNode.CONSTANT) {
+                return false;
+            }
+
             try {
                 long hi = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - inc;
                 if (hi < model.intervalHi) {
@@ -318,6 +328,11 @@ final class QueryFilterAnalyser {
 
         if (node.lhs.type == ExprNode.LITERAL && node.lhs.token.equals(timestamp)) {
             try {
+
+                if (node.rhs.type != ExprNode.CONSTANT) {
+                    return false;
+                }
+
                 long hi = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) - inc;
                 if (hi < model.intervalHi) {
                     model.intervalHi = hi;
@@ -332,6 +347,10 @@ final class QueryFilterAnalyser {
 
         if (node.rhs.type == ExprNode.LITERAL && node.rhs.token.equals(timestamp)) {
             try {
+                if (node.lhs.type != ExprNode.CONSTANT) {
+                    return false;
+                }
+
                 long lo = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) + inc;
                 if (lo > model.intervalLo) {
                     model.intervalLo = lo;
