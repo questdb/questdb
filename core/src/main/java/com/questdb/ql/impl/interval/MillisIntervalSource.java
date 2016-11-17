@@ -51,7 +51,7 @@ public class MillisIntervalSource extends AbstractImmutableIterator<Interval> im
         if (pos++ == 0) {
             return start;
         } else {
-            next.update(next.getLo() + period, next.getHi() + period);
+            next.of(next.getLo() + period, next.getHi() + period);
             return next;
         }
     }
@@ -69,6 +69,6 @@ public class MillisIntervalSource extends AbstractImmutableIterator<Interval> im
     @Override
     public void toTop() {
         pos = 0;
-        next.update(start.getLo(), start.getHi());
+        next.of(start.getLo(), start.getHi());
     }
 }

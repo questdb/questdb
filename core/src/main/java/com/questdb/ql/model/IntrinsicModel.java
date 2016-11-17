@@ -23,23 +23,17 @@
 
 package com.questdb.ql.model;
 
-import com.questdb.misc.Dates;
-import com.questdb.ql.impl.interval.IntervalSource;
-import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.IntList;
-import com.questdb.std.Mutable;
-import com.questdb.std.ObjectFactory;
+import com.questdb.misc.Interval;
+import com.questdb.ql.parser.IntervalCompiler;
+import com.questdb.std.*;
 
 public class IntrinsicModel implements Mutable {
     public static final IntrinsicModelFactory FACTORY = new IntrinsicModelFactory();
     public final CharSequenceHashSet keyValues = new CharSequenceHashSet();
     public final IntList keyValuePositions = new IntList();
     public String keyColumn;
-    public long intervalLo = Long.MIN_VALUE;
-    public long intervalHi = Long.MAX_VALUE;
     public ExprNode filter;
-    public long millis = Long.MIN_VALUE;
-    public IntervalSource intervalSource;
+    public ObjList<Interval> intervals;
     public int intrinsicValue = IntrinsicValue.UNDEFINED;
     public boolean keyValuesIsLambda = false;
 
@@ -53,28 +47,34 @@ public class IntrinsicModel implements Mutable {
         keyValuePositions.clear();
         clearInterval();
         filter = null;
-        millis = Long.MIN_VALUE;
-        intervalSource = null;
+        intervals = null;
         intrinsicValue = IntrinsicValue.UNDEFINED;
         keyValuesIsLambda = false;
     }
 
     public void clearInterval() {
-        this.intervalLo = Long.MIN_VALUE;
-        this.intervalHi = Long.MAX_VALUE;
+        // todo: refactor out allocations
+        this.intervals = null;
     }
 
-    public void overlapInterval(long lo, long hi) {
-        if (hi < intervalLo || lo > intervalHi) {
-            intrinsicValue = IntrinsicValue.FALSE;
-        } else {
-            if (lo > intervalLo) {
-                intervalLo = lo;
-            }
+    public void intersectInterval(long lo, long hi) {
+        Interval interval = new Interval(lo, hi);
+        ObjList<Interval> list = new ObjList<>();
+        list.add(interval);
+        intersectInterval(list);
+    }
 
-            if (hi < intervalHi) {
-                intervalHi = hi;
-            }
+    public void intersectInterval(ObjList<Interval> list) {
+        if (this.intervals == null) {
+            this.intervals = list;
+        } else {
+            this.intervals = IntervalCompiler.intersect(this.intervals, list);
+        }
+
+        if (intervals.size() == 0) {
+            intrinsicValue = IntrinsicValue.FALSE;
+//        } else if (intrinsicValue == IntrinsicValue.UNDEFINED) {
+//            intrinsicValue = IntrinsicValue.TRUE;
         }
     }
 
@@ -83,10 +83,7 @@ public class IntrinsicModel implements Mutable {
         return "IntrinsicModel{" +
                 "keyValues=" + keyValues +
                 ", keyColumn='" + keyColumn + '\'' +
-                ", intervalLo=" + Dates.toString(intervalLo) +
-                ", intervalHi=" + Dates.toString(intervalHi) +
                 ", filter=" + filter +
-                ", millis=" + millis +
                 '}';
     }
 

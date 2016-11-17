@@ -156,17 +156,17 @@ public class Interval implements Sinkable {
         return hi <= x;
     }
 
+    public void of(long lo, long hi) {
+        this.lo = lo;
+        this.hi = hi;
+    }
+
     @Override
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("low").put(':').putISODate(lo).put(',');
         sink.putQuoted("high").put(':').putISODate(hi);
         sink.put('}');
-    }
-
-    public void update(long lo, long hi) {
-        this.lo = lo;
-        this.hi = hi;
     }
 }
 

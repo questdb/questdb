@@ -52,7 +52,7 @@ public class MonthsIntervalSource extends AbstractImmutableIterator<Interval> im
         if (pos++ == 0) {
             return start;
         } else {
-            next.update(Dates.addMonths(next.getLo(), period), Dates.addMonths(next.getHi(), period));
+            next.of(Dates.addMonths(next.getLo(), period), Dates.addMonths(next.getHi(), period));
             return next;
         }
     }
@@ -70,6 +70,6 @@ public class MonthsIntervalSource extends AbstractImmutableIterator<Interval> im
     @Override
     public void toTop() {
         pos = 0;
-        next.update(start.getLo(), start.getHi());
+        next.of(start.getLo(), start.getHi());
     }
 }

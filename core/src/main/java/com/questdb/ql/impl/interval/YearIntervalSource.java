@@ -52,7 +52,7 @@ public class YearIntervalSource extends AbstractImmutableIterator<Interval> impl
         if (pos++ == 0) {
             return start;
         } else {
-            next.update(Dates.addYear(next.getLo(), period), Dates.addYear(next.getHi(), period));
+            next.of(Dates.addYear(next.getLo(), period), Dates.addYear(next.getHi(), period));
             return next;
         }
     }
@@ -70,6 +70,6 @@ public class YearIntervalSource extends AbstractImmutableIterator<Interval> impl
     @Override
     public void toTop() {
         pos = 0;
-        next.update(start.getLo(), start.getHi());
+        next.of(start.getLo(), start.getHi());
     }
 }

@@ -40,9 +40,8 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.*;
 import com.questdb.ql.impl.aggregation.*;
 import com.questdb.ql.impl.analytic.*;
-import com.questdb.ql.impl.interval.IntervalRecordSource;
-import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
-import com.questdb.ql.impl.interval.SingleIntervalSource;
+import com.questdb.ql.impl.interval.IntervalRecordSource2;
+import com.questdb.ql.impl.interval.MultiIntervalPartitionSource2;
 import com.questdb.ql.impl.join.AsOfJoinRecordSource;
 import com.questdb.ql.impl.join.AsOfPartitionedJoinRecordSource;
 import com.questdb.ql.impl.join.CrossJoinRecordSource;
@@ -1136,25 +1135,8 @@ public class QueryCompiler {
                 ps = new NoOpJournalPartitionSource(journalMetadata);
             } else {
 
-                if (im.intervalHi < Long.MAX_VALUE || im.intervalLo > Long.MIN_VALUE) {
-
-                    ps = new MultiIntervalPartitionSource(ps,
-                            new SingleIntervalSource(
-                                    new Interval(im.intervalLo, im.intervalHi
-                                    )
-                            )
-                    );
-                } else if (im.millis > Long.MIN_VALUE) {
-                    ps = new MultiIntervalPartitionSource(ps,
-                            new SingleIntervalSource(
-                                    new Interval(im.millis, im.millis
-                                    )
-                            )
-                    );
-                }
-
-                if (im.intervalSource != null) {
-                    ps = new MultiIntervalPartitionSource(ps, im.intervalSource);
+                if (im.intervals != null) {
+                    ps = new MultiIntervalPartitionSource2(ps, im.intervals);
                 }
 
                 if (latestByCol == null) {
@@ -1576,15 +1558,8 @@ public class QueryCompiler {
                 return new NoOpJournalRecordSource(rs);
             }
 
-            if (im.intervalHi < Long.MAX_VALUE || im.intervalLo > Long.MIN_VALUE) {
-                rs = new IntervalRecordSource(rs,
-                        new SingleIntervalSource(new Interval(im.intervalLo, im.intervalHi))
-                );
-            }
-
-            if (im.intervalSource != null) {
-                // todo: not hit by test
-                rs = new IntervalRecordSource(rs, im.intervalSource);
+            if (im.intervals != null) {
+                rs = new IntervalRecordSource2(rs, im.intervals);
             }
 
             if (im.filter != null) {

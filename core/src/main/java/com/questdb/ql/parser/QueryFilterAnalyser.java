@@ -29,11 +29,6 @@ import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Dates;
-import com.questdb.misc.Interval;
-import com.questdb.misc.Numbers;
-import com.questdb.ql.impl.interval.MillisIntervalSource;
-import com.questdb.ql.impl.interval.MonthsIntervalSource;
-import com.questdb.ql.impl.interval.YearIntervalSource;
 import com.questdb.ql.model.AliasTranslator;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.IntrinsicModel;
@@ -52,7 +47,6 @@ final class QueryFilterAnalyser {
     private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
     private final FlyweightCharSequence quoteEraser = new FlyweightCharSequence();
     private final ObjList<ExprNode> keyNodes = new ObjList<>();
-    private final ObjList<ExprNode> timestampNodes = new ObjList<>();
     private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
     private final IntList tempPos = new IntList();
@@ -80,13 +74,8 @@ final class QueryFilterAnalyser {
 
         if (a.type == ExprNode.LITERAL && b.type == ExprNode.CONSTANT) {
             if (isTimestamp(a)) {
-                boolean reversible = parseInterval(model, quoteEraser.ofQuoted(b.token), b.position);
+                parseInterval(model, quoteEraser.ofQuoted(b.token), b.position);
                 node.intrinsicValue = IntrinsicValue.TRUE;
-                // exact timestamp matches will be returning FALSE
-                // which means that they are irreversible and won't be added to timestampNodes.
-                if (reversible) {
-                    timestampNodes.add(node);
-                }
                 return true;
             } else {
                 String column = translator.translateAlias(a.token).toString();
@@ -176,11 +165,7 @@ final class QueryFilterAnalyser {
             }
 
             try {
-                long lo = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + inc;
-                if (lo > model.intervalLo) {
-                    model.intervalLo = lo;
-                }
-                node.intrinsicValue = IntrinsicValue.TRUE;
+                model.intersectInterval(Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + inc, Long.MAX_VALUE);
                 return true;
             } catch (NumericException e) {
                 throw QueryError.$(node.rhs.position, "Not a date");
@@ -194,11 +179,7 @@ final class QueryFilterAnalyser {
             }
 
             try {
-                long hi = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - inc;
-                if (hi < model.intervalHi) {
-                    model.intervalHi = hi;
-                }
-                node.intrinsicValue = IntrinsicValue.TRUE;
+                model.intersectInterval(Long.MIN_VALUE, Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - inc);
                 return true;
             } catch (NumericException e) {
                 throw QueryError.$(node.lhs.position, "Not a date");
@@ -238,7 +219,6 @@ final class QueryFilterAnalyser {
             throw QueryError.$(in.args.getQuick(0).position, "Too many args");
         }
 
-
         if (in.paramCount < 3) {
             throw QueryError.$(in.position, "Too few args");
         }
@@ -262,9 +242,8 @@ final class QueryFilterAnalyser {
                 throw QueryError.$(hi.position, "Unknown date format");
             }
 
-            model.overlapInterval(loMillis, hiMillis);
+            model.intersectInterval(loMillis, hiMillis);
             in.intrinsicValue = IntrinsicValue.TRUE;
-            timestampNodes.add(in);
             return true;
         }
         return false;
@@ -334,11 +313,8 @@ final class QueryFilterAnalyser {
                 }
 
                 long hi = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) - inc;
-                if (hi < model.intervalHi) {
-                    model.intervalHi = hi;
-                }
+                model.intersectInterval(Long.MIN_VALUE, hi);
                 node.intrinsicValue = IntrinsicValue.TRUE;
-                timestampNodes.add(node);
                 return true;
             } catch (NumericException e) {
                 throw QueryError.$(node.rhs.position, "Not a date");
@@ -352,11 +328,8 @@ final class QueryFilterAnalyser {
                 }
 
                 long lo = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) + inc;
-                if (lo > model.intervalLo) {
-                    model.intervalLo = lo;
-                }
+                model.intersectInterval(lo, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicValue.TRUE;
-                timestampNodes.add(node);
                 return true;
             } catch (NumericException e) {
                 throw QueryError.$(node.lhs.position, "Not a date");
@@ -472,7 +445,6 @@ final class QueryFilterAnalyser {
     IntrinsicModel extract(AliasTranslator translator, ExprNode node, RecordMetadata m, String preferredKeyColumn, int timestampIndex) throws ParserException {
         this.stack.clear();
         this.keyNodes.clear();
-        this.timestampNodes.clear();
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
 
@@ -516,121 +488,8 @@ final class QueryFilterAnalyser {
     }
 
     private boolean parseInterval(IntrinsicModel model, CharSequence seq, int lo, int lim, int position) throws ParserException {
-        int pos[] = new int[3];
-        int p = -1;
-        for (int i = lo; i < lim; i++) {
-            if (seq.charAt(i) == ';') {
-                if (p > 1) {
-                    throw QueryError.$(position, "Invalid interval format");
-                }
-                pos[++p] = i;
-            }
-        }
-
-        switch (p) {
-            case -1:
-                // no semicolons, just date part, which can be interval in itself
-                try {
-                    Interval interval = Dates.parseInterval(seq, lo, lim);
-                    model.overlapInterval(interval.getLo(), interval.getHi());
-                    return true;
-                } catch (NumericException ignore) {
-                    // this must be a date then?
-                }
-
-                // reset intrinsic value of previous timestamp nodes
-                for (int i = 0, k = timestampNodes.size(); i < k; i++) {
-                    timestampNodes.getQuick(i).intrinsicValue = IntrinsicValue.UNDEFINED;
-                }
-                timestampNodes.clear();
-
-                try {
-                    long millis = Dates.tryParse(seq, lo, lim);
-
-                    if (model.millis != Long.MIN_VALUE && model.millis != millis) {
-                        model.intrinsicValue = IntrinsicValue.FALSE;
-                    }
-
-                    model.millis = millis;
-                    model.clearInterval();
-                    return false;
-                } catch (NumericException e) {
-                    throw QueryError.$(position, "Not a date");
-                }
-            case 0:
-                // single semicolon, expect period format after date
-                Interval interval0 = parseInterval0(seq, lo, pos[0], lim, position);
-                model.overlapInterval(interval0.getLo(), interval0.getHi());
-                break;
-            case 2:
-                if (model.intervalSource != null) {
-                    throw QueryError.$(position, "Duplicate interval filter is not supported");
-                }
-                Interval interval2 = parseInterval0(seq, lo, pos[0], pos[1], position);
-                int period;
-                try {
-                    period = Numbers.parseInt(seq, pos[1] + 1, pos[2] - 1);
-                } catch (NumericException e) {
-                    throw QueryError.$(position, "Period not a number");
-                }
-                char type = seq.charAt(pos[2] - 1);
-                int count;
-                try {
-                    count = Numbers.parseInt(seq, pos[2] + 1, seq.length());
-                } catch (NumericException e) {
-                    throw QueryError.$(position, "Count not a number");
-                }
-                switch (type) {
-                    case 'y':
-                        model.intervalSource = new YearIntervalSource(interval2, period, count);
-                        break;
-                    case 'M':
-                        model.intervalSource = new MonthsIntervalSource(interval2, period, count);
-                        break;
-                    case 'h':
-                        model.intervalSource = new MillisIntervalSource(interval2, period * Dates.HOUR_MILLIS, count);
-                        break;
-                    case 'm':
-                        model.intervalSource = new MillisIntervalSource(interval2, period * Dates.MINUTE_MILLIS, count);
-                        break;
-                    case 's':
-                        model.intervalSource = new MillisIntervalSource(interval2, period * Dates.SECOND_MILLIS, count);
-                        break;
-                    case 'd':
-                        model.intervalSource = new MillisIntervalSource(interval2, period * Dates.DAY_MILLIS, count);
-                        break;
-                    default:
-                        throw QueryError.$(position, "Unknown period: " + type + " at " + (p - 1));
-                }
-                break;
-            default:
-                throw QueryError.$(position, "Invalid interval format");
-        }
-
+        model.intersectInterval(IntervalCompiler.parseIntervalEx(seq, lo, lim, position));
         return true;
-    }
-
-    private Interval parseInterval0(CharSequence seq, int lo, int p, int lim, int position) throws ParserException {
-        char type = seq.charAt(lim - 1);
-        int period;
-        try {
-            period = Numbers.parseInt(seq, p + 1, lim - 1);
-        } catch (NumericException e) {
-            throw QueryError.$(position, "Range not a number");
-        }
-        try {
-            Interval interval = Dates.parseInterval(seq, lo, p);
-            return new Interval(interval.getLo(), Dates.addPeriod(interval.getHi(), type, period));
-        } catch (NumericException ignore) {
-            // try date instead
-        }
-        try {
-            long loMillis = Dates.tryParse(seq, lo, p - 1);
-            long hiMillis = Dates.addPeriod(loMillis, type, period);
-            return new Interval(loMillis, hiMillis);
-        } catch (NumericException e) {
-            throw QueryError.$(position, "Neither interval nor date");
-        }
     }
 
     private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {

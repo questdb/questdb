@@ -381,8 +381,11 @@ final public class Dates {
     }
 
     public static Interval parseInterval(CharSequence seq, final int pos, int lim) throws NumericException {
-        int len = lim - pos - 1;
+        int len = lim - pos;
         int p = pos;
+        if (len < 4) {
+            throw NumericException.INSTANCE;
+        }
         int year = Numbers.parseInt(seq, p, p += 4);
         boolean l = isLeapYear(year);
         if (checkLen(p, len)) {
@@ -596,7 +599,7 @@ final public class Dates {
     }
 
     private static boolean checkLen(int p, int lim) throws NumericException {
-        if (lim - p > 1) {
+        if (lim - p > 2) {
             return true;
         }
         if (lim <= p) {

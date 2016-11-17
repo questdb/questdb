@@ -24,13 +24,14 @@
 package com.questdb.std;
 
 import com.questdb.misc.Unsafe;
+import com.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Iterator;
 
-public class ObjList<T> implements Mutable {
+public class ObjList<T> implements Mutable, Sinkable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     /**
      * The maximum number of runs in merge sort.
@@ -237,21 +238,6 @@ public class ObjList<T> implements Mutable {
         Unsafe.arrayPut(buffer, --pos, null);
     }
 
-// --Commented out by Inspection START (15/05/2016, 01:08):
-//    public void seed(int capacity, ObjectFactory<T> factory) {
-//        ensureCapacity0(capacity);
-//        pos = capacity;
-//        for (int i = 0; i < capacity; i++) {
-//            T o = Unsafe.arrayGet(buffer, i);
-//            if (o == null) {
-//                Unsafe.arrayPut(buffer, i, factory.newInstance());
-//            } else if (o instanceof Mutable) {
-//                ((Mutable) o).clear();
-//            }
-//        }
-//    }
-// --Commented out by Inspection STOP (15/05/2016, 01:08)
-
     /**
      * {@inheritDoc}
      */
@@ -266,6 +252,21 @@ public class ObjList<T> implements Mutable {
         }
         return false;
     }
+
+// --Commented out by Inspection START (15/05/2016, 01:08):
+//    public void seed(int capacity, ObjectFactory<T> factory) {
+//        ensureCapacity0(capacity);
+//        pos = capacity;
+//        for (int i = 0; i < capacity; i++) {
+//            T o = Unsafe.arrayGet(buffer, i);
+//            if (o == null) {
+//                Unsafe.arrayPut(buffer, i, factory.newInstance());
+//            } else if (o instanceof Mutable) {
+//                ((Mutable) o).clear();
+//            }
+//        }
+//    }
+// --Commented out by Inspection STOP (15/05/2016, 01:08)
 
     public void setAll(int capacity, T value) {
         ensureCapacity0(capacity);
@@ -286,6 +287,25 @@ public class ObjList<T> implements Mutable {
 
     public void sort(Comparator<T> cmp) {
         sort(0, size() - 1, cmp);
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            T obj = getQuick(i);
+            if (obj instanceof Sinkable) {
+                sink.put((Sinkable) obj);
+            } else if (obj == null) {
+                sink.put("null");
+            } else {
+                sink.put(obj.toString());
+            }
+        }
+        sink.put(']');
     }
 
     @SuppressWarnings("unchecked")
