@@ -26,12 +26,13 @@ package com.questdb.ql.impl.interval;
 import com.questdb.Partition;
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.misc.Interval;
 import com.questdb.ql.PartitionCursor;
 import com.questdb.ql.PartitionSlice;
 import com.questdb.ql.PartitionSource;
 import com.questdb.ql.StorageFacade;
+import com.questdb.ql.parser.IntervalCompiler;
 import com.questdb.std.AbstractImmutableIterator;
+import com.questdb.std.LongList;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.BSearchType;
 import com.questdb.store.FixedColumn;
@@ -39,18 +40,19 @@ import com.questdb.store.FixedColumn;
 public class MultiIntervalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
     private final PartitionSource partitionSource;
     private final PartitionSlice result = new PartitionSlice();
-    private final IntervalSource intervalSource;
+    private final LongList intervals;
+    private final int intervalCount;
     private PartitionCursor partitionCursor;
-    private boolean needInterval = true;
     private boolean needPartition = true;
-    private Interval interval;
     private PartitionSlice slice = null;
     private FixedColumn timestampColumn = null;
     private long nextRowLo;
+    private int intervalIndex = 0;
 
-    public MultiIntervalPartitionSource(PartitionSource partitionSource, IntervalSource intervalSource) {
+    public MultiIntervalPartitionSource(PartitionSource partitionSource, LongList intervals) {
         this.partitionSource = partitionSource;
-        this.intervalSource = intervalSource;
+        this.intervals = intervals;
+        this.intervalCount = intervals.size() / 2;
     }
 
     @Override
@@ -60,8 +62,7 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
 
     @Override
     public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) {
-        intervalSource.toTop();
-        needInterval = true;
+        intervalIndex = 0;
         needPartition = true;
         partitionCursor = partitionSource.prepareCursor(readerFactory);
         return this;
@@ -79,8 +80,7 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
 
     @Override
     public void toTop() {
-        intervalSource.toTop();
-        needInterval = true;
+        intervalIndex = 0;
         needPartition = true;
         partitionCursor.toTop();
     }
@@ -91,15 +91,12 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
         long sliceRowHi;
         long sliceLo;
         long sliceHi;
+        long lo;
+        long hi;
 
         while (true) {
-
-            if (needInterval) {
-                if (intervalSource.hasNext()) {
-                    interval = intervalSource.next();
-                } else {
-                    return false;
-                }
+            if (intervalIndex == intervalCount) {
+                return false;
             }
 
             if (needPartition) {
@@ -108,7 +105,6 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
                     sliceRowLo = nextRowLo = slice.lo;
                     sliceRowHi = slice.calcHi ? slice.partition.size() - 1 : slice.hi;
                     if (sliceRowHi < 0) {
-                        needInterval = false;
                         continue;
                     }
                     timestampColumn = slice.partition.getTimestampColumn();
@@ -120,17 +116,19 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
                 sliceRowHi = slice.calcHi ? slice.partition.size() - 1 : slice.hi;
             }
 
+            lo = IntervalCompiler.getIntervalLo(intervals, intervalIndex);
+            hi = IntervalCompiler.getIntervalHi(intervals, intervalIndex);
+
             // interval is fully above notional partition interval, skip to next interval
-            if (interval.getHi() < slice.partition.getInterval().getLo() || interval.getHi() < (sliceLo = timestampColumn.getLong(sliceRowLo))) {
+            if (hi < slice.partition.getInterval().getLo() || hi < (sliceLo = timestampColumn.getLong(sliceRowLo))) {
                 needPartition = false;
-                needInterval = true;
+                intervalIndex++;
                 continue;
             }
 
             // interval is below notional partition, skip to next partition
-            if (interval.getLo() > slice.partition.getInterval().getHi() || interval.getLo() > (sliceHi = timestampColumn.getLong(sliceRowHi))) {
+            if (lo > slice.partition.getInterval().getHi() || lo > (sliceHi = timestampColumn.getLong(sliceRowHi))) {
                 needPartition = true;
-                needInterval = false;
             } else {
                 break;
             }
@@ -138,20 +136,22 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
 
         this.result.partition = slice.partition;
 
-        if (interval.getLo() > sliceLo) {
-            this.result.lo = slice.partition.indexOf(interval.getLo(), BSearchType.NEWER_OR_SAME);
+        if (lo > sliceLo) {
+            this.result.lo = slice.partition.indexOf(lo, BSearchType.NEWER_OR_SAME);
         } else {
             this.result.lo = sliceRowLo;
         }
 
-        if (interval.getHi() < sliceHi) {
-            this.result.hi = slice.partition.indexOf(interval.getHi(), BSearchType.OLDER_OR_SAME, this.result.lo, sliceRowHi);
+        if (hi < sliceHi) {
+            this.result.hi = slice.partition.indexOf(hi, BSearchType.OLDER_OR_SAME, this.result.lo, sliceRowHi);
             needPartition = false;
-            needInterval = true;
+            intervalIndex++;
         } else {
             this.result.hi = sliceRowHi;
             needPartition = true;
-            needInterval = interval.getHi() == sliceHi;
+            if (hi == sliceHi) {
+                intervalIndex++;
+            }
         }
 
         nextRowLo = result.hi + 1;
@@ -169,8 +169,7 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("MultiIntervalPartitionSource").put(',');
         sink.putQuoted("psrc").put(':').put(partitionSource).put(',');
-        sink.putQuoted("isrc").put(':').put(intervalSource);
+        sink.putQuoted("isrc").put(':').put(IntervalCompiler.asIntervalStr(intervals));
         sink.put('}');
     }
-
 }

@@ -25,26 +25,28 @@ package com.questdb.ql.impl.interval;
 
 import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.misc.Interval;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
+import com.questdb.ql.parser.IntervalCompiler;
+import com.questdb.std.LongList;
 import com.questdb.std.str.CharSink;
 
 public class IntervalRecordSource extends AbstractCombinedRecordSource {
 
     private final RecordSource delegate;
-    private final IntervalSource intervalSource;
+    private final LongList intervals;
     private final int timestampIndex;
+    private final int intervalCount;
     private RecordCursor cursor;
     private Record record;
-    private boolean needInterval = true;
     private boolean needRecord = true;
-    private Interval interval;
+    private int intervalIndex = 0;
 
-    public IntervalRecordSource(RecordSource delegate, IntervalSource intervalSource) {
+    public IntervalRecordSource(RecordSource delegate, LongList intervals) {
         this.delegate = delegate;
-        this.intervalSource = intervalSource;
+        this.intervals = intervals;
+        this.intervalCount = intervals.size() / 2;
         final RecordMetadata metadata = delegate.getMetadata();
         this.timestampIndex = metadata.getTimestampIndex();
     }
@@ -61,8 +63,7 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
-        intervalSource.toTop();
-        needInterval = true;
+        intervalIndex = 0;
         needRecord = true;
         this.cursor = delegate.prepareCursor(factory, cancellationHandler);
         return this;
@@ -85,9 +86,8 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public void toTop() {
-        needInterval = true;
         needRecord = true;
-        intervalSource.toTop();
+        intervalIndex = 0;
         this.cursor.toTop();
     }
 
@@ -95,12 +95,8 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
     public boolean hasNext() {
         while (true) {
 
-            if (needInterval) {
-                if (intervalSource.hasNext()) {
-                    interval = intervalSource.next();
-                } else {
-                    return false;
-                }
+            if (intervalIndex == intervalCount) {
+                return false;
             }
 
             if (needRecord) {
@@ -115,18 +111,15 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
 
 
             // interval is fully above notional partition interval, skip to next interval
-            if (interval.getHi() < t) {
+            if (IntervalCompiler.getIntervalHi(intervals, intervalIndex) < t) {
                 needRecord = false;
-                needInterval = true;
+                intervalIndex++;
                 continue;
             }
 
+            needRecord = true;
             // interval is below notional partition, skip to next partition
-            if (interval.getLo() > t) {
-                needRecord = true;
-                needInterval = false;
-            } else {
-                needRecord = true;
+            if (IntervalCompiler.getIntervalLo(intervals, intervalIndex) <= t) {
                 return true;
             }
         }
@@ -157,7 +150,7 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("IntervalRecordSource").put(',');
         sink.putQuoted("src").put(':').put(delegate).put(',');
-        sink.putQuoted("interval").put(':').put(intervalSource);
+        sink.putQuoted("interval").put(':').put(IntervalCompiler.asIntervalStr(intervals));
         sink.put('}');
     }
 }

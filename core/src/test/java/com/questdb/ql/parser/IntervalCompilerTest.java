@@ -26,57 +26,96 @@ package com.questdb.ql.parser;
 import com.questdb.ex.ParserException;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Interval;
+import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 public class IntervalCompilerTest {
 
+    private LongList a = new LongList();
+    private LongList b = new LongList();
+    private LongList out = new LongList();
+
+    @Before
+    public void setUp() throws Exception {
+        a.clear();
+        b.clear();
+        out.clear();
+    }
+
     @Test
-    public void testIntersectContain() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T09:00:00.000Z"), Dates.parseDateTime("2016-03-10T13:30:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]", IntervalCompiler.intersect(a, b).toString());
+    public void testIntersectContain2() throws Exception {
+        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+
+        b.add(Dates.parseDateTime("2016-03-10T09:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T13:30:00.000Z"));
+
+        assertIntersect("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]");
     }
 
     @Test
     public void testIntersectMergeOverlap() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T11:00:00.000Z"), Dates.parseDateTime("2016-03-10T14:00:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T11:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]", IntervalCompiler.intersect(a, b).toString());
+        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+
+        b.add(Dates.parseDateTime("2016-03-10T11:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
+
+        assertIntersect("[Interval{lo=2016-03-10T11:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]");
+    }
+
+    @Test
+    public void testIntersectMergeOverlap2() throws Exception {
+        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+
+        b.add(Dates.parseDateTime("2016-03-10T11:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
+
+        assertIntersect("[Interval{lo=2016-03-10T11:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]");
     }
 
     @Test
     public void testIntersectNoOverlap() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T14:00:00.000Z"), Dates.parseDateTime("2016-03-10T16:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T13:00:00.000Z"), Dates.parseDateTime("2016-03-10T13:30:00.000Z")));
-        Assert.assertEquals("[]", IntervalCompiler.intersect(a, b).toString());
+        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T16:00:00.000Z"));
+
+        b.add(Dates.parseDateTime("2016-03-10T13:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T13:30:00.000Z"));
+
+        assertIntersect("[]");
     }
 
     @Test
     public void testIntersectSame() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]", IntervalCompiler.intersect(a, b).toString());
+        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+
+        b.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+
+        assertIntersect("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]");
     }
 
     @Test
-    public void testIntersectTwoOverlapOne() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T14:00:00.000Z"), Dates.parseDateTime("2016-03-10T16:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T11:00:00.000Z"), Dates.parseDateTime("2016-03-10T15:00:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T11:00:00.000Z, hi=2016-03-10T12:00:00.000Z},Interval{lo=2016-03-10T14:00:00.000Z, hi=2016-03-10T15:00:00.000Z}]", IntervalCompiler.intersect(a, b).toString());
+    public void testIntersectTwoOverlapOne2() throws Exception {
+        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+
+
+        a.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T16:00:00.000Z"));
+
+
+        b.add(Dates.parseDateTime("2016-03-10T11:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T15:00:00.000Z"));
+
+        assertIntersect("[Interval{lo=2016-03-10T11:00:00.000Z, hi=2016-03-10T12:00:00.000Z},Interval{lo=2016-03-10T14:00:00.000Z, hi=2016-03-10T15:00:00.000Z}]");
     }
 
     @Test
@@ -89,29 +128,40 @@ public class IntervalCompilerTest {
         Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T16:00:00.000Z}]", IntervalCompiler.union(a, b).toString());
     }
 
-    @Test(expected = ParserException.class)
+    @Test
+    public void testParseLongInterval22() throws Exception {
+        assertShortInterval("[Interval{lo=2015-03-12T10:00:00.000Z, hi=2015-03-12T10:05:00.999Z},Interval{lo=2015-03-12T10:30:00.000Z, hi=2015-03-12T10:35:00.999Z},Interval{lo=2015-03-12T11:00:00.000Z, hi=2015-03-12T11:05:00.999Z},Interval{lo=2015-03-12T11:30:00.000Z, hi=2015-03-12T11:35:00.999Z},Interval{lo=2015-03-12T12:00:00.000Z, hi=2015-03-12T12:05:00.999Z},Interval{lo=2015-03-12T12:30:00.000Z, hi=2015-03-12T12:35:00.999Z},Interval{lo=2015-03-12T13:00:00.000Z, hi=2015-03-12T13:05:00.999Z},Interval{lo=2015-03-12T13:30:00.000Z, hi=2015-03-12T13:35:00.999Z},Interval{lo=2015-03-12T14:00:00.000Z, hi=2015-03-12T14:05:00.999Z},Interval{lo=2015-03-12T14:30:00.000Z, hi=2015-03-12T14:35:00.999Z}]",
+                "2015-03-12T10:00:00;5m;30m;10");
+    }
+
+    @Test
+    public void testParseLongInterval32() throws Exception {
+        assertShortInterval("[Interval{lo=2016-03-21T00:00:00.000Z, hi=2019-03-21T23:59:59.999Z},Interval{lo=2016-09-21T00:00:00.000Z, hi=2019-09-21T23:59:59.999Z},Interval{lo=2017-03-21T00:00:00.000Z, hi=2020-03-21T23:59:59.999Z},Interval{lo=2017-09-21T00:00:00.000Z, hi=2020-09-21T23:59:59.999Z},Interval{lo=2018-03-21T00:00:00.000Z, hi=2021-03-21T23:59:59.999Z}]", "2016-03-21;3y;6M;5");
+    }
+
+    @Test
     public void testParseShortDayErr() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-02-30", 0, 10, 0);
+        assertIntervalError("2016-02-30");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortDayErr2() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-02-3", 0, 9, 0);
+        assertIntervalError("2016-02-3");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortHourErr1() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-02-15T1", 0, 12, 0);
+        assertIntervalError("2016-02-15T1");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortHourErr2() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-02-15T31", 0, 13, 0);
+        assertIntervalError("2016-02-15T31");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortHourErr3() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-02-15X1", 0, 12, 0);
+        assertIntervalError("2016-02-15X1");
     }
 
     @Test
@@ -126,6 +176,11 @@ public class IntervalCompilerTest {
 
     @Test
     public void testParseShortInterval3() throws Exception {
+        assertShortInterval("[Interval{lo=2016-03-21T00:00:00.000Z, hi=2016-03-21T23:59:59.999Z}]", "2016-03-21");
+    }
+
+    @Test
+    public void testParseShortInterval32() throws Exception {
         assertShortInterval("[Interval{lo=2016-03-21T00:00:00.000Z, hi=2016-03-21T23:59:59.999Z}]", "2016-03-21");
     }
 
@@ -149,49 +204,49 @@ public class IntervalCompilerTest {
         assertShortInterval("[Interval{lo=2016-03-21T10:30:40.100Z, hi=2016-03-21T10:30:40.100Z}]", "2016-03-21T10:30:40.100Z");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortMilliErr() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-03-21T10:31:61.23", 0, 22, 0);
+        assertIntervalError("2016-03-21T10:31:61.23");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortMinErr() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-03-21T10:3", 0, 15, 0);
+        assertIntervalError("2016-03-21T10:3");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortMinErr2() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-03-21T10:69", 0, 15, 0);
+        assertIntervalError("2016-03-21T10:69");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortMonthErr() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-1", 0, 6, 0);
+        assertIntervalError("2016-1");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortMonthErr2() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016x11", 0, 7, 0);
+        assertIntervalError("2016x11");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortMonthRange() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-66", 0, 7, 0);
+        assertIntervalError("2016-66");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortSecErr() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-03-21T10:31:61", 0, 19, 0);
+        assertIntervalError("2016-03-21T10:31:61");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortSecErr1() throws Exception {
-        IntervalCompiler.parseIntervalEx("2016-03-21T10:31:1", 0, 18, 0);
+        assertIntervalError("2016-03-21T10:31:1");
     }
 
-    @Test(expected = ParserException.class)
+    @Test
     public void testParseShortYearErr() throws Exception {
-        IntervalCompiler.parseIntervalEx("201", 0, 3, 0);
+        assertIntervalError("201");
     }
 
     @Test
@@ -279,6 +334,22 @@ public class IntervalCompilerTest {
     }
 
     private static void assertShortInterval(String expected, String interval) throws ParserException {
-        Assert.assertEquals(expected, IntervalCompiler.parseIntervalEx(interval, 0, interval.length(), 0).toString());
+        LongList out = new LongList();
+        IntervalCompiler.parseIntervalEx(interval, 0, interval.length(), 0, out);
+        Assert.assertEquals(expected, IntervalCompiler.asIntervalStr(out));
     }
+
+    private void assertIntersect(String expected) {
+        IntervalCompiler.intersect(a, b, out);
+        Assert.assertEquals(expected, IntervalCompiler.asIntervalStr(out));
+    }
+
+    private void assertIntervalError(String interval) {
+        try {
+            IntervalCompiler.parseIntervalEx(interval, 0, interval.length(), 0, out);
+            Assert.fail();
+        } catch (ParserException ignore) {
+        }
+    }
+
 }

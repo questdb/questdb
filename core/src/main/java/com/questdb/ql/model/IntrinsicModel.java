@@ -23,7 +23,7 @@
 
 package com.questdb.ql.model;
 
-import com.questdb.misc.Interval;
+import com.questdb.ex.ParserException;
 import com.questdb.ql.parser.IntervalCompiler;
 import com.questdb.std.*;
 
@@ -31,9 +31,12 @@ public class IntrinsicModel implements Mutable {
     public static final IntrinsicModelFactory FACTORY = new IntrinsicModelFactory();
     public final CharSequenceHashSet keyValues = new CharSequenceHashSet();
     public final IntList keyValuePositions = new IntList();
+    private final LongList intervalsA = new LongList();
+    private final LongList intervalsB = new LongList();
+    private final LongList intervalsC = new LongList();
     public String keyColumn;
     public ExprNode filter;
-    public ObjList<Interval> intervals;
+    public LongList intervals;
     public int intrinsicValue = IntrinsicValue.UNDEFINED;
     public boolean keyValuesIsLambda = false;
 
@@ -53,29 +56,22 @@ public class IntrinsicModel implements Mutable {
     }
 
     public void clearInterval() {
-        // todo: refactor out allocations
         this.intervals = null;
     }
 
     public void intersectInterval(long lo, long hi) {
-        Interval interval = new Interval(lo, hi);
-        ObjList<Interval> list = new ObjList<>();
-        list.add(interval);
-        intersectInterval(list);
+        LongList temp = shuffleTemp();
+        temp.clear();
+        temp.add(lo);
+        temp.add(hi);
+        intersectInterval(temp);
     }
 
-    public void intersectInterval(ObjList<Interval> list) {
-        if (this.intervals == null) {
-            this.intervals = list;
-        } else {
-            this.intervals = IntervalCompiler.intersect(this.intervals, list);
-        }
-
-        if (intervals.size() == 0) {
-            intrinsicValue = IntrinsicValue.FALSE;
-//        } else if (intrinsicValue == IntrinsicValue.UNDEFINED) {
-//            intrinsicValue = IntrinsicValue.TRUE;
-        }
+    public void intersectInterval(CharSequence seq, int lo, int lim, int position) throws ParserException {
+        LongList temp = shuffleTemp();
+        temp.clear();
+        IntervalCompiler.parseIntervalEx(seq, lo, lim, position, temp);
+        intersectInterval(temp);
     }
 
     @Override
@@ -85,6 +81,46 @@ public class IntrinsicModel implements Mutable {
                 ", keyColumn='" + keyColumn + '\'' +
                 ", filter=" + filter +
                 '}';
+    }
+
+    private void intersectInterval(LongList intervals) {
+        if (this.intervals == null) {
+            this.intervals = intervals;
+        } else {
+            LongList dest = shuffleDest();
+            dest.clear();
+
+            IntervalCompiler.intersect(intervals, this.intervals, dest);
+            this.intervals = dest;
+        }
+
+        if (this.intervals.size() == 0) {
+            intrinsicValue = IntrinsicValue.FALSE;
+        }
+    }
+
+    private LongList shuffleDest() {
+        if (intervals == null || intervals == intervalsA) {
+            return intervalsB;
+        }
+
+        if (intervals == intervalsB) {
+            return intervalsC;
+        }
+
+        return intervalsA;
+    }
+
+    private LongList shuffleTemp() {
+        if (intervals == null || intervals == intervalsA) {
+            return intervalsC;
+        }
+
+        if (intervals == intervalsB) {
+            return intervalsA;
+        }
+
+        return intervalsB;
     }
 
     public static final class IntrinsicModelFactory implements ObjectFactory<IntrinsicModel> {

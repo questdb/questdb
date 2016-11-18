@@ -28,9 +28,37 @@ import com.questdb.ex.ParserException;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Interval;
 import com.questdb.misc.Numbers;
+import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 
 public class IntervalCompiler {
+
+    public static String asIntervalStr(LongList l) {
+        StringBuilder b = new StringBuilder();
+        b.append('[');
+        for (int i = 0, n = l.size(); i < n; i += 2) {
+            if (i > 0) {
+                b.append(',');
+            }
+            b.append("Interval{");
+            b.append("lo=");
+            b.append(Dates.toString(l.getQuick(i)));
+            b.append(", ");
+            b.append("hi=");
+            b.append(Dates.toString(l.getQuick(i + 1)));
+            b.append('}');
+        }
+        b.append(']');
+        return b.toString();
+    }
+
+    public static long getIntervalHi(LongList intervals, int pos) {
+        return intervals.getQuick((pos << 1) + 1);
+    }
+
+    public static long getIntervalLo(LongList intervals, int pos) {
+        return intervals.getQuick(pos << 1);
+    }
 
     /**
      * Intersects two lists of intervals and returns result list. Both lists are expected
@@ -40,51 +68,45 @@ public class IntervalCompiler {
      * @param b list of intervals
      * @return intersection
      */
-    public static ObjList<Interval> intersect(ObjList<Interval> a, ObjList<Interval> b) {
-        ObjList<Interval> out = new ObjList<>();
+    public static LongList intersect(LongList a, LongList b, LongList out) {
 
-        int indexA = 0;
-        int indexB = 0;
-        final int sizeA = a.size();
-        final int sizeB = b.size();
-        Interval intervalA = null;
-        Interval intervalB = null;
+        final int sizeA = a.size() / 2;
+        final int sizeB = b.size() / 2;
+        int intervalA = 0;
+        int intervalB = 0;
 
         while (true) {
-            if (intervalA == null && indexA < sizeA) {
-                intervalA = a.getQuick(indexA++);
-            }
 
-            if (intervalB == null && indexB < sizeB) {
-                intervalB = b.getQuick(indexB++);
-            }
-
-            if (intervalA == null || intervalB == null) {
+            if (intervalA == sizeA || intervalB == sizeB) {
                 break;
             }
 
+            long aLo = getIntervalLo(a, intervalA);
+            long aHi = getIntervalHi(a, intervalA);
+
+            long bLo = getIntervalLo(b, intervalB);
+            long bHi = getIntervalHi(b, intervalB);
+
             // a fully above b
-            if (intervalA.getHi() < intervalB.getLo()) {
+            if (aHi < bLo) {
                 // a loses
-                intervalA = null;
-            } else if (intervalA.getLo() > intervalB.getHi()) {
+                intervalA++;
+            } else if (getIntervalLo(a, intervalA) > getIntervalHi(b, intervalB)) {
                 // a fully below b
                 // b loses
-                intervalB = null;
+                intervalB++;
             } else {
-                append(out, new Interval(
-                        Math.max(intervalA.getLo(), intervalB.getLo()),
-                        Math.min(intervalA.getHi(), intervalB.getHi())
-                ));
 
-                if (intervalA.getHi() < intervalB.getHi()) {
+                append(out, aLo > bLo ? aLo : bLo, aHi < bHi ? aHi : bHi);
+
+                if (aHi < bHi) {
                     // b hanging lower than a
                     // a loses
-                    intervalA = null;
+                    intervalA++;
                 } else {
                     // otherwise a lower than b
                     // a loses
-                    intervalB = null;
+                    intervalB++;
                 }
             }
         }
@@ -92,7 +114,7 @@ public class IntervalCompiler {
         return out;
     }
 
-    public static ObjList<Interval> parseIntervalEx(CharSequence seq, int lo, int lim, int position) throws ParserException {
+    public static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, LongList out) throws ParserException {
         int pos[] = new int[3];
         int p = -1;
         for (int i = lo; i < lim; i++) {
@@ -104,13 +126,11 @@ public class IntervalCompiler {
             }
         }
 
-        final ObjList<Interval> out = new ObjList<>();
-
         switch (p) {
             case -1:
                 // no semicolons, just date part, which can be interval in itself
                 try {
-                    out.add(Dates.parseInterval(seq, lo, lim));
+                    Dates.parseInterval(seq, lo, lim, out);
                     break;
                 } catch (NumericException ignore) {
                     // this must be a date then?
@@ -118,14 +138,15 @@ public class IntervalCompiler {
 
                 try {
                     long millis = Dates.tryParse(seq, lo, lim);
-                    out.add(new Interval(millis, millis));
+                    out.add(millis);
+                    out.add(millis);
                     break;
                 } catch (NumericException e) {
                     throw QueryError.$(position, "Not a date");
                 }
             case 0:
                 // single semicolon, expect period format after date
-                out.add(parseRange(seq, lo, pos[0], lim, position));
+                parseRange(seq, lo, pos[0], lim, position, out);
                 break;
             case 2:
                 int period;
@@ -141,25 +162,26 @@ public class IntervalCompiler {
                     throw QueryError.$(position, "Count not a number");
                 }
 
+                parseRange(seq, lo, pos[0], pos[1], position, out);
                 char type = seq.charAt(pos[2] - 1);
                 switch (type) {
                     case 'y':
-                        addYearIntervals(parseRange(seq, lo, pos[0], pos[1], position), period, count, out);
+                        addYearIntervals(period, count, out);
                         break;
                     case 'M':
-                        addMonthInterval(parseRange(seq, lo, pos[0], pos[1], position), period, count, out);
+                        addMonthInterval(period, count, out);
                         break;
                     case 'h':
-                        addMillisInterval(parseRange(seq, lo, pos[0], pos[1], position), period * Dates.HOUR_MILLIS, count, out);
+                        addMillisInterval(period * Dates.HOUR_MILLIS, count, out);
                         break;
                     case 'm':
-                        addMillisInterval(parseRange(seq, lo, pos[0], pos[1], position), period * Dates.MINUTE_MILLIS, count, out);
+                        addMillisInterval(period * Dates.MINUTE_MILLIS, count, out);
                         break;
                     case 's':
-                        addMillisInterval(parseRange(seq, lo, pos[0], pos[1], position), period * Dates.SECOND_MILLIS, count, out);
+                        addMillisInterval(period * Dates.SECOND_MILLIS, count, out);
                         break;
                     case 'd':
-                        addMillisInterval(parseRange(seq, lo, pos[0], pos[1], position), period * Dates.DAY_MILLIS, count, out);
+                        addMillisInterval(period * Dates.DAY_MILLIS, count, out);
                         break;
                     default:
                         throw QueryError.$(position, "Unknown period: " + type + " at " + (p - 1));
@@ -168,8 +190,6 @@ public class IntervalCompiler {
             default:
                 throw QueryError.$(position, "Invalid interval format");
         }
-
-        return out;
     }
 
     /**
@@ -309,6 +329,20 @@ public class IntervalCompiler {
         return out;
     }
 
+    private static void append(LongList list, long lo, long hi) {
+        int n = list.size();
+        if (n > 0) {
+            long prevHi = list.getQuick(n - 1) + 1;
+            if (prevHi == lo) {
+                list.setQuick(n - 1, hi);
+                return;
+            }
+        }
+
+        list.add(lo);
+        list.add(hi);
+    }
+
     private static void append(ObjList<Interval> list, Interval interval) {
         int n = list.size();
         if (n > 0) {
@@ -322,7 +356,7 @@ public class IntervalCompiler {
         list.add(interval);
     }
 
-    private static Interval parseRange(CharSequence seq, int lo, int p, int lim, int position) throws ParserException {
+    private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, LongList out) throws ParserException {
         char type = seq.charAt(lim - 1);
         int period;
         try {
@@ -331,55 +365,58 @@ public class IntervalCompiler {
             throw QueryError.$(position, "Range not a number");
         }
         try {
-            Interval interval = Dates.parseInterval(seq, lo, p);
-            return new Interval(interval.getLo(), Dates.addPeriod(interval.getHi(), type, period));
+            Dates.parseInterval(seq, lo, p, out);
+            int n = out.size();
+            out.setQuick(n - 1, Dates.addPeriod(out.getQuick(n - 1), type, period));
+            return;
         } catch (NumericException ignore) {
             // try date instead
         }
         try {
             long loMillis = Dates.tryParse(seq, lo, p - 1);
-            long hiMillis = Dates.addPeriod(loMillis, type, period);
-            return new Interval(loMillis, hiMillis);
+            out.add(loMillis);
+            out.add(Dates.addPeriod(loMillis, type, period));
         } catch (NumericException e) {
             throw QueryError.$(position, "Neither interval nor date");
         }
     }
 
-    private static void addMillisInterval(Interval interval, long period, int count, ObjList<Interval> out) {
-        out.add(interval);
+    private static void addMillisInterval(long period, int count, LongList out) {
+        int k = out.size();
+        long lo = out.getQuick(k - 2);
+        long hi = out.getQuick(k - 1);
+
         for (int i = 0, n = count - 1; i < n; i++) {
-            interval = new Interval(
-                    interval.getLo() + period,
-                    interval.getHi() + period
-            );
-            out.add(interval);
+            lo += period;
+            hi += period;
+            out.add(lo);
+            out.add(hi);
         }
     }
 
-    private static void addMonthInterval(Interval interval, int period, int count, ObjList<Interval> out) {
-        out.add(interval);
+    private static void addMonthInterval(int period, int count, LongList out) {
+        int k = out.size();
+        long lo = out.getQuick(k - 2);
+        long hi = out.getQuick(k - 1);
+
         for (int i = 0, n = count - 1; i < n; i++) {
-            interval = new Interval(
-                    Dates.addMonths(interval.getLo(), period),
-                    Dates.addMonths(interval.getHi(), period)
-            );
-            out.add(interval);
+            lo = Dates.addMonths(lo, period);
+            hi = Dates.addMonths(hi, period);
+            out.add(lo);
+            out.add(hi);
         }
     }
 
-    private static void addYearIntervals(Interval interval, int period, int count, ObjList<Interval> out) {
-        out.add(interval);
-        for (int i = 0, n = count - 1; i < n; i++) {
-            interval = new Interval(
-                    Dates.addYear(interval.getLo(), period),
-                    Dates.addYear(interval.getHi(), period)
-            );
-            out.add(interval);
-        }
-    }
+    private static void addYearIntervals(int period, int count, LongList out) {
+        int k = out.size();
+        long lo = out.getQuick(k - 2);
+        long hi = out.getQuick(k - 1);
 
-    public static class Result {
-        ObjList<Interval> intervals = null;
-        boolean contaminated = false;
+        for (int i = 0, n = count - 1; i < n; i++) {
+            lo = Dates.addYear(lo, period);
+            hi = Dates.addYear(hi, period);
+            out.add(lo);
+            out.add(hi);
+        }
     }
 }

@@ -65,7 +65,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testAndBranchWithNonIndexedField() throws Exception {
         IntrinsicModel m = modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\") and bid > 100");
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         assertFilter(m, "100bid>");
     }
 
@@ -202,28 +202,28 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testComplexInterval1() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2015-02-23T10:00;2d'");
-        Assert.assertEquals("[Interval{lo=2015-02-23T10:00:00.000Z, hi=2015-02-25T10:00:59.999Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2015-02-23T10:00:00.000Z, hi=2015-02-25T10:00:59.999Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertEquals("IntrinsicModel{keyValues=[], keyColumn='null', filter=null}", m.toString());
     }
 
     @Test
     public void testComplexInterval2() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2015-02-23T10:00:55.000Z;7d'");
-        Assert.assertEquals("[Interval{lo=2015-02-23T10:00:55.000Z, hi=2015-03-02T10:00:55.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2015-02-23T10:00:55.000Z, hi=2015-03-02T10:00:55.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertEquals("IntrinsicModel{keyValues=[], keyColumn='null', filter=null}", m.toString());
     }
 
     @Test
     public void testComplexInterval3() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2015-02-23T10:00:55.000Z;15s'");
-        Assert.assertEquals("[Interval{lo=2015-02-23T10:00:55.000Z, hi=2015-02-23T10:01:10.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2015-02-23T10:00:55.000Z, hi=2015-02-23T10:01:10.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertEquals("IntrinsicModel{keyValues=[], keyColumn='null', filter=null}", m.toString());
     }
 
     @Test
     public void testComplexInterval4() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m'");
-        Assert.assertEquals("[Interval{lo=2015-02-23T10:00:55.000Z, hi=2015-02-23T10:30:55.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2015-02-23T10:00:55.000Z, hi=2015-02-23T10:30:55.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertEquals("IntrinsicModel{keyValues=[], keyColumn='null', filter=null}", m.toString());
     }
 
@@ -344,7 +344,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testExactDate() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2015-05-10T15:03:10.000Z' and timestamp < '2015-05-11T08:00:55.000Z'");
-        Assert.assertEquals("[Interval{lo=2015-05-10T15:03:10.000Z, hi=2015-05-10T15:03:10.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2015-05-10T15:03:10.000Z, hi=2015-05-10T15:03:10.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertNull(m.filter);
     }
 
@@ -358,14 +358,14 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testFilterAndInterval() throws Exception {
         IntrinsicModel m = modelOf("bid > 100 and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         assertFilter(m, "100bid>");
     }
 
     @Test
     public void testFilterMultipleKeysAndInterval() throws Exception {
         IntrinsicModel m = modelOf("sym in (\"a\", \"b\", \"c\") and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b,c]", m.keyValues.toString());
         Assert.assertEquals("[8,13,18]", m.keyValuePositions.toString());
@@ -375,7 +375,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testFilterOnIndexedFieldAndInterval() throws Exception {
         IntrinsicModel m = modelOf("sym in ('a') and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a]", m.keyValues.toString());
         Assert.assertNull(m.filter);
@@ -399,7 +399,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     public void testInVsEqualInterval() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and timestamp = '2014-01-01'");
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-01T23:59:59.999Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-01T23:59:59.999Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -420,32 +420,32 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testIntervalGreater1() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and timestamp > '2014-01-01T15:30:00.000Z'");
-        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.001Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.001Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
     public void testIntervalGreater2() throws Exception {
         IntrinsicModel m = modelOf("timestamp > '2014-01-01T15:30:00.000Z' and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
-        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.001Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.001Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
     public void testIntervalGreaterOrEq1() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and timestamp >= '2014-01-01T15:30:00.000Z'");
-        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
     public void testIntervalGreaterOrEq2() throws Exception {
         IntrinsicModel m = modelOf("timestamp >= '2014-01-01T15:30:00.000Z' and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
-        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
     public void testIntervalSourceDay() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m;2d;5'");
         Assert.assertEquals("[Interval{lo=2015-02-23T10:00:55.000Z, hi=2015-02-23T10:30:55.000Z},Interval{lo=2015-02-25T10:00:55.000Z, hi=2015-02-25T10:30:55.000Z},Interval{lo=2015-02-27T10:00:55.000Z, hi=2015-02-27T10:30:55.000Z},Interval{lo=2015-03-01T10:00:55.000Z, hi=2015-03-01T10:30:55.000Z},Interval{lo=2015-03-03T10:00:55.000Z, hi=2015-03-03T10:30:55.000Z}]",
-                m.intervals.toString());
+                IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -462,7 +462,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
                 "Interval{lo=2015-02-24T10:00:55.000Z, hi=2015-02-24T10:10:55.000Z}," +
                 "Interval{lo=2015-02-24T13:00:55.000Z, hi=2015-02-24T13:10:55.000Z}]";
 
-        Assert.assertEquals(expected, m.intervals.toString());
+        Assert.assertEquals(expected, IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -473,7 +473,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
                 "Interval{lo=2015-02-23T10:30:55.000Z, hi=2015-02-23T10:31:10.000Z}," +
                 "Interval{lo=2015-02-23T10:45:55.000Z, hi=2015-02-23T10:46:10.000Z}," +
                 "Interval{lo=2015-02-23T11:00:55.000Z, hi=2015-02-23T11:01:10.000Z}]";
-        Assert.assertEquals(expected, m.intervals.toString());
+        Assert.assertEquals(expected, IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -483,7 +483,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
                 "Interval{lo=2015-04-23T10:00:55.000Z, hi=2015-04-23T12:00:55.000Z}," +
                 "Interval{lo=2015-06-23T10:00:55.000Z, hi=2015-06-23T12:00:55.000Z}]";
 
-        Assert.assertEquals(expected, m.intervals.toString());
+        Assert.assertEquals(expected, IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -495,7 +495,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
                 "Interval{lo=2015-02-23T10:02:25.000Z, hi=2015-02-23T10:02:30.000Z}," +
                 "Interval{lo=2015-02-23T10:02:55.000Z, hi=2015-02-23T10:03:00.000Z}]";
 
-        Assert.assertEquals(expected, m.intervals.toString());
+        Assert.assertEquals(expected, IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -507,7 +507,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
                 "Interval{lo=2018-02-23T10:00:55.000Z, hi=2018-02-24T10:00:55.000Z}," +
                 "Interval{lo=2019-02-23T10:00:55.000Z, hi=2019-02-24T10:00:55.000Z}]";
 
-        Assert.assertEquals(expected, m.intervals.toString());
+        Assert.assertEquals(expected, IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -599,7 +599,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testLiteralInListOfValues() throws Exception {
         IntrinsicModel m = modelOf("sym in (\"a\", z) and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertNull(m.keyColumn);
         assertFilter(m, "z\"a\"symin");
     }
@@ -617,13 +617,13 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testManualInterval() throws Exception {
         IntrinsicModel m = modelOf("timestamp >= '2014-01-01T15:30:00.000Z' and timestamp < '2014-01-02T12:30:00.000Z'");
-        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.000Z, hi=2014-01-02T12:29:59.999Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.000Z, hi=2014-01-02T12:29:59.999Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
     public void testManualIntervalInverted() throws Exception {
         IntrinsicModel m = modelOf("'2014-01-02T12:30:00.000Z' > timestamp and '2014-01-01T15:30:00.000Z' <= timestamp ");
-        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.000Z, hi=2014-01-02T12:29:59.999Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T15:30:00.000Z, hi=2014-01-02T12:29:59.999Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -670,7 +670,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
         assertFilter(m, "110ask<100bid>'b''a'syminandand");
         Assert.assertEquals("ex", m.keyColumn);
         Assert.assertEquals("[c]", m.keyValues.toString());
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -680,7 +680,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
         assertFilter(m, "110ask<100bid>'b''a'syminandand");
         Assert.assertEquals("ex", m.keyColumn);
         Assert.assertEquals("[c]", m.keyValues.toString());
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -689,13 +689,13 @@ public class QueryFilterAnalyserTest extends AbstractTest {
         m = modelOf("sym in ('a', 'b') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110", "ex");
         assertFilter(m, "110ask<100bid>'b''a'syminandand");
         Assert.assertNull(m.keyColumn);
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
     public void testSimpleInterval() throws Exception {
         IntrinsicModel m = modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertNull(m.filter);
     }
 
@@ -709,7 +709,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testSingleQuoteInterval() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertNull(m.filter);
     }
 
@@ -720,7 +720,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
         assertFilter(m, "110ask<100bid>'c'exinandand");
         Assert.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b]", m.keyValues.toString());
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -730,7 +730,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
         assertFilter(m, "110ask<100bid>'c'exinandand");
         Assert.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b]", m.keyValues.toString());
-        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T12:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
@@ -747,7 +747,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testTwoExactMatchDifferentDates() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2015-05-10T15:03:10.000Z' and timestamp = '2015-05-11T15:03:10.000Z' and timestamp = '2015-05-11'");
-        Assert.assertEquals("[]", m.intervals.toString());
+        Assert.assertEquals("[]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertNull(m.filter);
         Assert.assertEquals(IntrinsicValue.FALSE, m.intrinsicValue);
     }
@@ -755,7 +755,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testTwoExactSameDates() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2015-05-10T15:03:10.000Z' and timestamp = '2015-05-10T15:03:10.000Z' and timestamp = '2015-05-11'");
-        Assert.assertEquals("[]", m.intervals.toString());
+        Assert.assertEquals("[]", IntervalCompiler.asIntervalStr(m.intervals));
         Assert.assertNull(m.filter);
         Assert.assertEquals(IntrinsicValue.FALSE, m.intrinsicValue);
     }
@@ -763,13 +763,13 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     @Test
     public void testTwoIntervalSources() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2014-06-20T13:25:00.000Z;10m;2d;5' and timestamp = '2015-06-20T13:25:00.000Z;10m;2d;5'");
-        Assert.assertEquals("[]", m.intervals.toString());
+        Assert.assertEquals("[]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test
     public void testTwoIntervals() throws Exception {
         IntrinsicModel m = modelOf("bid > 100 and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\") and timestamp in (\"2014-01-01T16:30:00.000Z\", \"2014-01-05T12:30:00.000Z\")");
-        Assert.assertEquals("[Interval{lo=2014-01-01T16:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", m.intervals.toString());
+        Assert.assertEquals("[Interval{lo=2014-01-01T16:30:00.000Z, hi=2014-01-02T12:30:00.000Z}]", IntervalCompiler.asIntervalStr(m.intervals));
     }
 
     @Test

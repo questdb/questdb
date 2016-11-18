@@ -24,6 +24,7 @@
 package com.questdb.misc;
 
 import com.questdb.ex.NumericException;
+import com.questdb.std.LongList;
 import com.questdb.std.str.CharSink;
 import com.questdb.txt.sink.StringSink;
 
@@ -495,6 +496,118 @@ final public class Dates {
                             + 59 * SECOND_MILLIS
                             + 999
             );
+        }
+    }
+
+    public static void parseInterval(CharSequence seq, final int pos, int lim, LongList out) throws NumericException {
+        int len = lim - pos;
+        int p = pos;
+        if (len < 4) {
+            throw NumericException.INSTANCE;
+        }
+        int year = Numbers.parseInt(seq, p, p += 4);
+        boolean l = isLeapYear(year);
+        if (checkLen(p, len)) {
+            checkChar(seq, p++, lim, '-');
+            int month = Numbers.parseInt(seq, p, p += 2);
+            checkRange(month, 1, 12);
+            if (checkLen(p, len)) {
+                checkChar(seq, p++, lim, '-');
+                int day = Numbers.parseInt(seq, p, p += 2);
+                checkRange(day, 1, getDaysPerMonth(month, l));
+                if (checkLen(p, len)) {
+                    checkChar(seq, p++, lim, 'T');
+                    int hour = Numbers.parseInt(seq, p, p += 2);
+                    checkRange(hour, 0, 23);
+                    if (checkLen(p, len)) {
+                        checkChar(seq, p++, lim, ':');
+                        int min = Numbers.parseInt(seq, p, p += 2);
+                        checkRange(min, 0, 59);
+                        if (checkLen(p, len)) {
+                            checkChar(seq, p++, lim, ':');
+                            int sec = Numbers.parseInt(seq, p, p += 2);
+                            checkRange(sec, 0, 59);
+                            if (p < len) {
+                                throw NumericException.INSTANCE;
+                            } else {
+                                // seconds
+                                out.add(yearMillis(year, l)
+                                        + monthOfYearMillis(month, l)
+                                        + (day - 1) * DAY_MILLIS
+                                        + hour * HOUR_MILLIS
+                                        + min * MINUTE_MILLIS
+                                        + sec * SECOND_MILLIS);
+                                out.add(yearMillis(year, l)
+                                        + monthOfYearMillis(month, l)
+                                        + (day - 1) * DAY_MILLIS
+                                        + hour * HOUR_MILLIS
+                                        + min * MINUTE_MILLIS
+                                        + sec * SECOND_MILLIS
+                                        + 999);
+                            }
+                        } else {
+                            // minute
+                            out.add(yearMillis(year, l)
+                                    + monthOfYearMillis(month, l)
+                                    + (day - 1) * DAY_MILLIS
+                                    + hour * HOUR_MILLIS
+                                    + min * MINUTE_MILLIS);
+                            out.add(yearMillis(year, l)
+                                    + monthOfYearMillis(month, l)
+                                    + (day - 1) * DAY_MILLIS
+                                    + hour * HOUR_MILLIS
+                                    + min * MINUTE_MILLIS
+                                    + 59 * SECOND_MILLIS
+                                    + 999);
+                        }
+                    } else {
+                        // year + month + day + hour
+                        out.add(yearMillis(year, l)
+                                + monthOfYearMillis(month, l)
+                                + (day - 1) * DAY_MILLIS
+                                + hour * HOUR_MILLIS);
+                        out.add(yearMillis(year, l)
+                                + monthOfYearMillis(month, l)
+                                + (day - 1) * DAY_MILLIS
+                                + hour * HOUR_MILLIS
+                                + 59 * MINUTE_MILLIS
+                                + 59 * SECOND_MILLIS
+                                + 999);
+                    }
+                } else {
+                    // year + month + day
+                    out.add(yearMillis(year, l)
+                            + monthOfYearMillis(month, l)
+                            + (day - 1) * DAY_MILLIS);
+                    out.add(yearMillis(year, l)
+                            + monthOfYearMillis(month, l)
+                            + +(day - 1) * DAY_MILLIS
+                            + 23 * HOUR_MILLIS
+                            + 59 * MINUTE_MILLIS
+                            + 59 * SECOND_MILLIS
+                            + 999);
+                }
+            } else {
+                // year + month
+                out.add(yearMillis(year, l) + monthOfYearMillis(month, l));
+                out.add(yearMillis(year, l)
+                        + monthOfYearMillis(month, l)
+                        + (DAYS_PER_MONTH[month - 1] - 1) * DAY_MILLIS
+                        + 23 * HOUR_MILLIS
+                        + 59 * MINUTE_MILLIS
+                        + 59 * SECOND_MILLIS
+                        + 999);
+            }
+        } else {
+            // year
+            out.add(yearMillis(year, l) + monthOfYearMillis(1, l));
+            out.add(yearMillis(year, l)
+                    + monthOfYearMillis(12, l)
+                    + (DAYS_PER_MONTH[11] - 1) * DAY_MILLIS
+                    + 23 * HOUR_MILLIS
+                    + 59 * MINUTE_MILLIS
+                    + 59 * SECOND_MILLIS
+                    + 999);
         }
     }
 

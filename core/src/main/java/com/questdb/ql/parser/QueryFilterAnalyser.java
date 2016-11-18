@@ -488,7 +488,7 @@ final class QueryFilterAnalyser {
     }
 
     private boolean parseInterval(IntrinsicModel model, CharSequence seq, int lo, int lim, int position) throws ParserException {
-        model.intersectInterval(IntervalCompiler.parseIntervalEx(seq, lo, lim, position));
+        model.intersectInterval(seq, lo, lim, position);
         return true;
     }
 
