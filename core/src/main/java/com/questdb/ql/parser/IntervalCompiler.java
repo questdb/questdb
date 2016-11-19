@@ -138,8 +138,7 @@ public class IntervalCompiler {
 
                 try {
                     long millis = Dates.tryParse(seq, lo, lim);
-                    out.add(millis);
-                    out.add(millis);
+                    append(out, millis, millis);
                     break;
                 } catch (NumericException e) {
                     throw QueryError.$(position, "Not a date");
@@ -196,64 +195,67 @@ public class IntervalCompiler {
      * Performs set subtraction on two lists of intervals. Subtracts b from a, e.g. result = a - b.
      * Both sets are expected to be ordered chronologically.
      *
-     * @param a list of intervals
-     * @param b list of intervals
-     * @return result of subtraction
+     * @param a   list of intervals
+     * @param b   list of intervals
+     * @param out result of subtraction
      */
-    public static ObjList<Interval> subtract(ObjList<Interval> a, ObjList<Interval> b) {
-        ObjList<Interval> out = new ObjList<>();
+    public static void subtract(LongList a, LongList b, LongList out) {
 
-        int indexA = 0;
-        int indexB = 0;
-        final int sizeA = a.size();
-        final int sizeB = b.size();
-        Interval intervalA = null;
-        Interval intervalB = null;
+        final int sizeA = a.size() / 2;
+        final int sizeB = b.size() / 2;
+        int intervalA = 0;
+        int intervalB = 0;
+        boolean fetchA = true;
 
-        while (true) {
-            if (intervalA == null && indexA < sizeA) {
-                intervalA = a.getQuick(indexA++);
-            }
+        if (intervalA < sizeA) {
 
-            if (intervalB == null && indexB < sizeB) {
-                intervalB = b.getQuick(indexB++);
-            }
+            long aLo = getIntervalLo(a, intervalA);
+            long aHi = getIntervalHi(a, intervalA);
 
-            if (intervalA != null && intervalB == null) {
-                append(out, intervalA);
-                intervalA = null;
-                continue;
-            }
+            while (intervalA < sizeA) {
 
-            if (intervalA == null) {
-                break;
-            }
 
-            // a fully above b
-            if (intervalA.getHi() < intervalB.getLo()) {
-                // a loses
-                append(out, intervalA);
-                intervalA = null;
-            } else if (intervalA.getLo() > intervalB.getHi()) {
-                // a fully below b
-                // b loses
-                intervalB = null;
-            } else {
-
-                if (intervalA.getLo() < intervalB.getLo()) {
-                    // top part of a is above b
-                    append(out, new Interval(intervalA.getLo(), intervalB.getLo()));
+                if (fetchA) {
+                    aLo = getIntervalLo(a, intervalA);
+                    aHi = getIntervalHi(a, intervalA);
+                    fetchA = true;
                 }
 
-                if (intervalA.getHi() > intervalB.getHi()) {
-                    intervalA = new Interval(intervalB.getHi(), intervalA.getHi());
-                    intervalB = null;
+                if (intervalB == sizeB) {
+                    append(out, aLo, aHi);
+                    intervalA++;
+                    continue;
+                }
+
+                long bLo = getIntervalLo(b, intervalB);
+                long bHi = getIntervalHi(b, intervalB);
+
+                // a fully above b
+                if (aHi < bLo) {
+                    // a loses
+                    append(out, aLo, aHi);
+                    intervalA++;
+                } else if (aLo > bHi) {
+                    // a fully below b
+                    // b loses
+                    intervalB++;
                 } else {
-                    intervalA = null;
+
+                    if (aLo < bLo) {
+                        // top part of a is above b
+                        append(out, aLo, bLo - 1);
+                    }
+
+                    if (aHi > bHi) {
+                        aLo = bHi + 1;
+                        fetchA = false;
+                        intervalB++;
+                    } else {
+                        intervalA++;
+                    }
                 }
             }
         }
-        return out;
     }
 
     /**
@@ -374,8 +376,7 @@ public class IntervalCompiler {
         }
         try {
             long loMillis = Dates.tryParse(seq, lo, p - 1);
-            out.add(loMillis);
-            out.add(Dates.addPeriod(loMillis, type, period));
+            append(out, loMillis, Dates.addPeriod(loMillis, type, period));
         } catch (NumericException e) {
             throw QueryError.$(position, "Neither interval nor date");
         }
@@ -389,8 +390,7 @@ public class IntervalCompiler {
         for (int i = 0, n = count - 1; i < n; i++) {
             lo += period;
             hi += period;
-            out.add(lo);
-            out.add(hi);
+            append(out, lo, hi);
         }
     }
 
@@ -402,8 +402,7 @@ public class IntervalCompiler {
         for (int i = 0, n = count - 1; i < n; i++) {
             lo = Dates.addMonths(lo, period);
             hi = Dates.addMonths(hi, period);
-            out.add(lo);
-            out.add(hi);
+            append(out, lo, hi);
         }
     }
 
@@ -415,8 +414,7 @@ public class IntervalCompiler {
         for (int i = 0, n = count - 1; i < n; i++) {
             lo = Dates.addYear(lo, period);
             hi = Dates.addYear(hi, period);
-            out.add(lo);
-            out.add(hi);
+            append(out, lo, hi);
         }
     }
 }

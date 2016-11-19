@@ -31,7 +31,6 @@ import com.questdb.misc.BytecodeAssembler;
 import com.questdb.misc.Files;
 import com.questdb.model.Album;
 import com.questdb.model.Band;
-import com.questdb.model.Quote;
 import com.questdb.ql.impl.AllRowSource;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalRecordSource;
@@ -41,10 +40,12 @@ import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.test.tools.JournalTestFactory;
-import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
 
 public class HashJoinRecordSourceTest {
     @Rule
@@ -115,48 +116,6 @@ public class HashJoinRecordSourceTest {
                 "metal\n" +
                 "pop\n" +
                 "rock\n", sink.toString());
-    }
-
-    @Ignore
-    @Test
-    public void testHashJoinPerformance() throws Exception {
-        final JournalWriter<Quote> w1 = factory.writer(Quote.class, "q1");
-        TestUtils.generateQuoteData(w1, 100000);
-
-        final JournalWriter<Quote> w2 = factory.writer(Quote.class, "q2");
-        TestUtils.generateQuoteData(w2, 100000);
-
-        RecordSource j = new HashJoinRecordSource(
-                new JournalRecordSource(new JournalPartitionSource(w1.getMetadata(), false), new AllRowSource()),
-                new IntList() {{
-                    w1.getMetadata().getColumnIndex("sym");
-                }},
-                new JournalRecordSource(new JournalPartitionSource(w2.getMetadata(), false), new AllRowSource()),
-                new IntList() {{
-                    w2.getMetadata().getColumnIndex("sym");
-                }},
-                false,
-                4 * 1024 * 1024,
-                4 * 1024 * 1024,
-                1024 * 1024,
-                new RecordKeyCopierCompiler(new BytecodeAssembler())
-        );
-
-        long t = System.currentTimeMillis();
-        int count = 0;
-//        ExportManager.export(j, new File("c:/temp/join.csv"), TextFileDelimiter.TAB);
-        RecordCursor c = j.prepareCursor(factory);
-        while (c.hasNext()) {
-            c.next();
-            count++;
-        }
-        System.out.println(System.currentTimeMillis() - t);
-        System.out.println(count);
-
-
-//        ExportManager.export(factory, "q1", new File("d:/q1.csv"), TextFileDelimiter.TAB);
-//        ExportManager.export(factory, "q2", new File("d:/q2.csv"), TextFileDelimiter.TAB);
-//        ExportManager.export(j, new File("d:/join.csv"), TextFileDelimiter.TAB);
     }
 
     @Test

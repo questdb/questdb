@@ -29,6 +29,7 @@ import com.questdb.std.*;
 
 public class IntrinsicModel implements Mutable {
     public static final IntrinsicModelFactory FACTORY = new IntrinsicModelFactory();
+    private static final LongList INFINITE_INTERVAL;
     public final CharSequenceHashSet keyValues = new CharSequenceHashSet();
     public final IntList keyValuePositions = new IntList();
     private final LongList intervalsA = new LongList();
@@ -59,19 +60,39 @@ public class IntrinsicModel implements Mutable {
         this.intervals = null;
     }
 
-    public void intersectInterval(long lo, long hi) {
+    public void intersectIntervals(long lo, long hi) {
         LongList temp = shuffleTemp();
         temp.clear();
         temp.add(lo);
         temp.add(hi);
-        intersectInterval(temp);
+        intersectIntervals(temp);
     }
 
-    public void intersectInterval(CharSequence seq, int lo, int lim, int position) throws ParserException {
+    public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws ParserException {
         LongList temp = shuffleTemp();
         temp.clear();
         IntervalCompiler.parseIntervalEx(seq, lo, lim, position, temp);
-        intersectInterval(temp);
+        intersectIntervals(temp);
+    }
+
+    public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws ParserException {
+        LongList temp = shuffleTemp();
+        temp.clear();
+        IntervalCompiler.parseIntervalEx(seq, lo, lim, position, temp);
+
+        final LongList dest = shuffleDest();
+        dest.clear();
+
+        if (this.intervals == null) {
+            IntervalCompiler.subtract(INFINITE_INTERVAL, temp, dest);
+        } else {
+            IntervalCompiler.subtract(temp, this.intervals, dest);
+        }
+
+        this.intervals = dest;
+        if (this.intervals.size() == 0) {
+            intrinsicValue = IntrinsicValue.FALSE;
+        }
     }
 
     @Override
@@ -83,7 +104,7 @@ public class IntrinsicModel implements Mutable {
                 '}';
     }
 
-    private void intersectInterval(LongList intervals) {
+    private void intersectIntervals(LongList intervals) {
         if (this.intervals == null) {
             this.intervals = intervals;
         } else {
@@ -128,6 +149,12 @@ public class IntrinsicModel implements Mutable {
         public IntrinsicModel newInstance() {
             return new IntrinsicModel();
         }
+    }
+
+    static {
+        INFINITE_INTERVAL = new LongList();
+        INFINITE_INTERVAL.add(Long.MIN_VALUE);
+        INFINITE_INTERVAL.add(Long.MAX_VALUE);
     }
 
 }

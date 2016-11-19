@@ -251,49 +251,67 @@ public class IntervalCompilerTest {
 
     @Test
     public void testSubtractClipNone() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T14:00:00.000Z"), Dates.parseDateTime("2016-03-10T15:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T13:00:00.000Z"), Dates.parseDateTime("2016-03-10T13:30:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z},Interval{lo=2016-03-10T14:00:00.000Z, hi=2016-03-10T15:00:00.000Z}]", IntervalCompiler.subtract(a, b).toString());
+        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+
+        a.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T15:00:00.000Z"));
+
+        b.add(Dates.parseDateTime("2016-03-10T13:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T13:30:00.000Z"));
+
+        IntervalCompiler.subtract(a, b, out);
+        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z},Interval{lo=2016-03-10T14:00:00.000Z, hi=2016-03-10T15:00:00.000Z}]",
+                IntervalCompiler.asIntervalStr(out));
     }
 
     @Test
     public void testSubtractClipTwo() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T14:00:00.000Z"), Dates.parseDateTime("2016-03-10T15:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T11:00:00.000Z"), Dates.parseDateTime("2016-03-10T14:30:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T11:00:00.000Z},Interval{lo=2016-03-10T14:30:00.000Z, hi=2016-03-10T15:00:00.000Z}]", IntervalCompiler.subtract(a, b).toString());
+        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+
+        a.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T15:00:00.000Z"));
+
+        b.add(Dates.parseDateTime("2016-03-10T11:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T14:30:00.000Z"));
+
+        IntervalCompiler.subtract(a, b, out);
+        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T10:59:59.999Z},Interval{lo=2016-03-10T14:30:00.001Z, hi=2016-03-10T15:00:00.000Z}]", IntervalCompiler.asIntervalStr(out));
     }
 
     @Test
     public void testSubtractConsume() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T11:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T14:00:00.000Z")));
-        Assert.assertEquals("[]", IntervalCompiler.subtract(a, b).toString());
+        a.add(Dates.parseDateTime("2016-03-10T11:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+
+        b.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
+
+        IntervalCompiler.subtract(a, b, out);
+        Assert.assertEquals("[]", IntervalCompiler.asIntervalStr(out));
     }
 
     @Test
     public void testSubtractMakeHole() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T10:30:00.000Z"), Dates.parseDateTime("2016-03-10T11:30:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T10:30:00.000Z},Interval{lo=2016-03-10T11:30:00.000Z, hi=2016-03-10T12:00:00.000Z}]", IntervalCompiler.subtract(a, b).toString());
+        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T10:30:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T11:30:00.000Z"));
+
+        IntervalCompiler.subtract(a, b, out);
+        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T10:29:59.999Z},Interval{lo=2016-03-10T11:30:00.001Z, hi=2016-03-10T12:00:00.000Z}]", IntervalCompiler.asIntervalStr(out));
     }
 
     @Test
     public void testSubtractSame() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        Assert.assertEquals("[]", IntervalCompiler.subtract(a, b).toString());
+        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        b.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+
+        IntervalCompiler.subtract(a, b, out);
+        Assert.assertEquals("[]", IntervalCompiler.asIntervalStr(out));
     }
 
     @Test

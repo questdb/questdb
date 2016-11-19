@@ -74,7 +74,8 @@ final class QueryFilterAnalyser {
 
         if (a.type == ExprNode.LITERAL && b.type == ExprNode.CONSTANT) {
             if (isTimestamp(a)) {
-                parseInterval(model, quoteEraser.ofQuoted(b.token), b.position);
+                CharSequence seq = quoteEraser.ofQuoted(b.token);
+                model.intersectIntervals(seq, 0, seq.length(), b.position);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } else {
@@ -165,7 +166,7 @@ final class QueryFilterAnalyser {
             }
 
             try {
-                model.intersectInterval(Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + inc, Long.MAX_VALUE);
+                model.intersectIntervals(Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + inc, Long.MAX_VALUE);
                 return true;
             } catch (NumericException e) {
                 throw QueryError.$(node.rhs.position, "Not a date");
@@ -179,7 +180,7 @@ final class QueryFilterAnalyser {
             }
 
             try {
-                model.intersectInterval(Long.MIN_VALUE, Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - inc);
+                model.intersectIntervals(Long.MIN_VALUE, Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - inc);
                 return true;
             } catch (NumericException e) {
                 throw QueryError.$(node.lhs.position, "Not a date");
@@ -242,7 +243,7 @@ final class QueryFilterAnalyser {
                 throw QueryError.$(hi.position, "Unknown date format");
             }
 
-            model.intersectInterval(loMillis, hiMillis);
+            model.intersectIntervals(loMillis, hiMillis);
             in.intrinsicValue = IntrinsicValue.TRUE;
             return true;
         }
@@ -313,7 +314,7 @@ final class QueryFilterAnalyser {
                 }
 
                 long hi = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) - inc;
-                model.intersectInterval(Long.MIN_VALUE, hi);
+                model.intersectIntervals(Long.MIN_VALUE, hi);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } catch (NumericException e) {
@@ -328,7 +329,7 @@ final class QueryFilterAnalyser {
                 }
 
                 long lo = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) + inc;
-                model.intersectInterval(lo, Long.MAX_VALUE);
+                model.intersectIntervals(lo, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } catch (NumericException e) {
@@ -409,12 +410,22 @@ final class QueryFilterAnalyser {
     }
 
     private boolean analyzeNotEquals(IntrinsicModel model, ExprNode node) throws ParserException {
-
         checkNodeValid(node);
 
         if (Chars.equals(node.lhs.token, node.rhs.token)) {
             model.intrinsicValue = IntrinsicValue.FALSE;
         }
+
+        ExprNode a = node.lhs;
+        ExprNode b = node.rhs;
+
+        if (a.type == ExprNode.LITERAL && b.type == ExprNode.CONSTANT && isTimestamp(a)) {
+            CharSequence seq = quoteEraser.ofQuoted(b.token);
+            model.subtractIntervals(seq, 0, seq.length(), b.position);
+            node.intrinsicValue = IntrinsicValue.TRUE;
+            return true;
+        }
+
         return false;
     }
 
@@ -481,15 +492,6 @@ final class QueryFilterAnalyser {
 
     private boolean isTimestamp(ExprNode n) {
         return timestamp != null && timestamp.equals(n.token);
-    }
-
-    private boolean parseInterval(IntrinsicModel model, CharSequence seq, int position) throws ParserException {
-        return parseInterval(model, seq, 0, seq.length(), position);
-    }
-
-    private boolean parseInterval(IntrinsicModel model, CharSequence seq, int lo, int lim, int position) throws ParserException {
-        model.intersectInterval(seq, lo, lim, position);
-        return true;
     }
 
     private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {

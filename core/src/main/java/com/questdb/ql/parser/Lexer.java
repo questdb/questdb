@@ -232,9 +232,10 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
 
         for (int i = 0, sz = l.size(); i < sz; i++) {
             CharSequence txt = l.get(i);
-            boolean match = (txt.length() - 2) < (_len - _pos);
+            int n = txt.length();
+            boolean match = (n - 2) < (_len - _pos);
             if (match) {
-                for (int k = 1; k < txt.length(); k++) {
+                for (int k = 1; k < n; k++) {
                     if (content.charAt(_pos + (k - 1)) != txt.charAt(k)) {
                         match = false;
                         break;

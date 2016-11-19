@@ -304,6 +304,9 @@ public final class FunctionFactories {
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymEqualsOperator.FACTORY);
         factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.SYMBOL, false), SymEqualsROperator.FACTORY);
 
+        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.DATE, false).paramType(1, ColumnType.STRING, true), DateEqualsStrConstOperator.FACTORY);
+        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.DATE, false).paramType(1, ColumnType.STRING, false), DateEqualsStrConstOperator.FACTORY);
+
         binSig("!=", DoubleNotEqualsOperator.FACTORY, LongNotEqualsOperator.FACTORY, IntNotEqualsOperator.FACTORY, StrNotEqualsOperator.FACTORY);
 
         factories.put(new Signature().setName("!=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrNotEqualsOperator.FACTORY);
