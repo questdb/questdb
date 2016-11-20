@@ -238,19 +238,16 @@ public class ObjList<T> implements Mutable, Sinkable {
         Unsafe.arrayPut(buffer, --pos, null);
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    public boolean remove(Object o) {
+    public int remove(Object o) {
         if (pos == 0) {
-            return false;
+            return -1;
         }
         int index = indexOf(o);
         if (index > -1) {
             remove(index);
-            return true;
+            return index;
         }
-        return false;
+        return -1;
     }
 
 // --Commented out by Inspection START (15/05/2016, 01:08):

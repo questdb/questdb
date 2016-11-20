@@ -105,7 +105,7 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     @Override
     @SuppressWarnings("unchecked")
     public boolean remove(Object key) {
-        if (list.remove(key)) {
+        if (list.remove(key) > -1) {
             int index = idx((T) key);
             if (key.equals(Unsafe.arrayGet(keys, index))) {
                 Unsafe.arrayPut(keys, index, noEntryValue);

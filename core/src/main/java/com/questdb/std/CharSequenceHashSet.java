@@ -123,35 +123,33 @@ public class CharSequenceHashSet implements Mutable {
         return list.getLast();
     }
 
-    public boolean remove(CharSequence key) {
+    public int remove(CharSequence key) {
         if (key == null) {
             if (hasNull) {
                 hasNull = false;
-                list.remove(null);
+                int index = list.remove(null);
                 free++;
-                return true;
+                return index;
             }
-            return false;
+            return -1;
         }
 
         int index = idx(key);
 
         if (Unsafe.arrayGet(keys, index) == null) {
-            return false;
+            return -1;
         }
 
         if (eq(index, key)) {
-            removeAt(index);
-            return true;
+            return removeAt(index);
         }
 
         index = probe(key, index);
         if (index < 0) {
-            return false;
+            return -1;
         }
 
-        removeAt(index);
-        return true;
+        return removeAt(index);
     }
 
     public int size() {
@@ -228,10 +226,11 @@ public class CharSequenceHashSet implements Mutable {
         }
     }
 
-    private void removeAt(int index) {
-        list.remove(Unsafe.arrayGet(keys, index));
+    private int removeAt(int index) {
+        int result = list.remove(Unsafe.arrayGet(keys, index));
         free++;
         rehash();
+        return result;
     }
 
     @SuppressWarnings({"unchecked"})

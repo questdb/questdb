@@ -228,6 +228,14 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
+    public void testComplexInterval5() throws Exception {
+        IntrinsicModel m = modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m' and timestamp != '2015-02-23T10:10:00.000Z'");
+        Assert.assertEquals("[Interval{lo=2015-02-23T10:00:55.000Z, hi=2015-02-23T10:09:59.999Z},Interval{lo=2015-02-23T10:10:00.001Z, hi=2015-02-23T10:30:55.000Z}]",
+                IntervalCompiler.asIntervalStr(m.intervals));
+        Assert.assertEquals("IntrinsicModel{keyValues=[], keyColumn='null', filter=null}", m.toString());
+    }
+
+    @Test
     public void testConstVsLambda() throws Exception {
         IntrinsicModel m = modelOf("ex in (1,2) and sym in (`xyz`)");
         Assert.assertEquals("sym", m.keyColumn);
@@ -655,6 +663,22 @@ public class QueryFilterAnalyserTest extends AbstractTest {
         } catch (ParserException e) {
             Assert.assertTrue(Chars.contains(QueryError.getMessage(), "Column name expected"));
         }
+    }
+
+    @Test
+    public void testNotEqualsDoesNotOverlapWithIn() throws Exception {
+        IntrinsicModel m = modelOf("sym in ('x','y') and sym != 'z' and ex != 'blah'");
+        assertFilter(m, "'blah'ex!=");
+        Assert.assertEquals("[x,y]", m.keyValues.toString());
+        Assert.assertEquals("[8,12]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testNotEqualsOverlapWithIn() throws Exception {
+        IntrinsicModel m = modelOf("sym in ('x','y') and sym != 'y' and ex != 'blah'");
+        assertFilter(m, "'blah'ex!=");
+        Assert.assertEquals("[x]", m.keyValues.toString());
+        Assert.assertEquals("[8]", m.keyValuePositions.toString());
     }
 
     @Test

@@ -47,6 +47,7 @@ final class QueryFilterAnalyser {
     private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
     private final FlyweightCharSequence quoteEraser = new FlyweightCharSequence();
     private final ObjList<ExprNode> keyNodes = new ObjList<>();
+    private final ObjList<ExprNode> keyExclNodes = new ObjList<>();
     private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
     private final IntList tempPos = new IntList();
@@ -409,24 +410,85 @@ final class QueryFilterAnalyser {
         return false;
     }
 
-    private boolean analyzeNotEquals(IntrinsicModel model, ExprNode node) throws ParserException {
+    private boolean analyzeNotEquals(AliasTranslator translator, IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
         checkNodeValid(node);
+        return analyzeNotEquals0(translator, model, node, node.lhs, node.rhs, m)
+                || analyzeNotEquals0(translator, model, node, node.rhs, node.lhs, m);
+    }
 
-        if (Chars.equals(node.lhs.token, node.rhs.token)) {
+    private boolean analyzeNotEquals0(AliasTranslator translator, IntrinsicModel model, ExprNode node, ExprNode a, ExprNode b, RecordMetadata m) throws ParserException {
+
+        if (Chars.equals(a.token, b.token)) {
             model.intrinsicValue = IntrinsicValue.FALSE;
-        }
-
-        ExprNode a = node.lhs;
-        ExprNode b = node.rhs;
-
-        if (a.type == ExprNode.LITERAL && b.type == ExprNode.CONSTANT && isTimestamp(a)) {
-            CharSequence seq = quoteEraser.ofQuoted(b.token);
-            model.subtractIntervals(seq, 0, seq.length(), b.position);
-            node.intrinsicValue = IntrinsicValue.TRUE;
             return true;
         }
 
+        if (a.type == ExprNode.LITERAL && b.type == ExprNode.CONSTANT) {
+            if (isTimestamp(a)) {
+                CharSequence seq = quoteEraser.ofQuoted(b.token);
+                model.subtractIntervals(seq, 0, seq.length(), b.position);
+                node.intrinsicValue = IntrinsicValue.TRUE;
+                return true;
+            } else {
+                String column = translator.translateAlias(a.token).toString();
+                int index = m.getColumnIndexQuiet(column);
+                if (index == -1) {
+                    throw QueryError.invalidColumn(a.position, a.token);
+                }
+                RecordColumnMetadata meta = m.getColumn(index);
+
+                switch (meta.getType()) {
+                    case ColumnType.SYMBOL:
+                    case ColumnType.STRING:
+                    case ColumnType.LONG:
+                    case ColumnType.INT:
+                        if (meta.isIndexed()) {
+
+                            // check if we are limited by preferred column
+                            if (preferredKeyColumn != null && !preferredKeyColumn.equals(column)) {
+                                return false;
+                            }
+
+                            keyExclNodes.add(node);
+                            return false;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+        }
         return false;
+    }
+
+    private void applyKeyExclusions(AliasTranslator translator, IntrinsicModel model) {
+        if (model.keyColumn != null && keyExclNodes.size() > 0) {
+            for (int i = 0, n = keyExclNodes.size(); i < n; i++) {
+                ExprNode node = keyExclNodes.getQuick(i);
+                ExprNode col;
+                ExprNode val;
+
+                if (node.lhs.type == ExprNode.LITERAL) {
+                    col = node.lhs;
+                    val = node.rhs;
+                } else {
+                    col = node.rhs;
+                    val = node.lhs;
+                }
+
+                final String column = translator.translateAlias(col.token).toString();
+                if (column.equals(model.keyColumn)) {
+                    String value = Chars.equals("null", val.token) ? null : Chars.stripQuotes(val.token);
+                    int index = model.keyValues.remove(value);
+                    if (index > -1) {
+                        model.keyValuePositions.removeIndex(index);
+                    }
+                    node.intrinsicValue = IntrinsicValue.TRUE;
+                }
+            }
+        }
+        keyExclNodes.clear();
     }
 
     private ExprNode collapseIntrinsicNodes(ExprNode node) {
@@ -486,6 +548,7 @@ final class QueryFilterAnalyser {
                 node = stack.poll();
             }
         }
+        applyKeyExclusions(translator, model);
         model.filter = collapseIntrinsicNodes(root);
         return model;
     }
@@ -509,7 +572,7 @@ final class QueryFilterAnalyser {
             case "=":
                 return analyzeEquals(translator, model, node, m);
             case "!=":
-                return analyzeNotEquals(model, node);
+                return analyzeNotEquals(translator, model, node, m);
             default:
                 return false;
         }

@@ -47,9 +47,9 @@ public class CharSequenceHashSetTest {
         Assert.assertFalse(set.add(null));
         Assert.assertEquals(n + 1, set.size());
         Assert.assertTrue(set.contains(null));
-        Assert.assertTrue(set.remove(null));
+        Assert.assertTrue(set.remove(null) > -1);
         Assert.assertEquals(n, set.size());
-        Assert.assertFalse(set.remove(null));
+        Assert.assertTrue(set.remove(null) == -1);
         Assert.assertEquals(n, set.size());
     }
 
@@ -87,12 +87,12 @@ public class CharSequenceHashSetTest {
         Assert.assertEquals(n, set.size());
 
         for (int i = 0; i < n; i++) {
-            Assert.assertFalse("at " + i, set.remove(next(rnd)));
+            Assert.assertTrue("at " + i, set.remove(next(rnd)) == -1);
         }
 
         Rnd rnd4 = new Rnd();
         for (int i = 0; i < n; i++) {
-            Assert.assertTrue("at " + i, set.remove(next(rnd4)));
+            Assert.assertTrue("at " + i, set.remove(next(rnd4)) > -1);
         }
 
         Assert.assertEquals(0, set.size());
