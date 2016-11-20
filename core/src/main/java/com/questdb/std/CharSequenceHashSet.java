@@ -34,11 +34,12 @@ public class CharSequenceHashSet implements Mutable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final double loadFactor;
-    private final ObjList<CharSequence> list;
+    private final ObjList<String> list;
     private CharSequence[] keys;
     private int free;
     private int capacity;
     private int mask;
+    private boolean hasNull = false;
 
     public CharSequenceHashSet() {
         this(MIN_INITIAL_CAPACITY);
@@ -73,10 +74,19 @@ public class CharSequenceHashSet implements Mutable {
     }
 
     public boolean add(CharSequence key) {
+        if (key == null) {
+            if (hasNull) {
+                return false;
+            }
+            hasNull = true;
+            list.add(null);
+            free--;
+            return true;
+        }
+
         if (insertKey(key)) {
-            list.add(key);
             if (free == 0) {
-                rehash();
+                resize();
             }
             return true;
         }
@@ -93,11 +103,16 @@ public class CharSequenceHashSet implements Mutable {
         free = capacity;
         Arrays.fill(keys, null);
         list.clear();
+        hasNull = false;
     }
 
-    public boolean contains(CharSequence value) {
-        int index = idx(value);
-        return Unsafe.arrayGet(keys, index) != null && (value == Unsafe.arrayGet(keys, index) || Chars.equals(value, Unsafe.arrayGet(keys, index)) || probeContains(value, index));
+    public boolean contains(CharSequence key) {
+        if (key == null) {
+            return hasNull;
+        }
+
+        int index = idx(key);
+        return Unsafe.arrayGet(keys, index) != null && (eq(index, key) || probe(key, index) > -1);
     }
 
     public CharSequence get(int index) {
@@ -106,6 +121,37 @@ public class CharSequenceHashSet implements Mutable {
 
     public CharSequence getLast() {
         return list.getLast();
+    }
+
+    public boolean remove(CharSequence key) {
+        if (key == null) {
+            if (hasNull) {
+                hasNull = false;
+                list.remove(null);
+                free++;
+                return true;
+            }
+            return false;
+        }
+
+        int index = idx(key);
+
+        if (Unsafe.arrayGet(keys, index) == null) {
+            return false;
+        }
+
+        if (eq(index, key)) {
+            removeAt(index);
+            return true;
+        }
+
+        index = probe(key, index);
+        if (index < 0) {
+            return false;
+        }
+
+        removeAt(index);
+        return true;
     }
 
     public int size() {
@@ -117,6 +163,10 @@ public class CharSequenceHashSet implements Mutable {
         return list.toString();
     }
 
+    private boolean eq(int index, CharSequence key) {
+        return key == Unsafe.arrayGet(keys, index) || Chars.equals(key, Unsafe.arrayGet(keys, index));
+    }
+
     private int idx(CharSequence key) {
         return key == null ? 0 : (Chars.hashCode(key) & mask);
     }
@@ -124,61 +174,74 @@ public class CharSequenceHashSet implements Mutable {
     private boolean insertKey(CharSequence key) {
         int index = idx(key);
         if (Unsafe.arrayGet(keys, index) == null) {
-            Unsafe.arrayPut(keys, index, key);
+            String sk = key.toString();
+            Unsafe.arrayPut(keys, index, sk);
+            list.add(sk);
             free--;
             return true;
         } else {
-            return !(key == Unsafe.arrayGet(keys, index) || Chars.equals(key, Unsafe.arrayGet(keys, index))) && probeInsert(key, index);
-        }
-    }
-
-    private boolean probeContains(CharSequence key, int index) {
-        int i = index;
-        do {
-            index = (index + 1) & mask;
-
-            if (Unsafe.arrayGet(keys, index) == null) {
+            if (eq(index, key)) {
                 return false;
             }
 
-            if (key == Unsafe.arrayGet(keys, index) || Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                return true;
-            }
+            int next = probe(key, index);
 
-        } while (i != index);
-
-        return false;
-    }
-
-    private boolean probeInsert(CharSequence key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == null) {
-                Unsafe.arrayPut(keys, index, key);
+            if (next < 0) {
+                String sk = key.toString();
+                Unsafe.arrayPut(keys, -next - 1, sk);
+                list.add(sk);
                 free--;
                 return true;
             }
 
-            if (key == Unsafe.arrayGet(keys, index) || Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                return false;
+            return false;
+        }
+    }
+
+    private int probe(CharSequence key, int index) {
+        do {
+            index = (index + 1) & mask;
+
+            if (Unsafe.arrayGet(keys, index) == null) {
+                return -(index + 1);
             }
+
+            if (eq(index, key)) {
+                return index;
+            }
+
         } while (true);
     }
 
-    @SuppressWarnings({"unchecked"})
     private void rehash() {
-        int newCapacity = keys.length << 1;
-        mask = newCapacity - 1;
-        free = capacity = (int) (newCapacity * loadFactor);
-
-        CharSequence[] oldKeys = keys;
-        this.keys = new CharSequence[newCapacity];
         Arrays.fill(keys, null);
-
-        for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldKeys, i) != null) {
-                insertKey(Unsafe.arrayGet(oldKeys, i));
+        for (int i = 0, n = list.size(); i < n; i++) {
+            String key = list.getQuick(i);
+            int idx = idx(key);
+            if (Unsafe.arrayGet(keys, idx) == null) {
+                Unsafe.arrayPut(keys, idx, key);
+            } else {
+                int next = probe(key, idx);
+                assert next < 0;
+                Unsafe.arrayPut(keys, -next - 1, key);
             }
         }
+    }
+
+    private void removeAt(int index) {
+        list.remove(Unsafe.arrayGet(keys, index));
+        free++;
+        rehash();
+    }
+
+    @SuppressWarnings({"unchecked"})
+    private void resize() {
+        int newCapacity = keys.length << 1;
+        mask = newCapacity - 1;
+        int oldCapacity = this.capacity;
+        capacity = (int) (newCapacity * loadFactor);
+        free = capacity - oldCapacity;
+        this.keys = new CharSequence[newCapacity];
+        rehash();
     }
 }
