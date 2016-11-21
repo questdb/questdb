@@ -485,6 +485,10 @@ final class QueryFilterAnalyser {
                         model.keyValuePositions.removeIndex(index);
                     }
                     node.intrinsicValue = IntrinsicValue.TRUE;
+                    if (model.keyValues.size() == 0) {
+                        model.intrinsicValue = IntrinsicValue.FALSE;
+                        break;
+                    }
                 }
             }
         }

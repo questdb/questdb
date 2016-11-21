@@ -258,6 +258,15 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
+    public void testContradictingNullSearch() throws Exception {
+        IntrinsicModel m = modelOf("sym = null and sym != null and ex != 'blah'");
+        Assert.assertEquals(IntrinsicValue.FALSE, m.intrinsicValue);
+        assertFilter(m, "'blah'ex!=");
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
     public void testDubiousEquals() throws Exception {
         IntrinsicModel m = modelOf("sum(ts) = sum(ts)");
         Assert.assertNull(m.filter);
@@ -683,8 +692,18 @@ public class QueryFilterAnalyserTest extends AbstractTest {
 
     @Test
     public void testOr() throws Exception {
-        modelOf("(sym = 'X' or sym = 'Y') and bid > 10");
+        IntrinsicModel m = modelOf("(sym = 'X' or sym = 'Y') and bid > 10");
+        Assert.assertEquals(IntrinsicValue.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "10bid>'Y'sym='X'sym=orand");
+    }
 
+    @Test
+    public void testOrNullSearch() throws Exception {
+        IntrinsicModel m = modelOf("sym = null or sym != null and ex != 'blah'");
+        Assert.assertEquals(IntrinsicValue.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "'blah'ex!=nullsym!=nullsym=orand");
+        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", m.keyValuePositions.toString());
     }
 
     @Test
