@@ -360,6 +360,12 @@ public class QueryCompiler {
         return set;
     }
 
+    private static void assertNotNull(ExprNode node, int position, String message) throws ParserException {
+        if (node == null) {
+            throw QueryError.$(position, message);
+        }
+    }
+
     private void addAlias(int position, String alias) throws ParserException {
         if (selectedColumnAliases.add(alias)) {
             return;
@@ -1896,7 +1902,7 @@ public class QueryCompiler {
         return result;
     }
 
-    ExprNode optimiseInvertedBooleans(final ExprNode node, boolean reverse) {
+    ExprNode optimiseInvertedBooleans(final ExprNode node, boolean reverse) throws ParserException {
         switch (node.token) {
             case "not":
                 if (reverse) {
@@ -1907,6 +1913,7 @@ public class QueryCompiler {
                         case ExprNode.CONSTANT:
                             return node;
                         default:
+                            assertNotNull(node.rhs, node.position, "Missing right argument");
                             return optimiseInvertedBooleans(node.rhs, true);
                     }
                 }
@@ -1914,6 +1921,8 @@ public class QueryCompiler {
                 if (reverse) {
                     node.token = "or";
                 }
+                assertNotNull(node.lhs, node.position, "Missing left argument");
+                assertNotNull(node.rhs, node.position, "Missing right argument");
                 node.lhs = optimiseInvertedBooleans(node.lhs, reverse);
                 node.rhs = optimiseInvertedBooleans(node.rhs, reverse);
                 return node;
@@ -1921,6 +1930,8 @@ public class QueryCompiler {
                 if (reverse) {
                     node.token = "and";
                 }
+                assertNotNull(node.lhs, node.position, "Missing left argument");
+                assertNotNull(node.rhs, node.position, "Missing right argument");
                 node.lhs = optimiseInvertedBooleans(node.lhs, reverse);
                 node.rhs = optimiseInvertedBooleans(node.rhs, reverse);
                 return node;
@@ -1968,7 +1979,7 @@ public class QueryCompiler {
         }
     }
 
-    private void optimiseInvertedBooleans(QueryModel model) {
+    private void optimiseInvertedBooleans(QueryModel model) throws ParserException {
         ExprNode where = model.getWhereClause();
         if (where != null) {
             model.setWhereClause(optimiseInvertedBooleans(where, false));

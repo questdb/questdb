@@ -344,6 +344,28 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
+    public void testAndArgCheck() throws Exception {
+        // missing left arg on 'and'
+        try {
+            assertThat("", "select id,w,x,z,x + -w, z+-w from tab where and id = 'FYXPVKNCBWLNLRH'");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(44, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testAndArgCheck2() throws Exception {
+        // missing left arg on 'and'
+        try {
+            assertThat("", "select id,w,x,z,x + -w, z+-w from tab where id = 'FYXPVKNCBWLNLRH' and ");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(67, QueryError.getPosition());
+        }
+    }
+
+    @Test
     public void testAtoI() throws Exception {
         JournalWriter w = factory.writer(
                 new JournalStructure("tab").$str("intC").$()
@@ -2451,6 +2473,28 @@ public class SingleJournalQueryTest extends AbstractTest {
                 "KKUSIMYDXUUSKCX\t0.000000193413\t405.375000000000\t441\t345\t2016-04-30T13:00:00.000Z\n";
 
         assertThat(expected, "tab where id = 'KKUSIMYDXUUSKCX'");
+    }
+
+    @Test
+    public void testOrArgCheck() throws Exception {
+        // missing left arg on 'and'
+        try {
+            assertThat("", "select id,w,x,z,x + -w, z+-w from tab where or id = 'FYXPVKNCBWLNLRH'");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(44, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testOrArgCheck2() throws Exception {
+        // missing left arg on 'and'
+        try {
+            assertThat("", "select id,w,x,z,x + -w, z+-w from tab where id = 'FYXPVKNCBWLNLRH' or");
+            Assert.fail();
+        } catch (ParserException e) {
+            Assert.assertEquals(67, QueryError.getPosition());
+        }
     }
 
     @Test
