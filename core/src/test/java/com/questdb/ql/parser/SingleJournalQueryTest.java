@@ -347,8 +347,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testAndArgCheck() throws Exception {
         // missing left arg on 'and'
         try {
-            assertThat("", "select id,w,x,z,x + -w, z+-w from tab where and id = 'FYXPVKNCBWLNLRH'");
-            Assert.fail();
+            expectFailure("select id,w,x,z,x + -w, z+-w from tab where and id = 'FYXPVKNCBWLNLRH'");
         } catch (ParserException e) {
             Assert.assertEquals(44, QueryError.getPosition());
         }
@@ -358,8 +357,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testAndArgCheck2() throws Exception {
         // missing left arg on 'and'
         try {
-            assertThat("", "select id,w,x,z,x + -w, z+-w from tab where id = 'FYXPVKNCBWLNLRH' and ");
-            Assert.fail();
+            expectFailure("select id,w,x,z,x + -w, z+-w from tab where id = 'FYXPVKNCBWLNLRH' and ");
         } catch (ParserException e) {
             Assert.assertEquals(67, QueryError.getPosition());
         }
@@ -2479,8 +2477,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testOrArgCheck() throws Exception {
         // missing left arg on 'and'
         try {
-            assertThat("", "select id,w,x,z,x + -w, z+-w from tab where or id = 'FYXPVKNCBWLNLRH'");
-            Assert.fail();
+            expectFailure("select id,w,x,z,x + -w, z+-w from tab where or id = 'FYXPVKNCBWLNLRH'");
         } catch (ParserException e) {
             Assert.assertEquals(44, QueryError.getPosition());
         }
@@ -2490,8 +2487,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testOrArgCheck2() throws Exception {
         // missing left arg on 'and'
         try {
-            assertThat("", "select id,w,x,z,x + -w, z+-w from tab where id = 'FYXPVKNCBWLNLRH' or");
-            Assert.fail();
+            expectFailure("select id,w,x,z,x + -w, z+-w from tab where id = 'FYXPVKNCBWLNLRH' or");
         } catch (ParserException e) {
             Assert.assertEquals(67, QueryError.getPosition());
         }
