@@ -148,7 +148,7 @@ final class QueryFilterAnalyser {
         return false;
     }
 
-    private boolean analyzeGreater(IntrinsicModel model, ExprNode node, int inc) throws ParserException {
+    private boolean analyzeGreater(IntrinsicModel model, ExprNode node, int increment) throws ParserException {
         checkNodeValid(node);
 
         if (Chars.equals(node.lhs.token, node.rhs.token)) {
@@ -167,7 +167,8 @@ final class QueryFilterAnalyser {
             }
 
             try {
-                model.intersectIntervals(Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + inc, Long.MAX_VALUE);
+                model.intersectIntervals(Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + increment, Long.MAX_VALUE);
+                node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } catch (NumericException e) {
                 throw QueryError.$(node.rhs.position, "Not a date");
@@ -181,7 +182,7 @@ final class QueryFilterAnalyser {
             }
 
             try {
-                model.intersectIntervals(Long.MIN_VALUE, Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - inc);
+                model.intersectIntervals(Long.MIN_VALUE, Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - increment);
                 return true;
             } catch (NumericException e) {
                 throw QueryError.$(node.lhs.position, "Not a date");
@@ -462,6 +463,92 @@ final class QueryFilterAnalyser {
         return false;
     }
 
+    private boolean analyzeNotIn(AliasTranslator translator, IntrinsicModel model, ExprNode notNode, RecordMetadata m) throws ParserException {
+
+        ExprNode node = notNode.rhs;
+
+        if (node.paramCount < 2) {
+            throw QueryError.$(node.position, "Too few arguments for 'in'");
+        }
+
+        ExprNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
+
+        if (col.type != ExprNode.LITERAL) {
+            throw QueryError.$(col.position, "Column name expected");
+        }
+
+        String column = translator.translateAlias(col.token).toString();
+
+        if (m.getColumnIndexQuiet(column) == -1) {
+            throw QueryError.invalidColumn(col.position, col.token);
+        }
+
+        boolean ok = analyzeNotInInterval(model, col, node) || analyzeNotListOfValues(column, m, node);
+
+        if (ok) {
+            notNode.intrinsicValue = IntrinsicValue.TRUE;
+        }
+
+        return ok;
+    }
+
+    private boolean analyzeNotInInterval(IntrinsicModel model, ExprNode col, ExprNode in) throws ParserException {
+        if (!isTimestamp(col)) {
+            return false;
+        }
+
+        if (in.paramCount > 3) {
+            throw QueryError.$(in.args.getQuick(0).position, "Too many args");
+        }
+
+        if (in.paramCount < 3) {
+            throw QueryError.$(in.position, "Too few args");
+        }
+
+        ExprNode lo = in.args.getQuick(1);
+        ExprNode hi = in.args.getQuick(0);
+
+        if (lo.type == ExprNode.CONSTANT && hi.type == ExprNode.CONSTANT) {
+            long loMillis;
+            long hiMillis;
+
+            try {
+                loMillis = Dates.tryParse(quoteEraser.ofQuoted(lo.token));
+            } catch (NumericException ignore) {
+                throw QueryError.$(lo.position, "Unknown date format");
+            }
+
+            try {
+                hiMillis = Dates.tryParse(quoteEraser.ofQuoted(hi.token));
+            } catch (NumericException ignore) {
+                throw QueryError.$(hi.position, "Unknown date format");
+            }
+
+            model.subtractIntervals(loMillis, hiMillis);
+            in.intrinsicValue = IntrinsicValue.TRUE;
+            return true;
+        }
+        return false;
+    }
+
+    private boolean analyzeNotListOfValues(String column, RecordMetadata m, ExprNode node) {
+        RecordColumnMetadata meta = m.getColumn(column);
+
+        switch (meta.getType()) {
+            case ColumnType.SYMBOL:
+            case ColumnType.STRING:
+            case ColumnType.LONG:
+            case ColumnType.INT:
+                if (meta.isIndexed() && (preferredKeyColumn == null || preferredKeyColumn.equals(column))) {
+                    keyExclNodes.add(node);
+                }
+                break;
+            default:
+                break;
+        }
+        return false;
+    }
+
     private void applyKeyExclusions(AliasTranslator translator, IntrinsicModel model) {
         if (model.keyColumn != null && keyExclNodes.size() > 0) {
             for (int i = 0, n = keyExclNodes.size(); i < n; i++) {
@@ -577,6 +664,8 @@ final class QueryFilterAnalyser {
                 return analyzeEquals(translator, model, node, m);
             case "!=":
                 return analyzeNotEquals(translator, model, node, m);
+            case "not":
+                return "in".equals(node.rhs.token) && analyzeNotIn(translator, model, node, m);
             default:
                 return false;
         }

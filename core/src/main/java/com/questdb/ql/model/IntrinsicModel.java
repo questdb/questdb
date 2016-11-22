@@ -75,24 +75,19 @@ public class IntrinsicModel implements Mutable {
         intersectIntervals(temp);
     }
 
+    public void subtractIntervals(long lo, long hi) {
+        LongList temp = shuffleTemp();
+        temp.clear();
+        temp.add(lo);
+        temp.add(hi);
+        subtractIntervals(temp);
+    }
+
     public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws ParserException {
         LongList temp = shuffleTemp();
         temp.clear();
         IntervalCompiler.parseIntervalEx(seq, lo, lim, position, temp);
-
-        final LongList dest = shuffleDest();
-        dest.clear();
-
-        if (this.intervals == null) {
-            IntervalCompiler.subtract(INFINITE_INTERVAL, temp, dest);
-        } else {
-            IntervalCompiler.subtract(temp, this.intervals, dest);
-        }
-
-        this.intervals = dest;
-        if (this.intervals.size() == 0) {
-            intrinsicValue = IntrinsicValue.FALSE;
-        }
+        subtractIntervals(temp);
     }
 
     @Override
@@ -142,6 +137,22 @@ public class IntrinsicModel implements Mutable {
         }
 
         return intervalsB;
+    }
+
+    private void subtractIntervals(LongList temp) {
+        final LongList dest = shuffleDest();
+        dest.clear();
+
+        if (this.intervals == null) {
+            IntervalCompiler.subtract(INFINITE_INTERVAL, temp, dest);
+        } else {
+            IntervalCompiler.subtract(temp, this.intervals, dest);
+        }
+
+        this.intervals = dest;
+        if (this.intervals.size() == 0) {
+            intrinsicValue = IntrinsicValue.FALSE;
+        }
     }
 
     public static final class IntrinsicModelFactory implements ObjectFactory<IntrinsicModel> {

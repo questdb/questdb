@@ -206,6 +206,8 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
                 return new IntConstant(f.getInt(null), f.getPosition());
             case ColumnType.DOUBLE:
                 return new DoubleConstant(f.getDouble(null), f.getPosition());
+            case ColumnType.FLOAT:
+                return new FloatConstant(f.getFloat(null), f.getPosition());
             case ColumnType.BOOLEAN:
                 return new BooleanConstant(f.getBool(null), f.getPosition());
             case ColumnType.STRING:
@@ -213,6 +215,8 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
                 return cs == null ? new NullConstant(f.getPosition()) : new StrConstant(cs.toString(), f.getPosition());
             case ColumnType.LONG:
                 return new LongConstant(f.getLong(null), f.getPosition());
+            case ColumnType.DATE:
+                return new DateConstant(f.getDate(null), f.getPosition());
             default:
                 return f;
         }

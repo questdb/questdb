@@ -812,6 +812,7 @@ public class QueryCompiler {
     }
 
     private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws ParserException {
+        optimiseInvertedBooleans(model);
         optimiseOrderBy(model, ORDER_BY_UNKNOWN);
         optimiseSubQueries(model, factory);
         createOrderHash(model);
@@ -1566,7 +1567,6 @@ public class QueryCompiler {
                 VirtualColumn vc = virtualColumnBuilder.createVirtualColumn(model, im.filter, m);
                 if (vc.isConstant()) {
                     // todo: not hit by test
-
                     if (vc.getBool(null)) {
                         return rs;
                     } else {
@@ -1620,7 +1620,6 @@ public class QueryCompiler {
 
             int index = m.getColumnIndexQuiet(node.token);
             if (index == -1) {
-                // todo: not hit by test
                 throw QueryError.position(node.position).$("Invalid column: ").$(node.token).$();
             }
             return index;
@@ -1895,6 +1894,97 @@ public class QueryCompiler {
         }
 
         return result;
+    }
+
+    ExprNode optimiseInvertedBooleans(final ExprNode node, boolean reverse) {
+        switch (node.token) {
+            case "not":
+                if (reverse) {
+                    return optimiseInvertedBooleans(node.rhs, false);
+                } else {
+                    switch (node.rhs.type) {
+                        case ExprNode.LITERAL:
+                        case ExprNode.CONSTANT:
+                            return node;
+                        default:
+                            return optimiseInvertedBooleans(node.rhs, true);
+                    }
+                }
+            case "and":
+                if (reverse) {
+                    node.token = "or";
+                }
+                node.lhs = optimiseInvertedBooleans(node.lhs, reverse);
+                node.rhs = optimiseInvertedBooleans(node.rhs, reverse);
+                return node;
+            case "or":
+                if (reverse) {
+                    node.token = "and";
+                }
+                node.lhs = optimiseInvertedBooleans(node.lhs, reverse);
+                node.rhs = optimiseInvertedBooleans(node.rhs, reverse);
+                return node;
+            case ">":
+                if (reverse) {
+                    node.token = "<=";
+                }
+                return node;
+            case ">=":
+                if (reverse) {
+                    node.token = "<";
+                }
+                return node;
+
+            case "<":
+                if (reverse) {
+                    node.token = ">=";
+                }
+                return node;
+            case "<=":
+                if (reverse) {
+                    node.token = ">";
+                }
+                return node;
+            case "=":
+                if (reverse) {
+                    node.token = "!=";
+                }
+                return node;
+            case "!=":
+                if (reverse) {
+                    node.token = "=";
+                }
+                return node;
+            default:
+                if (reverse) {
+                    ExprNode n = exprNodePool.next();
+                    n.token = "not";
+                    n.paramCount = 1;
+                    n.rhs = node;
+                    n.type = ExprNode.OPERATION;
+                    return n;
+                }
+                return node;
+        }
+    }
+
+    private void optimiseInvertedBooleans(QueryModel model) {
+        ExprNode where = model.getWhereClause();
+        if (where != null) {
+            model.setWhereClause(optimiseInvertedBooleans(where, false));
+        }
+
+        if (model.getNestedModel() != null) {
+            optimiseInvertedBooleans(model.getNestedModel());
+        }
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel m = joinModels.getQuick(i);
+            if (m != model) {
+                optimiseInvertedBooleans(joinModels.getQuick(i));
+            }
+        }
     }
 
     private void optimiseJoins(QueryModel parent, JournalReaderFactory factory) throws ParserException {
