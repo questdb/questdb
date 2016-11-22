@@ -24,6 +24,7 @@
 package com.questdb.ql.model;
 
 import com.questdb.ex.ParserException;
+import com.questdb.misc.Chars;
 import com.questdb.ql.parser.IntervalCompiler;
 import com.questdb.std.*;
 
@@ -58,6 +59,18 @@ public class IntrinsicModel implements Mutable {
 
     public void clearInterval() {
         this.intervals = null;
+    }
+
+    public void excludeValue(ExprNode val) {
+        String value = Chars.equals("null", val.token) ? null : Chars.stripQuotes(val.token);
+        int index = keyValues.remove(value);
+        if (index > -1) {
+            keyValuePositions.removeIndex(index);
+        }
+
+        if (keyValues.size() == 0) {
+            intrinsicValue = IntrinsicValue.FALSE;
+        }
     }
 
     public void intersectIntervals(long lo, long hi) {

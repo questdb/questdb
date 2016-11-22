@@ -36,7 +36,6 @@ import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class QueryFilterAnalyserTest extends AbstractTest {
@@ -592,10 +591,19 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    @Ignore
-    public void testListOfValuesNegativeOverlap2() throws Exception {
+    public void testListOfValuesOverlapWithNotClause() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', 'z') and not (sym in ('c', 'd', 'e'))");
-        Assert.assertEquals(IntrinsicValue.FALSE, m.intrinsicValue);
+        Assert.assertEquals("[a,z]", m.keyValues.toString());
+        Assert.assertNull(m.filter);
+        Assert.assertEquals(IntrinsicValue.UNDEFINED, m.intrinsicValue);
+    }
+
+    @Test
+    public void testListOfValuesOverlapWithNotClause2() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', 'z') and not (sym in ('a', 'd', 'e'))");
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[z]", m.keyValues.toString());
+        Assert.assertEquals(IntrinsicValue.UNDEFINED, m.intrinsicValue);
     }
 
     @Test

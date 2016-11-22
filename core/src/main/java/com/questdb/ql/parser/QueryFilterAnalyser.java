@@ -483,7 +483,7 @@ final class QueryFilterAnalyser {
             throw QueryError.invalidColumn(col.position, col.token);
         }
 
-        boolean ok = analyzeNotInInterval(model, col, node) || analyzeNotListOfValues(column, m, node);
+        boolean ok = analyzeNotInInterval(model, col, node) || analyzeNotListOfValues(column, m, notNode);
 
         if (ok) {
             notNode.intrinsicValue = IntrinsicValue.TRUE;
@@ -531,7 +531,7 @@ final class QueryFilterAnalyser {
         return false;
     }
 
-    private boolean analyzeNotListOfValues(String column, RecordMetadata m, ExprNode node) {
+    private boolean analyzeNotListOfValues(String column, RecordMetadata m, ExprNode notNode) {
         RecordColumnMetadata meta = m.getColumn(column);
 
         switch (meta.getType()) {
@@ -540,7 +540,7 @@ final class QueryFilterAnalyser {
             case ColumnType.LONG:
             case ColumnType.INT:
                 if (meta.isIndexed() && (preferredKeyColumn == null || preferredKeyColumn.equals(column))) {
-                    keyExclNodes.add(node);
+                    keyExclNodes.add(notNode);
                 }
                 break;
             default:
@@ -551,31 +551,50 @@ final class QueryFilterAnalyser {
 
     private void applyKeyExclusions(AliasTranslator translator, IntrinsicModel model) {
         if (model.keyColumn != null && keyExclNodes.size() > 0) {
+            OUT:
             for (int i = 0, n = keyExclNodes.size(); i < n; i++) {
-                ExprNode node = keyExclNodes.getQuick(i);
-                ExprNode col;
-                ExprNode val;
+                ExprNode parent = keyExclNodes.getQuick(i);
 
-                if (node.lhs.type == ExprNode.LITERAL) {
-                    col = node.lhs;
-                    val = node.rhs;
-                } else {
-                    col = node.rhs;
-                    val = node.lhs;
+
+                ExprNode node = "not".equals(parent.token) ? parent.rhs : parent;
+                // this could either be '=' or 'in'
+
+                if (node.paramCount == 2) {
+                    ExprNode col;
+                    ExprNode val;
+
+                    if (node.lhs.type == ExprNode.LITERAL) {
+                        col = node.lhs;
+                        val = node.rhs;
+                    } else {
+                        col = node.rhs;
+                        val = node.lhs;
+                    }
+
+                    final String column = translator.translateAlias(col.token).toString();
+                    if (column.equals(model.keyColumn)) {
+                        model.excludeValue(val);
+                        parent.intrinsicValue = IntrinsicValue.TRUE;
+                        if (model.intrinsicValue == IntrinsicValue.FALSE) {
+                            break;
+                        }
+                    }
                 }
 
-                final String column = translator.translateAlias(col.token).toString();
-                if (column.equals(model.keyColumn)) {
-                    String value = Chars.equals("null", val.token) ? null : Chars.stripQuotes(val.token);
-                    int index = model.keyValues.remove(value);
-                    if (index > -1) {
-                        model.keyValuePositions.removeIndex(index);
+                if (node.paramCount > 2) {
+                    ExprNode col = node.args.getQuick(node.paramCount - 1);
+                    final String column = translator.translateAlias(col.token).toString();
+                    if (column.equals(model.keyColumn)) {
+                        for (int j = node.paramCount - 2; j > -1; j--) {
+                            ExprNode val = node.args.getQuick(j);
+                            model.excludeValue(val);
+                            if (model.intrinsicValue == IntrinsicValue.FALSE) {
+                                break OUT;
+                            }
+                        }
+                        parent.intrinsicValue = IntrinsicValue.TRUE;
                     }
-                    node.intrinsicValue = IntrinsicValue.TRUE;
-                    if (model.keyValues.size() == 0) {
-                        model.intrinsicValue = IntrinsicValue.FALSE;
-                        break;
-                    }
+
                 }
             }
         }
