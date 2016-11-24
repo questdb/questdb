@@ -159,18 +159,24 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
         DirectMapValues values = MapUtils.getMapValues(map, record, partitionBy);
         final CharSequence str = valueColumn.getFlyweightStr(record);
 
-        // todo: test with null values
         if (values.isNew()) {
             nextNull = true;
-            store(str, values);
+            if (str == null) {
+                allocAndStoreNull(values);
+            } else {
+                allocAndStore(str, values);
+            }
         } else {
             nextNull = false;
             long ptr = values.getLong(0);
             int len = values.getInt(1);
             copyToBuffer(ptr);
-            if (toByteLen(str.length()) > len) {
+
+            if (str == null) {
+                Unsafe.getUnsafe().putInt(ptr, VariableColumn.NULL_LEN);
+            } else if (toByteLen(str.length()) > len) {
                 Unsafe.free(ptr, len);
-                store(str, values);
+                allocAndStore(str, values);
             } else {
                 Chars.put(ptr, str);
             }
@@ -207,8 +213,31 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
         return charLen * 2 + 4;
     }
 
+    private void allocAndStore(CharSequence str, DirectMapValues values) {
+        int l = Numbers.ceilPow2(toByteLen(str.length()));
+        long ptr = Unsafe.malloc(l);
+        values.putLong(0, ptr);
+        values.putInt(1, l);
+        Chars.put(ptr, str);
+    }
+
+    private void allocAndStoreNull(DirectMapValues values) {
+        int l = 64;
+        long ptr = Unsafe.malloc(l);
+        values.putLong(0, ptr);
+        values.putInt(1, l);
+        Unsafe.getUnsafe().putInt(ptr, VariableColumn.NULL_LEN);
+    }
+
     private void copyToBuffer(long ptr) {
-        int l = toByteLen(Unsafe.getUnsafe().getInt(ptr));
+        int l = Unsafe.getUnsafe().getInt(ptr);
+
+        if (l == VariableColumn.NULL_LEN) {
+            nextNull = true;
+            return;
+        }
+
+        l = toByteLen(l);
         if (l > bufPtrLen) {
             if (bufPtr != 0) {
                 Unsafe.free(bufPtr, bufPtrLen);
@@ -226,13 +255,5 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
         for (DirectMapEntry e : map) {
             Unsafe.free(e.getLong(0), e.getInt(1));
         }
-    }
-
-    private void store(CharSequence str, DirectMapValues values) {
-        int l = Numbers.ceilPow2(toByteLen(str.length()));
-        long ptr = Unsafe.malloc(l);
-        values.putLong(0, ptr);
-        values.putInt(1, l);
-        Chars.put(ptr, str);
     }
 }

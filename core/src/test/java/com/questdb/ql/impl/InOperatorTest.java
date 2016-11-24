@@ -34,7 +34,6 @@ import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.ql.parser.QueryError;
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class InOperatorTest extends AbstractOptimiserTest {
@@ -237,9 +236,28 @@ public class InOperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
-    @Ignore
     public void testPrevWithNull() throws Exception {
-        assertThat("", "select str, sym, prev(str) p over(partition by sym), timestamp from '*!*abc' where str in (null, 'XX') limit 20");
+        assertThat("XX\tAX\t\t2016-05-01T10:23:00.000Z\n" +
+                        "XX\tKK\t\t2016-05-01T10:25:00.000Z\n" +
+                        "XX\tBZ\t\t2016-05-01T10:27:00.000Z\n" +
+                        "XX\tBZ\tXX\t2016-05-01T10:36:00.000Z\n" +
+                        "XX\tBZ\tXX\t2016-05-01T10:39:00.000Z\n" +
+                        "\tAX\tXX\t2016-05-01T10:41:00.000Z\n" +
+                        "XX\t\t\t2016-05-01T10:42:00.000Z\n" +
+                        "XX\tKK\tXX\t2016-05-01T10:43:00.000Z\n" +
+                        "XX\tBZ\tXX\t2016-05-01T10:49:00.000Z\n" +
+                        "XX\tAX\t\t2016-05-01T10:53:00.000Z\n" +
+                        "XX\tKK\tXX\t2016-05-01T10:57:00.000Z\n" +
+                        "XX\tKK\tXX\t2016-05-01T10:59:00.000Z\n" +
+                        "XX\tXX\t\t2016-05-01T11:00:00.000Z\n" +
+                        "\tKK\tXX\t2016-05-01T11:01:00.000Z\n" +
+                        "XX\tAX\tXX\t2016-05-01T11:02:00.000Z\n" +
+                        "XX\tAX\tXX\t2016-05-01T11:03:00.000Z\n" +
+                        "XX\tKK\t\t2016-05-01T11:05:00.000Z\n" +
+                        "XX\tBZ\tXX\t2016-05-01T11:08:00.000Z\n" +
+                        "XX\tBZ\tXX\t2016-05-01T11:20:00.000Z\n" +
+                        "XX\tAX\tXX\t2016-05-01T11:25:00.000Z\n",
+                "select str, sym, prev(str) p over(partition by sym), timestamp from '*!*abc' where str in (null, 'XX') limit 20");
     }
 
     @Test
