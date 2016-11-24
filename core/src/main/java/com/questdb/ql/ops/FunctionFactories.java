@@ -179,6 +179,11 @@ public final class FunctionFactories {
                         return IntInOperator.FACTORY;
                     case ColumnType.LONG:
                         return LongInOperator.FACTORY;
+                    case ColumnType.DATE:
+                        if (sig.paramCount < 3) {
+                            return null;
+                        }
+                        return DateInOperator.FACTORY;
                     default:
                         break;
                 }

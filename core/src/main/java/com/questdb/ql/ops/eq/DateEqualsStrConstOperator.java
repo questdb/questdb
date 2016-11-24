@@ -68,7 +68,7 @@ public class DateEqualsStrConstOperator extends AbstractBinaryOperator {
     @Override
     public void setRhs(VirtualColumn rhs) throws ParserException {
         super.setRhs(rhs);
-        // todo: null test
+        // null is handled by another operator
         CharSequence intervalStr = rhs.getFlyweightStr(null);
         if (intervalStr != null) {
             IntervalCompiler.parseIntervalEx(intervalStr, 0, intervalStr.length(), rhs.getPosition(), intervals);

@@ -65,6 +65,7 @@ public class InOperatorTest extends AbstractOptimiserTest {
             Rnd rnd = new Rnd();
 
             long t = Dates.toMillis(2016, 5, 1, 10, 20);
+            long d = Dates.toMillis(2016, 5, 1, 10, 20);
             for (int i = 0; i < n; i++) {
                 JournalEntryWriter ew = w.entryWriter(t += 60000);
                 ew.putInt(0, (rnd.nextPositiveInt() & 15) == 0 ? Numbers.INT_NaN : rnd.nextInt());
@@ -76,7 +77,8 @@ public class InOperatorTest extends AbstractOptimiserTest {
                 ew.putBool(6, rnd.nextBoolean());
                 ew.putSym(7, (rnd.nextPositiveInt() & 15) == 0 ? null : sym[rnd.nextPositiveInt() % sym.length]);
                 ew.putShort(8, (short) rnd.nextInt());
-                ew.putDate(9, (rnd.nextPositiveInt() & 15) == 0 ? Long.MIN_VALUE : rnd.nextLong());
+                d += 45000;
+                ew.putDate(9, (rnd.nextPositiveInt() & 15) == 0 ? Numbers.LONG_NaN : d);
                 ew.append();
             }
             w.commit();
@@ -85,41 +87,81 @@ public class InOperatorTest extends AbstractOptimiserTest {
 
     @Test
     public void testByteIn() throws Exception {
-        assertThat("-40\t2016-05-01T10:24:00.000Z\n" +
-                        "-117\t2016-05-01T10:25:00.000Z\n" +
-                        "-117\t2016-05-01T12:52:00.000Z\n" +
-                        "-40\t2016-05-01T17:49:00.000Z\n" +
-                        "-40\t2016-05-01T18:05:00.000Z\n" +
-                        "-117\t2016-05-01T20:04:00.000Z\n" +
-                        "-40\t2016-05-02T00:42:00.000Z\n" +
-                        "-117\t2016-05-02T02:22:00.000Z\n" +
-                        "-40\t2016-05-02T02:25:00.000Z\n",
+        assertThat("-117\t2016-05-01T10:41:00.000Z\n" +
+                        "-117\t2016-05-01T10:43:00.000Z\n" +
+                        "-40\t2016-05-01T18:56:00.000Z\n" +
+                        "-117\t2016-05-01T23:08:00.000Z\n",
                 "select b, timestamp from abc where b in (-40, -117)");
+    }
+
+    @Test
+    public void testDateIn() throws Exception {
+        assertThat("2016-05-01T10:25:15.000Z\t2016-05-01T10:27:00.000Z\t0.3180\n" +
+                        "2016-05-01T10:26:00.000Z\t2016-05-01T10:28:00.000Z\t0.2358\n" +
+                        "2016-05-01T10:26:45.000Z\t2016-05-01T10:29:00.000Z\t0.1341\n" +
+                        "2016-05-01T10:27:30.000Z\t2016-05-01T10:30:00.000Z\t0.6746\n",
+                "select date, timestamp, f from abc where date in ('2016-05-01T10:25:15.000Z', '2016-05-01T10:27:30.000Z')");
+    }
+
+    @Test
+    public void testDateInNulls() throws Exception {
+        try {
+            expectFailure("select date, timestamp, f from abc where date in ('2016-05-01T10:25:15.000Z', null)");
+        } catch (ParserException e) {
+            Assert.assertEquals(78, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testDateInTooFewArgs() throws Exception {
+        try {
+            expectFailure("select date, timestamp, f from abc where date in ('2016-05-01T10:25:15.000Z')");
+        } catch (ParserException e) {
+            Assert.assertEquals(46, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testDateInTooManyArgs() throws Exception {
+        try {
+            expectFailure("select date, timestamp, f from abc where date in ('2016-05-01T10:25:15.000Z', '2016-05-01T10:27:30.000Z','2016-05-01T10:27:30.000Z')");
+        } catch (ParserException e) {
+            Assert.assertEquals(105, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testDateInWrongArgs() throws Exception {
+        try {
+            expectFailure("select date, timestamp, f from abc where date in ('2016-05-01T10:25:15.000Z', 10)");
+        } catch (ParserException e) {
+            Assert.assertEquals(78, QueryError.getPosition());
+        }
     }
 
     @Test
     public void testInInt() throws Exception {
         assertThat("NaN\t2016-05-01T10:21:00.000Z\n" +
-                        "1978144263\t2016-05-01T10:25:00.000Z\n" +
-                        "NaN\t2016-05-01T10:35:00.000Z\n" +
-                        "NaN\t2016-05-01T10:45:00.000Z\n" +
-                        "NaN\t2016-05-01T10:47:00.000Z\n" +
-                        "NaN\t2016-05-01T10:59:00.000Z\n" +
-                        "NaN\t2016-05-01T11:19:00.000Z\n" +
-                        "NaN\t2016-05-01T11:34:00.000Z\n" +
-                        "NaN\t2016-05-01T11:35:00.000Z\n" +
-                        "NaN\t2016-05-01T11:52:00.000Z\n" +
-                        "NaN\t2016-05-01T12:03:00.000Z\n" +
-                        "NaN\t2016-05-01T12:11:00.000Z\n" +
-                        "NaN\t2016-05-01T12:32:00.000Z\n" +
-                        "NaN\t2016-05-01T12:38:00.000Z\n" +
+                        "724677640\t2016-05-01T10:47:00.000Z\n" +
+                        "NaN\t2016-05-01T10:52:00.000Z\n" +
+                        "NaN\t2016-05-01T10:55:00.000Z\n" +
+                        "NaN\t2016-05-01T10:57:00.000Z\n" +
+                        "NaN\t2016-05-01T11:07:00.000Z\n" +
+                        "NaN\t2016-05-01T11:26:00.000Z\n" +
+                        "NaN\t2016-05-01T11:33:00.000Z\n" +
+                        "NaN\t2016-05-01T11:38:00.000Z\n" +
+                        "NaN\t2016-05-01T11:54:00.000Z\n" +
+                        "NaN\t2016-05-01T11:59:00.000Z\n" +
+                        "NaN\t2016-05-01T12:27:00.000Z\n" +
+                        "NaN\t2016-05-01T12:41:00.000Z\n" +
+                        "NaN\t2016-05-01T12:59:00.000Z\n" +
                         "NaN\t2016-05-01T13:02:00.000Z\n" +
-                        "NaN\t2016-05-01T13:11:00.000Z\n" +
-                        "NaN\t2016-05-01T13:15:00.000Z\n" +
-                        "NaN\t2016-05-01T13:26:00.000Z\n" +
-                        "NaN\t2016-05-01T13:54:00.000Z\n" +
-                        "NaN\t2016-05-01T13:59:00.000Z\n",
-                "select i, timestamp from abc where i in (1978144263, NaN) limit 20");
+                        "NaN\t2016-05-01T13:07:00.000Z\n" +
+                        "NaN\t2016-05-01T13:28:00.000Z\n" +
+                        "NaN\t2016-05-01T13:50:00.000Z\n" +
+                        "NaN\t2016-05-01T14:04:00.000Z\n" +
+                        "NaN\t2016-05-01T15:04:00.000Z\n",
+                "select i, timestamp from abc where i in (724677640, NaN) limit 20");
     }
 
     @Test
@@ -143,31 +185,31 @@ public class InOperatorTest extends AbstractOptimiserTest {
     @Test
     public void testLongIn() throws Exception {
         assertThat("-2653407051020864006\t2016-05-01T10:21:00.000Z\n" +
-                        "NaN\t2016-05-01T10:34:00.000Z\n" +
-                        "NaN\t2016-05-01T10:35:00.000Z\n" +
-                        "NaN\t2016-05-01T10:36:00.000Z\n" +
-                        "NaN\t2016-05-01T11:04:00.000Z\n" +
-                        "NaN\t2016-05-01T11:08:00.000Z\n" +
+                        "NaN\t2016-05-01T10:53:00.000Z\n" +
                         "NaN\t2016-05-01T11:11:00.000Z\n" +
-                        "NaN\t2016-05-01T11:18:00.000Z\n" +
-                        "NaN\t2016-05-01T11:52:00.000Z\n" +
-                        "NaN\t2016-05-01T12:02:00.000Z\n",
+                        "NaN\t2016-05-01T11:31:00.000Z\n" +
+                        "NaN\t2016-05-01T11:54:00.000Z\n" +
+                        "NaN\t2016-05-01T12:10:00.000Z\n" +
+                        "NaN\t2016-05-01T12:37:00.000Z\n" +
+                        "NaN\t2016-05-01T12:52:00.000Z\n" +
+                        "NaN\t2016-05-01T12:59:00.000Z\n" +
+                        "NaN\t2016-05-01T13:13:00.000Z\n",
                 "select l, timestamp from abc where l in (NaN, -2653407051020864006L) limit 10");
     }
 
     @Test
     public void testLongInMixArg() throws Exception {
-        assertThat("9116006198143953886\t2016-05-01T10:22:00.000Z\n" +
-                        "NaN\t2016-05-01T10:34:00.000Z\n" +
-                        "NaN\t2016-05-01T10:35:00.000Z\n" +
-                        "NaN\t2016-05-01T10:36:00.000Z\n" +
-                        "NaN\t2016-05-01T11:04:00.000Z\n" +
-                        "NaN\t2016-05-01T11:08:00.000Z\n" +
+        assertThat("8000176386900538697\t2016-05-01T10:23:00.000Z\n" +
+                        "NaN\t2016-05-01T10:53:00.000Z\n" +
                         "NaN\t2016-05-01T11:11:00.000Z\n" +
-                        "NaN\t2016-05-01T11:18:00.000Z\n" +
-                        "NaN\t2016-05-01T11:52:00.000Z\n" +
-                        "NaN\t2016-05-01T12:02:00.000Z\n",
-                "select l, timestamp from abc where l in (NaN, 9116006198143953886L, 3) limit 10");
+                        "NaN\t2016-05-01T11:31:00.000Z\n" +
+                        "NaN\t2016-05-01T11:54:00.000Z\n" +
+                        "NaN\t2016-05-01T12:10:00.000Z\n" +
+                        "NaN\t2016-05-01T12:37:00.000Z\n" +
+                        "NaN\t2016-05-01T12:52:00.000Z\n" +
+                        "NaN\t2016-05-01T12:59:00.000Z\n" +
+                        "NaN\t2016-05-01T13:13:00.000Z\n",
+                "select l, timestamp from abc where l in (NaN, 8000176386900538697L, 3) limit 10");
     }
 
     @Test
@@ -182,16 +224,16 @@ public class InOperatorTest extends AbstractOptimiserTest {
     @Test
     public void testParserErrorOnNegativeNumbers() throws Exception {
         assertThat("NaN\t2016-05-01T10:21:00.000Z\n" +
-                        "-409854405\t2016-05-01T10:22:00.000Z\n" +
-                        "NaN\t2016-05-01T10:35:00.000Z\n" +
-                        "NaN\t2016-05-01T10:45:00.000Z\n" +
-                        "NaN\t2016-05-01T10:47:00.000Z\n" +
-                        "NaN\t2016-05-01T10:59:00.000Z\n" +
-                        "NaN\t2016-05-01T11:19:00.000Z\n" +
-                        "NaN\t2016-05-01T11:34:00.000Z\n" +
-                        "NaN\t2016-05-01T11:35:00.000Z\n" +
-                        "NaN\t2016-05-01T11:52:00.000Z\n",
-                "select i, timestamp from abc where i  in (-409854405, NaN) limit 10");
+                        "-1271909747\t2016-05-01T10:24:00.000Z\n" +
+                        "NaN\t2016-05-01T10:52:00.000Z\n" +
+                        "NaN\t2016-05-01T10:55:00.000Z\n" +
+                        "NaN\t2016-05-01T10:57:00.000Z\n" +
+                        "NaN\t2016-05-01T11:07:00.000Z\n" +
+                        "NaN\t2016-05-01T11:26:00.000Z\n" +
+                        "NaN\t2016-05-01T11:33:00.000Z\n" +
+                        "NaN\t2016-05-01T11:38:00.000Z\n" +
+                        "NaN\t2016-05-01T11:54:00.000Z\n",
+                "select i, timestamp from abc where i  in (-1271909747, NaN) limit 10");
     }
 
     @Test
@@ -202,48 +244,48 @@ public class InOperatorTest extends AbstractOptimiserTest {
 
     @Test
     public void testShortIn() throws Exception {
-        assertThat("2276\t2016-05-01T10:24:00.000Z\n" +
-                        "9141\t2016-05-01T10:25:00.000Z\n",
-                "select sho, timestamp from abc where sho in (2276,9141)");
+        assertThat("-7374\t2016-05-01T10:24:00.000Z\n" +
+                        "-1605\t2016-05-01T10:30:00.000Z\n",
+                "select sho, timestamp from abc where sho in (-7374,-1605)");
     }
 
     @Test
     public void testStrIn() throws Exception {
-        assertThat("BZ\t2016-05-01T10:23:00.000Z\n" +
-                        "BZ\t2016-05-01T10:24:00.000Z\n" +
-                        "XX\t2016-05-01T10:26:00.000Z\n" +
-                        "XX\t2016-05-01T10:29:00.000Z\n" +
-                        "XX\t2016-05-01T10:31:00.000Z\n" +
-                        "XX\t2016-05-01T10:32:00.000Z\n" +
-                        "XX\t2016-05-01T10:33:00.000Z\n" +
-                        "BZ\t2016-05-01T10:36:00.000Z\n" +
-                        "XX\t2016-05-01T10:37:00.000Z\n" +
-                        "XX\t2016-05-01T10:38:00.000Z\n",
+        assertThat("XX\t2016-05-01T10:23:00.000Z\n" +
+                        "XX\t2016-05-01T10:25:00.000Z\n" +
+                        "XX\t2016-05-01T10:27:00.000Z\n" +
+                        "BZ\t2016-05-01T10:31:00.000Z\n" +
+                        "BZ\t2016-05-01T10:33:00.000Z\n" +
+                        "XX\t2016-05-01T10:36:00.000Z\n" +
+                        "XX\t2016-05-01T10:39:00.000Z\n" +
+                        "BZ\t2016-05-01T10:40:00.000Z\n" +
+                        "XX\t2016-05-01T10:42:00.000Z\n" +
+                        "XX\t2016-05-01T10:43:00.000Z\n",
                 "select str, timestamp from abc where str in ('BZ', 'XX') limit 10");
     }
 
     @Test
     public void testStrInAsEq() throws Exception {
-        assertThat("XX\t2016-05-01T10:26:00.000Z\n" +
-                        "XX\t2016-05-01T10:29:00.000Z\n" +
-                        "XX\t2016-05-01T10:31:00.000Z\n" +
-                        "XX\t2016-05-01T10:32:00.000Z\n" +
-                        "XX\t2016-05-01T10:33:00.000Z\n" +
-                        "XX\t2016-05-01T10:37:00.000Z\n" +
-                        "XX\t2016-05-01T10:38:00.000Z\n" +
+        assertThat("XX\t2016-05-01T10:23:00.000Z\n" +
+                        "XX\t2016-05-01T10:25:00.000Z\n" +
+                        "XX\t2016-05-01T10:27:00.000Z\n" +
+                        "XX\t2016-05-01T10:36:00.000Z\n" +
                         "XX\t2016-05-01T10:39:00.000Z\n" +
-                        "XX\t2016-05-01T10:41:00.000Z\n" +
+                        "XX\t2016-05-01T10:42:00.000Z\n" +
                         "XX\t2016-05-01T10:43:00.000Z\n" +
                         "XX\t2016-05-01T10:49:00.000Z\n" +
-                        "XX\t2016-05-01T10:52:00.000Z\n" +
-                        "XX\t2016-05-01T10:55:00.000Z\n" +
-                        "XX\t2016-05-01T10:56:00.000Z\n" +
+                        "XX\t2016-05-01T10:53:00.000Z\n" +
                         "XX\t2016-05-01T10:57:00.000Z\n" +
+                        "XX\t2016-05-01T10:59:00.000Z\n" +
+                        "XX\t2016-05-01T11:00:00.000Z\n" +
                         "XX\t2016-05-01T11:02:00.000Z\n" +
-                        "XX\t2016-05-01T11:12:00.000Z\n" +
-                        "XX\t2016-05-01T11:18:00.000Z\n" +
+                        "XX\t2016-05-01T11:03:00.000Z\n" +
+                        "XX\t2016-05-01T11:05:00.000Z\n" +
+                        "XX\t2016-05-01T11:08:00.000Z\n" +
+                        "XX\t2016-05-01T11:20:00.000Z\n" +
+                        "XX\t2016-05-01T11:25:00.000Z\n" +
                         "XX\t2016-05-01T11:26:00.000Z\n" +
-                        "XX\t2016-05-01T11:27:00.000Z\n",
+                        "XX\t2016-05-01T11:34:00.000Z\n",
                 "select str, timestamp from abc where str in ('XX') limit 20");
     }
 
@@ -258,26 +300,26 @@ public class InOperatorTest extends AbstractOptimiserTest {
 
     @Test
     public void testStrInNull() throws Exception {
-        assertThat("\t2016-05-01T10:22:00.000Z\n" +
-                        "XX\t2016-05-01T10:26:00.000Z\n" +
-                        "XX\t2016-05-01T10:29:00.000Z\n" +
-                        "XX\t2016-05-01T10:31:00.000Z\n" +
-                        "XX\t2016-05-01T10:32:00.000Z\n" +
-                        "XX\t2016-05-01T10:33:00.000Z\n" +
-                        "\t2016-05-01T10:35:00.000Z\n" +
-                        "XX\t2016-05-01T10:37:00.000Z\n" +
-                        "XX\t2016-05-01T10:38:00.000Z\n" +
+        assertThat("XX\t2016-05-01T10:23:00.000Z\n" +
+                        "XX\t2016-05-01T10:25:00.000Z\n" +
+                        "XX\t2016-05-01T10:27:00.000Z\n" +
+                        "XX\t2016-05-01T10:36:00.000Z\n" +
                         "XX\t2016-05-01T10:39:00.000Z\n" +
-                        "XX\t2016-05-01T10:41:00.000Z\n" +
+                        "\t2016-05-01T10:41:00.000Z\n" +
+                        "XX\t2016-05-01T10:42:00.000Z\n" +
                         "XX\t2016-05-01T10:43:00.000Z\n" +
                         "XX\t2016-05-01T10:49:00.000Z\n" +
-                        "XX\t2016-05-01T10:52:00.000Z\n" +
-                        "XX\t2016-05-01T10:55:00.000Z\n" +
-                        "XX\t2016-05-01T10:56:00.000Z\n" +
+                        "XX\t2016-05-01T10:53:00.000Z\n" +
                         "XX\t2016-05-01T10:57:00.000Z\n" +
+                        "XX\t2016-05-01T10:59:00.000Z\n" +
+                        "XX\t2016-05-01T11:00:00.000Z\n" +
+                        "\t2016-05-01T11:01:00.000Z\n" +
                         "XX\t2016-05-01T11:02:00.000Z\n" +
-                        "\t2016-05-01T11:04:00.000Z\n" +
-                        "XX\t2016-05-01T11:12:00.000Z\n",
+                        "XX\t2016-05-01T11:03:00.000Z\n" +
+                        "XX\t2016-05-01T11:05:00.000Z\n" +
+                        "XX\t2016-05-01T11:08:00.000Z\n" +
+                        "XX\t2016-05-01T11:20:00.000Z\n" +
+                        "XX\t2016-05-01T11:25:00.000Z\n",
                 "select str, timestamp from abc where str in (null, 'XX') limit 20");
     }
 
@@ -294,74 +336,74 @@ public class InOperatorTest extends AbstractOptimiserTest {
     public void testSymIn() throws Exception {
         assertThat("KK\t2016-05-01T10:21:00.000Z\n" +
                         "XX\t2016-05-01T10:22:00.000Z\n" +
-                        "KK\t2016-05-01T10:23:00.000Z\n" +
-                        "XX\t2016-05-01T10:26:00.000Z\n" +
-                        "XX\t2016-05-01T10:30:00.000Z\n" +
-                        "KK\t2016-05-01T10:31:00.000Z\n" +
-                        "XX\t2016-05-01T10:32:00.000Z\n" +
+                        "KK\t2016-05-01T10:25:00.000Z\n" +
+                        "KK\t2016-05-01T10:29:00.000Z\n" +
+                        "KK\t2016-05-01T10:30:00.000Z\n" +
+                        "XX\t2016-05-01T10:31:00.000Z\n" +
                         "KK\t2016-05-01T10:33:00.000Z\n" +
-                        "XX\t2016-05-01T10:36:00.000Z\n" +
-                        "XX\t2016-05-01T10:38:00.000Z\n" +
-                        "XX\t2016-05-01T10:43:00.000Z\n" +
+                        "KK\t2016-05-01T10:38:00.000Z\n" +
+                        "KK\t2016-05-01T10:43:00.000Z\n" +
                         "XX\t2016-05-01T10:44:00.000Z\n" +
-                        "XX\t2016-05-01T10:45:00.000Z\n" +
-                        "XX\t2016-05-01T10:46:00.000Z\n" +
-                        "XX\t2016-05-01T10:47:00.000Z\n" +
-                        "XX\t2016-05-01T10:49:00.000Z\n" +
-                        "KK\t2016-05-01T10:50:00.000Z\n" +
-                        "KK\t2016-05-01T10:53:00.000Z\n" +
+                        "KK\t2016-05-01T10:46:00.000Z\n" +
                         "XX\t2016-05-01T10:54:00.000Z\n" +
-                        "KK\t2016-05-01T10:55:00.000Z\n",
+                        "KK\t2016-05-01T10:56:00.000Z\n" +
+                        "KK\t2016-05-01T10:57:00.000Z\n" +
+                        "XX\t2016-05-01T10:58:00.000Z\n" +
+                        "KK\t2016-05-01T10:59:00.000Z\n" +
+                        "XX\t2016-05-01T11:00:00.000Z\n" +
+                        "KK\t2016-05-01T11:01:00.000Z\n" +
+                        "KK\t2016-05-01T11:04:00.000Z\n" +
+                        "KK\t2016-05-01T11:05:00.000Z\n",
                 "select sym, timestamp from abc where sym in ('KK','XX') limit 20");
     }
 
     @Test
     public void testSymInAsEq() throws Exception {
         assertThat("KK\t2016-05-01T10:21:00.000Z\n" +
-                        "KK\t2016-05-01T10:23:00.000Z\n" +
-                        "KK\t2016-05-01T10:31:00.000Z\n" +
+                        "KK\t2016-05-01T10:25:00.000Z\n" +
+                        "KK\t2016-05-01T10:29:00.000Z\n" +
+                        "KK\t2016-05-01T10:30:00.000Z\n" +
                         "KK\t2016-05-01T10:33:00.000Z\n" +
-                        "KK\t2016-05-01T10:50:00.000Z\n" +
-                        "KK\t2016-05-01T10:53:00.000Z\n" +
-                        "KK\t2016-05-01T10:55:00.000Z\n" +
+                        "KK\t2016-05-01T10:38:00.000Z\n" +
+                        "KK\t2016-05-01T10:43:00.000Z\n" +
+                        "KK\t2016-05-01T10:46:00.000Z\n" +
                         "KK\t2016-05-01T10:56:00.000Z\n" +
+                        "KK\t2016-05-01T10:57:00.000Z\n" +
+                        "KK\t2016-05-01T10:59:00.000Z\n" +
+                        "KK\t2016-05-01T11:01:00.000Z\n" +
+                        "KK\t2016-05-01T11:04:00.000Z\n" +
                         "KK\t2016-05-01T11:05:00.000Z\n" +
-                        "KK\t2016-05-01T11:08:00.000Z\n" +
-                        "KK\t2016-05-01T11:15:00.000Z\n" +
-                        "KK\t2016-05-01T11:21:00.000Z\n" +
+                        "KK\t2016-05-01T11:07:00.000Z\n" +
+                        "KK\t2016-05-01T11:11:00.000Z\n" +
+                        "KK\t2016-05-01T11:16:00.000Z\n" +
+                        "KK\t2016-05-01T11:18:00.000Z\n" +
                         "KK\t2016-05-01T11:23:00.000Z\n" +
-                        "KK\t2016-05-01T11:27:00.000Z\n" +
-                        "KK\t2016-05-01T11:34:00.000Z\n" +
-                        "KK\t2016-05-01T11:41:00.000Z\n" +
-                        "KK\t2016-05-01T12:06:00.000Z\n" +
-                        "KK\t2016-05-01T12:07:00.000Z\n" +
-                        "KK\t2016-05-01T12:09:00.000Z\n" +
-                        "KK\t2016-05-01T12:11:00.000Z\n",
+                        "KK\t2016-05-01T11:24:00.000Z\n",
                 "select sym, timestamp from abc where sym in ('KK') limit 20");
     }
 
     @Test
     public void testSymInNull() throws Exception {
         assertThat("KK\t2016-05-01T10:21:00.000Z\n" +
-                        "KK\t2016-05-01T10:23:00.000Z\n" +
-                        "KK\t2016-05-01T10:31:00.000Z\n" +
+                        "KK\t2016-05-01T10:25:00.000Z\n" +
+                        "KK\t2016-05-01T10:29:00.000Z\n" +
+                        "KK\t2016-05-01T10:30:00.000Z\n" +
                         "KK\t2016-05-01T10:33:00.000Z\n" +
-                        "\t2016-05-01T10:41:00.000Z\n" +
-                        "KK\t2016-05-01T10:50:00.000Z\n" +
-                        "KK\t2016-05-01T10:53:00.000Z\n" +
-                        "KK\t2016-05-01T10:55:00.000Z\n" +
+                        "\t2016-05-01T10:35:00.000Z\n" +
+                        "KK\t2016-05-01T10:38:00.000Z\n" +
+                        "\t2016-05-01T10:42:00.000Z\n" +
+                        "KK\t2016-05-01T10:43:00.000Z\n" +
+                        "KK\t2016-05-01T10:46:00.000Z\n" +
+                        "\t2016-05-01T10:55:00.000Z\n" +
                         "KK\t2016-05-01T10:56:00.000Z\n" +
+                        "KK\t2016-05-01T10:57:00.000Z\n" +
+                        "KK\t2016-05-01T10:59:00.000Z\n" +
+                        "KK\t2016-05-01T11:01:00.000Z\n" +
+                        "KK\t2016-05-01T11:04:00.000Z\n" +
                         "KK\t2016-05-01T11:05:00.000Z\n" +
-                        "KK\t2016-05-01T11:08:00.000Z\n" +
-                        "KK\t2016-05-01T11:15:00.000Z\n" +
-                        "\t2016-05-01T11:18:00.000Z\n" +
-                        "KK\t2016-05-01T11:21:00.000Z\n" +
-                        "KK\t2016-05-01T11:23:00.000Z\n" +
-                        "KK\t2016-05-01T11:27:00.000Z\n" +
-                        "KK\t2016-05-01T11:34:00.000Z\n" +
-                        "KK\t2016-05-01T11:41:00.000Z\n" +
-                        "\t2016-05-01T12:03:00.000Z\n" +
-                        "\t2016-05-01T12:04:00.000Z\n",
+                        "KK\t2016-05-01T11:07:00.000Z\n" +
+                        "KK\t2016-05-01T11:11:00.000Z\n" +
+                        "\t2016-05-01T11:14:00.000Z\n",
                 "select sym, timestamp from abc where sym in (null, 'KK') limit 20");
     }
 }
