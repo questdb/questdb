@@ -164,6 +164,7 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
         DirectMapValues values = MapUtils.getMapValues(map, record, partitionBy);
         final CharSequence str = valueColumn.getFlyweightStr(record);
 
+        // todo: test with null values
         if (values.isNew()) {
             nextNull = true;
             store(str, values);

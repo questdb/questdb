@@ -23,9 +23,10 @@
 
 package com.questdb.ql.impl.analytic;
 
+import com.questdb.ql.impl.AbstractAllTypeTest;
 import org.junit.Test;
 
-public class MiscAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
+public class MiscAnalyticFunctionTest extends AbstractAllTypeTest {
     @Test
     public void testAnalyticAndAggregates() throws Exception {
         assertThat("0\tBZ\t2016-05-01T10:40:00.000Z\n" +

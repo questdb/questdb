@@ -309,6 +309,7 @@ public class LastVarRecordMap implements LastRecordMap {
                     break;
                 case ColumnType.STRING:
                     Unsafe.getUnsafe().putInt(address, varOffset);
+                    //todo: test with null
                     varOffset += Chars.put(addr + varOffset, record.getFlyweightStr(idx));
                     break;
                 default:

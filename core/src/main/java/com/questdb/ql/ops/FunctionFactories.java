@@ -173,6 +173,12 @@ public final class FunctionFactories {
                         return StrInOperator.FACTORY;
                     case ColumnType.SYMBOL:
                         return SymInOperator.FACTORY;
+                    case ColumnType.INT:
+                    case ColumnType.BYTE:
+                    case ColumnType.SHORT:
+                        return IntInOperator.FACTORY;
+                    case ColumnType.LONG:
+                        return LongInOperator.FACTORY;
                     default:
                         break;
                 }

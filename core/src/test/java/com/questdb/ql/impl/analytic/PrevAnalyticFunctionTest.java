@@ -24,13 +24,14 @@
 package com.questdb.ql.impl.analytic;
 
 import com.questdb.ex.ParserException;
+import com.questdb.ql.impl.AbstractAllTypeTest;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class PrevAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
+public class PrevAnalyticFunctionTest extends AbstractAllTypeTest {
 
     private final static String expected = "-1148479920\tBZ\t2016-05-01T10:21:00.000Z\tNaN\n" +
             "1548800833\tKK\t2016-05-01T10:22:00.000Z\tNaN\n" +

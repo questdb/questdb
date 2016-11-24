@@ -142,6 +142,7 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
                     break;
                 case ColumnType.STRING:
                     Unsafe.getUnsafe().putInt(address, varOffset);
+                    //todo: test with null
                     varOffset += Chars.put(this.address + varOffset, record.getFlyweightStr(i));
                     break;
                 default:

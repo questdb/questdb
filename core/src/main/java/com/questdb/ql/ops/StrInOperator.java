@@ -66,7 +66,17 @@ public class StrInOperator extends AbstractVirtualColumn implements Function {
         if (pos == 0) {
             lhs = arg;
         } else {
-            set.add(arg.getStr(null).toString());
+            assertConstant(arg);
+
+            switch (arg.getType()) {
+                case ColumnType.STRING:
+                    CharSequence cs = arg.getFlyweightStr(null);
+                    set.add(cs == null ? null : cs.toString());
+                    break;
+                default:
+                    typeError(arg.getPosition(), ColumnType.STRING);
+                    break;
+            }
         }
     }
 }

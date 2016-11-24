@@ -24,11 +24,12 @@
 package com.questdb.ql.impl.analytic;
 
 import com.questdb.ex.ParserException;
+import com.questdb.ql.impl.AbstractAllTypeTest;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class DenseRankAnalyticFunctionTest extends AbstractAnalyticRecordSourceTest {
+public class DenseRankAnalyticFunctionTest extends AbstractAllTypeTest {
     @Test
     public void testRank() throws Exception {
         assertThat("5\ttrue\tAX\t2016-05-01T10:26:00.000Z\n" +

@@ -25,12 +25,11 @@ package com.questdb.ql.impl;
 
 import com.questdb.ex.ParserException;
 import com.questdb.ql.RecordSource;
-import com.questdb.ql.impl.analytic.AbstractAnalyticRecordSourceTest;
 import org.junit.Test;
 
 import java.io.IOException;
 
-public class ParameterTest extends AbstractAnalyticRecordSourceTest {
+public class ParameterTest extends AbstractAllTypeTest {
 
     @Test
     public void testEqualDouble() throws Exception {

@@ -63,7 +63,7 @@ public class DtoA4Function extends AbstractUnaryOperator {
 
     @Override
     public CharSequence getStr(Record rec) {
-        return getFlyweightStr(rec).toString();
+        return getFlyweightStr(rec);
     }
 
     @Override
@@ -73,6 +73,7 @@ public class DtoA4Function extends AbstractUnaryOperator {
 
     @Override
     public int getStrLen(Record rec) {
-        return getFlyweightStr(rec).length();
+        CharSequence cs = getFlyweightStr(rec);
+        return cs == null ? -1 : cs.length();
     }
 }

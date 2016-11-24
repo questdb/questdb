@@ -41,7 +41,7 @@ public class SymInOperator extends AbstractVirtualColumn implements Function {
         }
     };
 
-    private final IntHashSet set = new IntHashSet();
+    private final IntHashSet set = new IntHashSet(10, .5f, -10);
     private final CharSequenceHashSet values = new CharSequenceHashSet();
     private VirtualColumn lhs;
 
@@ -64,10 +64,7 @@ public class SymInOperator extends AbstractVirtualColumn implements Function {
         lhs.prepare(facade);
         SymbolTable tab = lhs.getSymbolTable();
         for (int i = 0, n = values.size(); i < n; i++) {
-            int k = tab.getQuick(values.get(i));
-            if (k > -1) {
-                set.add(k);
-            }
+            set.add(tab.getQuick(values.get(i)));
         }
     }
 
@@ -76,7 +73,17 @@ public class SymInOperator extends AbstractVirtualColumn implements Function {
         if (pos == 0) {
             lhs = arg;
         } else {
-            values.add(arg.getStr(null).toString());
+            assertConstant(arg);
+
+            switch (arg.getType()) {
+                case ColumnType.STRING:
+                    CharSequence cs = arg.getFlyweightStr(null);
+                    values.add(cs == null ? null : cs.toString());
+                    break;
+                default:
+                    typeError(arg.getPosition(), ColumnType.STRING);
+                    break;
+            }
         }
     }
 }

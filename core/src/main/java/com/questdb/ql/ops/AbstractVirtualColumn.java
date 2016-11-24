@@ -23,9 +23,12 @@
 
 package com.questdb.ql.ops;
 
+import com.questdb.ex.ParserException;
 import com.questdb.ql.Record;
+import com.questdb.ql.parser.QueryError;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 import java.io.OutputStream;
@@ -158,5 +161,15 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     @Override
     public boolean isIndexed() {
         return false;
+    }
+
+    protected static void typeError(int pos, int type) throws ParserException {
+        throw QueryError.position(pos).$('\'').$(ColumnType.nameOf(type)).$("' type expected").$();
+    }
+
+    protected static void assertConstant(VirtualColumn arg) throws ParserException {
+        if (!arg.isConstant()) {
+            throw QueryError.$(arg.getPosition(), "Constant expected");
+        }
     }
 }

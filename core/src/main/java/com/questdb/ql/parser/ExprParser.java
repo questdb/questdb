@@ -202,6 +202,7 @@ public class ExprParser {
                             case '-':
                                 switch (prevBranch) {
                                     case BRANCH_OPERATOR:
+                                    case BRANCH_LEFT_BRACE:
                                     case BRANCH_COMMA:
                                     case BRANCH_NONE:
                                         // we have unary minus

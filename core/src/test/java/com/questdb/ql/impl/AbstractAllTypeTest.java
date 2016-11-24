@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.impl.analytic;
+package com.questdb.ql.impl;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
@@ -31,11 +31,14 @@ import com.questdb.misc.Rnd;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import org.junit.BeforeClass;
 
-public abstract class AbstractAnalyticRecordSourceTest extends AbstractOptimiserTest {
+public abstract class AbstractAllTypeTest extends AbstractOptimiserTest {
 
     @BeforeClass
     public static void setUp() throws Exception {
 
+        // this does thread local allocations that
+        // should not be accounted for while
+        // measuring query allocations and de-allocations
         factory.getConfiguration().exists("");
 
         try (JournalWriter w = factory.bulkWriter(new JournalStructure("xyz")

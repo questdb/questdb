@@ -21,58 +21,73 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.eq;
+package com.questdb.ql.ops;
 
 import com.questdb.ex.ParserException;
+import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
-import com.questdb.ql.ops.AbstractBinaryOperator;
-import com.questdb.ql.ops.Function;
-import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.ql.parser.IntervalCompiler;
-import com.questdb.std.LongList;
+import com.questdb.ql.StorageFacade;
+import com.questdb.std.LongHashSet;
 import com.questdb.store.ColumnType;
 
-public class DateEqualsStrConstOperator extends AbstractBinaryOperator {
+public class LongInOperator extends AbstractVirtualColumn implements Function {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DateEqualsStrConstOperator(position);
+            return new LongInOperator(position);
         }
     };
 
-    private final LongList intervals = new LongList();
-    private int intervalCount;
+    private final LongHashSet set = new LongHashSet();
+    private VirtualColumn lhs;
 
-    private DateEqualsStrConstOperator(int position) {
+    private LongInOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        long date = lhs.getDate(rec);
-        for (int i = 0; i < intervalCount; i++) {
-            if (date < IntervalCompiler.getIntervalLo(intervals, i)) {
-                return false;
-            }
-
-            if (date <= IntervalCompiler.getIntervalHi(intervals, i)) {
-                return true;
-            }
-        }
-        return false;
+        return set.contains(lhs.getLong(rec));
     }
 
     @Override
-    public void setRhs(VirtualColumn rhs) throws ParserException {
-        super.setRhs(rhs);
-        // todo: null test
-        CharSequence intervalStr = rhs.getFlyweightStr(null);
-        if (intervalStr != null) {
-            IntervalCompiler.parseIntervalEx(intervalStr, 0, intervalStr.length(), rhs.getPosition(), intervals);
+    public boolean isConstant() {
+        return lhs.isConstant();
+    }
+
+    @Override
+    public void prepare(StorageFacade facade) {
+        lhs.prepare(facade);
+    }
+
+    @Override
+    public void setArg(int pos, VirtualColumn arg) throws ParserException {
+        if (pos == 0) {
+            lhs = arg;
+        } else {
+            assertConstant(arg);
+
+            switch (arg.getType()) {
+                case ColumnType.DOUBLE:
+                    double d = arg.getDouble(null);
+                    if (d != d) {
+                        set.add(Numbers.LONG_NaN);
+                    } else {
+                        typeError(arg.getPosition(), ColumnType.LONG);
+                    }
+                    break;
+                case ColumnType.LONG:
+                case ColumnType.INT:
+                case ColumnType.SHORT:
+                case ColumnType.BYTE:
+                    set.add(arg.getLong(null));
+                    break;
+                default:
+                    typeError(arg.getPosition(), ColumnType.LONG);
+                    break;
+            }
         }
-        intervalCount = intervals.size() / 2;
     }
 }

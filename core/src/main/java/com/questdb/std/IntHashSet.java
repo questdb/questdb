@@ -34,7 +34,7 @@ import java.util.Arrays;
 public class IntHashSet implements Mutable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private static final int noEntryValue = -1;
+    private final int noEntryValue;
     private final double loadFactor;
     private final IntList list;
     private int[] keys;
@@ -47,11 +47,12 @@ public class IntHashSet implements Mutable {
     }
 
     public IntHashSet(int initialCapacity) {
-        this(initialCapacity, 0.5f);
+        this(initialCapacity, 0.5f, -1);
     }
 
     @SuppressWarnings("unchecked")
-    private IntHashSet(int initialCapacity, double loadFactor) {
+    public IntHashSet(int initialCapacity, double loadFactor, int noEntryValue) {
+        this.noEntryValue = noEntryValue;
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }

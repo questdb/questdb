@@ -64,7 +64,7 @@ public class PluckStrFunction extends AbstractBinaryOperator {
 
     @Override
     public CharSequence getStr(Record rec) {
-        return getFlyweightStr(rec).toString();
+        return getFlyweightStr(rec);
     }
 
     @Override
@@ -74,7 +74,9 @@ public class PluckStrFunction extends AbstractBinaryOperator {
 
     @Override
     public int getStrLen(Record rec) {
-        return getFlyweightStr(rec).length();
+        //todo: null test
+        CharSequence cs = getFlyweightStr(rec);
+        return cs == null ? -1 : cs.length();
     }
 
     public CharSequence getFlyweightStr0(CharSequence base, FlyweightCharSequence to) {
