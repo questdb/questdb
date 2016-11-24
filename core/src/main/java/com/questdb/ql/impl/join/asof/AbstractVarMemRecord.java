@@ -31,7 +31,6 @@ abstract class AbstractVarMemRecord extends AbstractMemRecord {
 
     private final DirectCharSequence cs = new DirectCharSequence();
     private final DirectCharSequence csB = new DirectCharSequence();
-    private char[] strBuf;
 
     @Override
     public CharSequence getFlyweightStr(int col) {
@@ -47,23 +46,6 @@ abstract class AbstractVarMemRecord extends AbstractMemRecord {
         return csB;
     }
 
-    @Override
-    public CharSequence getStr(int col) {
-        long address = address() + getInt(col);
-        int len = Unsafe.getUnsafe().getInt(address);
-
-        if (strBuf == null || strBuf.length < len) {
-            strBuf = new char[len];
-        }
-
-        long lim = address + 4 + len * 2;
-        int i = 0;
-        for (long p = address + 4; p < lim; p += 2) {
-            strBuf[i++] = Unsafe.getUnsafe().getChar(p);
-        }
-
-        return new String(strBuf, 0, len);
-    }
 
     @Override
     public void getStr(int col, CharSink sink) {

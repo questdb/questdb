@@ -131,11 +131,6 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
     }
 
     @Override
-    public CharSequence getStr() {
-        return nextNull ? null : cs;
-    }
-
-    @Override
     public int getStrLen() {
         return nextNull ? VariableColumn.NULL_LEN : cs.length();
     }

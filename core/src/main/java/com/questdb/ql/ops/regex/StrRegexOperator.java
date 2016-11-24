@@ -61,7 +61,7 @@ public class StrRegexOperator extends AbstractBinaryOperator {
     @Override
     public void setRhs(VirtualColumn rhs) throws ParserException {
         super.setRhs(rhs);
-        CharSequence pattern = rhs.getStr(null);
+        CharSequence pattern = rhs.getFlyweightStr(null);
         if (pattern == null) {
             throw QueryError.$(rhs.getPosition(), "null regex?");
         }

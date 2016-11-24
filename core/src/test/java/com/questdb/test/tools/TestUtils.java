@@ -290,8 +290,7 @@ public final class TestUtils {
             for (int i = 0; i < len; i++) {
                 switch (metadata.getColumnQuick(i).getType()) {
                     case ColumnType.STRING:
-                        CharSequence s = r.getStr(i);
-                        assertEquals(s, r.getFlyweightStr(i));
+                        CharSequence s = r.getFlyweightStr(i);
                         assertEquals(s, r.getFlyweightStrB(i));
                         if (s != null) {
                             Assert.assertEquals(s.length(), r.getStrLen(i));

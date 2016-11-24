@@ -118,11 +118,6 @@ public abstract class AbstractNextAnalyticFunction implements AnalyticFunction, 
     }
 
     @Override
-    public CharSequence getStr() {
-        return valueColumn.getStr(next);
-    }
-
-    @Override
     public int getStrLen() {
         return valueColumn.getStrLen(next);
     }

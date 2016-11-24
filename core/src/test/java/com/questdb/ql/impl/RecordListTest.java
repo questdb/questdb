@@ -53,7 +53,7 @@ public class RecordListTest extends AbstractTest {
                         int col = 0;
                         String failedMsg = "Record " + i;
                         Assert.assertEquals(failedMsg, expected.aBool, value.getBool(col++));
-                        Assert.assertEquals(failedMsg, expected.aString, value.getStr(col++).toString());
+                        Assert.assertEquals(failedMsg, expected.aString, value.getFlyweightStr(col++).toString());
                         Assert.assertEquals(failedMsg, expected.aByte, value.get(col++));
                         Assert.assertEquals(failedMsg, expected.aShort, value.getShort(col++));
                         Assert.assertEquals(failedMsg, expected.anInt, value.getInt(col++));
@@ -192,7 +192,7 @@ public class RecordListTest extends AbstractTest {
                     public void assertRecord(Record value, int i) throws IOException {
                         StringLongBinary expected = generate(i);
 
-                        CharSequence str = value.getStr(0);
+                        CharSequence str = value.getFlyweightStr(0);
                         if (expected.aString != null || str != null) {
                             Assert.assertEquals(expected.aString, str.toString());
                         }

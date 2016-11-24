@@ -123,14 +123,12 @@ public abstract class AbstractOptimiserTest {
             while (cursor.hasNext()) {
                 Record r = cursor.next();
                 int len = r.getStrLen(columnIndex);
-                CharSequence s = r.getStr(columnIndex);
+                CharSequence s = r.getFlyweightStr(columnIndex);
                 if (s != null) {
-                    CharSequence csA = r.getFlyweightStr(columnIndex);
                     CharSequence csB = r.getFlyweightStrB(columnIndex);
-                    TestUtils.assertEquals(s, csA);
                     TestUtils.assertEquals(s, csB);
                     Assert.assertEquals(len, s.length());
-                    Assert.assertFalse(csA == csB);
+                    Assert.assertFalse(s == csB);
                 } else {
                     Assert.assertEquals(-1, len);
                     Assert.assertNull(r.getFlyweightStr(columnIndex));

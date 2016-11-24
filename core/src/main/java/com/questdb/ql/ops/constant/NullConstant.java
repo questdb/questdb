@@ -28,7 +28,6 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
-import com.questdb.store.VariableColumn;
 
 public class NullConstant extends AbstractVirtualColumn {
 
@@ -47,17 +46,7 @@ public class NullConstant extends AbstractVirtualColumn {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return null;
-    }
-
-    @Override
     public void getStr(Record rec, CharSink sink) {
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return VariableColumn.NULL_LEN;
     }
 
     @Override

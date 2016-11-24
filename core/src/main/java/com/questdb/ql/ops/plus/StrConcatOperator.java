@@ -61,12 +61,6 @@ public class StrConcatOperator extends AbstractBinaryOperator {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        csA.init(lhs.getStr(rec), rhs.getStr(rec));
-        return csA;
-    }
-
-    @Override
     public void getStr(Record rec, CharSink sink) {
         lhs.getStr(rec, sink);
         rhs.getStr(rec, sink);

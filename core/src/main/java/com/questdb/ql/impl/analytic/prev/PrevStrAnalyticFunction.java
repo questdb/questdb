@@ -129,11 +129,6 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     }
 
     @Override
-    public CharSequence getStr() {
-        return bufLen == -1 ? null : cs;
-    }
-
-    @Override
     public int getStrLen() {
         return bufLen == -1 ? VariableColumn.NULL_LEN : bufLen;
     }

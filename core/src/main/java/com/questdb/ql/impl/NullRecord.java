@@ -112,11 +112,6 @@ public class NullRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return null;
-    }
-
-    @Override
     public void getStr(int col, CharSink sink) {
 
     }

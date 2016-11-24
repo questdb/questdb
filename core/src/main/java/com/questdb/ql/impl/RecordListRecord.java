@@ -166,14 +166,6 @@ public class RecordListRecord extends AbstractRecord {
     }
 
     @Override
-    public String getStr(int col) {
-        long readAddress = addressOf(col);
-        final int len = Unsafe.getUnsafe().getInt(readAddress);
-        if (len < 0) return null;
-        return new DirectCharSequence().of(readAddress + 4, readAddress + 4 + len * 2).toString();
-    }
-
-    @Override
     public void getStr(int col, CharSink sink) {
         long readAddress = addressOf(col);
         final int len = Unsafe.getUnsafe().getInt(readAddress);

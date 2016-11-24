@@ -112,11 +112,6 @@ public class SplitRecord extends AbstractRecord {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return getRec(col).getStr(idx(col));
-    }
-
-    @Override
     public void getStr(int col, CharSink sink) {
         getRec(col).getStr(idx(col), sink);
     }

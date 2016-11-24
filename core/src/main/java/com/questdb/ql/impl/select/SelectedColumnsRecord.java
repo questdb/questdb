@@ -126,11 +126,6 @@ public class SelectedColumnsRecord extends AbstractRecord {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return base.getStr(Unsafe.arrayGet(reindex, col));
-    }
-
-    @Override
     public void getStr(int col, CharSink sink) {
         base.getStr(Unsafe.arrayGet(reindex, col), sink);
     }

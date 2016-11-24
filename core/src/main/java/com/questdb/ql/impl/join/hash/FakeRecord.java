@@ -103,11 +103,6 @@ public class FakeRecord extends AbstractRecord {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void getStr(int col, CharSink sink) {
         throw new UnsupportedOperationException();
     }

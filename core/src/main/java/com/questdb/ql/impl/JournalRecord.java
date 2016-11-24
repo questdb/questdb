@@ -107,11 +107,6 @@ public class JournalRecord extends AbstractRecord {
     }
 
     @Override
-    public String getStr(int col) {
-        return partition.getStr(rowid, col);
-    }
-
-    @Override
     public void getStr(int col, CharSink sink) {
         partition.getStr(rowid, col, sink);
     }

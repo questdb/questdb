@@ -28,9 +28,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
-import com.questdb.store.VariableColumn;
 
 public class StoAFunction extends AbstractUnaryOperator {
 
@@ -53,21 +51,5 @@ public class StoAFunction extends AbstractUnaryOperator {
     @Override
     public CharSequence getFlyweightStrB(Record rec) {
         return getFlyweightStr(rec);
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return value.getSym(rec);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(value.getSym(rec));
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        CharSequence cs = value.getSym(rec);
-        return cs == null ? VariableColumn.NULL_LEN : cs.length();
     }
 }

@@ -122,11 +122,6 @@ public abstract class AbstractOrderedAnalyticFunction implements AnalyticFunctio
     }
 
     @Override
-    public CharSequence getStr() {
-        return valueColumn.getStr(out);
-    }
-
-    @Override
     public int getStrLen() {
         return valueColumn.getStrLen(out);
     }

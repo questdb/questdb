@@ -61,8 +61,6 @@ public interface VirtualColumn extends RecordColumnMetadata {
 
     short getShort(Record rec);
 
-    CharSequence getStr(Record rec);
-
     void getStr(Record rec, CharSink sink);
 
     int getStrLen(Record rec);

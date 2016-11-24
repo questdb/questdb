@@ -62,18 +62,7 @@ public class DtoA4Function extends AbstractUnaryOperator {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return getFlyweightStr(rec);
-    }
-
-    @Override
     public void getStr(Record rec, CharSink sink) {
         Dates.formatMMMDYYYY(sink, value.getDate(rec));
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        CharSequence cs = getFlyweightStr(rec);
-        return cs == null ? -1 : cs.length();
     }
 }

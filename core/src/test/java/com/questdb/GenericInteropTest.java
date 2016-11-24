@@ -97,11 +97,11 @@ public class GenericInteropTest extends AbstractTest {
             Assert.assertEquals(10000, e.getInt(4));
             Assert.assertEquals(12000, e.getInt(5));
             Assert.assertEquals(1, e.get(6));
-            Assert.assertEquals("OK", e.getStr(7));
-            Assert.assertEquals("system", e.getStr(8));
-            Assert.assertEquals("EURUSD:GLOBAL", e.getStr(9));
+            TestUtils.assertEquals("OK", e.getFlyweightStr(7));
+            TestUtils.assertEquals("system", e.getFlyweightStr(8));
+            TestUtils.assertEquals("EURUSD:GLOBAL", e.getFlyweightStr(9));
             Assert.assertTrue(e.getBool(10));
-            Assert.assertNull(e.getStr(11));
+            Assert.assertNull(e.getFlyweightStr(11));
             Assert.assertEquals(13141516, e.getLong(12));
             Assert.assertEquals(25000, e.getShort(13));
 
@@ -115,11 +115,11 @@ public class GenericInteropTest extends AbstractTest {
             Assert.assertEquals(11000, e.getInt(4));
             Assert.assertEquals(13000, e.getInt(5));
             Assert.assertEquals(2, e.get(6));
-            Assert.assertEquals("STALE", e.getStr(7));
-            Assert.assertEquals("system", e.getStr(8));
-            Assert.assertEquals("EURUSD:GLOBAL", e.getStr(9));
+            TestUtils.assertEquals("STALE", e.getFlyweightStr(7));
+            TestUtils.assertEquals("system", e.getFlyweightStr(8));
+            TestUtils.assertEquals("EURUSD:GLOBAL", e.getFlyweightStr(9));
             Assert.assertFalse(e.getBool(10));
-            Assert.assertNull(e.getStr(11));
+            Assert.assertNull(e.getFlyweightStr(11));
             Assert.assertEquals(23242526, e.getLong(12));
             Assert.assertEquals(30000, e.getShort(13));
 
@@ -364,11 +364,11 @@ public class GenericInteropTest extends AbstractTest {
             Assert.assertEquals(1000, e.getInt(4));
             Assert.assertEquals(1100, e.getInt(5));
             Assert.assertEquals(1, e.get(6));
-            Assert.assertEquals("OK", e.getStr(7));
-            Assert.assertEquals("system", e.getStr(8));
-            Assert.assertEquals("GBPUSD:GLOBAL", e.getStr(9));
+            TestUtils.assertEquals("OK", e.getFlyweightStr(7));
+            TestUtils.assertEquals("system", e.getFlyweightStr(8));
+            TestUtils.assertEquals("GBPUSD:GLOBAL", e.getFlyweightStr(9));
             Assert.assertTrue(e.getBool(10));
-            Assert.assertNull(e.getStr(11));
+            Assert.assertNull(e.getFlyweightStr(11));
             Assert.assertEquals(12345678, e.getLong(12));
             Assert.assertEquals(425, e.getShort(13));
 

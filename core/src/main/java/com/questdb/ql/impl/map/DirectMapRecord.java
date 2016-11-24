@@ -109,11 +109,6 @@ public class DirectMapRecord extends AbstractRecord {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return entry.getStr(col);
-    }
-
-    @Override
     public void getStr(int col, CharSink sink) {
         entry.getStr(col, sink);
     }

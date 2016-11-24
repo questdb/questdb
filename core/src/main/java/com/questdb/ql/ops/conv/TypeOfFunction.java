@@ -30,7 +30,6 @@ import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
@@ -64,16 +63,6 @@ public class TypeOfFunction extends AbstractUnaryOperator implements SymbolTable
     @Override
     public int getInt(Record rec) {
         return valueType;
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return getFlyweightStr(rec);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(typeName);
     }
 
     @Override

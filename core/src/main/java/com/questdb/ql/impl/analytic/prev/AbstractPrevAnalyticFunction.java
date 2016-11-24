@@ -114,11 +114,6 @@ public abstract class AbstractPrevAnalyticFunction implements AnalyticFunction, 
     }
 
     @Override
-    public CharSequence getStr() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getStrLen() {
         throw new UnsupportedOperationException();
     }

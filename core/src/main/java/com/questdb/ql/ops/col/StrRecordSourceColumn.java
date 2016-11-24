@@ -48,11 +48,6 @@ public class StrRecordSourceColumn extends AbstractVirtualColumn {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return rec.getStr(index);
-    }
-
-    @Override
     public void getStr(Record rec, CharSink sink) {
         rec.getStr(index, sink);
     }

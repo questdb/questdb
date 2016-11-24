@@ -211,7 +211,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
             case ColumnType.BOOLEAN:
                 return new BooleanConstant(f.getBool(null), f.getPosition());
             case ColumnType.STRING:
-                CharSequence cs = f.getStr(null);
+                CharSequence cs = f.getFlyweightStr(null);
                 return cs == null ? new NullConstant(f.getPosition()) : new StrConstant(cs.toString(), f.getPosition());
             case ColumnType.LONG:
                 return new LongConstant(f.getLong(null), f.getPosition());

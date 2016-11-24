@@ -51,7 +51,8 @@ public class AtoSFunction extends AbstractUnaryOperator {
 
     @Override
     public String getSym(Record rec) {
-        return value.getStr(rec).toString();
+        CharSequence cs = value.getFlyweightStr(rec);
+        return cs == null ? null : cs.toString();
     }
 
     @Override

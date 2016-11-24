@@ -23,15 +23,17 @@
 
 package com.questdb.ql.ops.regex;
 
+import com.questdb.ex.ParserException;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
+import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.VirtualColumnFactory;
+import com.questdb.ql.parser.QueryError;
 import com.questdb.regex.Matcher;
 import com.questdb.regex.Pattern;
-import com.questdb.std.str.CharSink;
 import com.questdb.std.str.FlyweightCharSequence;
 import com.questdb.store.ColumnType;
 
@@ -62,23 +64,6 @@ public class PluckStrFunction extends AbstractBinaryOperator {
         return getFlyweightStr0(rhs.getFlyweightStrB(rec), csB);
     }
 
-    @Override
-    public CharSequence getStr(Record rec) {
-        return getFlyweightStr(rec);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(getFlyweightStr(rec));
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        //todo: null test
-        CharSequence cs = getFlyweightStr(rec);
-        return cs == null ? -1 : cs.length();
-    }
-
     public CharSequence getFlyweightStr0(CharSequence base, FlyweightCharSequence to) {
         if (base != null && matcher.reset(base).find() && matcher.groupCount() > 0) {
             int lo = matcher.firstStartQuick();
@@ -91,6 +76,21 @@ public class PluckStrFunction extends AbstractBinaryOperator {
     @Override
     public void prepare(StorageFacade facade) {
         super.prepare(facade);
-        matcher = Pattern.compile(lhs.getStr(null).toString()).matcher("");
+        matcher = Pattern.compile(lhs.getFlyweightStr(null).toString()).matcher("");
+    }
+
+    @Override
+    public void setArg(int pos, VirtualColumn arg) throws ParserException {
+        switch (pos) {
+            case 0:
+                assertConstant(arg);
+                if (arg.getFlyweightStr(null) == null) {
+                    throw QueryError.$(arg.getPosition(), "null pattern?");
+                }
+                break;
+            default:
+                break;
+        }
+        super.setArg(pos, arg);
     }
 }

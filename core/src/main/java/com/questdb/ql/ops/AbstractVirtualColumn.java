@@ -30,6 +30,7 @@ import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
+import com.questdb.store.VariableColumn;
 
 import java.io.OutputStream;
 
@@ -114,18 +115,14 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void getStr(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
+        sink.put(getFlyweightStr(rec));
     }
 
     @Override
     public int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
+        CharSequence cs = getFlyweightStr(rec);
+        return cs == null ? VariableColumn.NULL_LEN : cs.length();
     }
 
     @Override

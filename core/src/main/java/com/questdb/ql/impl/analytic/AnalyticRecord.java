@@ -122,11 +122,6 @@ public class AnalyticRecord extends AbstractRecord {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return col < split ? base.getStr(col) : functions.getQuick(col - split).getStr();
-    }
-
-    @Override
     public void getStr(int col, CharSink sink) {
         if (col < split) {
             base.getStr(col, sink);

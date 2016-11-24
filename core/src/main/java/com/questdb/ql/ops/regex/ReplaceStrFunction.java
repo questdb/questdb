@@ -79,19 +79,8 @@ class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return getFlyweightStr(rec);
-    }
-
-    @Override
     public void getStr(Record rec, CharSink sink) {
         sink.put(getFlyweightStr(rec));
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        CharSequence cs = getFlyweightStr(rec);
-        return cs == null ? -1 : cs.length();
     }
 
     @Override
@@ -121,7 +110,7 @@ class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
     }
 
     private void compileRegex(VirtualColumn arg) throws ParserException {
-        CharSequence pattern = arg.getStr(null);
+        CharSequence pattern = arg.getFlyweightStr(null);
         if (pattern == null) {
             throw QueryError.$(arg.getPosition(), "null regex?");
         }

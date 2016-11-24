@@ -26,10 +26,8 @@ package com.questdb.ql.ops.col;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
-import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
-import com.questdb.store.VariableColumn;
 
 public class SymRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;
@@ -53,22 +51,6 @@ public class SymRecordSourceColumn extends AbstractVirtualColumn {
     @Override
     public int getInt(Record rec) {
         return rec.getInt(index);
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return rec.getSym(index);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(rec.getSym(index));
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        CharSequence cs = rec.getSym(index);
-        return cs == null ? VariableColumn.NULL_LEN : cs.length();
     }
 
     @Override

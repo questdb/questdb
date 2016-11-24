@@ -29,7 +29,6 @@ import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 
 public class Parameter extends AbstractVirtualColumn {
@@ -139,16 +138,6 @@ public class Parameter extends AbstractVirtualColumn {
             default:
                 throw wrongType(ColumnType.SHORT);
         }
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return getFlyweightStr(rec);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(getFlyweightStr(rec));
     }
 
     @Override

@@ -60,8 +60,6 @@ public interface Record {
 
     short getShort(int col);
 
-    CharSequence getStr(int col);
-
     void getStr(int col, CharSink sink);
 
     int getStrLen(int col);

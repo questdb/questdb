@@ -447,12 +447,12 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 testSink.clear();
                 r.getStr(idx, testSink);
 
-                if (r.getStr(idx) == null) {
+                if (r.getFlyweightStr(idx) == null) {
                     Assert.assertTrue(testSink.length() == 0);
                 } else {
-                    TestUtils.assertEquals(r.getStr(idx), testSink);
+                    TestUtils.assertEquals(r.getFlyweightStr(idx), testSink);
                 }
-                TestUtils.assertEquals(r.getStr(idx), r.getFlyweightStr(idx));
+                TestUtils.assertEquals(r.getFlyweightStr(idx), r.getFlyweightStr(idx));
             }
         }
     }

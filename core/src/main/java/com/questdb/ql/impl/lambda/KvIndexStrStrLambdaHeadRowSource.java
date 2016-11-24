@@ -48,7 +48,7 @@ public class KvIndexStrStrLambdaHeadRowSource extends KvIndexStrLambdaHeadRowSou
 
     @Override
     protected CharSequence getKey(Record r, int col) {
-        return r.getStr(col);
+        return r.getFlyweightStr(col);
     }
 
     private static class Factory implements LatestByLambdaRowSourceFactory {

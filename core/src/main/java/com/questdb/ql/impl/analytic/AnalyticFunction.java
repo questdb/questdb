@@ -60,8 +60,6 @@ public interface AnalyticFunction {
 
     void getStr(CharSink sink);
 
-    CharSequence getStr();
-
     int getStrLen();
 
     String getSym();

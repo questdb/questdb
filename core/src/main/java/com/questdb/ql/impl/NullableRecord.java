@@ -110,11 +110,6 @@ public class NullableRecord extends AbstractRecord {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return rec.getStr(col);
-    }
-
-    @Override
     public void getStr(int col, CharSink sink) {
         rec.getStr(col, sink);
     }

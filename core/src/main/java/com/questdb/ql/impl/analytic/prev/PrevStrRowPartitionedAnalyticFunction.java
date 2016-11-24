@@ -109,11 +109,6 @@ public class PrevStrRowPartitionedAnalyticFunction extends AbstractPrevAnalyticF
     }
 
     @Override
-    public CharSequence getStr() {
-        return nextNull ? null : valueColumn.getStr(getParentRecord());
-    }
-
-    @Override
     public int getStrLen() {
         return nextNull ? -1 : valueColumn.getStrLen(getParentRecord());
     }

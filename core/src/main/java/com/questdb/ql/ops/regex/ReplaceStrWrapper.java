@@ -61,11 +61,6 @@ public class ReplaceStrWrapper extends AbstractVirtualColumn implements Function
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return funcA.getStr(rec);
-    }
-
-    @Override
     public void getStr(Record rec, CharSink sink) {
         funcA.getStr(rec, sink);
     }

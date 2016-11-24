@@ -27,9 +27,7 @@ import com.questdb.misc.Chars;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
-import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
-import com.questdb.store.VariableColumn;
 
 public class StrConstant extends AbstractVirtualColumn {
     private final String value;
@@ -47,21 +45,6 @@ public class StrConstant extends AbstractVirtualColumn {
     @Override
     public CharSequence getFlyweightStrB(Record rec) {
         return value;
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return value;
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(value);
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return value == null ? VariableColumn.NULL_LEN : value.length();
     }
 
     @Override

@@ -117,11 +117,6 @@ public class PrevRowAnalyticFunction implements AnalyticFunction {
     }
 
     @Override
-    public CharSequence getStr() {
-        return prevRowId == -1 ? null : valueColumn.getStr(getParentRecord());
-    }
-
-    @Override
     public int getStrLen() {
         return prevRowId == -1 ? -1 : valueColumn.getStrLen(getParentRecord());
     }
