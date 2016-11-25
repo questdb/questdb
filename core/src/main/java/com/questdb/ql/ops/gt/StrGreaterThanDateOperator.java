@@ -23,20 +23,13 @@
 
 package com.questdb.ql.ops.gt;
 
-import com.questdb.ex.NumericException;
-import com.questdb.ex.ParserException;
-import com.questdb.misc.Dates;
 import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
-import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.ql.parser.QueryError;
-import com.questdb.store.ColumnType;
 
-public class StrGreaterThanDateOperator extends AbstractBinaryOperator {
+public class StrGreaterThanDateOperator extends StrToDateCmpBaseOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
@@ -45,11 +38,8 @@ public class StrGreaterThanDateOperator extends AbstractBinaryOperator {
         }
     };
 
-    private long date;
-    private boolean alwaysFalse = false;
-
     private StrGreaterThanDateOperator(int position) {
-        super(ColumnType.BOOLEAN, position);
+        super(position);
     }
 
     @Override
@@ -59,26 +49,5 @@ public class StrGreaterThanDateOperator extends AbstractBinaryOperator {
         }
         long d = rhs.getDate(rec);
         return date > d && d > Numbers.LONG_NaN;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return super.isConstant() || alwaysFalse;
-    }
-
-    @Override
-    public void setLhs(VirtualColumn lhs) throws ParserException {
-        assertConstant(lhs);
-        super.setLhs(lhs);
-        CharSequence cs = lhs.getFlyweightStr(null);
-        if (cs == null) {
-            alwaysFalse = true;
-        } else {
-            try {
-                date = Dates.parseDateTime(cs);
-            } catch (NumericException e) {
-                throw QueryError.$(lhs.getPosition(), "Not a date");
-            }
-        }
     }
 }

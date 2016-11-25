@@ -94,6 +94,21 @@ public class InOperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testDateGreaterOrEqualNull() throws Exception {
+        assertEmpty("select date, sym from abc where date >= null");
+    }
+
+    @Test
+    public void testDateGreaterOrEqualStr() throws Exception {
+        assertThat("2016-05-01T11:14:00.000Z\tXX\n" +
+                        "2016-05-01T11:14:45.000Z\tXX\n" +
+                        "2016-05-01T11:15:30.000Z\tKK\n" +
+                        "2016-05-01T11:16:15.000Z\tXX\n" +
+                        "2016-05-01T11:17:00.000Z\tKK\n",
+                "select date, sym from abc where date >= '2016-05-01T11:14:00.000Z' limit 5");
+    }
+
+    @Test
     public void testDateGreaterThan() throws Exception {
         assertThat("2016-05-01T10:21:00.000Z\t2016-05-01T10:20:45.000Z\n" +
                         "2016-05-01T10:22:00.000Z\t2016-05-01T10:21:30.000Z\n" +
@@ -255,6 +270,11 @@ public class InOperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testNullGreaterOrEqualDate() throws Exception {
+        assertEmpty("select date, sym from abc where null >= date");
+    }
+
+    @Test
     public void testNullGreaterThanDate() throws Exception {
         assertEmpty("select timestamp, date from abc where null > date");
     }
@@ -324,10 +344,30 @@ public class InOperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testShortGreaterOrEqualDouble() throws Exception {
+        assertThat("21781\t0.293202951550\n" +
+                        "27809\t0.040750414133\n" +
+                        "22298\t109.355468750000\n" +
+                        "10633\t0.000002968513\n" +
+                        "8010\t0.000156438433\n",
+                "select sho, d from abc where sho >= d limit 5");
+    }
+
+    @Test
     public void testShortIn() throws Exception {
         assertThat("-7374\t2016-05-01T10:24:00.000Z\n" +
                         "-1605\t2016-05-01T10:30:00.000Z\n",
                 "select sho, timestamp from abc where sho in (-7374,-1605)");
+    }
+
+    @Test
+    public void testStrGreaterOrEqualDate() throws Exception {
+        assertThat("2016-05-01T10:20:45.000Z\tKK\n" +
+                        "2016-05-01T10:21:30.000Z\tXX\n" +
+                        "2016-05-01T10:22:15.000Z\tAX\n" +
+                        "2016-05-01T10:23:00.000Z\tBZ\n" +
+                        "2016-05-01T10:23:45.000Z\tKK\n",
+                "select date, sym from abc where '2016-05-01T10:23:45.000Z' >= date");
     }
 
     @Test

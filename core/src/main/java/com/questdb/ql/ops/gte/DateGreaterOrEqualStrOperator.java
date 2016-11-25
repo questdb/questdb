@@ -21,32 +21,29 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.gt;
+package com.questdb.ql.ops.gte;
 
-import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
-import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.store.ColumnType;
+import com.questdb.ql.ops.gt.DateToStrCmpBaseOperator;
 
-public class IntGreaterThanOperator extends AbstractBinaryOperator {
+public class DateGreaterOrEqualStrOperator extends DateToStrCmpBaseOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new IntGreaterThanOperator(position);
+            return new DateGreaterOrEqualStrOperator(position);
         }
     };
 
-    private IntGreaterThanOperator(int position) {
-        super(ColumnType.BOOLEAN, position);
+    private DateGreaterOrEqualStrOperator(int position) {
+        super(position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        int r = rhs.getInt(rec);
-        return lhs.getInt(rec) > r && r > Numbers.INT_NaN;
+        return !alwaysFalse && lhs.getDate(rec) >= date;
     }
 }

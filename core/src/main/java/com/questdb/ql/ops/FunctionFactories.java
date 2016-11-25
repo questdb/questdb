@@ -33,9 +33,7 @@ import com.questdb.ql.ops.first.FirstFloatAggregator;
 import com.questdb.ql.ops.first.FirstIntAggregator;
 import com.questdb.ql.ops.first.FirstLongAggregator;
 import com.questdb.ql.ops.gt.*;
-import com.questdb.ql.ops.gte.DoubleGreaterOrEqualOperator;
-import com.questdb.ql.ops.gte.IntGreaterOrEqualOperator;
-import com.questdb.ql.ops.gte.LongGreaterOrEqualOperator;
+import com.questdb.ql.ops.gte.*;
 import com.questdb.ql.ops.last.*;
 import com.questdb.ql.ops.lt.DoubleLessThanOperator;
 import com.questdb.ql.ops.lt.IntLessThanOperator;
@@ -334,6 +332,15 @@ public final class FunctionFactories {
         factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.DATE, false), StrGreaterThanDateOperator.FACTORY);
 
         binSig(">=", DoubleGreaterOrEqualOperator.FACTORY, LongGreaterOrEqualOperator.FACTORY, IntGreaterOrEqualOperator.FACTORY);
+        binSig(">=", ColumnType.DATE, ColumnType.DATE, DateGreaterOrEqualOperator.FACTORY);
+
+        factories.put(new Signature().setName(">=").setParamCount(2).paramType(0, ColumnType.DATE, false).paramType(1, ColumnType.STRING, true), DateGreaterOrEqualStrOperator.FACTORY);
+        factories.put(new Signature().setName(">=").setParamCount(2).paramType(0, ColumnType.DATE, true).paramType(1, ColumnType.STRING, true), DateGreaterOrEqualStrOperator.FACTORY);
+
+        factories.put(new Signature().setName(">=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.DATE, true), StrGreaterOrEqualDateOperator.FACTORY);
+        factories.put(new Signature().setName(">=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.DATE, false), StrGreaterOrEqualDateOperator.FACTORY);
+
+
         binSig("<", DoubleLessThanOperator.FACTORY, LongLessThanOperator.FACTORY, IntLessThanOperator.FACTORY);
         binSig("<=", DoubleLessOrEqualOperator.FACTORY, LongLessOrEqualOperator.FACTORY, IntLessOrEqualOperator.FACTORY);
         binSig("=", DoubleEqualsOperator.FACTORY, LongEqualsOperator.FACTORY, IntEqualsOperator.FACTORY, StrEqualsOperator.FACTORY);

@@ -23,6 +23,7 @@
 
 package com.questdb.ql.ops.gte;
 
+import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
@@ -46,6 +47,6 @@ public class IntGreaterOrEqualOperator extends AbstractBinaryOperator {
     @Override
     public boolean getBool(Record rec) {
         int r = rhs.getInt(rec);
-        return lhs.getInt(rec) >= r && r > Integer.MIN_VALUE;
+        return lhs.getInt(rec) >= r && r > Numbers.INT_NaN;
     }
 }
