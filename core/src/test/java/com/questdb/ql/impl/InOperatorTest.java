@@ -94,6 +94,40 @@ public class InOperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testDateGreaterThan() throws Exception {
+        assertThat("2016-05-01T10:21:00.000Z\t2016-05-01T10:20:45.000Z\n" +
+                        "2016-05-01T10:22:00.000Z\t2016-05-01T10:21:30.000Z\n" +
+                        "2016-05-01T10:23:00.000Z\t2016-05-01T10:22:15.000Z\n" +
+                        "2016-05-01T10:24:00.000Z\t2016-05-01T10:23:00.000Z\n" +
+                        "2016-05-01T10:25:00.000Z\t2016-05-01T10:23:45.000Z\n",
+                "select timestamp, date from abc where timestamp > date limit 5");
+    }
+
+    @Test
+    public void testDateGreaterThanNonConstStr() throws Exception {
+        try {
+            expectFailure("select timestamp, date from abc where timestamp > str limit 5");
+        } catch (ParserException e) {
+            Assert.assertEquals(48, QueryError.getPosition());
+        }
+    }
+
+    @Test
+    public void testDateGreaterThanNull() throws Exception {
+        assertEmpty("select timestamp, date from abc where date > null limit 5");
+    }
+
+    @Test
+    public void testDateGreaterThanStr() throws Exception {
+        assertThat("2016-05-01T10:25:00.000Z\t2016-05-01T10:23:45.000Z\n" +
+                        "2016-05-01T10:26:00.000Z\t2016-05-01T10:24:30.000Z\n" +
+                        "2016-05-01T10:27:00.000Z\t2016-05-01T10:25:15.000Z\n" +
+                        "2016-05-01T10:28:00.000Z\t2016-05-01T10:26:00.000Z\n" +
+                        "2016-05-01T10:29:00.000Z\t2016-05-01T10:26:45.000Z\n",
+                "select timestamp, date from abc where date > '2016-05-01T10:23:00.000Z' limit 5");
+    }
+
+    @Test
     public void testDateIn() throws Exception {
         assertThat("2016-05-01T10:25:15.000Z\t2016-05-01T10:27:00.000Z\t0.3180\n" +
                         "2016-05-01T10:26:00.000Z\t2016-05-01T10:28:00.000Z\t0.2358\n" +
@@ -221,6 +255,11 @@ public class InOperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testNullGreaterThanDate() throws Exception {
+        assertEmpty("select timestamp, date from abc where null > date");
+    }
+
+    @Test
     public void testParserErrorOnNegativeNumbers() throws Exception {
         assertThat("NaN\t2016-05-01T10:21:00.000Z\n" +
                         "-1271909747\t2016-05-01T10:24:00.000Z\n" +
@@ -261,10 +300,42 @@ public class InOperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testShortGreater() throws Exception {
+        assertThat("215.009567260742\t-32679\n" +
+                        "-190.000000000000\t-7374\n",
+                "select d, sho from abc where d > sho limit 2");
+
+        assertThat("8000176386900538697\t27809\n" +
+                        "7709707078566863064\t-7374\n",
+                "select l, sho from abc where l > sho limit 2");
+
+        assertThat("0.4836\t-32679\n" +
+                        "0.6755\t-7374\n",
+                "select f, sho from abc where f > sho limit 2");
+
+        assertThat("1573662097\t21781\n" +
+                        "1404198\t27809\n",
+                "select i, sho from abc where i > sho limit 2");
+
+        assertThat("21781\t27\n" +
+                        "27809\t54\n",
+                "select sho, b from abc where sho > b limit 2");
+
+    }
+
+    @Test
     public void testShortIn() throws Exception {
         assertThat("-7374\t2016-05-01T10:24:00.000Z\n" +
                         "-1605\t2016-05-01T10:30:00.000Z\n",
                 "select sho, timestamp from abc where sho in (-7374,-1605)");
+    }
+
+    @Test
+    public void testStrGreaterThanDate() throws Exception {
+        assertThat("2016-05-01T10:21:00.000Z\t2016-05-01T10:20:45.000Z\n" +
+                        "2016-05-01T10:22:00.000Z\t2016-05-01T10:21:30.000Z\n" +
+                        "2016-05-01T10:23:00.000Z\t2016-05-01T10:22:15.000Z\n",
+                "select timestamp, date from abc where '2016-05-01T10:23:00.000Z' > date");
     }
 
     @Test

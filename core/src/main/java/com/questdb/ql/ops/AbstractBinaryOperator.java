@@ -60,7 +60,7 @@ public abstract class AbstractBinaryOperator extends AbstractVirtualColumn imple
         }
     }
 
-    public void setLhs(VirtualColumn lhs) {
+    public void setLhs(VirtualColumn lhs) throws ParserException {
         this.lhs = lhs;
     }
 

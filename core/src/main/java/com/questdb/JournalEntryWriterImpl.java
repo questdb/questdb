@@ -27,6 +27,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.misc.Hash;
+import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.store.*;
 
@@ -155,13 +156,13 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
                 putDouble(index, Double.NaN);
                 break;
             case ColumnType.LONG:
-                putLong(index, Long.MIN_VALUE);
+                putLong(index, Numbers.LONG_NaN);
                 break;
             case ColumnType.BINARY:
                 putBin0(index, null);
                 break;
             case ColumnType.DATE:
-                putDate(index, Long.MIN_VALUE);
+                putDate(index, Numbers.LONG_NaN);
                 break;
             default:
                 fixCol(index).putNull();

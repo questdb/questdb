@@ -32,9 +32,7 @@ import com.questdb.ql.ops.first.FirstDoubleAggregator;
 import com.questdb.ql.ops.first.FirstFloatAggregator;
 import com.questdb.ql.ops.first.FirstIntAggregator;
 import com.questdb.ql.ops.first.FirstLongAggregator;
-import com.questdb.ql.ops.gt.DoubleGreaterThanOperator;
-import com.questdb.ql.ops.gt.IntGreaterThanOperator;
-import com.questdb.ql.ops.gt.LongGreaterThanOperator;
+import com.questdb.ql.ops.gt.*;
 import com.questdb.ql.ops.gte.DoubleGreaterOrEqualOperator;
 import com.questdb.ql.ops.gte.IntGreaterOrEqualOperator;
 import com.questdb.ql.ops.gte.LongGreaterOrEqualOperator;
@@ -281,6 +279,27 @@ public final class FunctionFactories {
         binSig(name, ColumnType.PARAMETER, ColumnType.LONG, longFactory);
         binSig(name, ColumnType.PARAMETER, ColumnType.INT, intFactory);
 
+
+        binSig(name, ColumnType.SHORT, ColumnType.INT, intFactory);
+        binSig(name, ColumnType.INT, ColumnType.SHORT, intFactory);
+        binSig(name, ColumnType.SHORT, ColumnType.DOUBLE, doubleFactory);
+        binSig(name, ColumnType.DOUBLE, ColumnType.SHORT, doubleFactory);
+        binSig(name, ColumnType.SHORT, ColumnType.FLOAT, doubleFactory);
+        binSig(name, ColumnType.FLOAT, ColumnType.SHORT, doubleFactory);
+        binSig(name, ColumnType.SHORT, ColumnType.LONG, longFactory);
+        binSig(name, ColumnType.LONG, ColumnType.SHORT, longFactory);
+
+        binSig(name, ColumnType.BYTE, ColumnType.INT, intFactory);
+        binSig(name, ColumnType.INT, ColumnType.BYTE, intFactory);
+        binSig(name, ColumnType.BYTE, ColumnType.DOUBLE, doubleFactory);
+        binSig(name, ColumnType.DOUBLE, ColumnType.BYTE, doubleFactory);
+        binSig(name, ColumnType.BYTE, ColumnType.FLOAT, doubleFactory);
+        binSig(name, ColumnType.FLOAT, ColumnType.BYTE, doubleFactory);
+        binSig(name, ColumnType.BYTE, ColumnType.LONG, longFactory);
+        binSig(name, ColumnType.LONG, ColumnType.BYTE, longFactory);
+        binSig(name, ColumnType.BYTE, ColumnType.SHORT, intFactory);
+        binSig(name, ColumnType.SHORT, ColumnType.BYTE, intFactory);
+
         if (strFactory != null) {
             binSig(name, ColumnType.STRING, ColumnType.STRING, strFactory);
             binSig(name, ColumnType.PARAMETER, ColumnType.STRING, strFactory);
@@ -306,6 +325,14 @@ public final class FunctionFactories {
         binSig("/", DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY);
         binSig("-", MinusDoubleOperator.FACTORY, MinusLongOperator.FACTORY, MinusIntOperator.FACTORY);
         binSig(">", DoubleGreaterThanOperator.FACTORY, LongGreaterThanOperator.FACTORY, IntGreaterThanOperator.FACTORY);
+
+        binSig(">", ColumnType.DATE, ColumnType.DATE, DateGreaterThanOperator.FACTORY);
+        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.DATE, false).paramType(1, ColumnType.STRING, true), DateGreaterThanStrOperator.FACTORY);
+        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.DATE, true).paramType(1, ColumnType.STRING, true), DateGreaterThanStrOperator.FACTORY);
+
+        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.DATE, true), StrGreaterThanDateOperator.FACTORY);
+        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.DATE, false), StrGreaterThanDateOperator.FACTORY);
+
         binSig(">=", DoubleGreaterOrEqualOperator.FACTORY, LongGreaterOrEqualOperator.FACTORY, IntGreaterOrEqualOperator.FACTORY);
         binSig("<", DoubleLessThanOperator.FACTORY, LongLessThanOperator.FACTORY, IntLessThanOperator.FACTORY);
         binSig("<=", DoubleLessOrEqualOperator.FACTORY, LongLessOrEqualOperator.FACTORY, IntLessOrEqualOperator.FACTORY);
