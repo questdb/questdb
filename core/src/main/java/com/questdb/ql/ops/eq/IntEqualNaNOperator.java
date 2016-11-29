@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.neq;
+package com.questdb.ql.ops.eq;
 
 import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
@@ -31,21 +31,21 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
-public class LongNotEqualsNaNOperator extends AbstractBinaryOperator {
+public class IntEqualNaNOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new LongNotEqualsNaNOperator(position);
+            return new IntEqualNaNOperator(position);
         }
     };
 
-    private LongNotEqualsNaNOperator(int position) {
+    private IntEqualNaNOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return lhs.getLong(rec) != Numbers.LONG_NaN;
+        return lhs.getInt(rec) == Numbers.INT_NaN;
     }
 }

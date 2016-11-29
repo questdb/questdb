@@ -23,29 +23,29 @@
 
 package com.questdb.ql.ops.eq;
 
-import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
+import com.questdb.store.VariableColumn;
 
-public class LongEqualsNaNOperator extends AbstractBinaryOperator {
+public class StrEqualNullOperator extends AbstractBinaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
+    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new LongEqualsNaNOperator(position);
+            return new StrEqualNullOperator(position);
         }
     };
 
-    private LongEqualsNaNOperator(int position) {
+    private StrEqualNullOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return lhs.getLong(rec) == Numbers.LONG_NaN;
+        return lhs.getStrLen(rec) == VariableColumn.NULL_LEN;
     }
 }

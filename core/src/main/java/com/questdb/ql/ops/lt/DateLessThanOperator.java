@@ -21,58 +21,32 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.eq;
+package com.questdb.ql.ops.lt;
 
-import com.questdb.ex.ParserException;
+import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
-import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.ql.parser.IntervalCompiler;
-import com.questdb.std.LongList;
 import com.questdb.store.ColumnType;
 
-public class DateEqualsStrConstOperator extends AbstractBinaryOperator {
+public class DateLessThanOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DateEqualsStrConstOperator(position);
+            return new DateLessThanOperator(position);
         }
     };
 
-    private final LongList intervals = new LongList();
-    private int intervalCount;
-
-    private DateEqualsStrConstOperator(int position) {
+    private DateLessThanOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        long date = lhs.getDate(rec);
-        for (int i = 0; i < intervalCount; i++) {
-            if (date < IntervalCompiler.getIntervalLo(intervals, i)) {
-                return false;
-            }
-
-            if (date <= IntervalCompiler.getIntervalHi(intervals, i)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    @Override
-    public void setRhs(VirtualColumn rhs) throws ParserException {
-        super.setRhs(rhs);
-        // null is handled by another operator
-        CharSequence intervalStr = rhs.getFlyweightStr(null);
-        if (intervalStr != null) {
-            IntervalCompiler.parseIntervalEx(intervalStr, 0, intervalStr.length(), rhs.getPosition(), intervals);
-        }
-        intervalCount = intervals.size() / 2;
+        long r = rhs.getDate(rec);
+        return lhs.getDate(rec) < r && r > Numbers.LONG_NaN;
     }
 }

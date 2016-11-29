@@ -21,31 +21,36 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.eq;
+package com.questdb.ql.ops.lt;
 
+import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
-import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.store.ColumnType;
+import com.questdb.ql.ops.gt.DateToStrCmpBaseOperator;
 
-public class LongEqualsOperator extends AbstractBinaryOperator {
+public class DateLessThanStrOperator extends DateToStrCmpBaseOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new LongEqualsOperator(position);
+            return new DateLessThanStrOperator(position);
         }
     };
 
-    private LongEqualsOperator(int position) {
-        super(ColumnType.BOOLEAN, position);
+    private DateLessThanStrOperator(int position) {
+        super(position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        long l = lhs.getLong(rec);
-        return l == rhs.getLong(rec) && l > Long.MIN_VALUE;
+        if (alwaysFalse) {
+            return false;
+        }
+
+        long d = lhs.getDate(rec);
+
+        return d < date && d > Numbers.LONG_NaN;
     }
 }

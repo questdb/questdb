@@ -35,12 +35,8 @@ import com.questdb.ql.ops.first.FirstLongAggregator;
 import com.questdb.ql.ops.gt.*;
 import com.questdb.ql.ops.gte.*;
 import com.questdb.ql.ops.last.*;
-import com.questdb.ql.ops.lt.DoubleLessThanOperator;
-import com.questdb.ql.ops.lt.IntLessThanOperator;
-import com.questdb.ql.ops.lt.LongLessThanOperator;
-import com.questdb.ql.ops.lte.DoubleLessOrEqualOperator;
-import com.questdb.ql.ops.lte.IntLessOrEqualOperator;
-import com.questdb.ql.ops.lte.LongLessOrEqualOperator;
+import com.questdb.ql.ops.lt.*;
+import com.questdb.ql.ops.lte.*;
 import com.questdb.ql.ops.max.MaxDateAggregator;
 import com.questdb.ql.ops.max.MaxDoubleAggregator;
 import com.questdb.ql.ops.max.MaxIntAggregator;
@@ -95,24 +91,24 @@ public final class FunctionFactories {
                         if (Chars.equals(sig.name, '=')) {
                             switch (columnType) {
                                 case ColumnType.DOUBLE:
-                                    return DoubleEqualsNanOperator.FACTORY;
+                                    return DoubleEqualNanOperator.FACTORY;
                                 case ColumnType.INT:
-                                    return IntEqualsNaNOperator.FACTORY;
+                                    return IntEqualNaNOperator.FACTORY;
                                 case ColumnType.LONG:
                                 case ColumnType.DATE:
-                                    return LongEqualsNaNOperator.FACTORY;
+                                    return LongEqualNaNOperator.FACTORY;
                                 default:
                                     break;
                             }
                         } else if (Chars.equals("!=", sig.name)) {
                             switch (columnType) {
                                 case ColumnType.DOUBLE:
-                                    return DoubleNotEqualsNanOperator.FACTORY;
+                                    return DoubleNotEqualNanOperator.FACTORY;
                                 case ColumnType.INT:
-                                    return IntNotEqualsNaNOperator.FACTORY;
+                                    return IntNotEqualNaNOperator.FACTORY;
                                 case ColumnType.LONG:
                                 case ColumnType.DATE:
-                                    return LongNotEqualsNaNOperator.FACTORY;
+                                    return LongNotEqualNaNOperator.FACTORY;
                                 default:
                                     break;
                             }
@@ -125,28 +121,28 @@ public final class FunctionFactories {
                         if (Chars.equals(sig.name, '=')) {
                             switch (columnType) {
                                 case ColumnType.DOUBLE:
-                                    return DoubleEqualsNanOperator.FACTORY;
+                                    return DoubleEqualNanOperator.FACTORY;
                                 case ColumnType.STRING:
-                                    return StrEqualsNullOperator.FACTORY;
+                                    return StrEqualNullOperator.FACTORY;
                                 case ColumnType.INT:
-                                    return IntEqualsNaNOperator.FACTORY;
+                                    return IntEqualNaNOperator.FACTORY;
                                 case ColumnType.LONG:
                                 case ColumnType.DATE:
-                                    return LongEqualsNaNOperator.FACTORY;
+                                    return LongEqualNaNOperator.FACTORY;
                                 default:
                                     break;
                             }
                         } else if (Chars.equals(sig.name, "!=")) {
                             switch (columnType) {
                                 case ColumnType.DOUBLE:
-                                    return DoubleNotEqualsNanOperator.FACTORY;
+                                    return DoubleNotEqualNanOperator.FACTORY;
                                 case ColumnType.STRING:
-                                    return StrNotEqualsNullOperator.FACTORY;
+                                    return StrNotEqualNullOperator.FACTORY;
                                 case ColumnType.INT:
-                                    return IntNotEqualsNaNOperator.FACTORY;
+                                    return IntNotEqualNaNOperator.FACTORY;
                                 case ColumnType.LONG:
                                 case ColumnType.DATE:
-                                    return LongNotEqualsNaNOperator.FACTORY;
+                                    return LongNotEqualNaNOperator.FACTORY;
                                 default:
                                     break;
                             }
@@ -193,10 +189,24 @@ public final class FunctionFactories {
     }
 
     private static void binSig(String name, int lhst, int rhst, VirtualColumnFactory<Function> f) {
-        factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, false).paramType(1, rhst, false), f);
-        factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, true).paramType(1, rhst, false), f);
-        factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, false).paramType(1, rhst, true), f);
-        factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, true).paramType(1, rhst, true), f);
+        binSig(name, lhst, false, rhst, false, f);
+        binSig(name, lhst, true, rhst, false, f);
+        binSig(name, lhst, false, rhst, true, f);
+        binSig(name, lhst, true, rhst, true, f);
+    }
+
+    private static void binSig(String name, int lhst, boolean lconst, int rhst, boolean rconst, VirtualColumnFactory<Function> f) {
+        factories.put(new Signature().setName(name).setParamCount(2).paramType(0, lhst, lconst).paramType(1, rhst, rconst), f);
+    }
+
+    private static void binSig(String name, int lhst, int rhst, boolean rconst, VirtualColumnFactory<Function> f) {
+        binSig(name, lhst, false, rhst, rconst, f);
+        binSig(name, lhst, true, rhst, rconst, f);
+    }
+
+    private static void binSig(String name, int lhst, boolean lconst, int rhst, VirtualColumnFactory<Function> f) {
+        binSig(name, lhst, lconst, rhst, true, f);
+        binSig(name, lhst, lconst, rhst, false, f);
     }
 
     private static void unSig(String name, int type, VirtualColumnFactory<Function> f) {
@@ -312,71 +322,65 @@ public final class FunctionFactories {
         binSig("+", ColumnType.DATE, ColumnType.INT, AddDateDayLOperator.FACTORY);
         binSig("+", ColumnType.INT, ColumnType.DATE, AddDateDayROperator.FACTORY);
 
-        binSig(">", ColumnType.DATE, ColumnType.DATE, LongGreaterThanOperator.FACTORY);
-        binSig(">=", ColumnType.DATE, ColumnType.DATE, LongGreaterOrEqualOperator.FACTORY);
-        binSig("<", ColumnType.DATE, ColumnType.DATE, LongLessThanOperator.FACTORY);
-        binSig("<=", ColumnType.DATE, ColumnType.DATE, LongLessOrEqualOperator.FACTORY);
-        binSig("=", ColumnType.DATE, ColumnType.DATE, LongEqualsOperator.FACTORY);
-        binSig("!=", ColumnType.DATE, ColumnType.DATE, LongNotEqualsOperator.FACTORY);
-
         binSig("*", MultDoubleOperator.FACTORY, MultLongOperator.FACTORY, MultIntOperator.FACTORY);
         binSig("/", DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY, DivDoubleOperator.FACTORY);
         binSig("-", MinusDoubleOperator.FACTORY, MinusLongOperator.FACTORY, MinusIntOperator.FACTORY);
+
         binSig(">", DoubleGreaterThanOperator.FACTORY, LongGreaterThanOperator.FACTORY, IntGreaterThanOperator.FACTORY);
-
         binSig(">", ColumnType.DATE, ColumnType.DATE, DateGreaterThanOperator.FACTORY);
-        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.DATE, false).paramType(1, ColumnType.STRING, true), DateGreaterThanStrOperator.FACTORY);
-        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.DATE, true).paramType(1, ColumnType.STRING, true), DateGreaterThanStrOperator.FACTORY);
-
-        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.DATE, true), StrGreaterThanDateOperator.FACTORY);
-        factories.put(new Signature().setName(">").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.DATE, false), StrGreaterThanDateOperator.FACTORY);
+        binSig(">", ColumnType.DATE, ColumnType.STRING, true, DateGreaterThanStrOperator.FACTORY);
+        binSig(">", ColumnType.STRING, true, ColumnType.DATE, StrGreaterThanDateOperator.FACTORY);
 
         binSig(">=", DoubleGreaterOrEqualOperator.FACTORY, LongGreaterOrEqualOperator.FACTORY, IntGreaterOrEqualOperator.FACTORY);
         binSig(">=", ColumnType.DATE, ColumnType.DATE, DateGreaterOrEqualOperator.FACTORY);
-
-        factories.put(new Signature().setName(">=").setParamCount(2).paramType(0, ColumnType.DATE, false).paramType(1, ColumnType.STRING, true), DateGreaterOrEqualStrOperator.FACTORY);
-        factories.put(new Signature().setName(">=").setParamCount(2).paramType(0, ColumnType.DATE, true).paramType(1, ColumnType.STRING, true), DateGreaterOrEqualStrOperator.FACTORY);
-
-        factories.put(new Signature().setName(">=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.DATE, true), StrGreaterOrEqualDateOperator.FACTORY);
-        factories.put(new Signature().setName(">=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.DATE, false), StrGreaterOrEqualDateOperator.FACTORY);
-
+        binSig(">=", ColumnType.DATE, ColumnType.STRING, true, DateGreaterOrEqualStrOperator.FACTORY);
+        binSig(">=", ColumnType.STRING, true, ColumnType.DATE, StrGreaterOrEqualDateOperator.FACTORY);
 
         binSig("<", DoubleLessThanOperator.FACTORY, LongLessThanOperator.FACTORY, IntLessThanOperator.FACTORY);
+        binSig("<", ColumnType.DATE, ColumnType.DATE, DateLessThanOperator.FACTORY);
+        binSig("<", ColumnType.DATE, ColumnType.STRING, true, DateLessThanStrOperator.FACTORY);
+        binSig("<", ColumnType.STRING, true, ColumnType.DATE, StrLessThanDateOperator.FACTORY);
+
         binSig("<=", DoubleLessOrEqualOperator.FACTORY, LongLessOrEqualOperator.FACTORY, IntLessOrEqualOperator.FACTORY);
-        binSig("=", DoubleEqualsOperator.FACTORY, LongEqualsOperator.FACTORY, IntEqualsOperator.FACTORY, StrEqualsOperator.FACTORY);
+        binSig("<=", ColumnType.DATE, ColumnType.DATE, LongLessOrEqualOperator.FACTORY);
+        binSig("<=", ColumnType.DATE, ColumnType.STRING, true, DateLessOrEqualStrOperator.FACTORY);
+        binSig("<=", ColumnType.STRING, true, ColumnType.DATE, StrLessOrEqualDateOperator.FACTORY);
 
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrEqualsOperator.FACTORY);
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymEqualsOperator.FACTORY);
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.SYMBOL, false), SymEqualsROperator.FACTORY);
+        binSig("=", DoubleEqualOperator.FACTORY, LongEqualOperator.FACTORY, IntEqualOperator.FACTORY, StrEqualStrOperator.FACTORY);
+        binSig("=", ColumnType.SYMBOL, false, ColumnType.STRING, false, StrEqualStrOperator.FACTORY);
+        binSig("=", ColumnType.SYMBOL, false, ColumnType.STRING, true, SymEqualStrOperator.FACTORY);
+        binSig("=", ColumnType.STRING, true, ColumnType.SYMBOL, false, StrEqualSymOperator.FACTORY);
+        binSig("=", ColumnType.DATE, ColumnType.DATE, LongEqualOperator.FACTORY);
+        binSig("=", ColumnType.DATE, ColumnType.STRING, true, DateEqualStrConstOperator.FACTORY);
+        binSig("=", ColumnType.STRING, true, ColumnType.DATE, StrEqualDateOperator.FACTORY);
 
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.DATE, false).paramType(1, ColumnType.STRING, true), DateEqualsStrConstOperator.FACTORY);
-        factories.put(new Signature().setName("=").setParamCount(2).paramType(0, ColumnType.DATE, false).paramType(1, ColumnType.STRING, false), DateEqualsStrConstOperator.FACTORY);
+        binSig("!=", DoubleNotEqualOperator.FACTORY, LongNotEqualOperator.FACTORY, IntNotEqualOperator.FACTORY, StrNotEqualOperator.FACTORY);
+        binSig("!=", ColumnType.DATE, ColumnType.DATE, LongNotEqualOperator.FACTORY);
+        binSig("!=", ColumnType.SYMBOL, false, ColumnType.STRING, false, StrNotEqualOperator.FACTORY);
+        binSig("!=", ColumnType.SYMBOL, false, ColumnType.STRING, true, SymNotEqualStrOperator.FACTORY);
+        binSig("!=", ColumnType.STRING, true, ColumnType.SYMBOL, false, StrNotEqualSymOperator.FACTORY);
+        binSig("!=", ColumnType.DATE, ColumnType.STRING, true, DateNotEqualStrConstOperator.FACTORY);
+        binSig("!=", ColumnType.STRING, true, ColumnType.DATE, StrNotEqualDateOperator.FACTORY);
 
-        binSig("!=", DoubleNotEqualsOperator.FACTORY, LongNotEqualsOperator.FACTORY, IntNotEqualsOperator.FACTORY, StrNotEqualsOperator.FACTORY);
+        triSig("eq", ColumnType.DOUBLE, ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.DOUBLE, ColumnType.INT, ColumnType.DOUBLE, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.INT, ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.DOUBLE, ColumnType.LONG, ColumnType.DOUBLE, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.LONG, ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleScaledEqualOperator.FACTORY);
 
-        factories.put(new Signature().setName("!=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, false), StrNotEqualsOperator.FACTORY);
-        factories.put(new Signature().setName("!=").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymNotEqualsOperator.FACTORY);
-        factories.put(new Signature().setName("!=").setParamCount(2).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.SYMBOL, false), SymNotEqualsROperator.FACTORY);
+        triSig("eq", ColumnType.DOUBLE, ColumnType.PARAMETER, ColumnType.DOUBLE, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.INT, ColumnType.PARAMETER, ColumnType.DOUBLE, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.LONG, ColumnType.PARAMETER, ColumnType.DOUBLE, DoubleScaledEqualOperator.FACTORY);
 
-        triSig("eq", ColumnType.DOUBLE, ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.DOUBLE, ColumnType.INT, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.INT, ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.DOUBLE, ColumnType.LONG, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.LONG, ColumnType.DOUBLE, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
+        triSig("eq", ColumnType.DOUBLE, ColumnType.PARAMETER, ColumnType.PARAMETER, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.INT, ColumnType.PARAMETER, ColumnType.PARAMETER, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.LONG, ColumnType.PARAMETER, ColumnType.PARAMETER, DoubleScaledEqualOperator.FACTORY);
 
-        triSig("eq", ColumnType.DOUBLE, ColumnType.PARAMETER, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.INT, ColumnType.PARAMETER, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.LONG, ColumnType.PARAMETER, ColumnType.DOUBLE, DoubleScaledEqualsOperator.FACTORY);
-
-        triSig("eq", ColumnType.DOUBLE, ColumnType.PARAMETER, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.INT, ColumnType.PARAMETER, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.LONG, ColumnType.PARAMETER, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
-
-        triSig("eq", ColumnType.DOUBLE, ColumnType.DOUBLE, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.DOUBLE, ColumnType.INT, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.INT, ColumnType.DOUBLE, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.DOUBLE, ColumnType.LONG, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
-        triSig("eq", ColumnType.LONG, ColumnType.DOUBLE, ColumnType.PARAMETER, DoubleScaledEqualsOperator.FACTORY);
+        triSig("eq", ColumnType.DOUBLE, ColumnType.DOUBLE, ColumnType.PARAMETER, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.DOUBLE, ColumnType.INT, ColumnType.PARAMETER, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.INT, ColumnType.DOUBLE, ColumnType.PARAMETER, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.DOUBLE, ColumnType.LONG, ColumnType.PARAMETER, DoubleScaledEqualOperator.FACTORY);
+        triSig("eq", ColumnType.LONG, ColumnType.DOUBLE, ColumnType.PARAMETER, DoubleScaledEqualOperator.FACTORY);
 
         unSig("-", ColumnType.INT, IntNegativeOperator.FACTORY);
         unSig("-", ColumnType.DOUBLE, DoubleNegativeOperator.FACTORY);
@@ -395,10 +399,11 @@ public final class FunctionFactories {
         unSig("time24", ColumnType.STRING, Time24ToMillisFunction.FACTORY);
         unSig("toDate", ColumnType.STRING, ToDateFunction.FACTORY);
 
-        factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.STRING, true), StrRegexOperator.FACTORY);
-        factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.PARAMETER, true), StrRegexOperator.FACTORY);
-        factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.STRING, true), SymRegexOperator.FACTORY);
-        factories.put(new Signature().setName("~").setParamCount(2).paramType(0, ColumnType.SYMBOL, false).paramType(1, ColumnType.PARAMETER, true), SymRegexOperator.FACTORY);
+        binSig("~", ColumnType.STRING, false, ColumnType.STRING, true, StrRegexOperator.FACTORY);
+        binSig("~", ColumnType.STRING, false, ColumnType.PARAMETER, true, StrRegexOperator.FACTORY);
+        binSig("~", ColumnType.SYMBOL, false, ColumnType.STRING, true, SymRegexOperator.FACTORY);
+        binSig("~", ColumnType.SYMBOL, false, ColumnType.PARAMETER, true, SymRegexOperator.FACTORY);
+
         binSig("and", ColumnType.BOOLEAN, ColumnType.BOOLEAN, AndOperator.FACTORY);
         binSig("or", ColumnType.BOOLEAN, ColumnType.BOOLEAN, OrOperator.FACTORY);
 

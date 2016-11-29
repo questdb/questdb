@@ -21,31 +21,58 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.eq;
+package com.questdb.ql.ops.neq;
 
+import com.questdb.ex.ParserException;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
+import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.VirtualColumnFactory;
+import com.questdb.ql.parser.IntervalCompiler;
+import com.questdb.std.LongList;
 import com.questdb.store.ColumnType;
 
-public class DoubleEqualsNanOperator extends AbstractBinaryOperator {
+public class StrNotEqualDateOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DoubleEqualsNanOperator(position);
+            return new StrNotEqualDateOperator(position);
         }
     };
 
-    private DoubleEqualsNanOperator(int position) {
+    private final LongList intervals = new LongList();
+    private int intervalCount;
+
+    private StrNotEqualDateOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        double l = lhs.getDouble(rec);
-        return l != l;
+        long date = rhs.getDate(rec);
+        for (int i = 0; i < intervalCount; i++) {
+            if (date < IntervalCompiler.getIntervalLo(intervals, i)) {
+                return true;
+            }
+
+            if (date <= IntervalCompiler.getIntervalHi(intervals, i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public void setLhs(VirtualColumn lhs) throws ParserException {
+        super.setLhs(lhs);
+        // null is handled by another operator
+        CharSequence intervalStr = lhs.getFlyweightStr(null);
+        if (intervalStr != null) {
+            IntervalCompiler.parseIntervalEx(intervalStr, 0, intervalStr.length(), lhs.getPosition(), intervals);
+        }
+        intervalCount = intervals.size() / 2;
     }
 }

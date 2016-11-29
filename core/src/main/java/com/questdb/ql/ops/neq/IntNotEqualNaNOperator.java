@@ -23,6 +23,7 @@
 
 package com.questdb.ql.ops.neq;
 
+import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
@@ -30,21 +31,21 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
-public class LongNotEqualsOperator extends AbstractBinaryOperator {
+public class IntNotEqualNaNOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new LongNotEqualsOperator(position);
+            return new IntNotEqualNaNOperator(position);
         }
     };
 
-    private LongNotEqualsOperator(int position) {
+    private IntNotEqualNaNOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return lhs.getLong(rec) != rhs.getLong(rec);
+        return lhs.getInt(rec) != Numbers.INT_NaN;
     }
 }

@@ -33,30 +33,30 @@ import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
-public class SymNotEqualsROperator extends AbstractBinaryOperator {
+public class SymNotEqualStrOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new SymNotEqualsROperator(position);
+            return new SymNotEqualStrOperator(position);
         }
     };
 
-    private int key;
+    private int key = -2;
 
-    private SymNotEqualsROperator(int position) {
+    private SymNotEqualStrOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        int k = rhs.getInt(rec);
+        int k = lhs.getInt(rec);
         return (k != key && (key != SymbolTable.VALUE_IS_NULL || k != Numbers.INT_NaN));
     }
 
     @Override
     public void prepare(StorageFacade facade) {
         super.prepare(facade);
-        this.key = rhs.getSymbolTable().getQuick(lhs.getFlyweightStr(null));
+        this.key = lhs.getSymbolTable().getQuick(rhs.getFlyweightStr(null));
     }
 }

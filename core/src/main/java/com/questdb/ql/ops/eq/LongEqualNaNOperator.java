@@ -26,37 +26,26 @@ package com.questdb.ql.ops.eq;
 import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
 
-public class SymEqualsROperator extends AbstractBinaryOperator {
+public class LongEqualNaNOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new SymEqualsROperator(position);
+            return new LongEqualNaNOperator(position);
         }
     };
 
-    private int key;
-
-    private SymEqualsROperator(int position) {
+    private LongEqualNaNOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        int k = rhs.getInt(rec);
-        return (k == key || (key == SymbolTable.VALUE_IS_NULL && k == Numbers.INT_NaN));
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
-        super.prepare(facade);
-        this.key = rhs.getSymbolTable().getQuick(lhs.getFlyweightStr(null));
+        return lhs.getLong(rec) == Numbers.LONG_NaN;
     }
 }

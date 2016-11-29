@@ -21,42 +21,34 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.neq;
+package com.questdb.ql.ops.lte;
 
 import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
-import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
+import com.questdb.ql.ops.gt.StrToDateCmpBaseOperator;
 
-public class SymNotEqualsOperator extends AbstractBinaryOperator {
+public class StrLessOrEqualDateOperator extends StrToDateCmpBaseOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new SymNotEqualsOperator(position);
+            return new StrLessOrEqualDateOperator(position);
         }
     };
 
-    private int key = -2;
-
-    private SymNotEqualsOperator(int position) {
-        super(ColumnType.BOOLEAN, position);
+    private StrLessOrEqualDateOperator(int position) {
+        super(position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        int k = lhs.getInt(rec);
-        return (k != key && (key != SymbolTable.VALUE_IS_NULL || k != Numbers.INT_NaN));
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
-        super.prepare(facade);
-        this.key = lhs.getSymbolTable().getQuick(rhs.getFlyweightStr(null));
+        if (alwaysFalse) {
+            return false;
+        }
+        long d = rhs.getDate(rec);
+        return date <= d && d > Numbers.LONG_NaN;
     }
 }

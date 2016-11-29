@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.neq;
 
-import com.questdb.misc.Chars;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
@@ -31,23 +30,21 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
-public class StrNotEqualsOperator extends AbstractBinaryOperator {
+public class LongNotEqualOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new StrNotEqualsOperator(position);
+            return new LongNotEqualOperator(position);
         }
     };
 
-    private StrNotEqualsOperator(int position) {
+    private LongNotEqualOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        CharSequence l = lhs.getFlyweightStr(rec);
-        CharSequence r = rhs.getFlyweightStr(rec);
-        return !(r == null && l == null) && (!(r != null && l != null) || !Chars.equals(l, r));
+        return lhs.getLong(rec) != rhs.getLong(rec);
     }
 }

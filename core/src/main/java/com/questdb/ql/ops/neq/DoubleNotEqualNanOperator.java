@@ -29,23 +29,23 @@ import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
-import com.questdb.store.VariableColumn;
 
-public class StrNotEqualsNullOperator extends AbstractBinaryOperator {
+public class DoubleNotEqualNanOperator extends AbstractBinaryOperator {
 
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
+    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new StrNotEqualsNullOperator(position);
+            return new DoubleNotEqualNanOperator(position);
         }
     };
 
-    private StrNotEqualsNullOperator(int position) {
+    private DoubleNotEqualNanOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return lhs.getStrLen(rec) != VariableColumn.NULL_LEN;
+        double l = lhs.getDouble(rec);
+        return l == l;
     }
 }

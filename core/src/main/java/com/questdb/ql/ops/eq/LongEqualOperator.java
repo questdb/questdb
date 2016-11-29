@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.eq;
 
-import com.questdb.misc.Chars;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
@@ -31,23 +30,22 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
-public class StrEqualsOperator extends AbstractBinaryOperator {
+public class LongEqualOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new StrEqualsOperator(position);
+            return new LongEqualOperator(position);
         }
     };
 
-    private StrEqualsOperator(int position) {
+    private LongEqualOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        CharSequence l = lhs.getFlyweightStr(rec);
-        CharSequence r = rhs.getFlyweightStr(rec);
-        return l == null && r == null || l != null && r != null && Chars.equals(l, r);
+        long l = lhs.getLong(rec);
+        return l == rhs.getLong(rec) && l > Long.MIN_VALUE;
     }
 }

@@ -30,16 +30,16 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
-public class IntNotEqualsOperator extends AbstractBinaryOperator {
+public class IntNotEqualOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new IntNotEqualsOperator(position);
+            return new IntNotEqualOperator(position);
         }
     };
 
-    private IntNotEqualsOperator(int position) {
+    private IntNotEqualOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 

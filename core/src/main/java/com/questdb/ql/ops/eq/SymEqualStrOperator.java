@@ -23,28 +23,40 @@
 
 package com.questdb.ql.ops.eq;
 
+import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
+import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
+import com.questdb.store.SymbolTable;
 
-public class DoubleEqualsOperator extends AbstractBinaryOperator {
+public class SymEqualStrOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DoubleEqualsOperator(position);
+            return new SymEqualStrOperator(position);
         }
     };
 
-    private DoubleEqualsOperator(int position) {
+    private int key = -2;
+
+    private SymEqualStrOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return lhs.getDouble(rec) == rhs.getDouble(rec);
+        int k = lhs.getInt(rec);
+        return (k == key || (key == SymbolTable.VALUE_IS_NULL && k == Numbers.INT_NaN));
+    }
+
+    @Override
+    public void prepare(StorageFacade facade) {
+        super.prepare(facade);
+        this.key = lhs.getSymbolTable().getQuick(rhs.getFlyweightStr(null));
     }
 }

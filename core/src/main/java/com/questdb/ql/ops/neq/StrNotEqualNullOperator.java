@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.eq;
+package com.questdb.ql.ops.neq;
 
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
@@ -31,21 +31,21 @@ import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
 
-public class StrEqualsNullOperator extends AbstractBinaryOperator {
+public class StrNotEqualNullOperator extends AbstractBinaryOperator {
 
     public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new StrEqualsNullOperator(position);
+            return new StrNotEqualNullOperator(position);
         }
     };
 
-    private StrEqualsNullOperator(int position) {
+    private StrNotEqualNullOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return lhs.getStrLen(rec) == VariableColumn.NULL_LEN;
+        return lhs.getStrLen(rec) != VariableColumn.NULL_LEN;
     }
 }

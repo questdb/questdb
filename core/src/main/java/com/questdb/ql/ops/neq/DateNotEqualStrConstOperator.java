@@ -21,64 +21,65 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.ops.eq;
+package com.questdb.ql.ops.neq;
 
 import com.questdb.ex.ParserException;
+import com.questdb.misc.Numbers;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
-import com.questdb.ql.ops.AbstractVirtualColumn;
+import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.VirtualColumnFactory;
+import com.questdb.ql.parser.IntervalCompiler;
+import com.questdb.std.LongList;
 import com.questdb.store.ColumnType;
 
-public class DoubleScaledEqualsOperator extends AbstractVirtualColumn implements Function {
+public class DateNotEqualStrConstOperator extends AbstractBinaryOperator {
 
     public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
         @Override
         public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DoubleScaledEqualsOperator(position);
+            return new DateNotEqualStrConstOperator(position);
         }
     };
-    private VirtualColumn lhs;
-    private VirtualColumn rhs;
-    private VirtualColumn scale;
 
-    private DoubleScaledEqualsOperator(int position) {
+    private final LongList intervals = new LongList();
+    private int intervalCount;
+
+    private DateNotEqualStrConstOperator(int position) {
         super(ColumnType.BOOLEAN, position);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        double d = lhs.getDouble(rec) - rhs.getDouble(rec);
-        return d > 0 ? d < this.scale.getDouble(rec) : d > -this.scale.getDouble(rec);
-    }
+        long date = lhs.getDate(rec);
 
-    @Override
-    public boolean isConstant() {
-        return lhs.isConstant() && rhs.isConstant() && scale.isConstant();
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
-        lhs.prepare(facade);
-        rhs.prepare(facade);
-        scale.prepare(facade);
-    }
-
-    @Override
-    public void setArg(int pos, VirtualColumn arg) throws ParserException {
-        switch (pos) {
-            case 0:
-                lhs = arg;
-                break;
-            case 1:
-                rhs = arg;
-                break;
-            default:
-                scale = arg;
-                break;
+        if (date == Numbers.LONG_NaN) {
+            return false;
         }
+
+        for (int i = 0; i < intervalCount; i++) {
+            if (date < IntervalCompiler.getIntervalLo(intervals, i)) {
+                return true;
+            }
+
+            if (date <= IntervalCompiler.getIntervalHi(intervals, i)) {
+                return false;
+            }
+
+        }
+        return true;
+    }
+
+    @Override
+    public void setRhs(VirtualColumn rhs) throws ParserException {
+        super.setRhs(rhs);
+        // null is handled by another operator
+        CharSequence intervalStr = rhs.getFlyweightStr(null);
+        if (intervalStr != null) {
+            IntervalCompiler.parseIntervalEx(intervalStr, 0, intervalStr.length(), rhs.getPosition(), intervals);
+        }
+        intervalCount = intervals.size() / 2;
     }
 }
