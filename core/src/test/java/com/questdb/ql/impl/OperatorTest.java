@@ -659,4 +659,11 @@ public class OperatorTest extends AbstractOptimiserTest {
                         "\t2016-05-01T11:14:00.000Z\n",
                 "select sym, timestamp from abc where sym in (null, 'KK') limit 20");
     }
+
+    @Test
+    public void testVirtualColumnDateFilter() throws Exception {
+        assertThat("2015-07-06T06:51:36.000Z\n" +
+                        "2015-07-06T06:51:36.000Z\n",
+                "(select toDate('1970-01-01T00:00:00.000Z') + 1436165496*1000L x from abc) where x = '2015-07-06T06:51:36.000Z' limit 2");
+    }
 }

@@ -1630,21 +1630,22 @@ public class QueryCompiler {
             }
             return index;
         } else {
-            int index = m.getTimestampIndex();
-            if (index > -1) {
-                return index;
-            }
-
-            for (int i = 0, n = m.getColumnCount(); i < n; i++) {
-                if (m.getColumnQuick(i).getType() == ColumnType.DATE) {
-                    if (index == -1) {
-                        index = i;
-                    } else {
-                        return -2;
-                    }
-                }
-            }
-            return index;
+            return m.getTimestampIndex();
+//            int index = m.getTimestampIndex();
+//            if (index > -1) {
+//                return index;
+//            }
+//
+//            for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+//                if (m.getColumnQuick(i).getType() == ColumnType.DATE) {
+//                    if (index == -1) {
+//                        index = i;
+//                    } else {
+//                        return -2;
+//                    }
+//                }
+//            }
+//            return index;
         }
     }
 

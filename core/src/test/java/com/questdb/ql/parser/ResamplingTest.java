@@ -186,7 +186,7 @@ public class ResamplingTest extends AbstractOptimiserTest {
                         "2014-05-04T16:00:00.000Z\t-12.148285354848\n" +
                         "2014-05-05T00:00:00.000Z\t-10.773253435499\n" +
                         "2014-05-05T08:00:00.000Z\t0.750778769143\n",
-                "select orderDate, vwap(price, quantity) from orders sample by 8h");
+                "select orderDate, vwap(price, quantity) from orders timestamp (orderDate) sample by 8h");
     }
 
     @Test
@@ -220,7 +220,7 @@ public class ResamplingTest extends AbstractOptimiserTest {
                         "2014-05-05T00:00:00.000Z\tYRXPEHNRX\t-8.573401980346\t-8.573401980346\n" +
                         "2014-05-05T00:00:00.000Z\tUEDRQQULO\t16.987375521363\t16.987375521363\n" +
                         "2014-05-05T00:00:00.000Z\tTGPGWFFYU\t17.260132823173\t17.260132823173\n",
-                "select orderDate, employeeId, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders sample by 1d");
+                "select orderDate, employeeId, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders timestamp (orderDate) sample by 1d");
     }
 
     @Test
