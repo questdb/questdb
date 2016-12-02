@@ -25,6 +25,7 @@ package com.questdb.txt;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceObjHashMap;
@@ -101,9 +102,10 @@ public class SchemaImpl implements Schema, Closeable, Mutable {
             this.wptr = this.address + (old_wptr - old_address);
             Unsafe.free(old_address, old_size);
         }
-        for (int i = 0; i < cs.length(); i++) {
-            Unsafe.getUnsafe().putByte(wptr++, (byte) cs.charAt(i));
-        }
+
+        int len = cs.length();
+        Chars.strcpy(cs, len, wptr);
+        wptr += len;
     }
 
     private void allocate(int size) {

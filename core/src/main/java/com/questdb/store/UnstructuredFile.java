@@ -113,7 +113,7 @@ public class UnstructuredFile extends MemoryFile {
         if (value == null) {
             put(-1);
         } else {
-            Chars.put(nextAddress(value.length() * 2 + 4), value);
+            Chars.strcpyw(value, nextAddress(value.length() * 2 + 4));
         }
     }
 

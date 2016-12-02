@@ -25,6 +25,7 @@ package com.questdb.misc;
 
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.Path;
 
 public final class Chars {
@@ -201,21 +202,8 @@ public final class Chars {
         return -1;
     }
 
-    public static int put(long address, CharSequence value) {
-        int len = value.length();
-        Unsafe.getUnsafe().putInt(address, len);
-        long p = address + 4;
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(p + (i << 1), value.charAt(i));
-        }
-        return (len << 1) + 4;
-    }
-
     public static void putCharsOnly(long address, CharSequence value) {
-        int len = value.length();
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(address + (i << 1), value.charAt(i));
-        }
+        strcpyw(value, value.length(), address);
     }
 
     /**
@@ -281,6 +269,31 @@ public final class Chars {
 
     public static boolean startsWith(CharSequence _this, char c) {
         return _this.length() > 0 && _this.charAt(0) == c;
+    }
+
+    public static void strcpy(final CharSequence value, final int len, final long address) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
+        }
+    }
+
+    public static void strcpy(final ByteSequence value, final int len, final long address) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(address + i, value.byteAt(i));
+        }
+    }
+
+    public static int strcpyw(CharSequence value, long address) {
+        int len = value.length();
+        Unsafe.getUnsafe().putInt(address, len);
+        strcpyw(value, len, address + 4);
+        return (len << 1) + 4;
+    }
+
+    public static void strcpyw(final CharSequence value, final int len, final long address) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putChar(address + (i << 1), value.charAt(i));
+        }
     }
 
     public static String stripQuotes(String s) {

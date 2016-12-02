@@ -26,6 +26,7 @@ package com.questdb.txt.parser;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectPool;
 import com.questdb.std.str.DirectByteCharSequence;
@@ -35,7 +36,9 @@ import com.questdb.txt.parser.listener.InputAnalysisListener;
 import com.questdb.txt.parser.listener.Listener;
 import com.questdb.txt.parser.listener.MetadataExtractorListener;
 
-public class DelimitedTextParser implements TextParser {
+import java.io.Closeable;
+
+public class DelimitedTextParser implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(DelimitedTextParser.class);
     private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
     private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 16);
@@ -72,49 +75,6 @@ public class DelimitedTextParser implements TextParser {
     }
 
     @Override
-    public int getLineCount() {
-        return lineCount;
-    }
-
-    @Override
-    public TextParser of(char separator) {
-        clear();
-        this.separator = separator;
-        return this;
-    }
-
-    @Override
-    public void parse(long lo, long len, int lim, Listener listener) {
-        this.listener = listener;
-        this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
-        parse(lo, len, lim);
-    }
-
-    @Override
-    public void parseLast() {
-        if (useLineRollBuf) {
-            if (inQuote) {
-                listener.onError(lineCount);
-            } else {
-                this.fieldHi++;
-                stashField();
-                triggerLine(0);
-            }
-        }
-    }
-
-    public void putSchema(CharSequence schema) {
-        if (schema != null) {
-            this.schema.put(schema);
-        }
-    }
-
-    @Override
-    public void setHeader(boolean header) {
-        this.header = header;
-    }
-
-    @Override
     public final void clear() {
         restart();
         this.fields.clear();
@@ -133,6 +93,40 @@ public class DelimitedTextParser implements TextParser {
         schema.close();
     }
 
+    public int getLineCount() {
+        return lineCount;
+    }
+
+    public DelimitedTextParser of(char separator) {
+        clear();
+        this.separator = separator;
+        return this;
+    }
+
+    public void parse(long lo, long len, int lim, Listener listener) {
+        this.listener = listener;
+        this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
+        parse(lo, len, lim);
+    }
+
+    public void parseLast() {
+        if (useLineRollBuf) {
+            if (inQuote) {
+                listener.onError(lineCount);
+            } else {
+                this.fieldHi++;
+                stashField();
+                triggerLine(0);
+            }
+        }
+    }
+
+    public void putSchema(CharSequence schema) {
+        if (schema != null) {
+            this.schema.put(schema);
+        }
+    }
+
     public final void restart() {
         this.fieldLo = 0;
         this.eol = false;
@@ -142,6 +136,10 @@ public class DelimitedTextParser implements TextParser {
         this.lineCount = 0;
         this.lineRollBufCur = lineRollBufPtr;
         this.useLineRollBuf = false;
+    }
+
+    public void setHeader(boolean header) {
+        this.header = header;
     }
 
     private void calcField() {

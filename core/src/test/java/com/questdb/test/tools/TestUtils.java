@@ -454,13 +454,8 @@ public final class TestUtils {
     }
 
     public static long toMemory(CharSequence sequence) {
-        long lo = Unsafe.malloc(sequence.length());
-        long ptr = lo;
-
-        for (int i = 0; i < sequence.length(); i++) {
-            Unsafe.getUnsafe().putByte(lo++, (byte) sequence.charAt(i));
-        }
-
+        long ptr = Unsafe.malloc(sequence.length());
+        Chars.strcpy(sequence, sequence.length(), ptr);
         return ptr;
     }
 

@@ -288,7 +288,7 @@ public class VariableColumn extends AbstractColumn {
         } else {
             int len = value.length() * 2 + 4;
             long offset = getOffset();
-            Chars.put(mappedFile.addressOf(offset, len), value);
+            Chars.strcpyw(value, mappedFile.addressOf(offset, len));
             return commitAppend(offset, len);
         }
     }

@@ -23,6 +23,7 @@
 
 package com.questdb.txt.sink;
 
+import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CharSink;
@@ -49,9 +50,7 @@ public class DirectUnboundedAnsiSink extends AbstractCharSink {
     @Override
     public CharSink put(CharSequence cs) {
         int len = cs.length();
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(_wptr + i, (byte) cs.charAt(i));
-        }
+        Chars.strcpy(cs, len, _wptr);
         _wptr += len;
         return this;
     }

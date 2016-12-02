@@ -358,10 +358,8 @@ public class Response implements Closeable, Mutable {
             int len = seq.length();
             long p = _wPtr;
             if (p + len < limit) {
-                for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(p++, (byte) seq.charAt(i));
-                }
-                _wPtr = p;
+                Chars.strcpy(seq, len, p);
+                _wPtr = p + len;
             } else {
                 throw ResponseContentBufferTooSmallException.INSTANCE;
             }

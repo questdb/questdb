@@ -28,7 +28,6 @@ import com.questdb.factory.JournalWriterFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.txt.parser.DelimitedTextParser;
-import com.questdb.txt.parser.TextParser;
 import com.questdb.txt.parser.listener.InputAnalysisListener;
 import com.questdb.txt.parser.listener.JournalImportListener;
 import com.questdb.txt.parser.listener.Listener;
@@ -93,7 +92,7 @@ public final class ImportManager {
 
     public static void importFile(JournalWriterFactory factory, String fileName, char delimiter, CharSequence schema, int sampleSize) throws IOException {
 
-        try (TextParser parser = new DelimitedTextParser().of(delimiter)) {
+        try (DelimitedTextParser parser = new DelimitedTextParser().of(delimiter)) {
             File file = new File(fileName);
             String location = file.getName();
 
@@ -109,7 +108,7 @@ public final class ImportManager {
         }
     }
 
-    public static void parse(File file, TextParser parser, final long bufSize, boolean header, Listener listener) throws IOException {
+    public static void parse(File file, DelimitedTextParser parser, final long bufSize, boolean header, Listener listener) throws IOException {
         parser.clear();
         parser.setHeader(header);
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
@@ -132,7 +131,7 @@ public final class ImportManager {
         }
     }
 
-    private static void analyzeAndParse(File file, TextParser parser, InputAnalysisListener listener, CharSequence schema, int sampleSize) throws IOException {
+    private static void analyzeAndParse(File file, DelimitedTextParser parser, InputAnalysisListener listener, CharSequence schema, int sampleSize) throws IOException {
         parser.clear();
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             try (FileChannel channel = raf.getChannel()) {

@@ -180,9 +180,8 @@ public class Request implements Closeable, Mutable {
 
         private void of0(CharSequence value) {
             int len = value.length();
-            for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(_wptr++, (byte) value.charAt(i));
-            }
+            Chars.strcpy(value, len, _wptr);
+            _wptr += len;
         }
 
         private void resize(int lim) {

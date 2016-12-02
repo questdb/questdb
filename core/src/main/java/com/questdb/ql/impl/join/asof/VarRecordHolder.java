@@ -143,7 +143,7 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
                 case ColumnType.STRING:
                     Unsafe.getUnsafe().putInt(address, varOffset);
                     //todo: test with null
-                    varOffset += Chars.put(this.address + varOffset, record.getFlyweightStr(i));
+                    varOffset += Chars.strcpyw(record.getFlyweightStr(i), this.address + varOffset);
                     break;
                 default:
                     break;

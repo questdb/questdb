@@ -23,7 +23,6 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjectFactory;
 
@@ -72,7 +71,8 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
         }
 
         if (len > 0 && !trailingSlash) {
-            Unsafe.getUnsafe().putByte(wptr++, (byte) (Os.type == Os.WINDOWS ? '\\' : '/'));
+            Path.copyPathSeparator(wptr);
+            wptr++;
             len++;
         }
 
@@ -110,12 +110,13 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
     }
 
     private void copy(CharSequence str, int len) {
-        char c = 0;
-        for (int i = 0; i < len; i++) {
-            c = str.charAt(i);
-            Unsafe.getUnsafe().putByte(wptr + i, (byte) (Os.type == Os.WINDOWS && c == '/' ? '\\' : c));
+        Path.copy(str, 0, len, wptr);
+        if (len > 0) {
+            char c = str.charAt(len - 1);
+            this.trailingSlash = c == '/' || c == '\\';
+        } else {
+            this.trailingSlash = false;
         }
-        this.trailingSlash = c == '/' || c == '\\';
         this.wptr += len;
         this.len += len;
     }

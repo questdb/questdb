@@ -24,6 +24,7 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.JournalMode;
+import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.net.http.IOContext;
@@ -134,10 +135,7 @@ public class UploadHandler extends AbstractMultipartHandler {
         if (data instanceof DirectByteCharSequence) {
             Unsafe.getUnsafe().copyMemory(((DirectByteCharSequence) data).getLo() + offset, addr, len);
         } else {
-            long p = addr;
-            for (int i = offset; i < len; i++) {
-                Unsafe.getUnsafe().putByte(p++, data.byteAt(i));
-            }
+            Chars.strcpy(data, len, addr);
         }
     }
 

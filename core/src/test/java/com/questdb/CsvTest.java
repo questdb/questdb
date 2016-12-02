@@ -28,7 +28,6 @@ import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.ImportManager;
 import com.questdb.txt.parser.DelimitedTextParser;
-import com.questdb.txt.parser.TextParser;
 import com.questdb.txt.parser.listener.Listener;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
@@ -188,7 +187,7 @@ public class CsvTest {
     }
 */
 
-    private void assertFile(String file, long bufSize, TextParser parser) throws Exception {
+    private void assertFile(String file, long bufSize, DelimitedTextParser parser) throws Exception {
         String expected = "123,abc,2015-01-20T21:00:00.000Z,3.1415,TRUE,Lorem ipsum dolor sit amet.,122\n" +
                 "124,abc,2015-01-20T21:00:00.000Z,7.342,FALSE,Lorem ipsum \n" +
                 "\n" +

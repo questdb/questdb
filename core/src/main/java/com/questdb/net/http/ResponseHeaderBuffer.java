@@ -75,10 +75,8 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         int len = cs.length();
         long p = _wptr;
         if (p + len < limit) {
-            for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(p++, (byte) cs.charAt(i));
-            }
-            _wptr = p;
+            Chars.strcpy(cs, len, p);
+            _wptr += len;
         } else {
             throw ResponseHeaderBufferTooSmallException.INSTANCE;
         }
@@ -96,10 +94,6 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
 
     public int getCode() {
         return code;
-    }
-
-    public boolean isChunky() {
-        return chunky;
     }
 
     public String status(int code, CharSequence contentType, long contentLength) {

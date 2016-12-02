@@ -23,6 +23,7 @@
 
 package com.questdb.log;
 
+import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CharSink;
@@ -53,10 +54,7 @@ public class LogRecordSink extends AbstractCharSink {
         int rem = (int) (lim - _wptr);
         int len = cs.length();
         int n = rem < len ? rem : len;
-
-        for (int i = 0; i < n; i++) {
-            Unsafe.getUnsafe().putByte(_wptr + i, (byte) cs.charAt(i));
-        }
+        Chars.strcpy(cs, n, _wptr);
         _wptr += n;
         return this;
     }

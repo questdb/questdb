@@ -288,6 +288,6 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
         long addr = mem.allocate(l * 2 + 4);
         // Save the address in the header.
         Unsafe.getUnsafe().putLong(headerAddress, addr);
-        Chars.put(addr, value);
+        Chars.strcpyw(value, addr);
     }
 }

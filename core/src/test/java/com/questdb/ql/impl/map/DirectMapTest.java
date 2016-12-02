@@ -89,7 +89,7 @@ public class DirectMapTest {
             float f = rnd.nextFloat();
             CharSequence s2 = rnd.nextBoolean() ? null : cs;
 
-            w.put(tmp, Chars.put(tmp, cs));
+            w.put(tmp, Chars.strcpyw(cs, tmp));
             w.putLong(l);
             w.putBool(b);
             w.putInt(ii);
@@ -248,7 +248,7 @@ public class DirectMapTest {
         if (cs == null) {
             return address;
         }
-        return address + Chars.put(address, cs);
+        return address + Chars.strcpyw(cs, address);
     }
 
     private static long put(long address, long value) {

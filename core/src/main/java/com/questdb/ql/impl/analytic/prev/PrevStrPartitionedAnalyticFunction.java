@@ -178,7 +178,7 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
                 Unsafe.free(ptr, len);
                 allocAndStore(str, values);
             } else {
-                Chars.put(ptr, str);
+                Chars.strcpyw(str, ptr);
             }
         }
     }
@@ -218,7 +218,7 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
         long ptr = Unsafe.malloc(l);
         values.putLong(0, ptr);
         values.putInt(1, l);
-        Chars.put(ptr, str);
+        Chars.strcpyw(str, ptr);
     }
 
     private void allocAndStoreNull(DirectMapValues values) {

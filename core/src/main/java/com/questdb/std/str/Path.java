@@ -40,7 +40,23 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
     public Path(CharSequence str) {
         int l = str.length();
         alloc(l);
-        copy(str, 0, l);
+        copyz(str, 0, l, ptr);
+    }
+
+    public static void copy(CharSequence str, int from, int len, long addr) {
+        for (int i = 0; i < len; i++) {
+            char c = str.charAt(i + from);
+            Unsafe.getUnsafe().putByte(addr + i, (byte) (Os.type == Os.WINDOWS && c == '/' ? '\\' : c));
+        }
+    }
+
+    public static void copyPathSeparator(long address) {
+        Unsafe.getUnsafe().putByte(address, (byte) (Os.type == Os.WINDOWS ? '\\' : '/'));
+    }
+
+    public static void copyz(CharSequence str, int from, int len, long address) {
+        copy(str, from, len, address);
+        Unsafe.getUnsafe().putByte(address + len, (byte) 0);
     }
 
     @Override
@@ -75,7 +91,7 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
             Unsafe.free(ptr, capacity + 1);
             alloc(len);
         }
-        copy(str, from, len);
+        copyz(str, from, len, ptr);
         this.len = len;
         return this;
     }
@@ -83,13 +99,5 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
     private void alloc(int len) {
         this.capacity = len;
         this.ptr = Unsafe.malloc(len + 1);
-    }
-
-    private void copy(CharSequence str, int from, int len) {
-        for (int i = 0; i < len; i++) {
-            char c = str.charAt(i + from);
-            Unsafe.getUnsafe().putByte(ptr + i, (byte) (Os.type == Os.WINDOWS && c == '/' ? '\\' : c));
-        }
-        Unsafe.getUnsafe().putByte(ptr + len, (byte) 0);
     }
 }

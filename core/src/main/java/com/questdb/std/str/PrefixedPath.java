@@ -24,7 +24,6 @@
 package com.questdb.std.str;
 
 import com.questdb.misc.Misc;
-import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -47,14 +46,10 @@ public final class PrefixedPath extends AbstractCharSequence implements Closeabl
 
         alloc(Math.max(minCapacity, l * 2));
 
-        for (int i = 0; i < l; i++) {
-            char c = prefix.charAt(i);
-            Unsafe.getUnsafe().putByte(ptr + i, (byte) (Os.type == Os.WINDOWS && c == '/' ? '\\' : c));
-        }
-
+        Path.copy(prefix, 0, l, ptr);
         char c = prefix.charAt(l - 1);
         if (c != '/' && c != '\\') {
-            Unsafe.getUnsafe().putByte(ptr + l, (byte) (Os.type == Os.WINDOWS ? '\\' : '/'));
+            Path.copyPathSeparator(ptr + l);
             l++;
         }
 
@@ -90,12 +85,7 @@ public final class PrefixedPath extends AbstractCharSequence implements Closeabl
         if (l + prefixLen > capacity) {
             alloc(l + len);
         }
-        long p = ptr + prefixLen;
-        for (int i = 0; i < l; i++) {
-            char c = str.charAt(i);
-            Unsafe.getUnsafe().putByte(p + i, (byte) (Os.type == Os.WINDOWS && c == '/' ? '\\' : c));
-        }
-        Unsafe.getUnsafe().putByte(p + l, (byte) 0);
+        Path.copyz(str, 0, l, ptr + prefixLen);
         this.len = this.prefixLen + l;
         return this;
     }

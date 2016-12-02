@@ -47,7 +47,6 @@ import com.questdb.std.str.FileNameExtractorCharSequence;
 import com.questdb.store.ColumnType;
 import com.questdb.txt.parser.DelimitedTextParser;
 import com.questdb.txt.parser.FormatParser;
-import com.questdb.txt.parser.TextParser;
 import com.questdb.txt.parser.listener.JournalImportListener;
 
 import java.io.Closeable;
@@ -429,7 +428,7 @@ public class ImportHandler extends AbstractMultipartHandler {
         private int state;
         private String stateMessage;
         private boolean analysed = false;
-        private TextParser textParser = new DelimitedTextParser();
+        private DelimitedTextParser textParser = new DelimitedTextParser();
         private JournalImportListener importer;
         private int messagePart = MESSAGE_UNKNOWN;
         private int responseState = RESPONSE_PREFIX;
