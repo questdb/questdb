@@ -35,7 +35,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
-import java.util.Base64;
 
 public final class Os {
     public static final int WINDOWS = 3;
@@ -86,7 +85,7 @@ public final class Os {
         return Unsafe.getUnsafe().getInt(forkExecT + 4);
     }
 
-    public static String generateKerberosToken(CharSequence spn) throws KerberosException {
+    public static byte[] generateKerberosToken(CharSequence spn) throws KerberosException {
         try (CharSequenceZ cs = new CharSequenceZ(spn)) {
             final long struct = generateKrbToken(cs.address());
             int status = Unsafe.getUnsafe().getInt(struct);
@@ -103,11 +102,9 @@ public final class Os {
             for (int i = 0; i < bufLen; i++) {
                 token[i] = Unsafe.getUnsafe().getByte(ptoken + i);
             }
-
             freeKrbToken(struct);
 
-            Base64.Encoder encoder = java.util.Base64.getEncoder();
-            return encoder.encodeToString(token);
+            return token;
         }
     }
 
@@ -119,10 +116,6 @@ public final class Os {
 
     @SuppressWarnings("EmptyMethod")
     public static void init() {
-    }
-
-    public static void main(String[] args) throws KerberosException {
-        System.out.println(generateKerberosToken(args[0]));
     }
 
     private static native long generateKrbToken(long spn);

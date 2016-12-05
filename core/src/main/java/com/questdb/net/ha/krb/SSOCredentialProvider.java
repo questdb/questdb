@@ -23,19 +23,21 @@
 
 package com.questdb.net.ha.krb;
 
+import com.questdb.misc.Os;
 import com.questdb.net.ha.auth.CredentialProvider;
 
 public class SSOCredentialProvider implements CredentialProvider {
     private final String serviceName;
 
     public SSOCredentialProvider(String serviceName) {
+        if (Os.type != Os.WINDOWS) {
+            throw new RuntimeException("SSO is only supported on Windows");
+        }
         this.serviceName = serviceName;
     }
 
     @Override
     public byte[] createToken() throws Exception {
-        try (SSOServiceTokenEncoder enc = new SSOServiceTokenEncoder()) {
-            return enc.encodeServiceToken(serviceName);
-        }
+        return Os.generateKerberosToken(serviceName);
     }
 }

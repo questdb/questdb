@@ -483,10 +483,11 @@ final class QueryFilterAnalyser {
             throw QueryError.invalidColumn(col.position, col.token);
         }
 
-        boolean ok = analyzeNotInInterval(model, col, node) || analyzeNotListOfValues(column, m, notNode);
-
+        boolean ok = analyzeNotInInterval(model, col, node);
         if (ok) {
             notNode.intrinsicValue = IntrinsicValue.TRUE;
+        } else {
+            analyzeNotListOfValues(column, m, notNode);
         }
 
         return ok;
@@ -531,7 +532,7 @@ final class QueryFilterAnalyser {
         return false;
     }
 
-    private boolean analyzeNotListOfValues(String column, RecordMetadata m, ExprNode notNode) {
+    private void analyzeNotListOfValues(String column, RecordMetadata m, ExprNode notNode) {
         RecordColumnMetadata meta = m.getColumn(column);
 
         switch (meta.getType()) {
@@ -546,7 +547,6 @@ final class QueryFilterAnalyser {
             default:
                 break;
         }
-        return false;
     }
 
     private void applyKeyExclusions(AliasTranslator translator, IntrinsicModel model) {

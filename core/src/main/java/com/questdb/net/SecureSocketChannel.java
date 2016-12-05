@@ -179,9 +179,6 @@ public class SecureSocketChannel implements WrappedByteChannel {
             sslEngineResult = engine.wrap(swapBuf, outBuf);
             outBuf.flip();
             socketChannel.write(outBuf);
-            if (sslEngineResult.getStatus() == SSLEngineResult.Status.CLOSED) {
-                break;
-            }
         } while (sslEngineResult.getStatus() != SSLEngineResult.Status.CLOSED && !engine.isInboundDone());
         engine.closeOutbound();
     }

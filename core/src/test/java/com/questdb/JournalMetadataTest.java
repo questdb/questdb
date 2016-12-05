@@ -42,7 +42,7 @@ public class JournalMetadataTest {
         JournalMetadataBuilder<Quote> b = new JournalMetadataBuilder<>(Quote.class);
 
         UnstructuredFile hb = new UnstructuredFile(temp.newFile(), 10, JournalMode.APPEND);
-        JournalMetadata m = (JournalMetadata) b.build();
+        JournalMetadata m = b.build();
         m.write(hb);
         JournalMetadata metadata = new JournalMetadata(hb);
         hb.close();

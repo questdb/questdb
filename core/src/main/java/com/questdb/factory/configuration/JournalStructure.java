@@ -291,7 +291,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
             }
 
             ColumnMetadata meta = metadata.getQuick(index);
-            checkTypes(meta.type, ColumnType.columnTypeOf((Class) f.getType()));
+            checkTypes(meta.type, ColumnType.columnTypeOf(f.getType()));
             meta.offset = Unsafe.getUnsafe().objectFieldOffset(f);
         }
 

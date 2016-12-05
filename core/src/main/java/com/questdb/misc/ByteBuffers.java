@@ -312,7 +312,7 @@ public final class ByteBuffers {
     }
 
     private static int copy0(ReadableByteChannel from, ByteBuffer to, long count) throws JournalNetworkException {
-        int result = 0;
+        int result;
         int limit = to.limit();
         try {
             to.limit((int) (to.position() + count));

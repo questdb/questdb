@@ -256,7 +256,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
             if (Modifier.isStatic(f.getModifiers())) {
                 continue;
             }
-            int columnType = ColumnType.columnTypeOf((Class) f.getType());
+            int columnType = ColumnType.columnTypeOf(f.getType());
             if (columnType == -1) {
                 continue;
             }

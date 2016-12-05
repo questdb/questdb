@@ -21,12 +21,12 @@ function read_link {
 
         if [[ "$f" != /* ]]; then
             f="$(dirname $1)/$f"
-            f="$(cd $(dirname $f); pwd)/$(basename $f)"
+            f="$(cd $(dirname ${f}); pwd)/$(basename ${f})"
         fi
 
-        n=$(read_link $f)
+        n=$(read_link ${f})
         if [ "$n" != "" ]; then
-             f=$n;
+             f=${n};
         fi
     fi
     echo "$f"
@@ -125,7 +125,7 @@ function start {
 
     LINK=$(read_link $0)
     if [ "$LINK" != "" ]; then
-        BASE=$(dirname $LINK)
+        BASE=$(dirname ${LINK})
     else
         BASE=$(dirname $0)
     fi

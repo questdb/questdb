@@ -56,7 +56,7 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     @Override
     @SuppressWarnings("unchecked")
     public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        String name = ((JournalKey) key).derivedLocation();
+        String name = key.derivedLocation();
         checkBlocked(name);
         JournalBulkReader<T> result = bulkReaders.get(name);
         if (result == null) {
@@ -71,7 +71,7 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     @Override
     @SuppressWarnings("unchecked")
     public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        String name = ((JournalKey) key).derivedLocation();
+        String name = key.derivedLocation();
         checkBlocked(name);
         Journal<T> result = readers.get(name);
         if (result == null) {
@@ -109,7 +109,7 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     @Override
     @SuppressWarnings("unchecked")
     public <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
-        String name = ((JournalKey) key).derivedLocation();
+        String name = key.derivedLocation();
         JournalMetadata m = metadata.get(name);
         if (m == null) {
             m = super.getOrCreateMetadata(key);

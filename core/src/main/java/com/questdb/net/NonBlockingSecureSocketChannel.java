@@ -229,9 +229,6 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
             sslEngineResult = engine.wrap(unwrapped, out);
             out.flip();
             channel.write(out);
-            if (sslEngineResult.getStatus() == SSLEngineResult.Status.CLOSED) {
-                break;
-            }
         } while (sslEngineResult.getStatus() != SSLEngineResult.Status.CLOSED && !engine.isInboundDone());
         engine.closeOutbound();
     }
