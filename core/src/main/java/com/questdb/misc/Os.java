@@ -24,7 +24,9 @@
 package com.questdb.misc;
 
 import com.questdb.ex.FatalError;
+import com.questdb.ex.KerberosException;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.CharSequenceZ;
 import com.questdb.std.str.Path;
 import com.sun.management.OperatingSystemMXBean;
 
@@ -33,6 +35,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
+import java.util.Base64;
 
 public final class Os {
     public static final int WINDOWS = 3;
@@ -83,6 +86,31 @@ public final class Os {
         return Unsafe.getUnsafe().getInt(forkExecT + 4);
     }
 
+    public static String generateKerberosToken(CharSequence spn) throws KerberosException {
+        try (CharSequenceZ cs = new CharSequenceZ(spn)) {
+            final long struct = generateKrbToken(cs.address());
+            int status = Unsafe.getUnsafe().getInt(struct);
+            int bufLen = Unsafe.getUnsafe().getInt(struct + 4);
+            long ptoken = Unsafe.getUnsafe().getLong(struct + 8);
+
+
+            if (status != 0) {
+                freeKrbToken(struct);
+                throw new KerberosException(status);
+            }
+
+            byte[] token = new byte[bufLen];
+            for (int i = 0; i < bufLen; i++) {
+                token[i] = Unsafe.getUnsafe().getByte(ptoken + i);
+            }
+
+            freeKrbToken(struct);
+
+            Base64.Encoder encoder = java.util.Base64.getEncoder();
+            return encoder.encodeToString(token);
+        }
+    }
+
     public static native int getPid();
 
     public static long getSystemMemory() {
@@ -93,16 +121,13 @@ public final class Os {
     public static void init() {
     }
 
-    public static void main(String[] args) {
-        long p = forkExec("/usr/local/bin/kramdown");
-        if (p == 0) {
-            System.out.println(Os.errno());
-        } else {
-            System.out.println(Unsafe.getUnsafe().getInt(p + 8));
-            Unsafe.getUnsafe().freeMemory(p);
-            System.out.println("ok");
-        }
+    public static void main(String[] args) throws KerberosException {
+        System.out.println(generateKerberosToken(args[0]));
     }
+
+    private static native long generateKrbToken(long spn);
+
+    private static native void freeKrbToken(long struct);
 
     private static native long forkExec(long argv);
 

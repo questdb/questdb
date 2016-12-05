@@ -35,6 +35,22 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_getPid
 
 /*
  * Class:     com_questdb_misc_Os
+ * Method:    generateKrbToken
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Os_generateKrbToken
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Os
+ * Method:    freeKrbToken
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_com_questdb_misc_Os_freeKrbToken
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Os
  * Method:    forkExec
  * Signature: (J)J
  */

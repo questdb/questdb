@@ -37,7 +37,7 @@ public class Base64 {
      *             because JIT can inline a lot of string access (with data of 1K chars, it was twice as fast)
      * @return decoded bytes
      */
-    public static byte[] parseBase64Binary(String text) {
+    public static byte[] parseBase64Binary(CharSequence text) {
         final int buflen = guessLength(text);
         final byte[] out = new byte[buflen];
         int o = 0;
@@ -101,7 +101,7 @@ public class Base64 {
      * (like what most web services produce), then the speculation of this method
      * will be correct, so we get the performance benefit.
      */
-    private static int guessLength(String text) {
+    private static int guessLength(CharSequence text) {
         final int len = text.length();
 
         // compute the tail '=' chars
