@@ -30,14 +30,14 @@ public class SSOCredentialProvider implements CredentialProvider {
     private final String serviceName;
 
     public SSOCredentialProvider(String serviceName) {
-        if (Os.type != Os.WINDOWS) {
-            throw new RuntimeException("SSO is only supported on Windows");
-        }
         this.serviceName = serviceName;
     }
 
     @Override
     public byte[] createToken() throws Exception {
+        if (Os.type != Os.WINDOWS) {
+            throw new RuntimeException("SSO is only supported on Windows");
+        }
         return Os.generateKerberosToken(serviceName);
     }
 }
