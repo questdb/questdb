@@ -59,8 +59,8 @@ public class ClusteredProducerMain {
 
         final ClusterController cc = new ClusterController(
                 new ServerConfig() {{
-                    addNode(new ServerNode(1, "192.168.1.81:7080"));
-                    addNode(new ServerNode(2, "192.168.1.81:7090"));
+                    addNode(new ServerNode(1, "127.0.0.1:7080"));
+                    addNode(new ServerNode(2, "127.0.0.1:7090"));
                 }},
                 new ClientConfig(),
                 factory,

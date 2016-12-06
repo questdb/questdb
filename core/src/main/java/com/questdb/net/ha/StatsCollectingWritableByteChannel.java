@@ -58,7 +58,7 @@ class StatsCollectingWritableByteChannel implements WritableByteChannel {
     public void logStats() {
         if (byteCount > 10) {
             long endTime = System.currentTimeMillis();
-            LOG.info().$("received").$(byteCount).$(" bytes @ ").$((double) (byteCount * 1000) / ((endTime - startTime)) / 1024 / 1024).$(" MB/s from: ").$(socketAddress.toString()).$(" [").$(callCount).$(" calls]").$();
+            LOG.info().$("sent ").$(byteCount).$(" bytes @ ").$((double) (byteCount * 1000) / ((endTime - startTime)) / 1024 / 1024).$(" MB/s from: ").$(socketAddress.toString()).$(" [").$(callCount).$(" calls]").$();
         }
     }
 

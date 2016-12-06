@@ -41,7 +41,7 @@ public class ClusterConsumerMain {
             $(Price.class).$ts();
         }}.build(args[0]));
 
-        final JournalClient client = new JournalClient(new ClientConfig("192.168.1.81:7080,192.168.1.81:7090") {{
+        final JournalClient client = new JournalClient(new ClientConfig("127.0.0.1:7080,127.0.0.1:7090") {{
             getReconnectPolicy().setRetryCount(6);
             getReconnectPolicy().setSleepBetweenRetriesMillis(1);
             getReconnectPolicy().setLoginRetryCount(2);
