@@ -33,6 +33,7 @@ import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.store.TxListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -44,19 +45,11 @@ public class ReconnectTest extends AbstractTest {
 
     @Before
     public void setUp() {
-        client = new JournalClient(
-                new ClientConfig("localhost") {{
-                    getReconnectPolicy().setLoginRetryCount(3);
-                    getReconnectPolicy().setRetryCount(5);
-                    getReconnectPolicy().setSleepBetweenRetriesMillis(TimeUnit.SECONDS.toMillis(1));
-                }}
-                , factory
-        );
     }
 
     @Test
     public void testServerRestart() throws Exception {
-        int size = 100000;
+        final int size = 10000;
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote", 2 * size);
 
         // start server #1
@@ -64,16 +57,32 @@ public class ReconnectTest extends AbstractTest {
         server.publish(remote);
         server.start();
 
+        final CountDownLatch connectedLatch = new CountDownLatch(1);
+        client = new JournalClient(
+                new ClientConfig("localhost") {{
+                    getReconnectPolicy().setLoginRetryCount(3);
+                    getReconnectPolicy().setRetryCount(5);
+                    getReconnectPolicy().setSleepBetweenRetriesMillis(TimeUnit.SECONDS.toMillis(1));
+                }}, factory, null,
+                new JournalClient.Callback() {
+                    @Override
+                    public void onEvent(int evt) {
+                        if (evt == JournalClient.EVT_CONNECTED) {
+                            connectedLatch.countDown();
+                        }
+                    }
+                }
+        );
+
         // subscribe client, waiting for complete set of data
         // when data arrives client triggers latch
-
         final CountDownLatch latch = new CountDownLatch(1);
         final Journal<Quote> local = factory.reader(Quote.class, "local");
         client.subscribe(Quote.class, "remote", "local", 2 * size, new TxListener() {
             @Override
             public void onCommit() {
                 try {
-                    if (local.refresh() && local.size() == 200000) {
+                    if (local.refresh() && local.size() == 2 * size) {
                         latch.countDown();
                     }
                 } catch (JournalException e) {
@@ -90,6 +99,7 @@ public class ReconnectTest extends AbstractTest {
 
         client.start();
 
+        Assert.assertTrue(connectedLatch.await(5, TimeUnit.SECONDS));
         // generate first batch
         TestUtils.generateQuoteData(remote, size, System.currentTimeMillis(), 1);
         remote.commit();

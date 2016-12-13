@@ -47,6 +47,7 @@ public class ClusterController {
     private final ClientConfig clientConfig;
     private final ServerNode thisNode;
     private final ClusterStatusListener statusListener = new StatusListener();
+    private final ClientCallback clientCallback = new ClientCallback();
     private JournalClient client;
     private JournalServer server;
 
@@ -129,41 +130,17 @@ public class ClusterController {
                 clientConfig.clearNodes();
                 clientConfig.addNode(activeNode);
 
-                client = new JournalClient(clientConfig, factory);
+                client = new JournalClient(clientConfig, factory, null, clientCallback);
                 LOG.info().$(thisNode.toString()).$(" Subscribing journals").$();
                 for (int i = 0, sz = writers.size(); i < sz; i++) {
                     JournalWriter w = writers.get(i);
                     client.subscribe(w.getKey(), w, null);
                 }
 
-                try {
+                client.start();
 
-                    client.start();
-                    client.setDisconnectCallback(new JournalClient.DisconnectCallback() {
-                        @Override
-                        public void onDisconnect(int disconnectReason) {
-                            switch (disconnectReason) {
-                                case JournalClient.DISCONNECT_INCOMPATIBLE_JOURNAL:
-                                case JournalClient.DISCONNECT_CLIENT_HALT:
-                                    halt();
-                                    break;
-                                default:
-                                    if (running.get()) {
-                                        server.joinCluster(statusListener);
-                                    }
-                                    break;
-                            }
-                        }
-                    });
-
-                    if (listener != null) {
-                        listener.goPassive(activeNode);
-                    }
-
-                } catch (JournalNetworkException e) {
-                    LOG.error().$("Failed to start client").$(e).$();
-                    haltClient();
-                    server.joinCluster(statusListener);
+                if (listener != null) {
+                    listener.goPassive(activeNode);
                 }
             }
         }
@@ -173,6 +150,27 @@ public class ClusterController {
 
         }
 
+    }
+
+    private class ClientCallback implements JournalClient.Callback {
+        @Override
+        public void onEvent(int evt) {
+            switch (evt) {
+                case JournalClient.EVT_INCOMPATIBLE_JOURNAL:
+                case JournalClient.EVT_CLIENT_HALT:
+                case JournalClient.EVT_AUTH_CONFIG_ERROR:
+                case JournalClient.EVT_CLIENT_EXCEPTION:
+                    halt();
+                    break;
+                case JournalClient.EVT_SERVER_ERROR:
+                    if (running.get()) {
+                        server.joinCluster(statusListener);
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
     }
 }
 

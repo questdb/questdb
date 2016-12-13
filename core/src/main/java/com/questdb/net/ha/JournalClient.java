@@ -29,6 +29,7 @@ import com.questdb.PartitionBy;
 import com.questdb.ex.IncompatibleJournalException;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
+import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.JournalWriterFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
@@ -36,17 +37,20 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Files;
-import com.questdb.misc.NamedDaemonThreadFactory;
+import com.questdb.mp.MPSequence;
+import com.questdb.mp.RingQueue;
+import com.questdb.mp.SCSequence;
+import com.questdb.mp.Sequence;
 import com.questdb.net.SecureSocketChannel;
 import com.questdb.net.SslConfig;
 import com.questdb.net.StatsCollectingReadableByteChannel;
-import com.questdb.net.ha.auth.AuthConfigurationException;
-import com.questdb.net.ha.auth.AuthFailureException;
+import com.questdb.net.ha.auth.AuthenticationConfigException;
+import com.questdb.net.ha.auth.AuthenticationProviderException;
 import com.questdb.net.ha.auth.CredentialProvider;
+import com.questdb.net.ha.auth.UnauthorizedException;
 import com.questdb.net.ha.comsumer.HugeBufferConsumer;
 import com.questdb.net.ha.comsumer.JournalDeltaConsumer;
 import com.questdb.net.ha.config.ClientConfig;
-import com.questdb.net.ha.config.ServerNode;
 import com.questdb.net.ha.model.Command;
 import com.questdb.net.ha.model.IndexedJournal;
 import com.questdb.net.ha.model.IndexedJournalKey;
@@ -55,38 +59,44 @@ import com.questdb.net.ha.protocol.CommandConsumer;
 import com.questdb.net.ha.protocol.CommandProducer;
 import com.questdb.net.ha.protocol.Version;
 import com.questdb.net.ha.protocol.commands.*;
+import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
+import com.questdb.std.ObjectFactory;
 import com.questdb.store.TxListener;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.channels.ByteChannel;
 import java.nio.channels.SocketChannel;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class JournalClient {
-    public static final int DISCONNECT_UNKNOWN = 1;
-    public static final int DISCONNECT_CLIENT_HALT = 2;
-    public static final int DISCONNECT_CLIENT_EXCEPTION = 3;
-    public static final int DISCONNECT_BROKEN_CHANNEL = 4;
-    public static final int DISCONNECT_CLIENT_ERROR = 5;
-    public static final int DISCONNECT_INCOMPATIBLE_JOURNAL = 6;
+    public static final int EVT_NONE = 0;
+    public static final int EVT_RUNNING = 2;
+    public static final int EVT_CLIENT_HALT = 4;
+    public static final int EVT_CLIENT_EXCEPTION = 8;
+    public static final int EVT_INCOMPATIBLE_JOURNAL = 16;
+    public static final int EVT_CONNECTED = 32;
+    public static final int EVT_AUTH_CONFIG_ERROR = 64;
+    public static final int EVT_SERVER_ERROR = 1;
+    public static final int EVT_AUTH_ERROR = 128;
+    public static final int EVT_TERMINATED = 256;
+
     private static final AtomicInteger counter = new AtomicInteger(0);
     private static final Log LOG = LogFactory.getLog(JournalClient.class);
-    private final static ThreadFactory CLIENT_THREAD_FACTORY = new NamedDaemonThreadFactory("journal-client", false);
-    private final ObjList<JournalKey> remoteKeys = new ObjList<>();
-    private final ObjList<JournalKey> localKeys = new ObjList<>();
-    private final ObjList<TxListener> listeners = new ObjList<>();
     private final ObjList<JournalWriter> writers = new ObjList<>();
+    private final ObjList<JournalWriter> writersToClose = new ObjList<>();
     private final ObjList<JournalDeltaConsumer> deltaConsumers = new ObjList<>();
     private final IntList statusSentList = new IntList();
+    private final CharSequenceHashSet subscribedJournals = new CharSequenceHashSet();
     private final JournalWriterFactory factory;
     private final CommandProducer commandProducer = new CommandProducer();
     private final CommandConsumer commandConsumer = new CommandConsumer();
+    private final ObjList<SubscriptionHolder> subscriptions = new ObjList<>();
     private final SetKeyRequestProducer setKeyRequestProducer = new SetKeyRequestProducer();
     private final CharSequenceResponseConsumer charSequenceResponseConsumer = new CharSequenceResponseConsumer();
     private final JournalClientStateProducer journalClientStateProducer = new JournalClientStateProducer();
@@ -94,64 +104,65 @@ public class JournalClient {
     private final IntResponseProducer intResponseProducer = new IntResponseProducer();
     private final ByteArrayResponseProducer byteArrayResponseProducer = new ByteArrayResponseProducer();
     private final ClientConfig config;
-    private final ExecutorService service;
-    private final AtomicBoolean running = new AtomicBoolean(false);
     private final CredentialProvider credentialProvider;
-    private final DisconnectCallbackImpl disconnectCallback = new DisconnectCallbackImpl();
+    private final RingQueue<SubscriptionHolder> subscriptionQueue = new RingQueue<>(SubscriptionHolder.FACTORY, 64);
+    private final Sequence subscriptionPubSequence = new MPSequence(subscriptionQueue.getCapacity());
+    private final Sequence subscriptionSubSequence = new SCSequence();
+    private final CountDownLatch haltLatch = new CountDownLatch(1);
+    private final Callback callback;
     private ByteChannel channel;
     private StatsCollectingReadableByteChannel statsChannel;
-    private Future handlerFuture;
+    private volatile boolean running = false;
 
     public JournalClient(JournalWriterFactory factory) {
         this(factory, null);
     }
 
     public JournalClient(JournalWriterFactory factory, CredentialProvider credentialProvider) {
-        this(new ClientConfig(), factory, credentialProvider);
+        this(new ClientConfig(), factory, credentialProvider, null);
     }
 
     public JournalClient(ClientConfig config, JournalWriterFactory factory) {
-        this(config, factory, null);
+        this(config, factory, null, null);
     }
 
     public JournalClient(ClientConfig config, JournalWriterFactory factory, CredentialProvider credentialProvider) {
+        this(config, factory, credentialProvider, null);
+    }
+
+    public JournalClient(ClientConfig config, JournalWriterFactory factory, CredentialProvider credentialProvider, Callback callback) {
         this.config = config;
         this.factory = factory;
-        this.service = Executors.newCachedThreadPool(CLIENT_THREAD_FACTORY);
         this.credentialProvider = credentialProvider;
+        this.callback = callback;
+        subscriptionPubSequence.then(subscriptionSubSequence).then(subscriptionPubSequence);
     }
 
     public void halt() {
-        if (running.compareAndSet(true, false)) {
-            if (handlerFuture != null) {
-                try {
-                    handlerFuture.get();
-                } catch (InterruptedException | ExecutionException e) {
-                    LOG.error().$("Exception while waiting for client to shutdown gracefully").$(e).$();
-                } finally {
-                    handlerFuture = null;
-                }
+        long cursor = subscriptionPubSequence.next();
+        if (cursor < 0) {
+            throw new JournalRuntimeException("start client before subscribing");
+        }
+
+        SubscriptionHolder h = subscriptionQueue.get(cursor);
+        h.type = 1; // todo: make named constant
+        subscriptionPubSequence.done(cursor);
+
+        try {
+            if (!haltLatch.await(5, TimeUnit.SECONDS)) {
+                closeChannel();
             }
-            close0();
-            free();
-        } else {
-            closeChannel();
+        } catch (InterruptedException e) {
+            LOG.error().$("Got interrupted while halting journal client").$();
         }
     }
 
     public boolean isRunning() {
-        return running.get();
+        return running;
     }
 
-    public void setDisconnectCallback(DisconnectCallback callback) {
-        this.disconnectCallback.next = callback;
-    }
-
-    public void start() throws JournalNetworkException {
-        if (running.compareAndSet(false, true)) {
-            handshake();
-            handlerFuture = service.submit(new Handler());
-        }
+    public void start() {
+        new Handler().start();
     }
 
     public <T> void subscribe(Class<T> clazz) {
@@ -180,35 +191,37 @@ public class JournalClient {
     }
 
     public <T> void subscribe(JournalKey<T> remoteKey, JournalWriter<T> writer, TxListener txListener) {
-        remoteKeys.add(remoteKey);
-        localKeys.add(writer.getKey());
-        listeners.add(txListener);
-        set0(remoteKeys.size() - 1, writer, txListener);
+        subscribe(remoteKey, writer.getKey(), txListener, writer);
     }
 
     public void subscribe(JournalKey remote, JournalKey local, TxListener txListener) {
-        remoteKeys.add(remote);
-        localKeys.add(local);
-        listeners.add(txListener);
+        subscribe(remote, local, txListener, null);
     }
 
     private void checkAck() throws JournalNetworkException {
         charSequenceResponseConsumer.read(channel);
-        fail(Chars.equals("OK", charSequenceResponseConsumer.getValue()), charSequenceResponseConsumer.getValue().toString());
+        CharSequence value = charSequenceResponseConsumer.getValue();
+        fail(Chars.equals("OK", value), value);
     }
 
-    private void checkAuthAndSendCredential() throws JournalNetworkException {
+    private void checkAuthAndSendCredential() throws
+            JournalNetworkException,
+            AuthenticationProviderException,
+            UnauthorizedException,
+            AuthenticationConfigException {
+
         commandProducer.write(channel, Command.HANDSHAKE_COMPLETE);
         CharSequence cs = readString();
         if (Chars.equals("AUTH", cs)) {
             if (credentialProvider == null) {
-                throw new AuthConfigurationException();
+                throw new AuthenticationConfigException();
             }
             commandProducer.write(channel, Command.AUTHORIZATION);
             byteArrayResponseProducer.write(channel, getToken());
             CharSequence response = readString();
             if (!Chars.equals("OK", response)) {
-                throw new AuthFailureException(response.toString());
+                LOG.error().$(response).$();
+                throw new UnauthorizedException();
             }
         } else if (!Chars.equals("OK", cs)) {
             fail(true, "Unknown server response");
@@ -216,68 +229,51 @@ public class JournalClient {
     }
 
     private void close0() {
-
-        closeChannel();
-        for (int i = 0, sz = writers.size(); i < sz; i++) {
-            writers.getQuick(i).close();
+        for (int i = 0, sz = writersToClose.size(); i < sz; i++) {
+            writersToClose.getQuick(i).close();
         }
-
+        writersToClose.clear();
         writers.clear();
-        statusSentList.clear();
+
+        for (int i = 0, k = deltaConsumers.size(); i < k; i++) {
+            deltaConsumers.getQuick(i).free();
+        }
         deltaConsumers.clear();
+
+        commandConsumer.free();
+        charSequenceResponseConsumer.free();
+        intResponseConsumer.free();
+        statusSentList.clear();
     }
 
     private void closeChannel() {
         if (channel != null && channel.isOpen()) {
             try {
                 channel.close();
-            } catch (IOException e) {
+            } catch (Throwable e) {
                 LOG.error().$("Error closing channel").$(e).$();
-            } finally {
-                channel = null;
             }
         }
     }
 
-    private void fail(boolean condition, String message) throws JournalNetworkException {
+    private void fail(boolean condition, CharSequence message) throws JournalNetworkException {
         if (!condition) {
-            throw new JournalNetworkException(message);
+            throw new JournalNetworkException(message.toString());
         }
     }
 
-    private void free() {
-        for (int i = 0, k = deltaConsumers.size(); i < k; i++) {
-            deltaConsumers.getQuick(i).free();
-        }
-        commandConsumer.free();
-        charSequenceResponseConsumer.free();
-        intResponseConsumer.free();
-    }
-
-    private byte[] getToken() throws JournalNetworkException {
+    private byte[] getToken() throws JournalNetworkException, AuthenticationProviderException {
         try {
             return credentialProvider.createToken();
-        } catch (Exception e) {
-            halt();
-            throw new JournalNetworkException(e);
+        } catch (Throwable e) {
+            LOG.error().$("Error in credential provider: ").$(e).$();
+            throw new AuthenticationProviderException();
         }
     }
 
-    private void handshake() throws JournalNetworkException {
-        openChannel(null);
-        sendProtocolVersion();
-        sendKeys();
-        checkAuthAndSendCredential();
-        sendState();
-        counter.incrementAndGet();
-    }
-
-    private void openChannel(ServerNode node) throws JournalNetworkException {
-        if (this.channel == null || node != null) {
-            if (channel != null) {
-                closeChannel();
-            }
-            SocketChannel channel = node == null ? config.openSocketChannel() : config.openSocketChannel(node);
+    private void openChannel() throws JournalNetworkException {
+        if (this.channel == null || !this.channel.isOpen()) {
+            SocketChannel channel = config.openSocketChannel();
             try {
                 statsChannel = new StatsCollectingReadableByteChannel(channel.getRemoteAddress());
             } catch (IOException e) {
@@ -298,39 +294,15 @@ public class JournalClient {
         return charSequenceResponseConsumer.getValue();
     }
 
-    private void sendDisconnect() throws JournalNetworkException {
-        commandProducer.write(channel, Command.CLIENT_DISCONNECT);
+    private void resubscribe() throws JournalNetworkException {
+        for (int i = 0, n = subscriptions.size(); i < n; i++) {
+            SubscriptionHolder h = subscriptions.get(i);
+            subscribeOne(i, h, h.local.derivedLocation(), false);
+        }
     }
 
-    private void sendKeys() throws JournalNetworkException {
-        for (int i = 0, sz = remoteKeys.size(); i < sz; i++) {
-            commandProducer.write(channel, Command.SET_KEY_CMD);
-            setKeyRequestProducer.write(channel, new IndexedJournalKey(i, remoteKeys.getQuick(i)));
-            checkAck();
-
-
-            JournalMetadata metadata;
-            File file = Files.makeTempFile();
-            try {
-                try (HugeBufferConsumer h = new HugeBufferConsumer(file)) {
-                    h.read(channel);
-                    metadata = new JournalMetadata(h.getHb());
-                } catch (JournalException e) {
-                    throw new JournalNetworkException(e);
-                }
-            } finally {
-                Files.delete(file);
-            }
-
-
-            try {
-                if (writers.getQuiet(i) == null) {
-                    set0(i, factory.writer(new JournalStructure(metadata).location(localKeys.getQuick(i).derivedLocation())), listeners.getQuick(i));
-                }
-            } catch (JournalException e) {
-                throw new JournalNetworkException(e);
-            }
-        }
+    private void sendDisconnect() throws JournalNetworkException {
+        commandProducer.write(channel, Command.CLIENT_DISCONNECT);
     }
 
     private void sendProtocolVersion() throws JournalNetworkException {
@@ -341,7 +313,7 @@ public class JournalClient {
 
     private void sendReady() throws JournalNetworkException {
         commandProducer.write(channel, Command.CLIENT_READY_CMD);
-        LOG.debug().$("Client ready: ").$(channel.toString()).$();
+        LOG.debug().$("Client ready: ").$(channel).$();
     }
 
     private void sendState() throws JournalNetworkException {
@@ -353,16 +325,21 @@ public class JournalClient {
                 statusSentList.setQuick(i, 1);
             }
         }
-        sendReady();
     }
 
-    private <T> void set0(int index, JournalWriter<T> writer, TxListener txListener) {
-        statusSentList.extendAndSet(index, 0);
-        deltaConsumers.extendAndSet(index, new JournalDeltaConsumer(writer.setCommitOnClose(false)));
-        writers.extendAndSet(index, writer);
-        if (txListener != null) {
-            writer.setTxListener(txListener);
+    private void subscribe(JournalKey remote, JournalKey local, TxListener txListener, JournalWriter writer) {
+        long cursor = subscriptionPubSequence.next();
+        if (cursor < 0) {
+            throw new JournalRuntimeException("start client before subscribing");
         }
+
+        SubscriptionHolder h = subscriptionQueue.get(cursor);
+        h.type = 0;
+        h.remote = remote;
+        h.local = local;
+        h.listener = txListener;
+        h.writer = writer;
+        subscriptionPubSequence.done(cursor);
     }
 
     /**
@@ -384,119 +361,279 @@ public class JournalClient {
         subscribe(new JournalKey<>(clazz, location), new JournalKey<>(clazz, location), txListener);
     }
 
-    public interface DisconnectCallback {
-        void onDisconnect(int disconnectReason);
+    private void subscribeOne(int index, SubscriptionHolder holder, String loc, boolean newSubscription) throws JournalNetworkException {
+
+        if (newSubscription) {
+            SubscriptionHolder sub = new SubscriptionHolder();
+            sub.local = holder.local;
+            sub.remote = holder.remote;
+            sub.listener = holder.listener;
+            sub.writer = holder.writer;
+            subscriptions.add(sub);
+        }
+
+        commandProducer.write(channel, Command.SET_KEY_CMD);
+        setKeyRequestProducer.write(channel, new IndexedJournalKey(index, holder.remote));
+        checkAck();
+
+        //todo: do we really have to use file here?
+        JournalMetadata metadata;
+        File file = Files.makeTempFile();
+        try {
+            try (HugeBufferConsumer h = new HugeBufferConsumer(file)) {
+                h.read(channel);
+                metadata = new JournalMetadata(h.getHb());
+            } catch (JournalException e) {
+                throw new JournalNetworkException(e);
+            }
+        } finally {
+            Files.delete(file);
+        }
+
+        try {
+            boolean validate = true;
+            JournalWriter writer = writers.getQuiet(index);
+            if (writer == null) {
+                if (holder.writer == null) {
+                    writer = factory.writer(new JournalStructure(metadata).location(loc));
+                    writersToClose.add(writer);
+                    validate = false;
+                } else {
+                    writer = holder.writer;
+                }
+
+                statusSentList.extendAndSet(index, 0);
+                deltaConsumers.extendAndSet(index, new JournalDeltaConsumer(writer.setCommitOnClose(false)));
+                writers.extendAndSet(index, writer);
+                writer.setTxListener(holder.listener);
+            } else {
+                statusSentList.setQuick(index, 0);
+            }
+
+            if (validate && !metadata.isCompatible(writer.getMetadata(), false)) {
+                LOG.error().$("Journal ").$(holder.local.getLocation()).$(" is not compatible with ").$(holder.remote.getLocation()).$("(remote)").$();
+                // todo: unsubscribe
+                return;
+            }
+
+            commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
+            journalClientStateProducer.write(channel, new IndexedJournal(index, writer));
+            checkAck();
+            statusSentList.setQuick(index, 1);
+
+            LOG.info().$("Subscribed ").$(loc).$(" to ").$(holder.remote.getLocation()).$("(remote)").$();
+        } catch (JournalException e) {
+            throw new JournalNetworkException(e);
+        }
     }
 
-    private final class DisconnectCallbackImpl implements DisconnectCallback {
-        private DisconnectCallback next;
+    public interface Callback {
+        void onEvent(int evt);
+    }
 
-        public void onDisconnect(int disconnectReason) {
-            switch (disconnectReason) {
-                case DISCONNECT_BROKEN_CHANNEL:
-                case DISCONNECT_UNKNOWN:
-                    int retryCount = config.getReconnectPolicy().getRetryCount();
-                    int loginRetryCount = config.getReconnectPolicy().getLoginRetryCount();
-                    boolean connected = false;
-                    while (running.get() && !connected && retryCount-- > 0 && loginRetryCount > 0) {
-                        try {
-                            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(config.getReconnectPolicy().getSleepBetweenRetriesMillis()));
-                            LOG.info().$("Retrying reconnect ... [").$(retryCount + 1).$(']').$();
-                            close0();
-                            handshake();
-                            connected = true;
-                        } catch (AuthConfigurationException | AuthFailureException e) {
-                            loginRetryCount--;
-                        } catch (JournalNetworkException e) {
-                            LOG.info().$("Error during disconnect").$(e).$();
+    private static class SubscriptionHolder {
+        private static final ObjectFactory<SubscriptionHolder> FACTORY = new ObjectFactory<SubscriptionHolder>() {
+            @Override
+            public SubscriptionHolder newInstance() {
+                return new SubscriptionHolder();
+            }
+        };
+
+        private int type = 0;
+        private JournalKey remote;
+        private JournalKey local;
+        private TxListener listener;
+        private JournalWriter writer;
+    }
+
+    private final class Handler extends Thread {
+
+        public boolean isRunning() throws JournalNetworkException {
+            long cursor = subscriptionSubSequence.next();
+            if (cursor < 0) {
+                return true;
+            }
+
+            long available = subscriptionSubSequence.available();
+            while (cursor < available) {
+                SubscriptionHolder holder = subscriptionQueue.get(cursor++);
+                if (holder.type == 1) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public boolean processSubscriptionQueue() throws JournalNetworkException {
+            long cursor = subscriptionSubSequence.next();
+            if (cursor < 0) {
+                return true;
+            }
+
+            long available = subscriptionSubSequence.available();
+
+            int i = writers.size();
+
+            while (cursor < available) {
+
+                SubscriptionHolder holder = subscriptionQueue.get(cursor++);
+
+                if (holder.type == 0) {
+                    String loc = holder.local.derivedLocation();
+
+                    if (subscribedJournals.add(loc)) {
+                        subscribeOne(i++, holder, loc, true);
+                    } else {
+                        holder.listener.onError();
+                        LOG.error().$("Already subscribed ").$(loc).$();
+                    }
+                } else if (holder.type == 1) {
+                    return false;
+                }
+            }
+
+            subscriptionSubSequence.done(available - 1);
+            return true;
+        }
+
+        @Override
+        public void run() {
+
+            running = true;
+            notifyCallback(EVT_RUNNING);
+            int event = EVT_NONE;
+            boolean connected = false;
+
+            try {
+                while (true) {
+                    // reconnect code
+                    if (!connected) {
+                        int retryCount = config.getReconnectPolicy().getRetryCount();
+                        int loginRetryCount = config.getReconnectPolicy().getLoginRetryCount();
+                        do {
+                            try {
+                                closeChannel();
+
+                                // if we cannot connect - move on to retry
+                                try {
+                                    openChannel();
+                                    counter.incrementAndGet();
+                                } catch (JournalNetworkException e) {
+                                    if (retryCount-- > 0) {
+                                        continue;
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                sendProtocolVersion();
+                                checkAuthAndSendCredential();
+                                resubscribe();
+                                sendReady();
+                                connected = true;
+                                notifyCallback(EVT_CONNECTED);
+                            } catch (UnauthorizedException e) {
+                                notifyCallback(EVT_AUTH_ERROR);
+                                loginRetryCount--;
+                            } catch (AuthenticationConfigException | AuthenticationProviderException e) {
+                                closeChannel();
+                                close0();
+                                notifyCallback(EVT_AUTH_CONFIG_ERROR);
+                                return;
+                            } catch (JournalNetworkException e) {
+                                LOG.info().$(e.getMessage()).$();
+                                closeChannel();
+                            }
+
+                            if (!connected && retryCount-- > 0 && loginRetryCount > 0) {
+                                LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(config.getReconnectPolicy().getSleepBetweenRetriesMillis()));
+                                LOG.info().$("Retrying reconnect ... [").$(retryCount + 1).$(']').$();
+                            } else {
+                                break;
+                            }
+                        } while (true);
+
+                        if (!connected && (retryCount == 0 || loginRetryCount == 0)) {
+                            event = EVT_SERVER_ERROR;
                         }
                     }
 
-                    if (connected) {
-                        handlerFuture = service.submit(new Handler());
-                    } else {
-                        disconnect(disconnectReason);
+
+                    // protocol code
+
+                    try {
+                        if (connected && channel.isOpen() && isRunning()) {
+                            commandConsumer.read(channel);
+                            byte cmd = commandConsumer.getCommand();
+                            switch (cmd) {
+                                case Command.JOURNAL_DELTA_CMD:
+                                    statsChannel.setDelegate(channel);
+                                    int index = intResponseConsumer.getValue(statsChannel);
+                                    deltaConsumers.getQuick(index).read(statsChannel);
+                                    statusSentList.set(index, 0);
+                                    statsChannel.logStats();
+                                    break;
+                                case Command.SERVER_READY_CMD:
+                                    sendState();
+                                    sendReady();
+                                    break;
+                                case Command.SERVER_HEARTBEAT:
+                                    if (processSubscriptionQueue()) {
+                                        sendReady();
+                                    } else {
+                                        event = EVT_CLIENT_HALT;
+                                    }
+                                    break;
+                                case Command.SERVER_SHUTDOWN:
+                                    connected = false;
+                                    break;
+                                default:
+                                    LOG.info().$("Unknown command: ").$(cmd).$();
+                                    break;
+                            }
+                        } else if (event == EVT_NONE) {
+                            event = EVT_CLIENT_HALT;
+                        }
+                    } catch (IncompatibleJournalException e) {
+                        // unsubscribe journal
+                        LOG.error().$(e.getMessage()).$();
+                        event = EVT_INCOMPATIBLE_JOURNAL;
+                    } catch (JournalNetworkException e) {
+                        LOG.error().$("Network error. Server died?").$();
+                        LOG.debug().$("Network error details: ").$(e).$();
+                        connected = false;
+                    } catch (Throwable e) {
+                        LOG.error().$("Unhandled exception in client").$(e).$();
+                        event = EVT_CLIENT_EXCEPTION;
                     }
-                    break;
-                default:
-                    disconnect(disconnectReason);
-                    break;
-            }
-        }
 
-        private void disconnect(int disconnectReason) {
-            LOG.info().$("Client disconnecting").$();
-            counter.decrementAndGet();
-            running.set(false);
-            // set future to null to prevent deadlock
-            handlerFuture = null;
-            service.shutdown();
-
-            if (next != null) {
-                next.onDisconnect(disconnectReason);
-            }
-        }
-    }
-
-    private final class Handler implements Runnable {
-        @Override
-        public void run() {
-            int disconnectReason = DISCONNECT_UNKNOWN;
-            try {
-                OUT:
-                while (true) {
-                    assert channel != null;
-                    commandConsumer.read(channel);
-                    switch (commandConsumer.getCommand()) {
-                        case Command.JOURNAL_DELTA_CMD:
-                            statsChannel.setDelegate(channel);
-                            int index = intResponseConsumer.getValue(statsChannel);
-                            deltaConsumers.getQuick(index).read(statsChannel);
-                            statusSentList.set(index, 0);
-                            statsChannel.logStats();
-                            break;
-                        case Command.SERVER_READY_CMD:
-                            if (isRunning()) {
-                                sendState();
-                            } else {
-                                sendDisconnect();
-                                disconnectReason = DISCONNECT_CLIENT_HALT;
-                                break OUT;
-                            }
-                            break;
-                        case Command.SERVER_HEARTBEAT:
-                            if (isRunning()) {
-                                sendReady();
-                            } else {
-                                sendDisconnect();
-                                disconnectReason = DISCONNECT_CLIENT_HALT;
-                                break OUT;
-                            }
-                            break;
-                        case Command.SERVER_SHUTDOWN:
-                            disconnectReason = DISCONNECT_BROKEN_CHANNEL;
-                            break OUT;
-                        default:
-                            LOG.info().$("Unknown command: ").$(commandConsumer.getCommand()).$();
-                            break;
+                    if (event != EVT_NONE) {
+                        // client gracefully disconnects
+                        if (channel != null && channel.isOpen()) {
+                            sendDisconnect();
+                        }
+                        closeChannel();
+                        close0();
+                        notifyCallback(event);
+                        break;
                     }
                 }
-            } catch (IncompatibleJournalException e) {
-                LOG.error().$(e.getMessage()).$();
-                disconnectReason = DISCONNECT_INCOMPATIBLE_JOURNAL;
-            } catch (JournalNetworkException e) {
-                LOG.error().$("Network error. Server died?").$();
-                LOG.debug().$("Network error details: ").$(e).$();
-                disconnectReason = DISCONNECT_BROKEN_CHANNEL;
-            } catch (Error e) {
-                LOG.error().$("Unhandled exception in client").$(e).$();
-                disconnectReason = DISCONNECT_CLIENT_ERROR;
-                throw e;
             } catch (Throwable e) {
-                LOG.error().$("Unhandled exception in client").$(e).$();
-                disconnectReason = DISCONNECT_CLIENT_EXCEPTION;
+                LOG.error().$("Fatal exception when closing client").$(e).$();
+                closeChannel();
+                close0();
             } finally {
-                disconnectCallback.onDisconnect(disconnectReason);
+                running = false;
+                notifyCallback(EVT_TERMINATED);
+                haltLatch.countDown();
+                LOG.info().$("Terminated").$();
+            }
+        }
+
+        private void notifyCallback(int event) {
+            if (callback != null) {
+                callback.onEvent(event);
             }
         }
     }

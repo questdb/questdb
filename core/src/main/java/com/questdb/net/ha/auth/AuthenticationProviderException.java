@@ -23,10 +23,5 @@
 
 package com.questdb.net.ha.auth;
 
-import com.questdb.ex.JournalNetworkException;
-
-public class AuthFailureException extends JournalNetworkException {
-    public AuthFailureException(String message) {
-        super(message);
-    }
+public class AuthenticationProviderException extends Exception {
 }

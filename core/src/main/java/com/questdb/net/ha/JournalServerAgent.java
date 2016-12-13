@@ -168,7 +168,7 @@ public class JournalServerAgent {
         if (authorized) {
             ok(channel);
         } else {
-            error(channel, "Authorization failed");
+            error(channel, "Unauthorized");
         }
     }
 
@@ -234,7 +234,7 @@ public class JournalServerAgent {
             }
             return dataSent;
         } catch (Exception e) {
-            LOG.debug().$(socketAddress).$(" Client appears to be refusing new data from server, corrupt client").$(e).$();
+            LOG.error().$(socketAddress).$(" Client appears to be refusing new data from server, corrupt client").$(e).$();
             return false;
         }
     }
@@ -248,11 +248,13 @@ public class JournalServerAgent {
 
         journalDeltaProducer.configure(txn, txPin);
         if (journalDeltaProducer.hasContent()) {
-            LOG.debug().$(socketAddress).$(" Sending data").$();
+            LOG.debug().$(socketAddress).$(" Sending data [").$(txn).$(',').$(txPin).$(']').$();
             commandProducer.write(channel, Command.JOURNAL_DELTA_CMD);
             intResponseProducer.write(channel, index);
             journalDeltaProducer.write(channel);
             return true;
+        } else {
+            LOG.debug().$(socketAddress).$(" Nothing to send [").$(txn).$(',').$(txPin).$(']').$();
         }
         return false;
 

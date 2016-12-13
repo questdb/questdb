@@ -24,27 +24,37 @@
 package com.questdb.net.ha;
 
 import com.questdb.JournalWriter;
-import com.questdb.ex.JournalNetworkException;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
 public class ClientRecoveryTest extends AbstractTest {
     @Test
     public void testClientWriterRelease() throws Exception {
-        JournalClient client = new JournalClient(new ClientConfig("localhost"), factory);
+        final CountDownLatch serverError = new CountDownLatch(1);
+        JournalClient client = new JournalClient(new ClientConfig("localhost"), factory, null, new JournalClient.Callback() {
+            @Override
+            public void onEvent(int evt) {
+                if (evt == JournalClient.EVT_SERVER_ERROR) {
+                    serverError.countDown();
+                }
+            }
+        });
+
         client.subscribe(Quote.class);
-        try {
-            client.start();
-            Assert.fail("Expect client to fail");
-        } catch (JournalNetworkException e) {
-            client.halt();
-        }
+        client.start();
+
+        Assert.assertTrue(serverError.await(5, TimeUnit.SECONDS));
+        Assert.assertFalse(client.isRunning());
 
         // should be able to get writer after client failure.
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        Assert.assertNotNull(w);
+        try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
+            Assert.assertNotNull(w);
+        }
     }
 }

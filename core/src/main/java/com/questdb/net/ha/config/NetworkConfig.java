@@ -41,7 +41,7 @@ public class NetworkConfig {
 
     private static final int DEFAULT_MULTICAST_PORT = 4446;
     private static final int DEFAULT_SO_RCVBUF = 1024 * 1024;
-    private final List<ServerNode> nodes2 = new ArrayList<>();
+    private final List<ServerNode> serverNodes = new ArrayList<>();
     private final IntIntHashMap nodeLookup = new IntIntHashMap();
 
     private final SslConfig sslConfig = new SslConfig();
@@ -53,17 +53,17 @@ public class NetworkConfig {
     private NetworkInterface defaultInterface = null;
 
     public void addNode(ServerNode node) {
-        nodes2.add(node);
-        nodeLookup.put(node.getId(), nodes2.size() - 1);
+        serverNodes.add(node);
+        nodeLookup.put(node.getId(), serverNodes.size() - 1);
     }
 
     public void clearNodes() {
-        nodes2.clear();
+        serverNodes.clear();
         nodeLookup.clear();
     }
 
     public ServerNode getNodeByPosition(int pos) {
-        return nodes2.get(pos);
+        return serverNodes.get(pos);
     }
 
     public ServerNode getNodeByUID(int uid) {
@@ -71,11 +71,11 @@ public class NetworkConfig {
         if (pos == -1) {
             return null;
         }
-        return nodes2.get(pos);
+        return serverNodes.get(pos);
     }
 
     public int getNodeCount() {
-        return nodes2.size();
+        return serverNodes.size();
     }
 
     public int getNodePosition(int uid) {
@@ -169,8 +169,8 @@ public class NetworkConfig {
         this.multiCastPort = multiCastPort;
     }
 
-    List<ServerNode> getNodes() {
-        return nodes2;
+    List<ServerNode> getServerNodes() {
+        return serverNodes;
     }
 
     int getSoRcvBuf() {

@@ -46,6 +46,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class AuthorizationTest extends AbstractTest {
 
@@ -84,6 +85,43 @@ public class AuthorizationTest extends AbstractTest {
     }
 
     @Test
+    public void testClientWithoutAuthProvider() throws Exception {
+        JournalServer server = new JournalServer(
+                new ServerConfig() {{
+                    setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
+                    setEnableMultiCast(false);
+                }}
+                , factory
+                ,
+                new AuthorizationHandler() {
+                    @Override
+                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
+                        return "SECRET".equals(new String(token));
+                    }
+                });
+
+        server.start();
+        try {
+
+            final CountDownLatch error = new CountDownLatch(1);
+            JournalClient client = new JournalClient(local, factory, null, new JournalClient.Callback() {
+                @Override
+                public void onEvent(int evt) {
+                    if (evt == JournalClient.EVT_AUTH_CONFIG_ERROR) {
+                        error.countDown();
+                    }
+                }
+            });
+
+            client.start();
+            Assert.assertTrue(error.await(5, TimeUnit.SECONDS));
+            Assert.assertFalse(client.isRunning());
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
     public void testClientWrongAuth() throws Exception {
         JournalServer server = new JournalServer(
                 new ServerConfig() {{
@@ -100,18 +138,44 @@ public class AuthorizationTest extends AbstractTest {
                 });
 
 
-        JournalClient client = new JournalClient(local, factory, new CredentialProvider() {
-            @Override
-            public byte[] createToken() {
-                return "NON_SECRET".getBytes();
-            }
-        });
+        final AtomicInteger authErrorCount = new AtomicInteger();
+        final CountDownLatch serverError = new CountDownLatch(1);
 
+        JournalClient client = new JournalClient(
+                local,
+                factory,
+                new CredentialProvider() {
+                    @Override
+                    public byte[] createToken() {
+                        return "NON_SECRET".getBytes();
+                    }
+                },
+                new JournalClient.Callback() {
+                    @Override
+                    public void onEvent(int evt) {
+                        switch (evt) {
+                            case JournalClient.EVT_AUTH_ERROR:
+                                authErrorCount.incrementAndGet();
+                                break;
+                            case JournalClient.EVT_TERMINATED:
+                                serverError.countDown();
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                });
+
+        server.start();
         try {
-            beginSync(server, client);
-        } catch (JournalNetworkException e) {
-            Assert.assertEquals("Authorization failed", e.getMessage());
+            client.start();
+            Assert.assertTrue(serverError.await(5, TimeUnit.SECONDS));
+            Assert.assertFalse(client.isRunning());
+            Assert.assertEquals(1, authErrorCount.get());
+        } finally {
+            server.halt();
         }
+
     }
 
     @Test
@@ -131,12 +195,33 @@ public class AuthorizationTest extends AbstractTest {
                 });
 
 
-        JournalClient client = new JournalClient(local, factory, new SSOCredentialProvider("HOST/test"));
+        final AtomicInteger authErrorCount = new AtomicInteger();
+        final CountDownLatch terminated = new CountDownLatch(1);
+        JournalClient client = new JournalClient(local, factory, new SSOCredentialProvider("HOST/test"),
+                new JournalClient.Callback() {
+                    @Override
+                    public void onEvent(int evt) {
+                        switch (evt) {
+                            case JournalClient.EVT_AUTH_CONFIG_ERROR:
+                                authErrorCount.incrementAndGet();
+                                break;
+                            case JournalClient.EVT_TERMINATED:
+                                terminated.countDown();
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                });
 
+        server.start();
         try {
-            beginSync(server, client);
-            Assert.fail();
-        } catch (JournalNetworkException ignore) {
+            client.start();
+            Assert.assertTrue(terminated.await(5, TimeUnit.SECONDS));
+            Assert.assertEquals(1, authErrorCount.get());
+            Assert.assertFalse(client.isRunning());
+        } finally {
+            server.halt();
         }
     }
 
@@ -156,44 +241,40 @@ public class AuthorizationTest extends AbstractTest {
                     }
                 });
 
+        final AtomicInteger authErrorCount = new AtomicInteger();
+        final CountDownLatch serverError = new CountDownLatch(1);
 
         JournalClient client = new JournalClient(local, factory, new CredentialProvider() {
             @Override
             public byte[] createToken() {
                 return "SECRET".getBytes();
             }
+        }, new JournalClient.Callback() {
+            @Override
+            public void onEvent(int evt) {
+                switch (evt) {
+                    case JournalClient.EVT_AUTH_ERROR:
+                        authErrorCount.incrementAndGet();
+                        break;
+                    case JournalClient.EVT_TERMINATED:
+                        serverError.countDown();
+                        break;
+                    default:
+                        break;
+                }
+
+            }
         });
 
+
+        server.start();
         try {
-            beginSync(server, client);
-        } catch (JournalNetworkException e) {
-            Assert.assertEquals("Authorization failed", e.getMessage());
-        }
-    }
-
-    @Test
-    public void testSillyClient() throws Exception {
-        JournalServer server = new JournalServer(
-                new ServerConfig() {{
-                    setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
-                    setEnableMultiCast(false);
-                }}
-                , factory
-                ,
-                new AuthorizationHandler() {
-                    @Override
-                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
-                        return "SECRET".equals(new String(token));
-                    }
-                });
-
-
-        JournalClient client = new JournalClient(local, factory);
-
-        try {
-            beginSync(server, client);
-        } catch (JournalNetworkException e) {
-            Assert.assertEquals("Server requires authentication. Supply CredentialProvider.", e.getMessage());
+            client.start();
+            Assert.assertTrue(serverError.await(5, TimeUnit.SECONDS));
+            Assert.assertFalse(client.isRunning());
+            Assert.assertEquals(1, authErrorCount.get());
+        } finally {
+            server.halt();
         }
     }
 

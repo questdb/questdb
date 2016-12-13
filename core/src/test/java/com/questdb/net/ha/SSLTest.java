@@ -37,7 +37,9 @@ import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.InputStream;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class SSLTest {
 
@@ -66,30 +68,45 @@ public class SSLTest {
             setHeartbeatFrequency(50);
         }}, factory);
 
+
+        final AtomicInteger serverErrorCount = new AtomicInteger();
+        final CountDownLatch terminated = new CountDownLatch(1);
+
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
             getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setTrustStore(is, "changeit");
             }
-        }}, factory);
+        }}, factory, null, new JournalClient.Callback() {
+            @Override
+            public void onEvent(int evt) {
+                switch (evt) {
+                    case JournalClient.EVT_SERVER_ERROR:
+                        serverErrorCount.incrementAndGet();
+                        break;
+                    case JournalClient.EVT_TERMINATED:
+                        terminated.countDown();
+                        break;
+                    default:
+                        break;
+                }
+            }
+        });
 
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
         server.publish(remote);
         server.start();
 
-        client.subscribe(Quote.class, "remote", "local");
         try {
+            client.subscribe(Quote.class, "remote", "local");
             client.start();
-            Assert.fail("Expect client not to start");
-        } catch (Exception e) {
-            // expect this
+            Assert.assertTrue(terminated.await(5, TimeUnit.SECONDS));
+            Assert.assertEquals(0, server.getConnectedClients());
+            Assert.assertFalse(client.isRunning());
+            Assert.assertEquals(1, serverErrorCount.get());
         } finally {
-            client.halt();
+            server.halt();
         }
-
-        Thread.sleep(500);
-        Assert.assertEquals(0, server.getConnectedClients());
-        server.halt();
     }
 
     @Test
@@ -183,26 +200,44 @@ public class SSLTest {
             setHeartbeatFrequency(50);
         }}, factory);
 
+
+        final AtomicInteger serverErrorCount = new AtomicInteger();
+        final CountDownLatch terminated = new CountDownLatch(1);
+
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
             getSslConfig().setSecure(true);
-        }}, factory);
+        }}, factory, null, new JournalClient.Callback() {
+            @Override
+            public void onEvent(int evt) {
+                switch (evt) {
+                    case JournalClient.EVT_SERVER_ERROR:
+                        serverErrorCount.incrementAndGet();
+                        break;
+                    case JournalClient.EVT_TERMINATED:
+                        terminated.countDown();
+                        break;
+                    default:
+                        break;
+                }
+            }
+        });
 
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
         server.publish(remote);
         server.start();
 
         client.subscribe(Quote.class, "remote", "local");
+
         try {
+            client.subscribe(Quote.class, "remote", "local");
             client.start();
-            Assert.fail("Expect client not to start");
-        } catch (Exception e) {
-            // expect this
+            Assert.assertTrue(terminated.await(5, TimeUnit.SECONDS));
+//            Assert.assertEquals(0, server.getConnectedClients());
+            Assert.assertFalse(client.isRunning());
+            Assert.assertEquals(1, serverErrorCount.get());
         } finally {
-            client.halt();
+            server.halt();
         }
-        Thread.sleep(1000);
-        Assert.assertEquals(0, server.getConnectedClients());
-        server.halt();
     }
 
     @Test
@@ -218,6 +253,10 @@ public class SSLTest {
             setHeartbeatFrequency(50);
         }}, factory);
 
+
+        final AtomicInteger serverErrorCount = new AtomicInteger();
+        final CountDownLatch terminated = new CountDownLatch(1);
+
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
             getSslConfig().setSecure(true);
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
@@ -226,26 +265,34 @@ public class SSLTest {
             try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                 getSslConfig().setKeyStore(is, "changeit");
             }
-        }}, factory);
+        }}, factory, null, new JournalClient.Callback() {
+            @Override
+            public void onEvent(int evt) {
+                switch (evt) {
+                    case JournalClient.EVT_SERVER_ERROR:
+                        serverErrorCount.incrementAndGet();
+                        break;
+                    case JournalClient.EVT_TERMINATED:
+                        terminated.countDown();
+                        break;
+                    default:
+                        break;
+                }
+            }
+        });
 
         JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
         server.publish(remote);
         server.start();
-
-        client.subscribe(Quote.class, "remote", "local");
         try {
+            client.subscribe(Quote.class, "remote", "local");
             client.start();
-            Assert.fail("Expect client not to start");
-        } catch (Exception e) {
-            // expect this
+            Assert.assertTrue(terminated.await(5, TimeUnit.SECONDS));
+            Assert.assertFalse(client.isRunning());
+            Assert.assertEquals(1, serverErrorCount.get());
         } finally {
-            client.halt();
+            server.halt();
         }
-
-        Thread.sleep(1000);
-
-        Assert.assertEquals(0, server.getConnectedClients());
-        server.halt();
     }
 
     @Test

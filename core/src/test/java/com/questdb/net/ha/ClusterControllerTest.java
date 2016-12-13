@@ -39,6 +39,7 @@ import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -66,6 +67,7 @@ public class ClusterControllerTest extends AbstractTest {
     public final JournalTestFactory fact5 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
 
     @Test
+    @Ignore
     public void testBusyFailOver() throws Exception {
 
         final JournalWriter<Quote> writer1 = factory.writer(Quote.class);

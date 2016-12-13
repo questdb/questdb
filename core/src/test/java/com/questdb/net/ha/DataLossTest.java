@@ -59,6 +59,7 @@ public class DataLossTest extends AbstractTest {
         server.start();
 
         final AtomicInteger counter = new AtomicInteger();
+        final AtomicInteger doNotExpect = new AtomicInteger();
 
         // equalize slave
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
@@ -77,11 +78,12 @@ public class DataLossTest extends AbstractTest {
         });
         client.start();
 
-        TestUtils.assertCounter(counter, 1, 1, TimeUnit.SECONDS);
+        TestUtils.assertCounter(counter, 1, 10, TimeUnit.SECONDS);
 
         // stop client to be able to add to slave manually
         client.halt();
 
+        System.out.println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
 
         // add more data to slave
         JournalWriter<Quote> slave = factory.writer(Quote.class, "slave");
@@ -94,26 +96,26 @@ public class DataLossTest extends AbstractTest {
         client.subscribe(Quote.class, "master", "slave", new TxListener() {
             @Override
             public void onCommit() {
-                counter.incrementAndGet();
+                doNotExpect.incrementAndGet();
             }
 
             @Override
             public void onError() {
-
+                counter.incrementAndGet();
             }
         });
         client.start();
 
-        TestUtils.generateQuoteData(master, 145, master.getMaxTimestamp());
-        master.commit();
-
-        TestUtils.assertCounter(counter, 2, 5, TimeUnit.SECONDS);
+        TestUtils.assertCounter(counter, 2, 180, TimeUnit.SECONDS);
         client.halt();
 
-        slave = factory.writer(Quote.class, "slave");
-        TestUtils.assertDataEquals(master, slave);
-        Assert.assertEquals(master.getTxn(), slave.getTxn());
-        Assert.assertEquals(master.getTxPin(), slave.getTxPin());
+        Assert.assertEquals(0, doNotExpect.get());
+
+        // assert that slave journal is closed
+
+        JournalWriter w = factory.writer(Quote.class, "slave");
+        Assert.assertNotNull(w);
+        w.close();
 
         server.halt();
     }

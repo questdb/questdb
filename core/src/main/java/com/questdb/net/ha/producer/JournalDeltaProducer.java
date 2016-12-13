@@ -46,7 +46,6 @@ public class JournalDeltaProducer implements ChannelProducer {
     private final ObjList<PartitionDeltaProducer> partitionDeltaProducerCache = new ObjList<>();
     private final JournalSymbolTableProducer journalSymbolTableProducer;
     private PartitionDeltaProducer lagPartitionDeltaProducer;
-    private boolean rollback;
 
     public JournalDeltaProducer(Journal journal) {
         this.journal = journal;
@@ -55,23 +54,39 @@ public class JournalDeltaProducer implements ChannelProducer {
 
     public void configure(long txn, long txPin) throws JournalException {
 
+        String loc = journal.getKey().getId();
+
+        LOG.debug().$("Configure ").$(loc).$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
+
         journalServerState.reset();
 
         // ignore return value because client can be significantly behind server
         // even though journal has not refreshed we have to compare client and server txns
 
         journal.refresh();
-        long thisTxn = journal.getTxn();
-        this.rollback = thisTxn < txn;
-        journalServerState.setTxn(thisTxn);
-        journalServerState.setTxPin(journal.getTxPin());
 
-        if (thisTxn > txn) {
+        long thisTxn = journal.getTxn();
+        long thisTxnPin = journal.getTxPin();
+
+        if (thisTxn < txn) {
+            // refuse
+            LOG.info().$("Cannot sync ").$(loc).$(". Client TXN is ahead of ours").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
+            journalServerState.setTxn(-1);
+        } else if (thisTxn == txn) {
+            if (thisTxnPin != txPin) {
+                // refuse
+                LOG.info().$("Cannot sync ").$(loc).$(". Client TXN PIN is incorrect").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
+                journalServerState.setTxn(-1);
+            }
+        } else if (thisTxn > txn) {
             Tx tx = journal.find(txn, txPin);
             if (tx == null) {
-                // indicate to client that their txn is invalid
+                // unknown txn
+                LOG.info().$("Cannot sync ").$(loc).$(". Unknown TXN").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
                 journalServerState.setTxn(-1);
             } else {
+                journalServerState.setTxn(thisTxn);
+                journalServerState.setTxPin(thisTxnPin);
                 configure0(tx);
             }
         }
@@ -95,7 +110,7 @@ public class JournalDeltaProducer implements ChannelProducer {
 
     @Override
     public boolean hasContent() {
-        return rollback || journalServerState.notEmpty();
+        return journalServerState.notEmpty();
     }
 
     @Override

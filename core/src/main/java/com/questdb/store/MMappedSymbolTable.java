@@ -50,9 +50,10 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
     private final ObjList<String> keyCache;
     private final boolean noCache;
     private final Iter iter = new Iter();
-    private VariableColumn data;
-    private KVIndex index;
+    private final VariableColumn data;
+    private final KVIndex index;
     private int size;
+    private boolean open = true;
 
     public MMappedSymbolTable(int keyCount, int avgStringSize, int txCountHint, File directory, String column, int journalMode, int size, long indexTxAddress, boolean noCache) throws JournalException {
         // number of hash keys stored in index
@@ -107,8 +108,11 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
 
     @Override
     public void close() {
-        data = Misc.free(data);
-        index = Misc.free(index);
+        if (open) {
+            Misc.free(data);
+            Misc.free(index);
+            open = false;
+        }
     }
 
     public void commit() {

@@ -23,10 +23,8 @@
 
 package com.questdb.net.ha.auth;
 
-import com.questdb.ex.JournalNetworkException;
-
-public class AuthConfigurationException extends JournalNetworkException {
-    public AuthConfigurationException() {
+public class AuthenticationConfigException extends Exception {
+    public AuthenticationConfigException() {
         super("Server requires authentication. Supply CredentialProvider.");
     }
 }

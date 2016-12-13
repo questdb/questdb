@@ -32,6 +32,7 @@ import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
+import com.questdb.store.TxListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestData;
 import com.questdb.test.tools.TestUtils;
@@ -39,7 +40,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ScenarioTest extends AbstractTest {
 
@@ -65,11 +68,10 @@ public class ScenarioTest extends AbstractTest {
         final Journal<Quote> remoteReader = factory.reader(Quote.class, "remote");
 
         // create empty journal
-        Journal<Quote> local = factory.writer(Quote.class, "local");
-        local.close();
+        factory.writer(Quote.class, "local").close();
 
         // setup local where data should be trickling from client
-        local = factory.reader(Quote.class, "local");
+        final Journal<Quote> local = factory.reader(Quote.class, "local");
         Assert.assertEquals(0, local.size());
 
         JournalServer server = new JournalServer(serverConfig, factory);
@@ -78,7 +80,29 @@ public class ScenarioTest extends AbstractTest {
         server.publish(remote);
         server.start();
 
-        client.subscribe(Quote.class, "remote", "local");
+        final AtomicInteger errors = new AtomicInteger();
+
+        final CountDownLatch ready = new CountDownLatch(1);
+        client.subscribe(Quote.class, "remote", "local", new TxListener() {
+            @Override
+            public void onCommit() {
+                try {
+                    if (local.refresh() && local.size() == 33) {
+                        ready.countDown();
+                    }
+                } catch (JournalException e) {
+                    errors.incrementAndGet();
+                    e.printStackTrace();
+                }
+            }
+
+            @Override
+            public void onError() {
+                errors.incrementAndGet();
+            }
+        });
+
+
         client.start();
 
         int n = 0;
@@ -87,7 +111,7 @@ public class ScenarioTest extends AbstractTest {
             n += 10;
         }
 
-        Thread.sleep(200);
+        Assert.assertTrue(ready.await(10, TimeUnit.SECONDS));
 
         server.halt();
         client.halt();
@@ -95,6 +119,8 @@ public class ScenarioTest extends AbstractTest {
         local.refresh();
         remoteReader.refresh();
         TestUtils.assertEquals(remoteReader, local);
+
+        Assert.assertEquals(0, errors.get());
     }
 
     @Test

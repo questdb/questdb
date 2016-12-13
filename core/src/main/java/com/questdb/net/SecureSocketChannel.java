@@ -203,6 +203,7 @@ public class SecureSocketChannel implements WrappedByteChannel {
                     } catch (SSLException e) {
                         LOG.error().$("Server SSL handshake failed: ").$(e.getMessage()).$();
                         closureOnException();
+                        socketChannel.close();
                         throw e;
                     }
                     outBuf.flip();
@@ -237,6 +238,8 @@ public class SecureSocketChannel implements WrappedByteChannel {
                         }
                     } catch (SSLException e) {
                         LOG.error().$("Client SSL handshake failed: ").$(e.getMessage()).$();
+                        handshakeStatus = SSLEngineResult.HandshakeStatus.FINISHED;
+                        socketChannel.close();
                         throw e;
                     }
                     break;

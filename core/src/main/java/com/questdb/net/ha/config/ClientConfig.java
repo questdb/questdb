@@ -85,7 +85,7 @@ public class ClientConfig extends NetworkConfig {
             }
         }
 
-        List<ServerNode> nodes = getNodes();
+        List<ServerNode> nodes = getServerNodes();
 
         for (int i = 0, k = nodes.size(); i < k; i++) {
             ServerNode node = nodes.get(i);
