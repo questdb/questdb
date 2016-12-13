@@ -79,8 +79,6 @@ public class AuthorizationTest extends AbstractTest {
                 return "SECRET".getBytes();
             }
         });
-
-
         beginSync(server, client);
     }
 
@@ -103,12 +101,20 @@ public class AuthorizationTest extends AbstractTest {
         server.start();
         try {
 
+            final AtomicInteger authErrors = new AtomicInteger();
             final CountDownLatch error = new CountDownLatch(1);
             JournalClient client = new JournalClient(local, factory, null, new JournalClient.Callback() {
                 @Override
                 public void onEvent(int evt) {
-                    if (evt == JournalClient.EVT_AUTH_CONFIG_ERROR) {
-                        error.countDown();
+                    switch (evt) {
+                        case JournalClient.EVT_AUTH_CONFIG_ERROR:
+                            authErrors.incrementAndGet();
+                            break;
+                        case JournalClient.EVT_TERMINATED:
+                            error.countDown();
+                            break;
+                        default:
+                            break;
                     }
                 }
             });
