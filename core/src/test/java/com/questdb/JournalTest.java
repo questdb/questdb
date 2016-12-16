@@ -35,8 +35,8 @@ import com.questdb.misc.Rows;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.query.ResultSet;
+import com.questdb.store.JournalListener;
 import com.questdb.store.SymbolTable;
-import com.questdb.store.TxListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestData;
 import com.questdb.test.tools.TestUtils;
@@ -370,8 +370,8 @@ public class JournalTest extends AbstractTest {
         TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), SIZE);
         origin.commit();
 
-        TestTxListener lsnr = new TestTxListener();
-        w.setTxListener(lsnr);
+        TestJournalListener lsnr = new TestJournalListener();
+        w.setJournalListener(lsnr);
 
 
         w.append(origin.query().all().asResultSet().subset(0, 1000));
@@ -512,7 +512,7 @@ public class JournalTest extends AbstractTest {
         TestUtils.assertDataEquals(origin, w);
     }
 
-    private static class TestTxListener implements TxListener {
+    private static class TestJournalListener implements JournalListener {
 
         private boolean notifyAsyncNoWait = false;
 
@@ -526,7 +526,7 @@ public class JournalTest extends AbstractTest {
         }
 
         @Override
-        public void onError(int event) {
+        public void onEvent(int event) {
 
         }
 

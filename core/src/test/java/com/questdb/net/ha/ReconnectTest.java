@@ -30,7 +30,7 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
-import com.questdb.store.TxListener;
+import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -78,7 +78,7 @@ public class ReconnectTest extends AbstractTest {
         // when data arrives client triggers latch
         final CountDownLatch latch = new CountDownLatch(1);
         final Journal<Quote> local = factory.reader(Quote.class, "local");
-        client.subscribe(Quote.class, "remote", "local", 2 * size, new TxListener() {
+        client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
             @Override
             public void onCommit() {
                 try {
@@ -91,7 +91,7 @@ public class ReconnectTest extends AbstractTest {
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
 
             }
         });

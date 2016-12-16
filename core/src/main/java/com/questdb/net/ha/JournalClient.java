@@ -64,7 +64,7 @@ import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 import com.questdb.store.JournalEvents;
-import com.questdb.store.TxListener;
+import com.questdb.store.JournalListener;
 
 import java.io.File;
 import java.io.IOException;
@@ -161,36 +161,36 @@ public class JournalClient {
     }
 
     public <T> void subscribe(Class<T> clazz) {
-        subscribe(clazz, (TxListener) null);
+        subscribe(clazz, (JournalListener) null);
     }
 
     @SuppressWarnings("unused")
     public <T> void subscribe(Class<T> clazz, String location) {
-        subscribe(clazz, location, (TxListener) null);
+        subscribe(clazz, location, (JournalListener) null);
     }
 
     public <T> void subscribe(Class<T> clazz, String remote, String local) {
         subscribe(clazz, remote, local, null);
     }
 
-    public <T> void subscribe(Class<T> clazz, String remote, String local, TxListener txListener) {
-        subscribe(new JournalKey<>(clazz, remote), new JournalKey<>(clazz, local), txListener);
+    public <T> void subscribe(Class<T> clazz, String remote, String local, JournalListener journalListener) {
+        subscribe(new JournalKey<>(clazz, remote), new JournalKey<>(clazz, local), journalListener);
     }
 
     public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint) {
         subscribe(clazz, remote, local, recordHint, null);
     }
 
-    public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint, TxListener txListener) {
-        subscribe(new JournalKey<>(clazz, remote, PartitionBy.DEFAULT, recordHint), new JournalKey<>(clazz, local, PartitionBy.DEFAULT, recordHint), txListener);
+    public <T> void subscribe(Class<T> clazz, String remote, String local, int recordHint, JournalListener journalListener) {
+        subscribe(new JournalKey<>(clazz, remote, PartitionBy.DEFAULT, recordHint), new JournalKey<>(clazz, local, PartitionBy.DEFAULT, recordHint), journalListener);
     }
 
-    public <T> void subscribe(JournalKey<T> remoteKey, JournalWriter<T> writer, TxListener txListener) {
-        subscribe(remoteKey, writer.getKey(), txListener, writer);
+    public <T> void subscribe(JournalKey<T> remoteKey, JournalWriter<T> writer, JournalListener journalListener) {
+        subscribe(remoteKey, writer.getKey(), journalListener, writer);
     }
 
-    public void subscribe(JournalKey remote, JournalKey local, TxListener txListener) {
-        subscribe(remote, local, txListener, null);
+    public void subscribe(JournalKey remote, JournalKey local, JournalListener journalListener) {
+        subscribe(remote, local, journalListener, null);
     }
 
     private void checkAck() throws JournalNetworkException {
@@ -328,7 +328,7 @@ public class JournalClient {
         }
     }
 
-    private void subscribe(JournalKey remote, JournalKey local, TxListener txListener, JournalWriter writer) {
+    private void subscribe(JournalKey remote, JournalKey local, JournalListener journalListener, JournalWriter writer) {
         long cursor = subscriptionPubSequence.next();
         if (cursor < 0) {
             throw new JournalRuntimeException("start client before subscribing");
@@ -338,7 +338,7 @@ public class JournalClient {
         h.type = MSG_SUBSCRIBE;
         h.remote = remote;
         h.local = local;
-        h.listener = txListener;
+        h.listener = journalListener;
         h.writer = writer;
         subscriptionPubSequence.done(cursor);
     }
@@ -350,16 +350,16 @@ public class JournalClient {
      * when client journal is committed. Listener is called synchronously with
      * client thread, so callback implementation must be fast.
      *
-     * @param clazz      journal class on both client and server
-     * @param txListener callback listener to get receive commit notifications.
-     * @param <T>        generics to comply with Journal API.
+     * @param clazz           journal class on both client and server
+     * @param journalListener callback listener to get receive commit notifications.
+     * @param <T>             generics to comply with Journal API.
      */
-    private <T> void subscribe(Class<T> clazz, TxListener txListener) {
-        subscribe(new JournalKey<>(clazz), new JournalKey<>(clazz), txListener);
+    private <T> void subscribe(Class<T> clazz, JournalListener journalListener) {
+        subscribe(new JournalKey<>(clazz), new JournalKey<>(clazz), journalListener);
     }
 
-    private <T> void subscribe(Class<T> clazz, String location, TxListener txListener) {
-        subscribe(new JournalKey<>(clazz, location), new JournalKey<>(clazz, location), txListener);
+    private <T> void subscribe(Class<T> clazz, String location, JournalListener journalListener) {
+        subscribe(new JournalKey<>(clazz, location), new JournalKey<>(clazz, location), journalListener);
     }
 
     private void subscribeOne(int index, SubscriptionHolder holder, String loc, boolean newSubscription) throws JournalNetworkException {
@@ -413,7 +413,7 @@ public class JournalClient {
                 statusSentList.extendAndSet(index, 0);
                 deltaConsumers.extendAndSet(index, new JournalDeltaConsumer(writer.setCommitOnClose(false)));
                 writers.extendAndSet(index, writer);
-                writer.setTxListener(holder.listener);
+                writer.setJournalListener(holder.listener);
             } else {
                 statusSentList.setQuick(index, 0);
             }
@@ -429,6 +429,9 @@ public class JournalClient {
             checkAck();
             statusSentList.setQuick(index, 1);
 
+            if (holder.listener != null) {
+                holder.listener.onEvent(JournalEvents.EVT_JNL_SUBSCRIBED);
+            }
             LOG.info().$("Subscribed ").$(loc).$(" to ").$(holder.remote.path()).$("(remote)").$();
         } catch (JournalNetworkException e) {
             LOG.error().$("Failed to subscribe ").$(loc).$(" to ").$(holder.remote.path()).$("(remote)").$();
@@ -474,7 +477,7 @@ public class JournalClient {
         }
 
         if (holder.listener != null) {
-            holder.listener.onError(reason);
+            holder.listener.onEvent(reason);
         }
     }
 
@@ -493,7 +496,7 @@ public class JournalClient {
         private int type = 0;
         private JournalKey remote;
         private JournalKey local;
-        private TxListener listener;
+        private JournalListener listener;
         private JournalWriter writer;
     }
 
@@ -538,7 +541,7 @@ public class JournalClient {
                             subscribeOne(i++, holder, loc, true);
                         } else {
                             if (holder.listener != null) {
-                                holder.listener.onError(JournalEvents.EVT_JNL_ALREADY_SUBSCRIBED);
+                                holder.listener.onEvent(JournalEvents.EVT_JNL_ALREADY_SUBSCRIBED);
                             }
                             LOG.error().$("Already subscribed ").$(loc).$();
                         }

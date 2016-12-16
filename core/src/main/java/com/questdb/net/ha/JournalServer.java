@@ -207,7 +207,7 @@ public class JournalServer {
     public void start() throws JournalNetworkException {
         for (ObjIntHashMap.Entry<JournalWriter> e : writers) {
             JournalEventPublisher publisher = new JournalEventPublisher(e.value, bridge);
-            e.key.setTxListener(publisher);
+            e.key.setJournalListener(publisher);
         }
 
         serverSocketChannel = config.openServerSocketChannel(uid);

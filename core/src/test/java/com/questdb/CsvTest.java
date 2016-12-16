@@ -155,7 +155,7 @@ public class CsvTest {
                 , 1024 * 1024
                 , new Csv.Listener() {
                     @Override
-                    public void onError(int line) {
+                    public void onEvent(int line) {
 
                     }
 

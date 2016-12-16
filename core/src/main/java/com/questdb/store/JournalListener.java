@@ -23,8 +23,8 @@
 
 package com.questdb.store;
 
-public interface TxListener {
+public interface JournalListener {
     void onCommit();
 
-    void onError(int event);
+    void onEvent(int event);
 }

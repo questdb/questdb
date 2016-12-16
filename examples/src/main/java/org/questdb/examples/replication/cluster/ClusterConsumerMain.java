@@ -31,7 +31,7 @@ import com.questdb.factory.JournalFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalClient;
 import com.questdb.net.ha.config.ClientConfig;
-import com.questdb.store.TxListener;
+import com.questdb.store.JournalListener;
 import org.questdb.examples.support.Price;
 
 public class ClusterConsumerMain {
@@ -49,7 +49,7 @@ public class ClusterConsumerMain {
 
         final Journal<Price> reader = factory.bulkReader(new JournalKey<>(Price.class, "price-copy", PartitionBy.NONE, 1000000000));
 
-        client.subscribe(Price.class, null, "price-copy", 1000000000, new TxListener() {
+        client.subscribe(Price.class, null, "price-copy", 1000000000, new JournalListener() {
             @Override
             public void onCommit() {
                 int count = 0;
@@ -68,7 +68,7 @@ public class ClusterConsumerMain {
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
                 System.out.println("there was an error");
             }
         });

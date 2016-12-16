@@ -27,7 +27,7 @@ import com.questdb.Journal;
 import com.questdb.JournalIterators;
 import com.questdb.factory.JournalFactory;
 import com.questdb.net.ha.JournalClient;
-import com.questdb.store.TxListener;
+import com.questdb.store.JournalListener;
 import org.questdb.examples.support.Price;
 
 /**
@@ -42,7 +42,7 @@ public class SimpleReplicationClientMain {
 
         final Journal<Price> reader = factory.bulkReader(Price.class, "price-copy");
 
-        client.subscribe(Price.class, null, "price-copy", new TxListener() {
+        client.subscribe(Price.class, null, "price-copy", new JournalListener() {
             @Override
             public void onCommit() {
                 int count = 0;
@@ -57,7 +57,7 @@ public class SimpleReplicationClientMain {
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
                 System.out.println("There was an error");
             }
         });

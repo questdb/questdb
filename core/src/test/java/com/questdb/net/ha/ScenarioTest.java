@@ -32,7 +32,8 @@ import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
-import com.questdb.store.TxListener;
+import com.questdb.store.JournalEvents;
+import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestData;
 import com.questdb.test.tools.TestUtils;
@@ -83,7 +84,7 @@ public class ScenarioTest extends AbstractTest {
         final AtomicInteger errors = new AtomicInteger();
 
         final CountDownLatch ready = new CountDownLatch(1);
-        client.subscribe(Quote.class, "remote", "local", new TxListener() {
+        client.subscribe(Quote.class, "remote", "local", new JournalListener() {
             @Override
             public void onCommit() {
                 try {
@@ -97,8 +98,10 @@ public class ScenarioTest extends AbstractTest {
             }
 
             @Override
-            public void onError(int event) {
-                errors.incrementAndGet();
+            public void onEvent(int event) {
+                if (event != JournalEvents.EVT_JNL_SUBSCRIBED) {
+                    errors.incrementAndGet();
+                }
             }
         });
 

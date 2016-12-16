@@ -38,7 +38,7 @@ import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.net.ha.krb.SSOCredentialProvider;
 import com.questdb.std.ObjList;
-import com.questdb.store.TxListener;
+import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -291,14 +291,14 @@ public class AuthorizationTest extends AbstractTest {
         server.start();
         try {
             final CountDownLatch latch = new CountDownLatch(1);
-            client.subscribe(Quote.class, "remote", "local", 2 * size, new TxListener() {
+            client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
                 @Override
                 public void onCommit() {
                     latch.countDown();
                 }
 
                 @Override
-                public void onError(int event) {
+                public void onEvent(int event) {
 
                 }
             });

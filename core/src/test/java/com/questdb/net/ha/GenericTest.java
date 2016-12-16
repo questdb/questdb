@@ -38,7 +38,7 @@ import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.ql.RecordSource;
-import com.questdb.store.TxListener;
+import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
@@ -73,14 +73,14 @@ public class GenericTest extends AbstractTest {
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
             setEnableMultiCast(false);
         }}, factory);
-        client.subscribe(new JournalKey("quote"), new JournalKey("abc"), new TxListener() {
+        client.subscribe(new JournalKey("quote"), new JournalKey("abc"), new JournalListener() {
             @Override
             public void onCommit() {
                 ready.countDown();
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
 
             }
         });
@@ -245,14 +245,14 @@ public class GenericTest extends AbstractTest {
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
             setEnableMultiCast(false);
         }}, factory);
-        client.subscribe(new JournalKey("xyz"), new JournalKey("abc"), new TxListener() {
+        client.subscribe(new JournalKey("xyz"), new JournalKey("abc"), new JournalListener() {
             @Override
             public void onCommit() {
                 ready.countDown();
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
 
             }
         });

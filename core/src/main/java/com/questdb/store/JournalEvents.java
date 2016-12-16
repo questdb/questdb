@@ -29,6 +29,7 @@ public final class JournalEvents {
     public static final int EVT_JNL_TRANSACTION_REFUSED = 3;
     public static final int EVT_JNL_UNKNOWN_TRANSACTION = 4;
     public static final int EVT_JNL_SERVER_ERROR = 5;
+    public static final int EVT_JNL_SUBSCRIBED = 6;
 
     private JournalEvents() {
     }

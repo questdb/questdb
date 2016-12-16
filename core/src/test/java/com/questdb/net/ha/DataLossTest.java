@@ -28,7 +28,7 @@ import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
-import com.questdb.store.TxListener;
+import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -65,14 +65,14 @@ public class DataLossTest extends AbstractTest {
         JournalClient client = new JournalClient(new ClientConfig("localhost") {{
             setEnableMultiCast(false);
         }}, factory);
-        client.subscribe(Quote.class, "master", "slave", new TxListener() {
+        client.subscribe(Quote.class, "master", "slave", new JournalListener() {
             @Override
             public void onCommit() {
                 counter.incrementAndGet();
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
 
             }
         });
@@ -93,14 +93,14 @@ public class DataLossTest extends AbstractTest {
 
         // synchronise slave again
         client = new JournalClient(new ClientConfig("localhost"), factory);
-        client.subscribe(Quote.class, "master", "slave", new TxListener() {
+        client.subscribe(Quote.class, "master", "slave", new JournalListener() {
             @Override
             public void onCommit() {
                 doNotExpect.incrementAndGet();
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
                 counter.incrementAndGet();
             }
         });

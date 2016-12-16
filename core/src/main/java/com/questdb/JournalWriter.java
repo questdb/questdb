@@ -69,7 +69,7 @@ public class JournalWriter<T> extends Journal<T> {
     // discard.txt related
     private final File discardTxt;
     private Lock writeLock;
-    private TxListener txListener;
+    private JournalListener journalListener;
     private boolean txActive = false;
     private int txPartitionIndex = -1;
     private long appendTimestampLo = -1;
@@ -521,10 +521,10 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    public void notifyTxError(int event) {
-        if (txListener != null) {
+    public void notifyListener(int event) {
+        if (journalListener != null) {
             try {
-                txListener.onError(event);
+                journalListener.onEvent(event);
             } catch (Throwable e) {
                 LOG.error().$("Error in listener").$(e).$();
             }
@@ -574,8 +574,8 @@ public class JournalWriter<T> extends Journal<T> {
         rollback0(txLog.findAddress(txn, txPin), true);
     }
 
-    public void setTxListener(TxListener txListener) {
-        this.txListener = txListener;
+    public void setJournalListener(JournalListener journalListener) {
+        this.journalListener = journalListener;
     }
 
     public void truncate() throws JournalException {
@@ -683,8 +683,8 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     private void notifyTxListener() {
-        if (txListener != null) {
-            txListener.onCommit();
+        if (journalListener != null) {
+            journalListener.onCommit();
         }
     }
 
@@ -696,7 +696,7 @@ public class JournalWriter<T> extends Journal<T> {
     private void rollback0(long address, boolean writeDiscard) throws JournalException {
 
         if (address == -1L) {
-            notifyTxError(JournalEvents.EVT_JNL_UNKNOWN_TRANSACTION);
+            notifyListener(JournalEvents.EVT_JNL_UNKNOWN_TRANSACTION);
             throw new IncompatibleJournalException("Server txn is not compatible with %s", this.getLocation());
         }
 

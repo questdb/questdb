@@ -85,7 +85,7 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
             this.state = journalServerStateConsumer.getValue();
 
             if (state.getTxn() == -1) {
-                journal.notifyTxError(JournalEvents.EVT_JNL_TRANSACTION_REFUSED);
+                journal.notifyListener(JournalEvents.EVT_JNL_TRANSACTION_REFUSED);
                 throw new IncompatibleJournalException("Server refused txn for %s", journal.getLocation());
             }
 

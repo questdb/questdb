@@ -24,9 +24,9 @@
 package com.questdb.net.ha;
 
 import com.questdb.net.ha.bridge.JournalEventBridge;
-import com.questdb.store.TxListener;
+import com.questdb.store.JournalListener;
 
-public class JournalEventPublisher implements TxListener {
+public class JournalEventPublisher implements JournalListener {
     private final int journalIndex;
     private final JournalEventBridge bridge;
 
@@ -41,6 +41,6 @@ public class JournalEventPublisher implements TxListener {
     }
 
     @Override
-    public void onError(int event) {
+    public void onEvent(int event) {
     }
 }

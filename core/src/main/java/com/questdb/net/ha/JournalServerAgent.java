@@ -155,9 +155,9 @@ public class JournalServerAgent {
 
     @SuppressWarnings("unchecked")
     private void addClientKey(ByteChannel channel) throws JournalNetworkException {
-        LOG.debug().$(socketAddress).$(" SetKey command received").$();
         setKeyRequestConsumer.read(channel);
         IndexedJournalKey indexedKey = setKeyRequestConsumer.getValue();
+        LOG.debug().$(socketAddress).$(" AddKey command received. Index: ").$(indexedKey.getIndex()).$();
 
         JournalKey<?> readerKey = indexedKey.getKey();
         int index = indexedKey.getIndex();
@@ -342,9 +342,9 @@ public class JournalServerAgent {
     }
 
     private void removeClientKey(ByteChannel channel) throws JournalNetworkException {
-        LOG.debug().$(socketAddress).$(" RemoveKey command received").$();
         setKeyRequestConsumer.read(channel);
         IndexedJournalKey indexedKey = setKeyRequestConsumer.getValue();
+        LOG.debug().$(socketAddress).$(" RemoveKey command received. Index: ").$(indexedKey.getIndex()).$();
 
         JournalKey<?> readerKey = indexedKey.getKey();
         int index = indexedKey.getIndex();

@@ -26,15 +26,17 @@ package com.questdb.net.ha;
 import com.questdb.Journal;
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.misc.Dates;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.store.JournalEvents;
-import com.questdb.store.TxListener;
+import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,6 +44,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -62,10 +65,143 @@ public class IntegrationTest extends AbstractTest {
     }
 
     @Test
+    public void testBadJournalDoesNotResubscribe() throws Exception {
+        // todo: test that when client reconnects it doesn't retry bad subscriptions
+        Assert.fail();
+    }
+
+    @Test
     public void testBadSubscriptionOnTheFlyFollowedByReconnect() throws Exception {
         //todo: check that bad subscription doesn't interrupt data flow on good subscription
-        //todo: check that reconnect doesn't resubscribe bad subscriptions
-        Assert.fail();
+
+        try (final JournalWriter<Quote> origin = factory.writer(Quote.class, "origin")) {
+            final int batchSize = 1000;
+            final int batchCount = 100;
+
+            server.publish(origin);
+
+            server.start();
+            try {
+                final CountDownLatch terminated = new CountDownLatch(1);
+                JournalClient client = new JournalClient(new ClientConfig("localhost"), factory, null, new JournalClient.Callback() {
+                    @Override
+                    public void onEvent(int evt) {
+                        if (evt == JournalClientEvents.EVT_TERMINATED) {
+                            terminated.countDown();
+                        }
+                    }
+                });
+
+                client.start();
+
+
+                final AtomicInteger commits = new AtomicInteger();
+                final AtomicInteger errors = new AtomicInteger();
+                final CountDownLatch localSubscribed = new CountDownLatch(1);
+                final CountDownLatch dataReceived = new CountDownLatch(1);
+                try {
+
+                    // create empty journal
+                    factory.writer(Quote.class, "local").close();
+
+                    try (final Journal local = factory.reader("local")) {
+                        client.subscribe(Quote.class, "origin", "local", new JournalListener() {
+                            @Override
+                            public void onCommit() {
+                                commits.incrementAndGet();
+                                try {
+                                    local.refresh();
+                                    if (local.size() == batchCount * batchSize) {
+                                        dataReceived.countDown();
+                                    }
+                                } catch (JournalException e) {
+                                    e.printStackTrace();
+                                    errors.incrementAndGet();
+                                }
+                            }
+
+                            @Override
+                            public void onEvent(int event) {
+                                switch (event) {
+                                    case JournalEvents.EVT_JNL_SUBSCRIBED:
+                                        localSubscribed.countDown();
+                                        break;
+                                    default:
+                                        errors.incrementAndGet();
+                                        break;
+                                }
+                            }
+                        });
+
+                        final CountDownLatch published = new CountDownLatch(1);
+                        final CyclicBarrier barrier = new CyclicBarrier(2);
+                        final AtomicInteger publisherErrors = new AtomicInteger();
+
+                        new Thread() {
+                            @Override
+                            public void run() {
+                                try {
+                                    barrier.await();
+
+                                    long timestamp = Dates.parseDateTime("2013-09-04T10:00:00.000Z");
+                                    long increment = 1000L;
+
+                                    for (int i = 0; i < batchCount; i++) {
+                                        TestUtils.generateQuoteData(origin, batchSize, timestamp, increment);
+                                        timestamp += increment * (batchSize);
+                                        origin.commit();
+                                    }
+                                } catch (Throwable e) {
+                                    e.printStackTrace();
+                                    publisherErrors.incrementAndGet();
+                                }
+                                published.countDown();
+                            }
+                        }.start();
+
+                        Assert.assertTrue(localSubscribed.await(10, TimeUnit.SECONDS));
+                        barrier.await();
+
+
+                        // after publishing stream is setup we attempt to subscribe bad journal
+                        // todo: this part breaks server, fix server and continue
+//                        factory.writer(new JournalConfigurationBuilder().$("x").$int("x").$()).close();
+//
+//                        client.subscribe(Quote.class, "origin", "x", new JournalListener() {
+//                            @Override
+//                            public void onCommit() {
+//
+//                            }
+//
+//                            @Override
+//                            public void onEvent(int event) {
+//                                System.out.println("bad event: " + event);
+//                            }
+//                        });
+
+
+                        Assert.assertTrue(published.await(60, TimeUnit.SECONDS));
+                        Assert.assertTrue(dataReceived.await(60, TimeUnit.SECONDS));
+                        Assert.assertEquals(0, publisherErrors.get());
+                        Assert.assertEquals(0, errors.get());
+                        Assert.assertTrue(commits.get() > 0);
+
+                        local.refresh();
+                        Assert.assertEquals(batchSize * batchCount, local.size());
+                    }
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    Assert.fail();
+                } finally {
+                    client.halt();
+                }
+                Assert.assertTrue(terminated.await(5, TimeUnit.SECONDS));
+            } finally {
+                server.halt();
+            }
+        }
+
+//        Assert.fail();
     }
 
     @Test
@@ -82,7 +218,7 @@ public class IntegrationTest extends AbstractTest {
 
         client.start();
 
-        Assert.assertTrue(error.await(1, TimeUnit.SECONDS));
+        Assert.assertTrue(error.await(30, TimeUnit.SECONDS));
     }
 
     @Test
@@ -127,14 +263,14 @@ public class IntegrationTest extends AbstractTest {
         try {
 
             final CountDownLatch commitLatch1 = new CountDownLatch(1);
-            client.subscribe(Quote.class, "remote", "local", 2 * size, new TxListener() {
+            client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
                 @Override
                 public void onCommit() {
                     commitLatch1.countDown();
                 }
 
                 @Override
-                public void onError(int event) {
+                public void onEvent(int event) {
 
                 }
             });
@@ -165,13 +301,13 @@ public class IntegrationTest extends AbstractTest {
             final CountDownLatch errorCountDown = new CountDownLatch(1);
 
             client = new JournalClient(new ClientConfig("localhost"), factory);
-            client.subscribe(Quote.class, "remote", "local", 2 * size, new TxListener() {
+            client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
                 @Override
                 public void onCommit() {
                 }
 
                 @Override
-                public void onError(int event) {
+                public void onEvent(int event) {
                     errorCountDown.countDown();
                 }
             });
@@ -204,14 +340,14 @@ public class IntegrationTest extends AbstractTest {
                     }
                 }
             });
-            client.subscribe(Quote.class, "remote", "local", 2 * size, new TxListener() {
+            client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
                 @Override
                 public void onCommit() {
                     commits.incrementAndGet();
                 }
 
                 @Override
-                public void onError(int event) {
+                public void onEvent(int event) {
 
                 }
             });
@@ -254,14 +390,14 @@ public class IntegrationTest extends AbstractTest {
                     }
                 }
             });
-            client.subscribe(Quote.class, "remote", "local", 2 * size, new TxListener() {
+            client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
                 @Override
                 public void onCommit() {
                     commits.incrementAndGet();
                 }
 
                 @Override
-                public void onError(int event) {
+                public void onEvent(int event) {
                     errorCounter.incrementAndGet();
                 }
             });
@@ -316,14 +452,14 @@ public class IntegrationTest extends AbstractTest {
 
                 try {
                     final CountDownLatch incompatible = new CountDownLatch(1);
-                    client.subscribe(Quote.class, "origin", "local", new TxListener() {
+                    client.subscribe(Quote.class, "origin", "local", new JournalListener() {
                         @Override
                         public void onCommit() {
 
                         }
 
                         @Override
-                        public void onError(int event) {
+                        public void onEvent(int event) {
                             if (event == JournalEvents.EVT_JNL_INCOMPATIBLE) {
                                 incompatible.countDown();
                             }
@@ -339,15 +475,17 @@ public class IntegrationTest extends AbstractTest {
                     // subscribe again and have client create compatible journal from server's metadata
                     final AtomicInteger errorCount = new AtomicInteger();
                     final CountDownLatch commit = new CountDownLatch(1);
-                    client.subscribe(Quote.class, "origin", "local", new TxListener() {
+                    client.subscribe(Quote.class, "origin", "local", new JournalListener() {
                         @Override
                         public void onCommit() {
                             commit.countDown();
                         }
 
                         @Override
-                        public void onError(int event) {
-                            errorCount.incrementAndGet();
+                        public void onEvent(int event) {
+                            if (event != JournalEvents.EVT_JNL_SUBSCRIBED) {
+                                errorCount.incrementAndGet();
+                            }
                         }
                     });
 
@@ -403,14 +541,14 @@ public class IntegrationTest extends AbstractTest {
 
             try {
                 final CountDownLatch latch = new CountDownLatch(1);
-                client.subscribe(Quote.class, "remote", "local", 2 * size, new TxListener() {
+                client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
                     @Override
                     public void onCommit() {
                         latch.countDown();
                     }
 
                     @Override
-                    public void onError(int event) {
+                    public void onEvent(int event) {
 
                     }
                 });
@@ -429,6 +567,12 @@ public class IntegrationTest extends AbstractTest {
                 TestUtils.assertDataEquals(remote, local);
             }
         }
+    }
+
+    @Test
+    public void testSubscribeCopyOnTheFly() throws Exception {
+        // todo: test that server can multiplex journal when needed
+        Assert.fail();
     }
 
     @Test
@@ -469,14 +613,14 @@ public class IntegrationTest extends AbstractTest {
                     final CountDownLatch incompatible = new CountDownLatch(1);
                     try {
 
-                        client.subscribe(Quote.class, "remote", "local", new TxListener() {
+                        client.subscribe(Quote.class, "remote", "local", new JournalListener() {
                             @Override
                             public void onCommit() {
 
                             }
 
                             @Override
-                            public void onError(int event) {
+                            public void onEvent(int event) {
                                 if (event == JournalEvents.EVT_JNL_INCOMPATIBLE) {
                                     incompatible.countDown();
                                 }
@@ -543,14 +687,14 @@ public class IntegrationTest extends AbstractTest {
                     final CountDownLatch incompatible = new CountDownLatch(1);
                     try {
 
-                        client.subscribe(new JournalKey<>("remote"), writer, new TxListener() {
+                        client.subscribe(new JournalKey<>("remote"), writer, new JournalListener() {
                             @Override
                             public void onCommit() {
 
                             }
 
                             @Override
-                            public void onError(int event) {
+                            public void onEvent(int event) {
                                 if (event == JournalEvents.EVT_JNL_INCOMPATIBLE) {
                                     incompatible.countDown();
                                 }
@@ -602,14 +746,14 @@ public class IntegrationTest extends AbstractTest {
 
                         try {
 
-                            client.subscribe(Quote.class, "remote1", "local1", new TxListener() {
+                            client.subscribe(Quote.class, "remote1", "local1", new JournalListener() {
                                 @Override
                                 public void onCommit() {
                                     counter.incrementAndGet();
                                 }
 
                                 @Override
-                                public void onError(int event) {
+                                public void onEvent(int event) {
 
                                 }
                             });
@@ -620,14 +764,14 @@ public class IntegrationTest extends AbstractTest {
                                 Assert.assertEquals(1000, r.size());
                             }
 
-                            client.subscribe(Quote.class, "remote2", "local2", new TxListener() {
+                            client.subscribe(Quote.class, "remote2", "local2", new JournalListener() {
                                 @Override
                                 public void onCommit() {
                                     counter.incrementAndGet();
                                 }
 
                                 @Override
-                                public void onError(int event) {
+                                public void onEvent(int event) {
 
                                 }
                             });
@@ -680,14 +824,14 @@ public class IntegrationTest extends AbstractTest {
 
                         try {
 
-                            client.subscribe(Quote.class, "remote1", "local1", new TxListener() {
+                            client.subscribe(Quote.class, "remote1", "local1", new JournalListener() {
                                 @Override
                                 public void onCommit() {
                                     counter.incrementAndGet();
                                 }
 
                                 @Override
-                                public void onError(int event) {
+                                public void onEvent(int event) {
                                     errors.incrementAndGet();
                                 }
                             });
@@ -698,14 +842,14 @@ public class IntegrationTest extends AbstractTest {
                                 Assert.assertEquals(1000, r.size());
                             }
 
-                            client.subscribe(Quote.class, "remote2", "local1", new TxListener() {
+                            client.subscribe(Quote.class, "remote2", "local1", new JournalListener() {
                                 @Override
                                 public void onCommit() {
                                     counter.incrementAndGet();
                                 }
 
                                 @Override
-                                public void onError(int event) {
+                                public void onEvent(int event) {
                                     errors.incrementAndGet();
                                 }
                             });
@@ -744,28 +888,28 @@ public class IntegrationTest extends AbstractTest {
 
         final AtomicInteger counter = new AtomicInteger();
         JournalClient client1 = new JournalClient(new ClientConfig("localhost"), factory);
-        client1.subscribe(Quote.class, "remote", "local1", new TxListener() {
+        client1.subscribe(Quote.class, "remote", "local1", new JournalListener() {
             @Override
             public void onCommit() {
                 counter.incrementAndGet();
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
 
             }
         });
         client1.start();
 
         JournalClient client2 = new JournalClient(new ClientConfig("localhost"), factory);
-        client2.subscribe(Quote.class, "remote", "local2", new TxListener() {
+        client2.subscribe(Quote.class, "remote", "local2", new JournalListener() {
             @Override
             public void onCommit() {
                 counter.incrementAndGet();
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
 
             }
         });
@@ -788,7 +932,7 @@ public class IntegrationTest extends AbstractTest {
         final CountDownLatch waitForUpdate = new CountDownLatch(1);
 
         client1 = new JournalClient(new ClientConfig("localhost"), factory);
-        client1.subscribe(Quote.class, "remote", "local1", new TxListener() {
+        client1.subscribe(Quote.class, "remote", "local1", new JournalListener() {
             @Override
             public void onCommit() {
                 counter.incrementAndGet();
@@ -796,7 +940,7 @@ public class IntegrationTest extends AbstractTest {
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
 
             }
         });
@@ -830,26 +974,26 @@ public class IntegrationTest extends AbstractTest {
         server.start();
 
         final CountDownLatch latch = new CountDownLatch(2);
-        client.subscribe(Quote.class, "remote1", "local1", 2 * size, new TxListener() {
+        client.subscribe(Quote.class, "remote1", "local1", 2 * size, new JournalListener() {
             @Override
             public void onCommit() {
                 latch.countDown();
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
 
             }
         });
 
-        client.subscribe(TestEntity.class, "remote2", "local2", 2 * size, new TxListener() {
+        client.subscribe(TestEntity.class, "remote2", "local2", 2 * size, new JournalListener() {
             @Override
             public void onCommit() {
                 latch.countDown();
             }
 
             @Override
-            public void onError(int event) {
+            public void onEvent(int event) {
 
             }
         });
