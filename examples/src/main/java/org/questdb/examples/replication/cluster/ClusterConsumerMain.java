@@ -68,7 +68,7 @@ public class ClusterConsumerMain {
             }
 
             @Override
-            public void onError() {
+            public void onError(int event) {
                 System.out.println("there was an error");
             }
         });

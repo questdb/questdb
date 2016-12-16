@@ -41,6 +41,6 @@ public class JournalEventPublisher implements TxListener {
     }
 
     @Override
-    public void onError() {
+    public void onError(int event) {
     }
 }

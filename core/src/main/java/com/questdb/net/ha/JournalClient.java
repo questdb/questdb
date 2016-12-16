@@ -63,6 +63,7 @@ import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
+import com.questdb.store.JournalEvents;
 import com.questdb.store.TxListener;
 
 import java.io.File;
@@ -75,16 +76,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class JournalClient {
-    public static final int EVT_NONE = 0;
-    public static final int EVT_RUNNING = 2;
-    public static final int EVT_CLIENT_HALT = 4;
-    public static final int EVT_CLIENT_EXCEPTION = 8;
-    public static final int EVT_INCOMPATIBLE_JOURNAL = 16;
-    public static final int EVT_CONNECTED = 32;
-    public static final int EVT_AUTH_CONFIG_ERROR = 64;
-    public static final int EVT_SERVER_ERROR = 1;
-    public static final int EVT_AUTH_ERROR = 128;
-    public static final int EVT_TERMINATED = 256;
+
+    public static final int MSG_SUBSCRIBE = 0;
+    public static final int MSG_HALT = 1;
+    public static final int MSG_UNSUBSCRIBE = 2;
 
     private static final AtomicInteger counter = new AtomicInteger(0);
     private static final Log LOG = LogFactory.getLog(JournalClient.class);
@@ -145,7 +140,7 @@ public class JournalClient {
         }
 
         SubscriptionHolder h = subscriptionQueue.get(cursor);
-        h.type = 1; // todo: make named constant
+        h.type = MSG_HALT;
         subscriptionPubSequence.done(cursor);
 
         try {
@@ -271,6 +266,12 @@ public class JournalClient {
         }
     }
 
+    private void notifyCallback(int event) {
+        if (callback != null) {
+            callback.onEvent(event);
+        }
+    }
+
     private void openChannel() throws JournalNetworkException {
         if (this.channel == null || !this.channel.isOpen()) {
             SocketChannel channel = config.openSocketChannel();
@@ -297,7 +298,7 @@ public class JournalClient {
     private void resubscribe() throws JournalNetworkException {
         for (int i = 0, n = subscriptions.size(); i < n; i++) {
             SubscriptionHolder h = subscriptions.get(i);
-            subscribeOne(i, h, h.local.derivedLocation(), false);
+            subscribeOne(i, h, h.local.path(), false);
         }
     }
 
@@ -334,7 +335,7 @@ public class JournalClient {
         }
 
         SubscriptionHolder h = subscriptionQueue.get(cursor);
-        h.type = 0;
+        h.type = MSG_SUBSCRIBE;
         h.remote = remote;
         h.local = local;
         h.listener = txListener;
@@ -372,30 +373,37 @@ public class JournalClient {
             subscriptions.add(sub);
         }
 
-        commandProducer.write(channel, Command.SET_KEY_CMD);
-        setKeyRequestProducer.write(channel, new IndexedJournalKey(index, holder.remote));
-        checkAck();
-
-        //todo: do we really have to use file here?
-        JournalMetadata metadata;
-        File file = Files.makeTempFile();
+        JournalWriter writer = writers.getQuiet(index);
         try {
-            try (HugeBufferConsumer h = new HugeBufferConsumer(file)) {
-                h.read(channel);
-                metadata = new JournalMetadata(h.getHb());
-            } catch (JournalException e) {
-                throw new JournalNetworkException(e);
+
+            commandProducer.write(channel, Command.ADD_KEY_CMD);
+            setKeyRequestProducer.write(channel, new IndexedJournalKey(index, holder.remote));
+            checkAck();
+
+            //todo: do we really have to use file here?
+            JournalMetadata metadata;
+            File file = Files.makeTempFile();
+            try {
+                try (HugeBufferConsumer h = new HugeBufferConsumer(file)) {
+                    h.read(channel);
+                    metadata = new JournalMetadata(h.getHb());
+                } catch (JournalException e) {
+                    throw new JournalNetworkException(e);
+                }
+            } finally {
+                Files.delete(file);
             }
-        } finally {
-            Files.delete(file);
-        }
 
-        try {
             boolean validate = true;
-            JournalWriter writer = writers.getQuiet(index);
             if (writer == null) {
                 if (holder.writer == null) {
-                    writer = factory.writer(new JournalStructure(metadata).location(loc));
+                    try {
+                        writer = factory.writer(new JournalStructure(metadata).location(loc));
+                    } catch (JournalException e) {
+                        LOG.error().$("Failed to create writer: ").$(e).$();
+                        unsubscribe(index, null, holder, JournalEvents.EVT_JNL_INCOMPATIBLE);
+                        return;
+                    }
                     writersToClose.add(writer);
                     validate = false;
                 } else {
@@ -411,8 +419,8 @@ public class JournalClient {
             }
 
             if (validate && !metadata.isCompatible(writer.getMetadata(), false)) {
-                LOG.error().$("Journal ").$(holder.local.getLocation()).$(" is not compatible with ").$(holder.remote.getLocation()).$("(remote)").$();
-                // todo: unsubscribe
+                LOG.error().$("Journal ").$(holder.local.path()).$(" is not compatible with ").$(holder.remote.path()).$("(remote)").$();
+                unsubscribe(index, writer, holder, JournalEvents.EVT_JNL_INCOMPATIBLE);
                 return;
             }
 
@@ -421,9 +429,52 @@ public class JournalClient {
             checkAck();
             statusSentList.setQuick(index, 1);
 
-            LOG.info().$("Subscribed ").$(loc).$(" to ").$(holder.remote.getLocation()).$("(remote)").$();
-        } catch (JournalException e) {
-            throw new JournalNetworkException(e);
+            LOG.info().$("Subscribed ").$(loc).$(" to ").$(holder.remote.path()).$("(remote)").$();
+        } catch (JournalNetworkException e) {
+            LOG.error().$("Failed to subscribe ").$(loc).$(" to ").$(holder.remote.path()).$("(remote)").$();
+            unsubscribe(index, writer, holder, JournalEvents.EVT_JNL_SERVER_ERROR);
+        }
+    }
+
+    private void unsubscribe(int index, JournalWriter writer, SubscriptionHolder holder, int reason) {
+        JournalDeltaConsumer deltaConsumer = deltaConsumers.getQuiet(index);
+        if (deltaConsumer != null) {
+            deltaConsumer.free();
+        }
+
+        if (writer != null && writersToClose.remove(writer) > -1) {
+            writer.close();
+        }
+
+        if (index < writers.size()) {
+            writers.setQuick(index, null);
+        }
+
+        try {
+            commandProducer.write(channel, Command.REMOVE_KEY_CMD);
+            setKeyRequestProducer.write(channel, new IndexedJournalKey(index, holder.remote));
+            checkAck();
+        } catch (JournalNetworkException e) {
+            LOG.error().$("Failed to unsubscribe journal ").$(holder.remote.path()).$(e).$();
+            notifyCallback(JournalClientEvents.EVT_UNSUB_REJECT);
+        }
+
+        if (reason == JournalEvents.EVT_JNL_INCOMPATIBLE) {
+            // remove from duplicate check set
+            subscribedJournals.remove(holder.local.path());
+
+            // remove from re-subscription list
+            for (int i = 0, n = subscriptions.size(); i < n; i++) {
+                SubscriptionHolder h = subscriptions.getQuick(i);
+                if (h.local.path().equals(holder.local.path())) {
+                    subscriptions.remove(i);
+                    break;
+                }
+            }
+        }
+
+        if (holder.listener != null) {
+            holder.listener.onError(reason);
         }
     }
 
@@ -457,7 +508,7 @@ public class JournalClient {
             long available = subscriptionSubSequence.available();
             while (cursor < available) {
                 SubscriptionHolder holder = subscriptionQueue.get(cursor++);
-                if (holder.type == 1) {
+                if (holder.type == MSG_HALT) {
                     return false;
                 }
             }
@@ -479,17 +530,26 @@ public class JournalClient {
 
                 SubscriptionHolder holder = subscriptionQueue.get(cursor++);
 
-                if (holder.type == 0) {
-                    String loc = holder.local.derivedLocation();
+                switch (holder.type) {
+                    case MSG_SUBSCRIBE:
+                        String loc = holder.local.path();
 
-                    if (subscribedJournals.add(loc)) {
-                        subscribeOne(i++, holder, loc, true);
-                    } else {
-                        holder.listener.onError();
-                        LOG.error().$("Already subscribed ").$(loc).$();
-                    }
-                } else if (holder.type == 1) {
-                    return false;
+                        if (subscribedJournals.add(loc)) {
+                            subscribeOne(i++, holder, loc, true);
+                        } else {
+                            if (holder.listener != null) {
+                                holder.listener.onError(JournalEvents.EVT_JNL_ALREADY_SUBSCRIBED);
+                            }
+                            LOG.error().$("Already subscribed ").$(loc).$();
+                        }
+                        break;
+                    case MSG_UNSUBSCRIBE:
+                        break;
+                    case MSG_HALT:
+                        return false;
+                    default:
+                        LOG.error().$("Ignored unknown message: ").$(holder.type).$();
+                        break;
                 }
             }
 
@@ -501,8 +561,8 @@ public class JournalClient {
         public void run() {
 
             running = true;
-            notifyCallback(EVT_RUNNING);
-            int event = EVT_NONE;
+            notifyCallback(JournalClientEvents.EVT_RUNNING);
+            int event = JournalClientEvents.EVT_NONE;
             boolean connected = false;
 
             try {
@@ -532,14 +592,14 @@ public class JournalClient {
                                 resubscribe();
                                 sendReady();
                                 connected = true;
-                                notifyCallback(EVT_CONNECTED);
+                                notifyCallback(JournalClientEvents.EVT_CONNECTED);
                             } catch (UnauthorizedException e) {
-                                notifyCallback(EVT_AUTH_ERROR);
+                                notifyCallback(JournalClientEvents.EVT_AUTH_ERROR);
                                 loginRetryCount--;
                             } catch (AuthenticationConfigException | AuthenticationProviderException e) {
                                 closeChannel();
                                 close0();
-                                notifyCallback(EVT_AUTH_CONFIG_ERROR);
+                                notifyCallback(JournalClientEvents.EVT_AUTH_CONFIG_ERROR);
                                 return;
                             } catch (JournalNetworkException e) {
                                 LOG.info().$(e.getMessage()).$();
@@ -555,7 +615,7 @@ public class JournalClient {
                         } while (true);
 
                         if (!connected && (retryCount == 0 || loginRetryCount == 0)) {
-                            event = EVT_SERVER_ERROR;
+                            event = JournalClientEvents.EVT_SERVER_ERROR;
                         }
                     }
 
@@ -582,7 +642,7 @@ public class JournalClient {
                                     if (processSubscriptionQueue()) {
                                         sendReady();
                                     } else {
-                                        event = EVT_CLIENT_HALT;
+                                        event = JournalClientEvents.EVT_CLIENT_HALT;
                                     }
                                     break;
                                 case Command.SERVER_SHUTDOWN:
@@ -592,23 +652,24 @@ public class JournalClient {
                                     LOG.info().$("Unknown command: ").$(cmd).$();
                                     break;
                             }
-                        } else if (event == EVT_NONE) {
-                            event = EVT_CLIENT_HALT;
+                        } else if (event == JournalClientEvents.EVT_NONE) {
+                            event = JournalClientEvents.EVT_CLIENT_HALT;
                         }
                     } catch (IncompatibleJournalException e) {
                         // unsubscribe journal
                         LOG.error().$(e.getMessage()).$();
-                        event = EVT_INCOMPATIBLE_JOURNAL;
+                        event = JournalClientEvents.EVT_INCOMPATIBLE_JOURNAL;
                     } catch (JournalNetworkException e) {
                         LOG.error().$("Network error. Server died?").$();
                         LOG.debug().$("Network error details: ").$(e).$();
+                        notifyCallback(JournalClientEvents.EVT_SERVER_DIED);
                         connected = false;
                     } catch (Throwable e) {
                         LOG.error().$("Unhandled exception in client").$(e).$();
-                        event = EVT_CLIENT_EXCEPTION;
+                        event = JournalClientEvents.EVT_CLIENT_EXCEPTION;
                     }
 
-                    if (event != EVT_NONE) {
+                    if (event != JournalClientEvents.EVT_NONE) {
                         // client gracefully disconnects
                         if (channel != null && channel.isOpen()) {
                             sendDisconnect();
@@ -625,15 +686,9 @@ public class JournalClient {
                 close0();
             } finally {
                 running = false;
-                notifyCallback(EVT_TERMINATED);
+                notifyCallback(JournalClientEvents.EVT_TERMINATED);
                 haltLatch.countDown();
                 LOG.info().$("Terminated").$();
-            }
-        }
-
-        private void notifyCallback(int event) {
-            if (callback != null) {
-                callback.onEvent(event);
             }
         }
     }

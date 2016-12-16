@@ -97,7 +97,7 @@ public class JournalServerAgentTest extends AbstractTest {
         JournalDeltaConsumer quoteDeltaConsumer = new JournalDeltaConsumer(quoteClientWriter);
 
         // send quote journal key
-        commandProducer.write(channel, Command.SET_KEY_CMD);
+        commandProducer.write(channel, Command.ADD_KEY_CMD);
         setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
         agent.process(channel);
         charSequenceResponseConsumer.read(channel);
@@ -161,7 +161,7 @@ public class JournalServerAgentTest extends AbstractTest {
         Journal<Quote> quoteClientWriter = factory.writer(Quote.class, "client");
 
         // send quote journal key
-//        commandProducer.write(channel, Command.SET_KEY_CMD);
+//        commandProducer.write(channel, Command.ADD_KEY_CMD);
 //        setKeyRequestProducer.write(channel, new IndexedJournalKey(3, quoteWriter.getKey()));
 //        agent.process(channel);
 //        charSequenceResponseConsumer.reset();
@@ -170,7 +170,7 @@ public class JournalServerAgentTest extends AbstractTest {
 //        Assert.assertEquals("Journal index is too large. Max 1", charSequenceResponseConsumer.getValue());
 
 
-        commandProducer.write(channel, Command.SET_KEY_CMD);
+        commandProducer.write(channel, Command.ADD_KEY_CMD);
         setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
         agent.process(channel);
         charSequenceResponseConsumer.read(channel);
@@ -194,14 +194,14 @@ public class JournalServerAgentTest extends AbstractTest {
 
     @Test
     public void testSetKeyRequestResponse() throws Exception {
-        commandProducer.write(channel, Command.SET_KEY_CMD);
+        commandProducer.write(channel, Command.ADD_KEY_CMD);
         setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
         agent.process(channel);
         charSequenceResponseConsumer.read(channel);
         TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
         hugeBufferConsumer.read(channel);
 
-        commandProducer.write(channel, Command.SET_KEY_CMD);
+        commandProducer.write(channel, Command.ADD_KEY_CMD);
         setKeyRequestProducer.write(channel, new IndexedJournalKey(0, tradeWriter.getKey()));
         agent.process(channel);
         charSequenceResponseConsumer.read(channel);

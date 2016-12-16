@@ -131,10 +131,6 @@ public class JournalKey<T> {
         return new JournalKey<>(new String(clazz, Files.UTF_8), location == null ? null : new String(location), partitionBy, recordHint, ordered);
     }
 
-    public String derivedLocation() {
-        return location == null ? id : location;
-    }
-
     public int getBufferSize() {
         return 4 + id.getBytes(Files.UTF_8).length + 4 + 2 * (location == null ? 0 : location.length()) + 1 + 1 + 4;
     }
@@ -168,8 +164,6 @@ public class JournalKey<T> {
         return 31 * result + (ordered ? 1 : 0);
     }
 
-    //////////////////////// REPLICATION CODE //////////////////////
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -178,6 +172,8 @@ public class JournalKey<T> {
         return ordered == that.ordered && recordHint == that.recordHint && !(id != null ? !id.equals(that.id) : that.id != null) && !(location != null ? !location.equals(that.location) : that.location != null) && partitionBy == that.partitionBy;
 
     }
+
+    //////////////////////// REPLICATION CODE //////////////////////
 
     @Override
     public String toString() {
@@ -192,6 +188,10 @@ public class JournalKey<T> {
 
     public boolean isOrdered() {
         return ordered;
+    }
+
+    public String path() {
+        return location == null ? id : location;
     }
 
     public void write(ByteBuffer buffer) {

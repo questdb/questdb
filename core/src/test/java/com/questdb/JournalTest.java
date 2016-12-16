@@ -526,7 +526,7 @@ public class JournalTest extends AbstractTest {
         }
 
         @Override
-        public void onError() {
+        public void onError(int event) {
 
         }
 

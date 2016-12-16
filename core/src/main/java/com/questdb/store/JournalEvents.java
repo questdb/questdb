@@ -21,24 +21,15 @@
  *
  ******************************************************************************/
 
-package com.questdb.net.ha.model;
+package com.questdb.store;
 
-public final class Command {
-    public static final byte ADD_KEY_CMD = 0x01;
-    public static final byte DELTA_REQUEST_CMD = 0x02;
-    public static final byte CLIENT_READY_CMD = 0x03;
-    public static final byte JOURNAL_DELTA_CMD = 0x04;
-    public static final byte SERVER_READY_CMD = 0x05;
-    public static final byte SERVER_HEARTBEAT = 0x06;
-    public static final byte CLIENT_DISCONNECT = 0x07;
-    public static final byte PROTOCOL_VERSION = 0x08;
-    public static final byte HANDSHAKE_COMPLETE = 0x09;
-    public static final byte AUTHORIZATION = 0x0a;
-    public static final byte SERVER_SHUTDOWN = 0x0c;
-    public static final byte ELECTION = 0x0d;
-    public static final byte ELECTED = 0x0e;
-    public static final byte REMOVE_KEY_CMD = 0x10;
-    public static final byte UNAUTHENTIC = (byte) 0xFC;
-    public static final int BUFFER_SIZE = 3;
-    public static final char AUTHENTICITY_KEY = 0xFAFB;
+public final class JournalEvents {
+    public static final int EVT_JNL_ALREADY_SUBSCRIBED = 1;
+    public static final int EVT_JNL_INCOMPATIBLE = 2;
+    public static final int EVT_JNL_TRANSACTION_REFUSED = 3;
+    public static final int EVT_JNL_UNKNOWN_TRANSACTION = 4;
+    public static final int EVT_JNL_SERVER_ERROR = 5;
+
+    private JournalEvents() {
+    }
 }

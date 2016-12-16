@@ -67,7 +67,7 @@ public class ReconnectTest extends AbstractTest {
                 new JournalClient.Callback() {
                     @Override
                     public void onEvent(int evt) {
-                        if (evt == JournalClient.EVT_CONNECTED) {
+                        if (evt == JournalClientEvents.EVT_CONNECTED) {
                             connectedLatch.countDown();
                         }
                     }
@@ -91,7 +91,7 @@ public class ReconnectTest extends AbstractTest {
             }
 
             @Override
-            public void onError() {
+            public void onError(int event) {
 
             }
         });

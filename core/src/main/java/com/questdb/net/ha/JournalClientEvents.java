@@ -21,24 +21,22 @@
  *
  ******************************************************************************/
 
-package com.questdb.net.ha.model;
+package com.questdb.net.ha;
 
-public final class Command {
-    public static final byte ADD_KEY_CMD = 0x01;
-    public static final byte DELTA_REQUEST_CMD = 0x02;
-    public static final byte CLIENT_READY_CMD = 0x03;
-    public static final byte JOURNAL_DELTA_CMD = 0x04;
-    public static final byte SERVER_READY_CMD = 0x05;
-    public static final byte SERVER_HEARTBEAT = 0x06;
-    public static final byte CLIENT_DISCONNECT = 0x07;
-    public static final byte PROTOCOL_VERSION = 0x08;
-    public static final byte HANDSHAKE_COMPLETE = 0x09;
-    public static final byte AUTHORIZATION = 0x0a;
-    public static final byte SERVER_SHUTDOWN = 0x0c;
-    public static final byte ELECTION = 0x0d;
-    public static final byte ELECTED = 0x0e;
-    public static final byte REMOVE_KEY_CMD = 0x10;
-    public static final byte UNAUTHENTIC = (byte) 0xFC;
-    public static final int BUFFER_SIZE = 3;
-    public static final char AUTHENTICITY_KEY = 0xFAFB;
+public final class JournalClientEvents {
+    public static final int EVT_NONE = 0;
+    public static final int EVT_RUNNING = 2;
+    public static final int EVT_CLIENT_HALT = 4;
+    public static final int EVT_CLIENT_EXCEPTION = 8;
+    public static final int EVT_INCOMPATIBLE_JOURNAL = 16;
+    public static final int EVT_CONNECTED = 32;
+    public static final int EVT_AUTH_CONFIG_ERROR = 64;
+    public static final int EVT_SERVER_ERROR = 1;
+    public static final int EVT_AUTH_ERROR = 128;
+    public static final int EVT_TERMINATED = 256;
+    public static final int EVT_UNSUB_REJECT = 257;
+    public static final int EVT_SERVER_DIED = 258;
+
+    private JournalClientEvents() {
+    }
 }

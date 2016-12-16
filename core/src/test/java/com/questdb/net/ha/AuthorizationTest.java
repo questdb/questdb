@@ -107,10 +107,10 @@ public class AuthorizationTest extends AbstractTest {
                 @Override
                 public void onEvent(int evt) {
                     switch (evt) {
-                        case JournalClient.EVT_AUTH_CONFIG_ERROR:
+                        case JournalClientEvents.EVT_AUTH_CONFIG_ERROR:
                             authErrors.incrementAndGet();
                             break;
-                        case JournalClient.EVT_TERMINATED:
+                        case JournalClientEvents.EVT_TERMINATED:
                             error.countDown();
                             break;
                         default:
@@ -160,10 +160,10 @@ public class AuthorizationTest extends AbstractTest {
                     @Override
                     public void onEvent(int evt) {
                         switch (evt) {
-                            case JournalClient.EVT_AUTH_ERROR:
+                            case JournalClientEvents.EVT_AUTH_ERROR:
                                 authErrorCount.incrementAndGet();
                                 break;
-                            case JournalClient.EVT_TERMINATED:
+                            case JournalClientEvents.EVT_TERMINATED:
                                 serverError.countDown();
                                 break;
                             default:
@@ -208,10 +208,10 @@ public class AuthorizationTest extends AbstractTest {
                     @Override
                     public void onEvent(int evt) {
                         switch (evt) {
-                            case JournalClient.EVT_AUTH_CONFIG_ERROR:
+                            case JournalClientEvents.EVT_AUTH_CONFIG_ERROR:
                                 authErrorCount.incrementAndGet();
                                 break;
-                            case JournalClient.EVT_TERMINATED:
+                            case JournalClientEvents.EVT_TERMINATED:
                                 terminated.countDown();
                                 break;
                             default:
@@ -259,10 +259,10 @@ public class AuthorizationTest extends AbstractTest {
             @Override
             public void onEvent(int evt) {
                 switch (evt) {
-                    case JournalClient.EVT_AUTH_ERROR:
+                    case JournalClientEvents.EVT_AUTH_ERROR:
                         authErrorCount.incrementAndGet();
                         break;
-                    case JournalClient.EVT_TERMINATED:
+                    case JournalClientEvents.EVT_TERMINATED:
                         serverError.countDown();
                         break;
                     default:
@@ -298,7 +298,7 @@ public class AuthorizationTest extends AbstractTest {
                 }
 
                 @Override
-                public void onError() {
+                public void onError(int event) {
 
                 }
             });

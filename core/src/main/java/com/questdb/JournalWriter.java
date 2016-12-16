@@ -521,10 +521,10 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    public void notifyTxError() {
+    public void notifyTxError(int event) {
         if (txListener != null) {
             try {
-                txListener.onError();
+                txListener.onError(event);
             } catch (Throwable e) {
                 LOG.error().$("Error in listener").$(e).$();
             }
@@ -696,7 +696,7 @@ public class JournalWriter<T> extends Journal<T> {
     private void rollback0(long address, boolean writeDiscard) throws JournalException {
 
         if (address == -1L) {
-            notifyTxError();
+            notifyTxError(JournalEvents.EVT_JNL_UNKNOWN_TRANSACTION);
             throw new IncompatibleJournalException("Server txn is not compatible with %s", this.getLocation());
         }
 

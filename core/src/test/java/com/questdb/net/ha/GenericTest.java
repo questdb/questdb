@@ -80,7 +80,7 @@ public class GenericTest extends AbstractTest {
             }
 
             @Override
-            public void onError() {
+            public void onError(int event) {
 
             }
         });
@@ -252,7 +252,7 @@ public class GenericTest extends AbstractTest {
             }
 
             @Override
-            public void onError() {
+            public void onError(int event) {
 
             }
         });

@@ -32,6 +32,7 @@ import com.questdb.misc.Interval;
 import com.questdb.net.ha.AbstractChannelConsumer;
 import com.questdb.net.ha.model.JournalServerState;
 import com.questdb.std.ObjList;
+import com.questdb.store.JournalEvents;
 
 import java.nio.channels.ReadableByteChannel;
 
@@ -84,7 +85,7 @@ public class JournalDeltaConsumer extends AbstractChannelConsumer {
             this.state = journalServerStateConsumer.getValue();
 
             if (state.getTxn() == -1) {
-                journal.notifyTxError();
+                journal.notifyTxError(JournalEvents.EVT_JNL_TRANSACTION_REFUSED);
                 throw new IncompatibleJournalException("Server refused txn for %s", journal.getLocation());
             }
 

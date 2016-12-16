@@ -26,5 +26,5 @@ package com.questdb.store;
 public interface TxListener {
     void onCommit();
 
-    void onError();
+    void onError(int event);
 }

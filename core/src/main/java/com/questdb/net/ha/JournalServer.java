@@ -256,7 +256,7 @@ public class JournalServer {
     IndexedJournalKey getWriterIndex0(JournalKey key) {
         for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
             JournalKey jk = e.key.getKey();
-            if (jk.derivedLocation().equals(key.derivedLocation())) {
+            if (jk.path().equals(key.path())) {
                 return new IndexedJournalKey(e.value, new JournalKey(jk.getId(), jk.getModelClass(), jk.getLocation(), jk.getRecordHint()));
             }
         }

@@ -108,8 +108,11 @@ public class JournalServerAgent {
     public void process(ByteChannel channel) throws JournalNetworkException {
         commandConsumer.read(channel);
         switch (commandConsumer.getCommand()) {
-            case Command.SET_KEY_CMD:
-                setClientKey(channel);
+            case Command.ADD_KEY_CMD:
+                addClientKey(channel);
+                break;
+            case Command.REMOVE_KEY_CMD:
+                removeClientKey(channel);
                 break;
             case Command.DELTA_REQUEST_CMD:
                 checkAuthorized(channel);
@@ -147,6 +150,31 @@ public class JournalServerAgent {
                 break;
             default:
                 throw new JournalNetworkException("Corrupt channel");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void addClientKey(ByteChannel channel) throws JournalNetworkException {
+        LOG.debug().$(socketAddress).$(" SetKey command received").$();
+        setKeyRequestConsumer.read(channel);
+        IndexedJournalKey indexedKey = setKeyRequestConsumer.getValue();
+
+        JournalKey<?> readerKey = indexedKey.getKey();
+        int index = indexedKey.getIndex();
+
+        IndexedJournalKey augmentedReaderKey = server.getWriterIndex0(readerKey);
+        if (augmentedReaderKey == null) {
+            error(channel, "Requested key not exported: " + readerKey);
+        } else {
+            writerToReaderMap.put(augmentedReaderKey.getIndex(), index);
+            readerToWriterMap.extendAndSet(index, augmentedReaderKey.getIndex());
+            try {
+                createReader(index, augmentedReaderKey.getKey());
+                ok(channel);
+                sendMetadata(channel, index);
+            } catch (JournalException e) {
+                error(channel, "Could not created reader for key: " + readerKey, e);
+            }
         }
     }
 
@@ -290,10 +318,12 @@ public class JournalServerAgent {
             // 2. reset writer update received status
             for (int i = 0, k = clientStates.size(); i < k; i++) {
                 JournalClientState state = clientStates.getQuick(i);
-                if (state.isWaitingOnEvents()) {
-                    dataSent = dispatch0(channel, i) || dataSent;
+                if (state != null) {
+                    if (state.isWaitingOnEvents()) {
+                        dataSent = dispatch0(channel, i) || dataSent;
+                    }
+                    state.setWaitingOnEvents(true);
                 }
-                state.setWaitingOnEvents(true);
             }
 
             if (dataSent) {
@@ -311,15 +341,8 @@ public class JournalServerAgent {
         return dataSent;
     }
 
-    private void sendMetadata(WritableByteChannel channel, int index) throws JournalException, JournalNetworkException {
-        try (HugeBufferProducer h = new HugeBufferProducer(new File(readers.get(index).getLocation(), JournalConfiguration.FILE_NAME))) {
-            h.write(channel);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private void setClientKey(ByteChannel channel) throws JournalNetworkException {
-        LOG.debug().$(socketAddress).$(" SetKey command received").$();
+    private void removeClientKey(ByteChannel channel) throws JournalNetworkException {
+        LOG.debug().$(socketAddress).$(" RemoveKey command received").$();
         setKeyRequestConsumer.read(channel);
         IndexedJournalKey indexedKey = setKeyRequestConsumer.getValue();
 
@@ -330,15 +353,40 @@ public class JournalServerAgent {
         if (augmentedReaderKey == null) {
             error(channel, "Requested key not exported: " + readerKey);
         } else {
-            writerToReaderMap.put(augmentedReaderKey.getIndex(), index);
-            readerToWriterMap.extendAndSet(index, augmentedReaderKey.getIndex());
+            writerToReaderMap.put(augmentedReaderKey.getIndex(), JOURNAL_INDEX_NOT_FOUND);
+            readerToWriterMap.extendAndSet(index, JOURNAL_INDEX_NOT_FOUND);
             try {
-                createReader(index, augmentedReaderKey.getKey());
+                removeReader(index);
+                clientStates.setQuick(index, null);
                 ok(channel);
-                sendMetadata(channel, index);
             } catch (JournalException e) {
                 error(channel, "Could not created reader for key: " + readerKey, e);
             }
+        }
+    }
+
+    private void removeReader(int index) throws JournalException {
+        Journal journal = readers.getQuiet(index);
+        if (journal != null) {
+            journal.close();
+            if (index < readers.size()) {
+                readers.setQuick(index, null);
+            }
+        }
+
+        JournalDeltaProducer producer = producers.getQuiet(index);
+        if (producer != null) {
+            producer.free();
+
+            if (index < producers.size()) {
+                producers.setQuick(index, null);
+            }
+        }
+    }
+
+    private void sendMetadata(WritableByteChannel channel, int index) throws JournalException, JournalNetworkException {
+        try (HugeBufferProducer h = new HugeBufferProducer(new File(readers.get(index).getLocation(), JournalConfiguration.FILE_NAME))) {
+            h.write(channel);
         }
     }
 
@@ -371,6 +419,7 @@ public class JournalServerAgent {
         public void handle(int index) {
             int journalIndex = writerToReaderMap.get(index);
             if (journalIndex != JOURNAL_INDEX_NOT_FOUND) {
+                assert journalIndex < clientStates.size();
                 JournalClientState status = clientStates.getQuick(journalIndex);
                 if (status != null && status.isWaitingOnEvents()) {
                     status.setWaitingOnEvents(false);

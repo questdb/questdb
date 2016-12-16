@@ -346,10 +346,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     public long getTxn() {
-        if (isOpen()) {
-            return txLog.getCurrentTxn();
-        }
-        throw new IllegalStateException("closed");
+        assert isOpen();
+        return txLog.getCurrentTxn();
     }
 
     public boolean hasIrregularPartition() {

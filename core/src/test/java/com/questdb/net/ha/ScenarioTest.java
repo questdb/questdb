@@ -97,7 +97,7 @@ public class ScenarioTest extends AbstractTest {
             }
 
             @Override
-            public void onError() {
+            public void onError(int event) {
                 errors.incrementAndGet();
             }
         });

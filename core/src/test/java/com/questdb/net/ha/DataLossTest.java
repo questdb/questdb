@@ -72,7 +72,7 @@ public class DataLossTest extends AbstractTest {
             }
 
             @Override
-            public void onError() {
+            public void onError(int event) {
 
             }
         });
@@ -100,7 +100,7 @@ public class DataLossTest extends AbstractTest {
             }
 
             @Override
-            public void onError() {
+            public void onError(int event) {
                 counter.incrementAndGet();
             }
         });

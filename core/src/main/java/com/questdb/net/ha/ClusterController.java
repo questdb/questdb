@@ -156,13 +156,13 @@ public class ClusterController {
         @Override
         public void onEvent(int evt) {
             switch (evt) {
-                case JournalClient.EVT_INCOMPATIBLE_JOURNAL:
-                case JournalClient.EVT_CLIENT_HALT:
-                case JournalClient.EVT_AUTH_CONFIG_ERROR:
-                case JournalClient.EVT_CLIENT_EXCEPTION:
+                case JournalClientEvents.EVT_INCOMPATIBLE_JOURNAL:
+                case JournalClientEvents.EVT_CLIENT_HALT:
+                case JournalClientEvents.EVT_AUTH_CONFIG_ERROR:
+                case JournalClientEvents.EVT_CLIENT_EXCEPTION:
                     halt();
                     break;
-                case JournalClient.EVT_SERVER_ERROR:
+                case JournalClientEvents.EVT_SERVER_ERROR:
                     if (running.get()) {
                         server.joinCluster(statusListener);
                     }

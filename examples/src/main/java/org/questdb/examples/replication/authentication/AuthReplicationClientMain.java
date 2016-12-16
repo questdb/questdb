@@ -65,7 +65,7 @@ public class AuthReplicationClientMain {
             }
 
             @Override
-            public void onError() {
+            public void onError(int event) {
                 System.out.println("There was an error");
             }
         });

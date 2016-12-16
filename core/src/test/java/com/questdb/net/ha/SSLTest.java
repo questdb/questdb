@@ -81,10 +81,10 @@ public class SSLTest {
             @Override
             public void onEvent(int evt) {
                 switch (evt) {
-                    case JournalClient.EVT_SERVER_ERROR:
+                    case JournalClientEvents.EVT_SERVER_ERROR:
                         serverErrorCount.incrementAndGet();
                         break;
-                    case JournalClient.EVT_TERMINATED:
+                    case JournalClientEvents.EVT_TERMINATED:
                         terminated.countDown();
                         break;
                     default:
@@ -210,10 +210,10 @@ public class SSLTest {
             @Override
             public void onEvent(int evt) {
                 switch (evt) {
-                    case JournalClient.EVT_SERVER_ERROR:
+                    case JournalClientEvents.EVT_SERVER_ERROR:
                         serverErrorCount.incrementAndGet();
                         break;
-                    case JournalClient.EVT_TERMINATED:
+                    case JournalClientEvents.EVT_TERMINATED:
                         terminated.countDown();
                         break;
                     default:
@@ -269,10 +269,10 @@ public class SSLTest {
             @Override
             public void onEvent(int evt) {
                 switch (evt) {
-                    case JournalClient.EVT_SERVER_ERROR:
+                    case JournalClientEvents.EVT_SERVER_ERROR:
                         serverErrorCount.incrementAndGet();
                         break;
-                    case JournalClient.EVT_TERMINATED:
+                    case JournalClientEvents.EVT_TERMINATED:
                         terminated.countDown();
                         break;
                     default:
