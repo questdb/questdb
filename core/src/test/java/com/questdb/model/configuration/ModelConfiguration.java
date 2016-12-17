@@ -34,7 +34,7 @@ public class ModelConfiguration {
     public static final JournalConfigurationBuilder MAIN = new JournalConfigurationBuilder() {{
         $(Quote.class).recordCountHint(10000)
                 .partitionBy(PartitionBy.MONTH)
-                .openFileTTL(1L, TimeUnit.MILLISECONDS)
+                .openFileTTL(5000L, TimeUnit.MILLISECONDS)
                 .lag(12, TimeUnit.HOURS)
                 .location("quote")
                 .keyColumn("sym")

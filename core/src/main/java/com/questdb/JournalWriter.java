@@ -273,7 +273,7 @@ public class JournalWriter<T> extends Journal<T> {
         if (txActive) {
             commit(force ? Tx.TX_FORCE : Tx.TX_NORMAL, txn, txPin);
             notifyTxListener();
-            expireOpenFiles();
+            expireOpenFiles0();
             txActive = false;
         }
     }
@@ -305,6 +305,10 @@ public class JournalWriter<T> extends Journal<T> {
             throw new JournalException("Cannot delete open journal: %s", this);
         }
         Files.deleteOrException(getLocation());
+    }
+
+    public void disableCommitOnClose() {
+        this.commitOnClose = false;
     }
 
     public JournalEntryWriter entryWriter() throws JournalException {
@@ -378,11 +382,6 @@ public class JournalWriter<T> extends Journal<T> {
 
     public boolean isCommitOnClose() {
         return commitOnClose;
-    }
-
-    public JournalWriter<T> setCommitOnClose(boolean commitOnClose) {
-        this.commitOnClose = commitOnClose;
-        return this;
     }
 
     public boolean isTxActive() {

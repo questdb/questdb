@@ -410,8 +410,9 @@ public class JournalClient {
                     writer = holder.writer;
                 }
 
+                writer.disableCommitOnClose();
                 statusSentList.extendAndSet(index, 0);
-                deltaConsumers.extendAndSet(index, new JournalDeltaConsumer(writer.setCommitOnClose(false)));
+                deltaConsumers.extendAndSet(index, new JournalDeltaConsumer(writer));
                 writers.extendAndSet(index, writer);
                 writer.setJournalListener(holder.listener);
             } else {

@@ -30,16 +30,15 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.ObjList;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
     private final CharSequenceObjHashMap<Journal> readers = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<JournalBulkReader> bulkReaders = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<JournalMetadata> metadata = new CharSequenceObjHashMap<>();
-    private final List<Journal> journalList = new ArrayList<>();
+    private final ObjList<Journal> journalList = new ObjList<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private JournalFactoryPool pool;
     private boolean inPool = false;
@@ -94,7 +93,7 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         } else {
             if (closed.compareAndSet(false, true)) {
                 for (int i = 0, sz = journalList.size(); i < sz; i++) {
-                    Journal journal = journalList.get(i);
+                    Journal journal = journalList.getQuick(i);
                     journal.setCloseListener(null);
                     if (journal.isOpen()) {
                         journal.close();
@@ -161,7 +160,7 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
 
     public void refresh() {
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
-            journalList.get(i).refresh();
+            journalList.getQuick(i).refresh();
         }
     }
 
@@ -177,7 +176,7 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
 
     void expireOpenFiles() {
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
-            journalList.get(i).expireOpenFiles();
+            journalList.getQuick(i).expireOpenFiles0();
         }
     }
 

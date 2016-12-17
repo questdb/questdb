@@ -54,9 +54,7 @@ public class JournalDeltaProducer implements ChannelProducer {
 
     public void configure(long txn, long txPin) throws JournalException {
 
-        String loc = journal.getKey().getId();
-
-        LOG.debug().$("Configure ").$(loc).$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
+        //        LOG.debug().$("Configure ").$(loc).$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
 
         journalServerState.reset();
 
@@ -70,19 +68,19 @@ public class JournalDeltaProducer implements ChannelProducer {
 
         if (thisTxn < txn) {
             // refuse
-            LOG.info().$("Cannot sync ").$(loc).$(". Client TXN is ahead of ours").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
+            LOG.info().$("Cannot sync ").$(journal.getKey().path()).$(". Client TXN is ahead of ours").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
             journalServerState.setTxn(-1);
         } else if (thisTxn == txn) {
             if (thisTxnPin != txPin) {
                 // refuse
-                LOG.info().$("Cannot sync ").$(loc).$(". Client TXN PIN is incorrect").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
+                LOG.info().$("Cannot sync ").$(journal.getKey().path()).$(". Client TXN PIN is incorrect").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
                 journalServerState.setTxn(-1);
             }
         } else if (thisTxn > txn) {
             Tx tx = journal.find(txn, txPin);
             if (tx == null) {
                 // unknown txn
-                LOG.info().$("Cannot sync ").$(loc).$(". Unknown TXN").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
+                LOG.info().$("Cannot sync ").$(journal.getKey().path()).$(". Unknown TXN").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
                 journalServerState.setTxn(-1);
             } else {
                 journalServerState.setTxn(thisTxn);
@@ -130,7 +128,7 @@ public class JournalDeltaProducer implements ChannelProducer {
         }
 
         journalServerState.reset();
-        journal.expireOpenFiles();
+        journal.expireOpenFiles0();
     }
 
     private void configure0(Tx tx) throws JournalException {

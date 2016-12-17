@@ -43,7 +43,7 @@ public class JournalRecoveryTest extends AbstractTest {
 
         long ts;
         try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
-            w.setCommitOnClose(false);
+            w.disableCommitOnClose();
             w.append(origin.query().all().asResultSet().subset(0, 15000));
             w.mergeAppend(origin.query().all().asResultSet().subset(15000, 17000));
             w.commit();
@@ -70,7 +70,7 @@ public class JournalRecoveryTest extends AbstractTest {
     public void testRecovery() throws Exception {
         long ts;
         try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
-            w.setCommitOnClose(false);
+            w.disableCommitOnClose();
             Assert.assertFalse(w.isCommitOnClose());
             TestUtils.generateQuoteData(w, 10000, new Interval("2013-01-01T00:00:00.000Z", "2013-02-28T12:55:00.000Z"));
             ts = w.getMaxTimestamp();
@@ -84,7 +84,7 @@ public class JournalRecoveryTest extends AbstractTest {
         }
 
         try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
-            w.setCommitOnClose(false);
+            w.disableCommitOnClose();
             Assert.assertEquals(ts, w.getMaxTimestamp());
             Assert.assertEquals(10000, w.size());
         }

@@ -58,17 +58,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
     // empty container for current transaction
     final Tx tx = new Tx();
     final JournalMetadata<T> metadata;
-    private final Comparator<Partition<T>> partitionAccessTimeComparator = new Comparator<Partition<T>>() {
-        @Override
-        public int compare(Partition<T> o1, Partition<T> o2) {
-            int c = Long.compare(o2.getLastAccessed(), o1.getLastAccessed());
-            if (c == 0) {
-                return Integer.compare(o2.getPartitionIndex(), o1.getPartitionIndex());
-            } else {
-                return c;
-            }
-        }
-    };
     private final File location;
     private final ObjObjHashMap<String, MMappedSymbolTable> symbolTableMap = new ObjObjHashMap<>();
     private final ObjList<MMappedSymbolTable> symbolTables = new ObjList<>();
@@ -84,12 +73,14 @@ public class Journal<T> implements Iterable<T>, Closeable {
         }
     };
     private final BitSet inactiveColumns;
-    private final ObjList<Partition<T>> toClose = new ObjList<>();
+    private final long openFileTtl;
+    private final long expireRecheckInterval;
     TxLog txLog;
     boolean open;
     private volatile Partition<T> irregularPartition;
     private JournalClosingListener closeListener;
     private TxIterator txIterator;
+    private long lastExpireCheck = 0L;
 
     public Journal(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
         this.metadata = metadata;
@@ -99,6 +90,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
         this.open = true;
         this.timestampOffset = getMetadata().getTimestampMetadata() == null ? -1 : getMetadata().getTimestampMetadata().offset;
         this.inactiveColumns = new BitSet(metadata.getColumnCount());
+        this.openFileTtl = metadata.getOpenFileTTL();
+        this.expireRecheckInterval = (long) (this.openFileTtl * 0.1);
         configure();
     }
 
@@ -158,33 +151,12 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return -1;
     }
 
-    public void expireOpenFiles() {
-
-        long ttl = getMetadata().getOpenFileTTL();
-        if (ttl > 0) {
-            toClose.clear();
-            long delta = System.currentTimeMillis() - ttl;
-            for (int i = 0, sz = partitions.size(); i < sz; i++) {
-                Partition<T> partition = partitions.getQuick(i);
-                if (partition.isOpen()) {
-                    toClose.add(partition);
-                }
-            }
-
-            int total = toClose.size();
-            if (total > 1) {
-                toClose.sort(partitionAccessTimeComparator);
-
-                for (int i = 1; i < total; i++) {
-                    Partition<T> partition = toClose.getQuick(i);
-                    if (delta > partition.getLastAccessed()) {
-                        partition.close();
-                    } else {
-                        break;
-                    }
-                }
-            }
+    public void expireOpenFiles0() {
+        long t = System.currentTimeMillis();
+        if (openFileTtl > 0 && t - lastExpireCheck > expireRecheckInterval) {
+            expireOpenFiles0(t - openFileTtl);
         }
+        lastExpireCheck = t;
     }
 
     public Tx find(long txn, long txPin) {
@@ -648,6 +620,15 @@ public class Journal<T> implements Iterable<T>, Closeable {
                 MMappedSymbolTable tab = getSymbolTable(meta.sameAs);
                 symbolTableMap.put(meta.name, tab);
                 meta.symbolTable = tab;
+            }
+        }
+    }
+
+    private void expireOpenFiles0(long deadline) {
+        for (int i = 0, sz = partitions.size() - 1; i < sz; i++) {
+            Partition<T> partition = partitions.getQuick(i);
+            if (partition.getLastAccessed() < deadline && partition.isOpen()) {
+                partition.close();
             }
         }
     }
