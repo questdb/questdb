@@ -1,23 +1,24 @@
 /*******************************************************************************
- * ___                  _   ____  ____
- * / _ \ _   _  ___  ___| |_|  _ \| __ )
- * | | | | | | |/ _ \/ __| __| | | |  _ \
- * | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- * \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
  * Copyright (C) 2014-2016 Appsicle
- * <p>
+ *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
- * <p>
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
- * <p>
+ *
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
  ******************************************************************************/
 
 package com.questdb.net.http;
@@ -28,6 +29,7 @@ import com.questdb.iter.clock.Clock;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Misc;
+import com.questdb.net.Context;
 import com.questdb.net.NetworkChannel;
 import com.questdb.net.NonBlockingSecureSocketChannel;
 import com.questdb.std.LocalValueMap;
@@ -37,7 +39,7 @@ import com.questdb.std.Mutable;
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class IOContext implements Closeable, Mutable, Locality {
+public class IOContext implements Closeable, Mutable, Locality, Context {
     private static final Log LOG = LogFactory.getLog(IOContext.class);
     public final NetworkChannel channel;
     public final Request request;
@@ -86,6 +88,11 @@ public class IOContext implements Closeable, Mutable, Locality {
 
     public FixedSizeResponse fixedSizeResponse() {
         return response.asFixedSize();
+    }
+
+    @Override
+    public long getFd() {
+        return channel.getFd();
     }
 
     @Override

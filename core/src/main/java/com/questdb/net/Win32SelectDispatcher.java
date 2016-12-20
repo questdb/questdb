@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.net.http;
+package com.questdb.net;
 
 import com.questdb.ex.NetworkError;
 import com.questdb.iter.clock.Clock;
@@ -29,13 +29,13 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
 import com.questdb.mp.*;
-import com.questdb.net.NetworkChannelImpl;
 import com.questdb.std.LongIntHashMap;
 import com.questdb.std.LongMatrix;
+import com.questdb.std.ObjectFactory;
 
 import java.io.IOException;
 
-public class Win32SelectDispatcher extends SynchronizedJob implements IODispatcher {
+public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob implements Dispatcher<C> {
 
     private static final int M_TIMESTAMP = 0;
     private static final int M_FD = 1;
@@ -48,39 +48,42 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
     private final FDSet readFdSet;
     private final FDSet writeFdSet;
     private final long socketFd;
-    private final RingQueue<IOEvent> ioQueue;
+    private final RingQueue<Event<C>> ioQueue;
     private final Sequence ioSequence;
-    private final RingQueue<IOEvent> interestQueue;
+    private final RingQueue<Event<C>> interestQueue;
     private final MPSequence interestPubSequence;
     private final SCSequence interestSubSequence = new SCSequence();
     private final Clock clock;
-    private final ServerConfiguration configuration;
     private final int timeout;
-    private final LongMatrix<IOContext> pending = new LongMatrix<>(4);
+    private final LongMatrix<C> pending = new LongMatrix<>(4);
     private final int maxConnections;
     private final LongIntHashMap fds = new LongIntHashMap();
+    private final ContextFactory<C> contextFactory;
     private int connectionCount = 0;
 
     public Win32SelectDispatcher(
             CharSequence ip,
             int port,
-            RingQueue<IOEvent> ioQueue,
+            int maxConnections,
+            int timeout,
+            RingQueue<Event<C>> ioQueue,
             Sequence ioSequence,
             Clock clock,
-            ServerConfiguration configuration,
-            int capacity
+            int capacity,
+            ObjectFactory<Event<C>> eventFactory,
+            ContextFactory<C> contextFactory
     ) {
         this.readFdSet = new FDSet(capacity);
         this.writeFdSet = new FDSet(capacity);
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
-        this.interestQueue = new RingQueue<>(IOEvent.FACTORY, ioQueue.getCapacity());
+        this.interestQueue = new RingQueue<>(eventFactory, ioQueue.getCapacity());
         this.interestPubSequence = new MPSequence(interestQueue.getCapacity());
         this.interestPubSequence.then(this.interestSubSequence).then(this.interestPubSequence);
         this.clock = clock;
-        this.configuration = configuration;
-        this.maxConnections = configuration.getHttpMaxConnections();
-        this.timeout = configuration.getHttpTimeout();
+        this.maxConnections = maxConnections;
+        this.timeout = timeout;
+        this.contextFactory = contextFactory;
 
         // bind socket
         this.socketFd = Net.socketTcp(false);
@@ -117,12 +120,12 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
     }
 
     @Override
-    public void registerChannel(IOContext context, int channelStatus) {
+    public void registerChannel(C context, int channelStatus) {
         long cursor = interestPubSequence.nextBully();
-        IOEvent evt = interestQueue.get(cursor);
+        Event<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.channelStatus = channelStatus;
-        LOG.debug().$("Re-queuing ").$(channelStatus).$(" on ").$(context.channel.getFd()).$();
+        LOG.debug().$("Re-queuing ").$(channelStatus).$(" on ").$(context.getFd()).$();
         interestPubSequence.done(cursor);
     }
 
@@ -171,23 +174,22 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         pending.set(r, M_TIMESTAMP, timestamp);
         pending.set(r, M_FD, _fd);
         pending.set(r, M_OPERATION, ChannelStatus.READ);
-        NetworkChannelImpl channel = new NetworkChannelImpl(_fd);
-        pending.set(r, new IOContext(channel, configuration, clock));
+        pending.set(r, contextFactory.newInstance(_fd, clock));
     }
 
-    private void disconnect(IOContext context, int disconnectReason) {
-        LOG.info().$("Disconnected ").$(context.channel.getFd()).$(": ").$(DisconnectReason.nameOf(disconnectReason)).$();
+    private void disconnect(C context, int disconnectReason) {
+        LOG.info().$("Disconnected ").$(context.getFd()).$(": ").$(DisconnectReason.nameOf(disconnectReason)).$();
         context.close();
         connectionCount--;
     }
 
-    private void enqueue(IOContext context, int channelStatus) {
+    private void enqueue(C context, int channelStatus) {
         long cursor = ioSequence.nextBully();
-        IOEvent evt = ioQueue.get(cursor);
+        Event<C> evt = ioQueue.get(cursor);
         evt.context = context;
         evt.channelStatus = channelStatus;
         ioSequence.done(cursor);
-        LOG.debug().$("Queuing ").$(channelStatus).$(" on ").$(context.channel.getFd()).$();
+        LOG.debug().$("Queuing ").$(channelStatus).$(" on ").$(context.getFd()).$();
 
     }
 
@@ -196,14 +198,14 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
         boolean useful = false;
         while ((cursor = interestSubSequence.next()) > -1) {
             useful = true;
-            IOEvent evt = interestQueue.get(cursor);
-            IOContext context = evt.context;
+            Event<C> evt = interestQueue.get(cursor);
+            C context = evt.context;
             int channelStatus = evt.channelStatus;
             interestSubSequence.done(cursor);
 
             int r = pending.addRow();
             pending.set(r, M_TIMESTAMP, timestamp);
-            pending.set(r, M_FD, context.channel.getFd());
+            pending.set(r, M_FD, context.getFd());
             pending.set(r, M_OPERATION, channelStatus);
             pending.set(r, context);
         }
@@ -308,7 +310,7 @@ public class Win32SelectDispatcher extends SynchronizedJob implements IODispatch
                 // this fd just has fired
                 // publish event
                 // and remove from pending
-                final IOContext context = pending.get(i);
+                final C context = pending.get(i);
 
                 if ((_new_op & FD_READ) > 0) {
                     enqueue(context, ChannelStatus.READ);

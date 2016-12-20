@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.net.http;
+package com.questdb.net;
 
 import com.questdb.ex.NetworkError;
 import com.questdb.iter.clock.Clock;
@@ -32,50 +32,52 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Net;
 import com.questdb.misc.Os;
 import com.questdb.mp.*;
-import com.questdb.net.Epoll;
-import com.questdb.net.NetworkChannelImpl;
 import com.questdb.std.LongMatrix;
+import com.questdb.std.ObjectFactory;
 
 import java.io.IOException;
 
-public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
+public class EpollDispatcher<C extends Context> extends SynchronizedJob implements Dispatcher<C> {
     private static final int M_TIMESTAMP = 1;
     private static final int M_FD = 2;
     private static final int M_ID = 0;
     private static final Log LOG = LogFactory.getLog(EpollDispatcher.class);
     private final long socketFd;
-    private final RingQueue<IOEvent> ioQueue;
+    private final RingQueue<Event<C>> ioQueue;
     private final Sequence ioSequence;
-    private final RingQueue<IOEvent> interestQueue;
+    private final RingQueue<Event<C>> interestQueue;
     private final MPSequence interestPubSequence;
     private final SCSequence interestSubSequence = new SCSequence();
     private final Clock clock;
-    private final ServerConfiguration configuration;
     private final Epoll epoll;
     private final int timeout;
-    private final LongMatrix<IOContext> pending = new LongMatrix<>(4);
+    private final LongMatrix<C> pending = new LongMatrix<>(4);
     private final int maxConnections;
+    private final ContextFactory<C> contextFactory;
     private int connectionCount = 0;
     private long fdid = 1;
 
     public EpollDispatcher(
             CharSequence ip,
             int port,
-            RingQueue<IOEvent> ioQueue,
+            int maxConnections,
+            int timeout,
+            RingQueue<Event<C>> ioQueue,
             Sequence ioSequence,
             Clock clock,
-            ServerConfiguration configuration,
-            int capacity
+            int capacity,
+            ObjectFactory<Event<C>> eventFactory,
+            ContextFactory<C> contextFactory
     ) {
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
-        this.interestQueue = new RingQueue<>(IOEvent.FACTORY, ioQueue.getCapacity());
+        this.interestQueue = new RingQueue<>(eventFactory, ioQueue.getCapacity());
         this.interestPubSequence = new MPSequence(interestQueue.getCapacity());
         this.interestPubSequence.then(this.interestSubSequence).then(this.interestPubSequence);
         this.clock = clock;
-        this.configuration = configuration;
-        this.maxConnections = configuration.getHttpMaxConnections();
-        this.timeout = configuration.getHttpTimeout();
+        this.maxConnections = maxConnections;
+        this.timeout = timeout;
+        this.contextFactory = contextFactory;
 
         // bind socket
         this.epoll = new Epoll(capacity);
@@ -105,12 +107,12 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
     }
 
     @Override
-    public void registerChannel(IOContext context, int channelStatus) {
+    public void registerChannel(C context, int channelStatus) {
         long cursor = interestPubSequence.nextBully();
-        IOEvent evt = interestQueue.get(cursor);
+        Event<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.channelStatus = channelStatus;
-        LOG.debug().$("Re-queuing ").$(context.channel.getFd()).$();
+        LOG.debug().$("Re-queuing ").$(context.getFd()).$();
         interestPubSequence.done(cursor);
     }
 
@@ -154,12 +156,11 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
         pending.set(r, M_FD, _fd);
         pending.set(r, M_ID, fdid++);
 
-        NetworkChannelImpl channel = new NetworkChannelImpl(_fd);
-        pending.set(r, new IOContext(channel, configuration, clock));
+        pending.set(r, contextFactory.newInstance(_fd, clock));
     }
 
-    private void disconnect(IOContext context, int disconnectReason) {
-        LOG.info().$("Disconnected ").$(context.channel.getFd()).$(": ").$(DisconnectReason.nameOf(disconnectReason)).$();
+    private void disconnect(C context, int disconnectReason) {
+        LOG.info().$("Disconnected ").$(context.getFd()).$(": ").$(DisconnectReason.nameOf(disconnectReason)).$();
         context.close();
         connectionCount--;
     }
@@ -189,12 +190,12 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
         int offset = 0;
         while ((cursor = interestSubSequence.next()) > -1) {
             useful = true;
-            IOEvent evt = interestQueue.get(cursor);
-            IOContext context = evt.context;
+            Event<C> evt = interestQueue.get(cursor);
+            C context = evt.context;
             int channelStatus = evt.channelStatus;
             interestSubSequence.done(cursor);
 
-            int fd = (int) context.channel.getFd();
+            int fd = (int) context.getFd();
             LOG.debug().$("Registering ").$(fd).$(" status ").$(channelStatus).$();
             epoll.setOffset(offset);
             offset += Epoll.SIZEOF_EVENT;
@@ -252,13 +253,13 @@ public class EpollDispatcher extends SynchronizedJob implements IODispatcher {
                         continue;
                     }
 
-                    final IOContext context = pending.get(row);
+                    final C context = pending.get(row);
                     long cursor = ioSequence.nextBully();
-                    IOEvent evt = ioQueue.get(cursor);
+                    Event<C> evt = ioQueue.get(cursor);
                     evt.context = context;
                     evt.channelStatus = (epoll.getEvent() & Epoll.EPOLLIN) > 0 ? ChannelStatus.READ : ChannelStatus.WRITE;
                     ioSequence.done(cursor);
-                    LOG.debug().$("Queuing ").$(id).$(" on ").$(context.channel.getFd()).$();
+                    LOG.debug().$("Queuing ").$(id).$(" on ").$(context.getFd()).$();
                     pending.deleteRow(row);
                     watermark--;
                 }

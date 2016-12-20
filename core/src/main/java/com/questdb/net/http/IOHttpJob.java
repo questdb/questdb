@@ -30,6 +30,9 @@ import com.questdb.misc.Net;
 import com.questdb.mp.Job;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
+import com.questdb.net.ChannelStatus;
+import com.questdb.net.Dispatcher;
+import com.questdb.net.Event;
 
 import java.io.IOException;
 
@@ -38,12 +41,12 @@ public class IOHttpJob implements Job {
     private final static Log ACCESS = LogFactory.getLog("access");
     private final static Log LOG = LogFactory.getLog(IOHttpJob.class);
 
-    private final RingQueue<IOEvent> ioQueue;
+    private final RingQueue<Event<IOContext>> ioQueue;
     private final Sequence ioSequence;
-    private final IODispatcher ioDispatcher;
+    private final Dispatcher<IOContext> ioDispatcher;
     private final UrlMatcher urlMatcher;
 
-    IOHttpJob(RingQueue<IOEvent> ioQueue, Sequence ioSequence, IODispatcher ioDispatcher, UrlMatcher urlMatcher) {
+    IOHttpJob(RingQueue<Event<IOContext>> ioQueue, Sequence ioSequence, Dispatcher<IOContext> ioDispatcher, UrlMatcher urlMatcher) {
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
         this.ioDispatcher = ioDispatcher;
@@ -57,8 +60,7 @@ public class IOHttpJob implements Job {
             return false;
         }
 
-        IOEvent evt = ioQueue.get(cursor);
-
+        Event<IOContext> evt = ioQueue.get(cursor);
         final IOContext ioContext = evt.context;
         final int status = evt.channelStatus;
         ioSequence.done(cursor);

@@ -21,26 +21,13 @@
  *
  ******************************************************************************/
 
-package com.questdb.net.http;
+package com.questdb.net;
 
-public final class DisconnectReason {
-    public static final int PEER = 1;
-    public static final int IDLE = 2;
-    public static final int SILLY = 3;
+import java.io.Closeable;
 
-    private DisconnectReason() {
-    }
+public interface Context extends Closeable {
+    @Override
+    void close();
 
-    public static CharSequence nameOf(int disconnectReason) {
-        switch (disconnectReason) {
-            case PEER:
-                return "PEER";
-            case IDLE:
-                return "IDLE";
-            case SILLY:
-                return "SILLY";
-            default:
-                return "UNKNOWN";
-        }
-    }
+    long getFd();
 }

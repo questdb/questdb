@@ -21,17 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.net.http;
+package com.questdb.net;
 
-import com.questdb.std.ObjectFactory;
-
-public class IOEvent {
-    public static final ObjectFactory<IOEvent> FACTORY = new ObjectFactory<IOEvent>() {
-        @Override
-        public IOEvent newInstance() {
-            return new IOEvent();
-        }
-    };
-    public int channelStatus;
-    public IOContext context;
+public final class ChannelStatus {
+    public static final int READ = 1;
+    public static final int DISCONNECTED = 3;
+    public static final int WRITE = 4;
+    public static final int EOF = 5;
+    
+    private ChannelStatus() {
+    }
 }

@@ -33,14 +33,22 @@ import com.questdb.log.LogFactory;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
 import com.questdb.mp.*;
+import com.questdb.net.*;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
+import com.questdb.std.ObjectFactory;
 
 import java.net.InetSocketAddress;
 import java.util.concurrent.CountDownLatch;
 
 public class HttpServer {
     private final static Log LOG = LogFactory.getLog(HttpServer.class);
+    private static final ObjectFactory<Event<IOContext>> EVENT_FACTORY = new ObjectFactory<Event<IOContext>>() {
+        @Override
+        public Event<IOContext> newInstance() {
+            return new Event<>();
+        }
+    };
     private final InetSocketAddress address;
     private final ObjList<Worker> workers;
     private final CountDownLatch haltLatch;
@@ -48,18 +56,25 @@ public class HttpServer {
     private final CountDownLatch startComplete = new CountDownLatch(1);
     private final UrlMatcher urlMatcher;
     private final ServerConfiguration configuration;
+    private final ContextFactory<IOContext> contextFactory;
     private volatile boolean running = true;
     private Clock clock = MilliClock.INSTANCE;
-    private IODispatcher dispatcher;
-    private RingQueue<IOEvent> ioQueue;
+    private Dispatcher<IOContext> dispatcher;
+    private RingQueue<Event<IOContext>> ioQueue;
 
-    public HttpServer(ServerConfiguration configuration, UrlMatcher urlMatcher) {
+    public HttpServer(final ServerConfiguration configuration, UrlMatcher urlMatcher) {
         this.address = new InetSocketAddress(configuration.getHttpIP(), configuration.getHttpPort());
         this.urlMatcher = urlMatcher;
         this.workerCount = configuration.getHttpThreads();
         this.haltLatch = new CountDownLatch(workerCount);
         this.workers = new ObjList<>(workerCount);
         this.configuration = configuration;
+        this.contextFactory = new ContextFactory<IOContext>() {
+            @Override
+            public IOContext newInstance(long fd, Clock clock) {
+                return new IOContext(new NetworkChannelImpl(fd), configuration, clock);
+            }
+        };
     }
 
     public void halt() {
@@ -77,7 +92,7 @@ public class HttpServer {
             }
 
             for (int i = 0; i < ioQueue.getCapacity(); i++) {
-                IOEvent ev = ioQueue.get(i);
+                Event<IOContext> ev = ioQueue.get(i);
                 if (ev != null && ev.context != null) {
                     ev.context = Misc.free(ev.context);
                 }
@@ -91,7 +106,7 @@ public class HttpServer {
 
     public boolean start(ObjHashSet<? extends Job> extraJobs, int queueDepth) {
         this.running = true;
-        ioQueue = new RingQueue<>(IOEvent.FACTORY, queueDepth);
+        ioQueue = new RingQueue<>(EVENT_FACTORY, queueDepth);
         SPSequence ioPubSequence = new SPSequence(ioQueue.getCapacity());
         MCSequence ioSubSequence = new MCSequence(ioQueue.getCapacity(), null);
         ioPubSequence.then(ioSubSequence).then(ioPubSequence);
@@ -128,10 +143,10 @@ public class HttpServer {
         start(null, 1024);
     }
 
-    private IODispatcher createDispatcher(
+    private Dispatcher<IOContext> createDispatcher(
             CharSequence ip,
             int port,
-            RingQueue<IOEvent> ioQueue,
+            RingQueue<Event<IOContext>> ioQueue,
             Sequence ioSequence,
             Clock clock,
             ServerConfiguration configuration,
@@ -140,11 +155,44 @@ public class HttpServer {
 
         switch (Os.type) {
             case Os.OSX:
-                return new KQueueDispatcher(ip, port, ioQueue, ioSequence, clock, configuration, capacity);
+                return new KQueueDispatcher<>(
+                        ip,
+                        port,
+                        configuration.getHttpMaxConnections(),
+                        configuration.getHttpTimeout(),
+                        ioQueue,
+                        ioSequence,
+                        clock,
+                        capacity,
+                        EVENT_FACTORY,
+                        contextFactory
+                );
             case Os.WINDOWS:
-                return new Win32SelectDispatcher(ip, port, ioQueue, ioSequence, clock, configuration, capacity);
+                return new Win32SelectDispatcher<>(
+                        ip,
+                        port,
+                        configuration.getHttpMaxConnections(),
+                        configuration.getHttpTimeout(),
+                        ioQueue,
+                        ioSequence,
+                        clock,
+                        capacity,
+                        EVENT_FACTORY,
+                        contextFactory
+                );
             case Os.LINUX:
-                return new EpollDispatcher(ip, port, ioQueue, ioSequence, clock, configuration, capacity);
+                return new EpollDispatcher<>(
+                        ip,
+                        port,
+                        configuration.getHttpMaxConnections(),
+                        configuration.getHttpTimeout(),
+                        ioQueue,
+                        ioSequence,
+                        clock,
+                        capacity,
+                        EVENT_FACTORY,
+                        contextFactory
+                );
             default:
                 throw new FatalError("Unsupported operating system");
         }

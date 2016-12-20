@@ -21,15 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.net.http;
+package com.questdb.net;
 
-public final class ChannelStatus {
-    public static final int READ = 1;
-    public static final int NEED_REQUEST = 2;
-    public static final int DISCONNECTED = 3;
-    public static final int WRITE = 4;
-    public static final int EOF = 5;
-    
-    private ChannelStatus() {
-    }
+import com.questdb.mp.Job;
+
+import java.io.Closeable;
+
+public interface Dispatcher<C extends Context> extends Closeable, Job {
+    int getConnectionCount();
+
+    void registerChannel(C context, int channelStatus);
 }

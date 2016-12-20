@@ -185,8 +185,6 @@ public final class ByteBuffers {
             int result;
             try {
                 result = channel.read(to);
-            } catch (SlowReadableChannelException e) {
-                throw e;
             } catch (IOException e) {
                 throw DisconnectedChannelException.INSTANCE;
             }

@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.net.http;
+package com.questdb.net;
 
 import com.questdb.ex.NetworkError;
 import com.questdb.iter.clock.Clock;
@@ -31,49 +31,51 @@ import com.questdb.misc.Files;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Net;
 import com.questdb.mp.*;
-import com.questdb.net.Kqueue;
-import com.questdb.net.NetworkChannelImpl;
 import com.questdb.std.LongMatrix;
+import com.questdb.std.ObjectFactory;
 
 import java.io.IOException;
 
-public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
+public class KQueueDispatcher<C extends Context> extends SynchronizedJob implements Dispatcher<C> {
     private static final Log LOG = LogFactory.getLog(KQueueDispatcher.class);
 
     private final long socketFd;
-    private final RingQueue<IOEvent> ioQueue;
+    private final RingQueue<Event<C>> ioQueue;
     private final Sequence ioSequence;
-    private final RingQueue<IOEvent> interestQueue;
+    private final RingQueue<Event<C>> interestQueue;
     private final MPSequence interestPubSequence;
     private final SCSequence interestSubSequence = new SCSequence();
     private final Clock clock;
-    private final ServerConfiguration configuration;
     private final Kqueue kqueue;
     private final int timeout;
-    private final LongMatrix<IOContext> pending = new LongMatrix<>(2);
+    private final LongMatrix<C> pending = new LongMatrix<>(2);
     private final int maxConnections;
     private final int capacity;
+    private final ContextFactory<C> contextFactory;
     private int connectionCount = 0;
 
     public KQueueDispatcher(
             CharSequence ip,
             int port,
-            RingQueue<IOEvent> ioQueue,
+            int maxConnections,
+            int timeout,
+            RingQueue<Event<C>> ioQueue,
             Sequence ioSequence,
             Clock clock,
-            ServerConfiguration configuration,
-            int capacity
+            int capacity,
+            ObjectFactory<Event<C>> eventFactory,
+            ContextFactory<C> contextFactory
     ) {
         this.ioQueue = ioQueue;
         this.ioSequence = ioSequence;
-        this.interestQueue = new RingQueue<>(IOEvent.FACTORY, ioQueue.getCapacity());
+        this.interestQueue = new RingQueue<>(eventFactory, ioQueue.getCapacity());
         this.interestPubSequence = new MPSequence(interestQueue.getCapacity());
         this.interestPubSequence.then(this.interestSubSequence).then(this.interestPubSequence);
         this.clock = clock;
-        this.configuration = configuration;
-        this.maxConnections = configuration.getHttpMaxConnections();
-        this.timeout = configuration.getHttpTimeout();
+        this.maxConnections = maxConnections;
+        this.timeout = timeout;
         this.capacity = capacity;
+        this.contextFactory = contextFactory;
 
         // bind socket
         this.kqueue = new Kqueue(capacity);
@@ -104,12 +106,12 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
     }
 
     @Override
-    public void registerChannel(IOContext context, int channelStatus) {
+    public void registerChannel(C context, int channelStatus) {
         long cursor = interestPubSequence.nextBully();
-        IOEvent evt = interestQueue.get(cursor);
+        Event<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.channelStatus = channelStatus;
-        LOG.debug().$("Re-queuing ").$(context.channel.getFd()).$();
+        LOG.debug().$("Re-queuing ").$(context.getFd()).$();
         interestPubSequence.done(cursor);
     }
 
@@ -148,12 +150,11 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         LOG.debug().$(" Matrix row ").$(r).$(" for ").$(_fd).$();
         pending.set(r, 0, timestamp);
         pending.set(r, 1, _fd);
-        NetworkChannelImpl channel = new NetworkChannelImpl(_fd);
-        pending.set(r, new IOContext(channel, configuration, clock));
+        pending.set(r, contextFactory.newInstance(_fd, clock));
     }
 
-    private void disconnect(IOContext context, int disconnectReason) {
-        LOG.info().$("Disconnected ").$(context.channel.getFd()).$(": ").$(DisconnectReason.nameOf(disconnectReason)).$();
+    private void disconnect(C context, int disconnectReason) {
+        LOG.info().$("Disconnected ").$(context.getFd()).$(": ").$(DisconnectReason.nameOf(disconnectReason)).$();
         context.close();
         connectionCount--;
     }
@@ -203,12 +204,12 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
         int offset = 0;
         while ((cursor = interestSubSequence.next()) > -1) {
             useful = true;
-            IOEvent evt = interestQueue.get(cursor);
-            IOContext context = evt.context;
+            Event<C> evt = interestQueue.get(cursor);
+            C context = evt.context;
             int channelStatus = evt.channelStatus;
             interestSubSequence.done(cursor);
 
-            int fd = (int) context.channel.getFd();
+            int fd = (int) context.getFd();
             LOG.debug().$("Registering ").$(fd).$(" status ").$(channelStatus).$();
             kqueue.setOffset(offset);
             offset += Kqueue.SIZEOF_KEVENT;
@@ -283,7 +284,7 @@ public class KQueueDispatcher extends SynchronizedJob implements IODispatcher {
                         disconnect(pending.get(row), DisconnectReason.PEER);
                     } else {
                         long cursor = ioSequence.nextBully();
-                        IOEvent evt = ioQueue.get(cursor);
+                        Event<C> evt = ioQueue.get(cursor);
                         evt.context = pending.get(row);
                         evt.channelStatus = kqueue.getFilter() == Kqueue.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
                         ioSequence.done(cursor);
