@@ -55,6 +55,11 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     }
 
     @Override
+    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
+        return new JournalBulkReader<>(getOrCreateMetadata(key), key);
+    }
+
+    @Override
     public abstract void close();
 
     public JournalConfiguration getConfiguration() {

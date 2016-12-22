@@ -30,7 +30,6 @@ import com.questdb.factory.JournalClosingListener;
 import com.questdb.factory.JournalFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.factory.configuration.MetadataBuilder;
 import com.questdb.misc.Files;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
@@ -86,31 +85,24 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
     }
 
     @Override
-    public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
-        JournalBulkWriter<T> writer = super.bulkWriter(key);
+    public <T> Journal<T> reader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
+        Journal<T> reader = new Journal<>(metadata, key);
+        journals.add(reader);
+        reader.setCloseListener(this);
+        return reader;
+    }
+
+    @Override
+    public <T> JournalBulkWriter<T> bulkWriter(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
+        JournalBulkWriter<T> writer = super.bulkWriter(metadata, key);
         journals.add(writer);
         writer.setCloseListener(this);
         return writer;
     }
 
     @Override
-    public <T> JournalWriter<T> bulkWriter(JournalMetadata<T> metadata) throws JournalException {
-        JournalWriter<T> writer = super.bulkWriter(metadata);
-        journals.add(writer);
-        writer.setCloseListener(this);
-        return writer;
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
-        JournalWriter<T> writer = super.writer(key);
-        journals.add(writer);
-        writer.setCloseListener(this);
-        return writer;
-    }
-
-    public <T> JournalWriter<T> writer(MetadataBuilder<T> b) throws JournalException {
-        JournalWriter<T> writer = super.writer(b);
+    public <T> JournalWriter<T> writer(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
+        JournalWriter<T> writer = super.writer(metadata, key);
         journals.add(writer);
         writer.setCloseListener(this);
         return writer;
@@ -120,21 +112,5 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
     public boolean closing(Journal journal) {
         journals.remove(journal);
         return true;
-    }
-
-    @Override
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        Journal<T> result = super.reader(key);
-        journals.add(result);
-        result.setCloseListener(this);
-        return result;
-    }
-
-    @Override
-    public <T> Journal<T> reader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
-        Journal<T> reader = new Journal<>(metadata, key);
-        journals.add(reader);
-        reader.setCloseListener(this);
-        return reader;
     }
 }

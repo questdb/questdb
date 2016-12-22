@@ -63,28 +63,13 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         checkBlocked(name);
         JournalBulkReader<T> result = bulkReaders.get(name);
         if (result == null) {
-            result = new JournalBulkReader<>(getOrCreateMetadata(key), key);
+            result = super.bulkReader(key);
             result.setCloseListener(this);
             bulkReaders.put(name, result);
             journalList.add(result);
         }
         return result;
     }
-
-//    @Override
-//    @SuppressWarnings("unchecked")
-//    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-//        String name = key.path();
-//        checkBlocked(name);
-//        Journal<T> result = readers.get(name);
-//        if (result == null) {
-//            result = new Journal<>(getOrCreateMetadata(key), key);
-//            result.setCloseListener(this);
-//            readers.put(name, result);
-//            journalList.add(result);
-//        }
-//        return result;
-//    }
 
     @Override
     public void close() {
@@ -131,7 +116,7 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
                 LOG.error().$("Journal does not exist: ").$(name).$();
                 throw JournalDoesNotExistException.INSTANCE;
             }
-            result = new Journal<>(metadata, key);
+            result = super.reader(metadata, key);
             result.setCloseListener(this);
             readers.put(name, result);
             journalList.add(result);

@@ -45,6 +45,8 @@ public interface JournalWriterFactory {
 
     <T> JournalWriter<T> bulkWriter(JournalMetadata<T> metadata) throws JournalException;
 
+    <T> JournalWriter<T> bulkWriter(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException;
+
     JournalWriter bulkWriter(String location) throws JournalException;
 
     JournalConfiguration getConfiguration();
@@ -59,5 +61,7 @@ public interface JournalWriterFactory {
 
     <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException;
 
-    <T> JournalWriter<T> writer(MetadataBuilder<T> metadata) throws JournalException;
+    <T> JournalWriter<T> writer(MetadataBuilder<T> metadataBuilder) throws JournalException;
+
+    <T> JournalWriter<T> writer(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException;
 }
