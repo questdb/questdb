@@ -72,6 +72,11 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     }
 
     @Override
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        return reader(getOrCreateMetadata(key));
+    }
+
+    @Override
     public <T> Journal<T> reader(Class<T> clazz) throws JournalException {
         return reader(new JournalKey<>(clazz));
     }
@@ -93,7 +98,12 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @SuppressWarnings("unchecked")
     @Override
-    public Journal reader(JournalMetadata metadata) throws JournalException {
-        return new Journal(metadata, metadata.getKey());
+    public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
+        return reader(metadata, metadata.getKey());
+    }
+
+    @Override
+    public <T> Journal<T> reader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
+        return new Journal<>(metadata, key);
     }
 }

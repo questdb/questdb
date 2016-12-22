@@ -95,7 +95,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         this.lag = lag;
         this.partialMapping = partialMapping;
         if (modelClass != null) {
-            this.key = new JournalKey<>(modelClass, location);
+            this.key = new JournalKey<>(modelClass, Chars.getFileName(location));
         } else {
             this.key = new JournalKey<>(id);
         }

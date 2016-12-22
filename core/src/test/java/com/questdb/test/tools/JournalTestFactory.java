@@ -86,14 +86,6 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
     }
 
     @Override
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        Journal<T> result = super.reader(key);
-        journals.add(result);
-        result.setCloseListener(this);
-        return result;
-    }
-
-    @Override
     public <T> JournalBulkWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
         JournalBulkWriter<T> writer = super.bulkWriter(key);
         journals.add(writer);
@@ -130,10 +122,17 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
         return true;
     }
 
-    @SuppressWarnings("unchecked")
     @Override
-    public Journal reader(JournalMetadata metadata) throws JournalException {
-        Journal reader = new Journal(metadata, metadata.getKey());
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        Journal<T> result = super.reader(key);
+        journals.add(result);
+        result.setCloseListener(this);
+        return result;
+    }
+
+    @Override
+    public <T> Journal<T> reader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
+        Journal<T> reader = new Journal<>(metadata, key);
         journals.add(reader);
         reader.setCloseListener(this);
         return reader;

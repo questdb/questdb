@@ -71,20 +71,20 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         return result;
     }
 
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        String name = key.path();
-        checkBlocked(name);
-        Journal<T> result = readers.get(name);
-        if (result == null) {
-            result = new Journal<>(getOrCreateMetadata(key), key);
-            result.setCloseListener(this);
-            readers.put(name, result);
-            journalList.add(result);
-        }
-        return result;
-    }
+//    @Override
+//    @SuppressWarnings("unchecked")
+//    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+//        String name = key.path();
+//        checkBlocked(name);
+//        Journal<T> result = readers.get(name);
+//        if (result == null) {
+//            result = new Journal<>(getOrCreateMetadata(key), key);
+//            result.setCloseListener(this);
+//            readers.put(name, result);
+//            journalList.add(result);
+//        }
+//        return result;
+//    }
 
     @Override
     public void close() {
@@ -121,10 +121,9 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         return m;
     }
 
-    @SuppressWarnings("unchecked")
     @Override
-    public Journal reader(JournalMetadata metadata) throws JournalException {
-        JournalKey key = metadata.getKey();
+    @SuppressWarnings("unchecked")
+    public <T> Journal<T> reader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
         String name = key.path();
         Journal result = readers.get(name);
         if (result == null) {
