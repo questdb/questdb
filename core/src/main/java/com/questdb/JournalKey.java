@@ -98,7 +98,7 @@ public class JournalKey<T> {
         this.ordered = ordered;
     }
 
-    private JournalKey(String clazz, String location, int partitionBy, int recordHint, boolean ordered) {
+    public JournalKey(String clazz, String location, int partitionBy, int recordHint, boolean ordered) {
         this.modelClass = null;
         this.id = clazz;
         this.location = location;

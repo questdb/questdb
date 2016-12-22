@@ -54,6 +54,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
     private String keyColumn;
     private long openFileTTL = TimeUnit.MINUTES.toMillis(3);
     private int lag = -1;
+    private boolean ordered = true;
 
     public JournalMetadataBuilder(Class<T> modelClass) {
         this.modelClass = modelClass;
@@ -75,6 +76,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
             ColumnMetadata from = model.getColumnQuick(i);
             columnMetadata.get(from.name).copy(from);
         }
+        this.ordered = model.isOrdered();
     }
 
     public BinaryBuilder<T> $bin(String name) {
@@ -172,6 +174,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
                 , txCountHint
                 , lag
                 , false
+                , ordered
         );
     }
 
@@ -186,6 +189,12 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
 
     public JournalMetadataBuilder<T> location(File location) {
         this.location = location.getAbsolutePath();
+        return this;
+    }
+
+    @Override
+    public JournalMetadataBuilder<T> ordered(boolean flag) {
+        this.ordered = flag;
         return this;
     }
 

@@ -184,7 +184,7 @@ public class JournalServerAgent {
                 int k = readers.size();
                 ObjList<JournalKey> keys = new ObjList<>(k);
                 for (int i = 0; i < k; i++) {
-                    keys.add(readers.getQuick(i).getKey());
+                    keys.add(readers.getQuick(i).getMetadata().getKey());
                 }
                 authorized = authorizationHandler.isAuthorized(value, keys);
             } catch (Throwable e) {

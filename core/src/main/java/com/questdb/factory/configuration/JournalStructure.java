@@ -59,6 +59,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
     private Class<Object> modelClass;
     private Constructor<Object> constructor;
     private boolean partialMapping = false;
+    private boolean ordered = true;
 
     public JournalStructure(String location) {
         this.location = location;
@@ -87,6 +88,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
             metadata.add(to.copy(model.getColumnQuick(i)));
             nameToIndexMap.put(to.name, i);
         }
+        this.ordered = model.isOrdered();
     }
 
     public JournalStructure $() {
@@ -214,6 +216,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
                 , txCountHint
                 , lag
                 , partialMapping
+                , ordered
         );
     }
 
@@ -230,6 +233,12 @@ public class JournalStructure implements MetadataBuilder<Object> {
     @Override
     public JournalStructure location(File path) {
         this.location = path.getAbsolutePath();
+        return this;
+    }
+
+    @Override
+    public MetadataBuilder<Object> ordered(boolean flag) {
+        this.ordered = flag;
         return this;
     }
 

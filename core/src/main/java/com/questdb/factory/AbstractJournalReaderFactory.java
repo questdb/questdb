@@ -56,7 +56,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @Override
     public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        return new JournalBulkReader<>(getOrCreateMetadata(key), key);
+        return new JournalBulkReader<>(getOrCreateMetadata(key));
     }
 
     @Override
@@ -71,7 +71,7 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
         File location = new File(metadata.getLocation());
         if (!location.exists()) {
             // create blank journal
-            new JournalWriter<>(metadata, key).close();
+            new JournalWriter<>(metadata).close();
         }
         return metadata;
     }
@@ -101,7 +101,6 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
         return reader(new JournalKey<>(clazz, location, PartitionBy.DEFAULT, recordHint));
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
         return reader(metadata, metadata.getKey());
@@ -109,6 +108,6 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
 
     @Override
     public <T> Journal<T> reader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
-        return new Journal<>(metadata, key);
+        return new Journal<>(metadata);
     }
 }

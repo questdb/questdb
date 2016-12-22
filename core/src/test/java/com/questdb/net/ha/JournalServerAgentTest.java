@@ -98,7 +98,7 @@ public class JournalServerAgentTest extends AbstractTest {
 
         // send quote journal key
         commandProducer.write(channel, Command.ADD_KEY_CMD);
-        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
+        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getMetadata().getKey()));
         agent.process(channel);
         charSequenceResponseConsumer.read(channel);
         TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
@@ -171,7 +171,7 @@ public class JournalServerAgentTest extends AbstractTest {
 
 
         commandProducer.write(channel, Command.ADD_KEY_CMD);
-        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
+        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getMetadata().getKey()));
         agent.process(channel);
         charSequenceResponseConsumer.read(channel);
         TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
@@ -195,16 +195,16 @@ public class JournalServerAgentTest extends AbstractTest {
     @Test
     public void testSetKeyRequestResponse() throws Exception {
         commandProducer.write(channel, Command.ADD_KEY_CMD);
-        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getKey()));
+        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getMetadata().getKey()));
         agent.process(channel);
         charSequenceResponseConsumer.read(channel);
         TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
         hugeBufferConsumer.read(channel);
 
         commandProducer.write(channel, Command.ADD_KEY_CMD);
-        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, tradeWriter.getKey()));
+        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, tradeWriter.getMetadata().getKey()));
         agent.process(channel);
         charSequenceResponseConsumer.read(channel);
-        TestUtils.assertEquals("Requested key not exported: JournalKey{id=com.questdb.model.Trade, location='null', partitionBy=DEFAULT, recordHint=0, ordered=true}", charSequenceResponseConsumer.getValue());
+        TestUtils.assertEquals("Requested key not exported: JournalKey{id=com.questdb.model.Trade, location='com.questdb.model.Trade', partitionBy=MONTH, recordHint=0, ordered=true}", charSequenceResponseConsumer.getValue());
     }
 }

@@ -68,19 +68,19 @@ public class JournalDeltaProducer implements ChannelProducer {
 
         if (thisTxn < txn) {
             // refuse
-            LOG.info().$("Cannot sync ").$(journal.getKey().path()).$(". Client TXN is ahead of ours").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
+            LOG.info().$("Cannot sync ").$(journal.getName()).$(". Client TXN is ahead of ours").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
             journalServerState.setTxn(-1);
         } else if (thisTxn == txn) {
             if (thisTxnPin != txPin) {
                 // refuse
-                LOG.info().$("Cannot sync ").$(journal.getKey().path()).$(". Client TXN PIN is incorrect").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
+                LOG.info().$("Cannot sync ").$(journal.getName()).$(". Client TXN PIN is incorrect").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
                 journalServerState.setTxn(-1);
             }
         } else if (thisTxn > txn) {
             Tx tx = journal.find(txn, txPin);
             if (tx == null) {
                 // unknown txn
-                LOG.info().$("Cannot sync ").$(journal.getKey().path()).$(". Unknown TXN").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
+                LOG.info().$("Cannot sync ").$(journal.getName()).$(". Unknown TXN").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
                 journalServerState.setTxn(-1);
             } else {
                 journalServerState.setTxn(thisTxn);

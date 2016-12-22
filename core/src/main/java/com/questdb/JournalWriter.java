@@ -81,15 +81,15 @@ public class JournalWriter<T> extends Journal<T> {
     private RandomAccessFile discardTxtRaf;
     private FlexBufferSink discardSink;
 
-    public JournalWriter(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
-        super(metadata, key);
+    public JournalWriter(JournalMetadata<T> metadata) throws JournalException {
+        super(metadata);
         if (metadata.isPartialMapped()) {
             close();
             throw new JournalException("Metadata is unusable for writer. Partially mapped?");
         }
         this.lagMillis = TimeUnit.HOURS.toMillis(getMetadata().getLag());
         this.lagSwellMillis = lagMillis * 3;
-        this.checkOrder = key.isOrdered() && getTimestampOffset() != -1;
+        this.checkOrder = metadata.getKey().isOrdered() && getTimestampOffset() != -1;
         this.journalEntryWriter = new JournalEntryWriterImpl(this);
         this.discardTxt = new File(metadata.getLocation(), "discard.txt");
     }
@@ -202,17 +202,6 @@ public class JournalWriter<T> extends Journal<T> {
     @Override
     public int getMode() {
         return JournalMode.APPEND;
-    }
-
-    @Override
-    public int hashCode() {
-        return getKey().hashCode();
-    }
-
-    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
-    @Override
-    public boolean equals(Object o) {
-        return this == o || !(o == null || getClass() != o.getClass()) && getKey().equals(((Journal) o).getKey());
     }
 
     @Override

@@ -134,7 +134,7 @@ public class ClusterController {
                 LOG.info().$(thisNode.toString()).$(" Subscribing journals").$();
                 for (int i = 0, sz = writers.size(); i < sz; i++) {
                     JournalWriter w = writers.get(i);
-                    client.subscribe(w.getKey(), w, null);
+                    client.subscribe(w.getMetadata().getKey(), w, null);
                 }
 
                 client.start();

@@ -61,7 +61,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private final File location;
     private final ObjObjHashMap<String, MMappedSymbolTable> symbolTableMap = new ObjObjHashMap<>();
     private final ObjList<MMappedSymbolTable> symbolTables = new ObjList<>();
-    private final JournalKey<T> key;
     private final Query<T> query = new QueryImpl<>(this);
     private final long timestampOffset;
     private final Comparator<T> timestampComparator = new Comparator<T>() {
@@ -82,9 +81,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private TxIterator txIterator;
     private long lastExpireCheck = 0L;
 
-    public Journal(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
+    public Journal(JournalMetadata<T> metadata) throws JournalException {
         this.metadata = metadata;
-        this.key = key;
         this.location = new File(metadata.getLocation());
         this.txLog = new TxLog(location, getMode(), metadata.getTxCountHint());
         this.open = true;
@@ -179,10 +177,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
         irregularPartition.setPartitionIndex(nonLagPartitionCount());
     }
 
-    public JournalKey<T> getKey() {
-        return key;
-    }
-
     public Partition<T> getLastPartition() throws JournalException {
         Partition<T> result;
 
@@ -273,6 +267,10 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return JournalMode.READ;
     }
 
+    public String getName() {
+        return getMetadata().getKey().path();
+    }
+
     public Partition<T> getPartition(int partitionIndex, boolean open) throws JournalException {
         if (irregularPartition != null && partitionIndex == nonLagPartitionCount()) {
             return open ? irregularPartition.open() : irregularPartition;
@@ -324,22 +322,6 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     public boolean hasIrregularPartition() {
         return irregularPartition != null;
-    }
-
-    @Override
-    public int hashCode() {
-        return key.hashCode();
-    }
-
-    @SuppressWarnings("EqualsBetweenInconvertibleTypes")
-    @Override
-    public boolean equals(Object o) {
-        return this == o || !(o == null || getClass() != o.getClass()) && key.equals(((Journal) o).key);
-    }
-
-    @Override
-    public String toString() {
-        return getClass().getName() + "[location=" + location + ", " + "mode=" + getMode() + ", " + ", metadata=" + metadata + ']';
     }
 
     public long incrementRowID(long rowID) throws JournalException {
@@ -494,6 +476,11 @@ public class Journal<T> implements Iterable<T>, Closeable {
             result += getPartition(i, true).size();
         }
         return result;
+    }
+
+    @Override
+    public String toString() {
+        return getClass().getName() + "[location=" + location + ", " + "mode=" + getMode() + ", " + ", metadata=" + metadata + ']';
     }
 
     public TxIterator transactions() {

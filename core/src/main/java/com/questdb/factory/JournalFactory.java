@@ -75,7 +75,7 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     @Override
     public <T> JournalBulkWriter<T> bulkWriter(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
-        return new JournalBulkWriter<>(metadata, key);
+        return new JournalBulkWriter<>(metadata);
     }
 
     @Override
@@ -117,7 +117,7 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     @Override
     public <T> JournalWriter<T> writer(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
-        return new JournalWriter<>(metadata, key);
+        return new JournalWriter<>(metadata);
     }
 
     /**

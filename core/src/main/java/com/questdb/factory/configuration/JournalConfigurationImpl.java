@@ -99,7 +99,12 @@ class JournalConfigurationImpl implements JournalConfiguration {
                     builder = new JournalMetadataBuilder<>(mn);
                 }
             }
-            return builder.partitionBy(key.getPartitionBy()).recordCountHint(key.getRecordHint()).location(journalLocation).build();
+            return builder.
+                    partitionBy(key.getPartitionBy()).
+                    recordCountHint(key.getRecordHint()).
+                    location(journalLocation).
+                    ordered(key.isOrdered()).
+                    build();
         } else {
             // journal exists on disk
             if (mn == null) {

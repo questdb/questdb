@@ -186,7 +186,7 @@ public class JournalClient {
     }
 
     public <T> void subscribe(JournalKey<T> remoteKey, JournalWriter<T> writer, JournalListener journalListener) {
-        subscribe(remoteKey, writer.getKey(), journalListener, writer);
+        subscribe(remoteKey, writer.getMetadata().getKey(), journalListener, writer);
     }
 
     public void subscribe(JournalKey remote, JournalKey local, JournalListener journalListener) {

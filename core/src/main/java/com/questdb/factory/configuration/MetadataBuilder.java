@@ -34,6 +34,8 @@ public interface MetadataBuilder<T> {
 
     MetadataBuilder<T> location(File path);
 
+    MetadataBuilder<T> ordered(boolean flag);
+
     MetadataBuilder<T> partitionBy(int partitionBy);
 
     MetadataBuilder<T> recordCountHint(int count);

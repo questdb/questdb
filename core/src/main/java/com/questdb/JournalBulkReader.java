@@ -27,8 +27,8 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalMetadata;
 
 public class JournalBulkReader<T> extends Journal<T> {
-    public JournalBulkReader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
-        super(metadata, key);
+    public JournalBulkReader(JournalMetadata<T> metadata) throws JournalException {
+        super(metadata);
     }
 
     @Override

@@ -58,6 +58,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     private final int lag;
     private final boolean partialMapping;
     private final JournalKey<T> key;
+    private final boolean ordered;
 
     public JournalMetadata(
             String id
@@ -73,6 +74,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
             , int ioBlockTxCount
             , int lag
             , boolean partialMapping
+            , boolean ordered
     ) {
         this.id = id;
         this.modelClass = modelClass;
@@ -95,10 +97,11 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         this.lag = lag;
         this.partialMapping = partialMapping;
         if (modelClass != null) {
-            this.key = new JournalKey<>(modelClass, Chars.getFileName(location));
+            this.key = new JournalKey<>(modelClass, Chars.getFileName(location), partitionBy, ordered);
         } else {
-            this.key = new JournalKey<>(id);
+            this.key = new JournalKey<>(id, null, partitionBy, ioBlockRecordCount, ordered);
         }
+        this.ordered = ordered;
     }
 
     public JournalMetadata(UnstructuredFile buf) {
@@ -126,9 +129,10 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         ioBlockTxCount = buf.getInt();
         keyColumn = buf.getStr();
         lag = buf.getInt();
+        ordered = buf.getBool();
         constructor = null;
         partialMapping = false;
-        this.key = new JournalKey<>(id);
+        this.key = new JournalKey<>(id, Chars.getFileName(location), partitionBy, ioBlockRecordCount, ordered);
     }
 
     public void copyColumnMetadata(ColumnMetadata[] meta) {
@@ -258,6 +262,10 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         return true;
     }
 
+    public boolean isOrdered() {
+        return ordered;
+    }
+
     public boolean isPartialMapped() {
         return partialMapping;
     }
@@ -316,6 +324,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         buf.put(ioBlockTxCount);
         buf.put(keyColumn);
         buf.put(lag);
+        buf.put(ordered);
         buf.setAppendOffset(buf.getPos());
     }
 

@@ -58,6 +58,7 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public PartitionCursor prepareCursor(JournalReaderFactory factory) {
         try {
             this.journal = factory.reader(metadata);

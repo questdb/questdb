@@ -86,7 +86,7 @@ public class JournalTestFactory extends JournalFactory implements TestRule, Jour
 
     @Override
     public <T> Journal<T> reader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
-        Journal<T> reader = new Journal<>(metadata, key);
+        Journal<T> reader = new Journal<>(metadata);
         journals.add(reader);
         reader.setCloseListener(this);
         return reader;
