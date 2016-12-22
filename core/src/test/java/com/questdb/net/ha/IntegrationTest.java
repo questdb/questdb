@@ -41,6 +41,7 @@ import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -65,6 +66,7 @@ public class IntegrationTest extends AbstractTest {
     }
 
     @Test
+    @Ignore
     public void testBadJournalDoesNotResubscribe() throws Exception {
         // todo: test that when client reconnects it doesn't retry bad subscriptions
         Assert.fail();
@@ -508,6 +510,7 @@ public class IntegrationTest extends AbstractTest {
     }
 
     @Test
+    @Ignore
     public void testResubscribeAfterUnsubscribe() throws Exception {
         //todo: test that it is possible to re-subscribe after unsubscribe call
         Assert.fail();
@@ -570,6 +573,7 @@ public class IntegrationTest extends AbstractTest {
     }
 
     @Test
+    @Ignore
     public void testSubscribeCopyOnTheFly() throws Exception {
         // todo: test that server can multiplex journal when needed
         Assert.fail();
@@ -1016,18 +1020,21 @@ public class IntegrationTest extends AbstractTest {
     }
 
     @Test
+    @Ignore
     public void testUnsubscribe() throws Exception {
         //todo: check that unsubscribe triggers correct event sequence
         Assert.fail();
     }
 
     @Test
+    @Ignore
     public void testUnsubscribeOnTheFly() throws Exception {
         //todo: test that unsubscribe on the fly does not impact existing data flow
         Assert.fail();
     }
 
     @Test
+    @Ignore
     public void testUnsubscribeReconnectBehaviour() throws Exception {
         // todo: test that unsubscribed journal does not cause re-subscription on client failover
         Assert.fail();

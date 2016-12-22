@@ -26,15 +26,19 @@ package com.questdb.factory;
 import com.questdb.Journal;
 import com.questdb.JournalBulkReader;
 import com.questdb.JournalKey;
+import com.questdb.ex.JournalDoesNotExistException;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
+    private final static Log LOG = LogFactory.getLog(JournalCachingFactory.class);
     private final CharSequenceObjHashMap<Journal> readers = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<JournalBulkReader> bulkReaders = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<JournalMetadata> metadata = new CharSequenceObjHashMap<>();
@@ -125,7 +129,8 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         Journal result = readers.get(name);
         if (result == null) {
             if (getConfiguration().exists(name) != JournalConfiguration.EXISTS) {
-                throw new JournalException("Journal does not exist");
+                LOG.error().$("Journal does not exist: ").$(name).$();
+                throw JournalDoesNotExistException.INSTANCE;
             }
             result = new Journal<>(metadata, key);
             result.setCloseListener(this);

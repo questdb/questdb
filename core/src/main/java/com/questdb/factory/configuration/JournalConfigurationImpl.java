@@ -25,8 +25,12 @@ package com.questdb.factory.configuration;
 
 import com.questdb.JournalKey;
 import com.questdb.JournalMode;
+import com.questdb.ex.JournalDoesNotExistException;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalMetadataException;
+import com.questdb.ex.JournalWriterAlreadyOpenException;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.Files;
 import com.questdb.misc.Os;
 import com.questdb.std.ObjObjHashMap;
@@ -40,6 +44,8 @@ import com.questdb.store.UnstructuredFile;
 import java.io.File;
 
 class JournalConfigurationImpl implements JournalConfiguration {
+
+    private static final Log LOG = LogFactory.getLog(JournalConfigurationImpl.class);
 
     private final static ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath.FACTORY);
     private final ObjObjHashMap<String, JournalMetadata> journalMetadata;
@@ -78,7 +84,8 @@ class JournalConfigurationImpl implements JournalConfiguration {
             // 2. key represents a class that can be introspected
 
             if (mn == null && key.getModelClass() == null) {
-                throw new JournalException("Journal does not exist");
+                LOG.error().$("Journal does not exist: ").$(key.path()).$();
+                throw JournalDoesNotExistException.INSTANCE;
             }
 
             MetadataBuilder<T> builder;
@@ -126,7 +133,8 @@ class JournalConfigurationImpl implements JournalConfiguration {
         Lock lock = LockManager.lockExclusive(l.getAbsolutePath());
         try {
             if (lock == null || !lock.isValid()) {
-                throw new JournalException("Journal is open for APPEND at %s", l);
+                LOG.error().$("Cannot obtain lock on ").$(l).$();
+                throw JournalWriterAlreadyOpenException.INSTANCE;
             }
             Files.deleteOrException(l);
         } finally {
@@ -165,7 +173,8 @@ class JournalConfigurationImpl implements JournalConfiguration {
                 newName.of(path).concat(to).$();
 
                 if (!Files.exists(oldName)) {
-                    throw new JournalException("Journal does not exist");
+                    LOG.error().$("Journal does not exist: ").$(oldName).$();
+                    throw JournalDoesNotExistException.INSTANCE;
                 }
 
                 if (Os.type == Os.WINDOWS) {
@@ -177,7 +186,8 @@ class JournalConfigurationImpl implements JournalConfiguration {
                 Lock lock = LockManager.lockExclusive(oldName.toString());
                 try {
                     if (lock == null || !lock.isValid()) {
-                        throw new JournalException("Journal is already open for APPEND at %s", oldName.toString());
+                        LOG.error().$("Cannot obtain lock on ").$(oldName).$();
+                        throw JournalWriterAlreadyOpenException.INSTANCE;
                     }
 
                     if (Files.exists(newName)) {
@@ -189,7 +199,8 @@ class JournalConfigurationImpl implements JournalConfiguration {
                     try {
 
                         if (writeLock == null || !writeLock.isValid()) {
-                            throw new JournalException("Journal is already open for APPEND at %s", newName.toString());
+                            LOG.error().$("Cannot obtain lock on ").$(newName).$();
+                            throw JournalWriterAlreadyOpenException.INSTANCE;
                         }
 
                         if (!Files.rename(oldName, newName)) {

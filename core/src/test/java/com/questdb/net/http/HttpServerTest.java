@@ -395,7 +395,7 @@ public class HttpServerTest extends AbstractJournalTest {
             StringBuilder response = new StringBuilder();
             try {
                 Assert.assertEquals(200, HttpTestUtils.upload("/csv/small.csv", "http://localhost:9000/imp?fmt=json", null, response));
-                Assert.assertTrue(Chars.startsWith(response, "{\"status\":\"com.questdb.ex.JournalException: Journal is already open for APPEND"));
+                Assert.assertTrue(Chars.startsWith(response, "{\"status\":\"com.questdb.ex.JournalWriterAlreadyOpenException\"}"));
             } catch (IOException e) {
                 Assert.assertTrue(e.getMessage().contains("Connection reset"));
             } finally {

@@ -25,7 +25,7 @@ package com.questdb.store;
 
 import com.questdb.JournalMode;
 import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalNoSuchFileException;
+import com.questdb.ex.JournalIOException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -318,14 +318,16 @@ public class MemoryFile implements Closeable {
         try {
             this.channel = new RandomAccessFile(file, mode).getChannel();
         } catch (FileNotFoundException e) {
-            throw new JournalNoSuchFileException(e);
+            LOG.error().$(e).$();
+            throw JournalIOException.INSTANCE;
         }
 
         long size;
         try {
             size = channel.size();
         } catch (IOException e) {
-            throw new JournalException(e);
+            LOG.error().$(e).$();
+            throw JournalIOException.INSTANCE;
         }
 
         try {
@@ -354,10 +356,11 @@ public class MemoryFile implements Closeable {
             try {
                 this.channel.close();
             } catch (IOException ignore) {
-                // ignore
+                LOG.error().$("Cannot close channel").$();
             }
             this.channel = null;
-            throw new JournalException(e);
+            LOG.error().$(e).$();
+            throw JournalIOException.INSTANCE;
         }
 
         return size;

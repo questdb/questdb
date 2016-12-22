@@ -23,9 +23,7 @@
 
 package com.questdb;
 
-import com.questdb.ex.IncompatibleJournalException;
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.ex.*;
 import com.questdb.factory.configuration.Constants;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
@@ -229,7 +227,8 @@ public class JournalWriter<T> extends Journal<T> {
         writeLock = LockManager.lockExclusive(getLocation().getAbsolutePath());
         if (writeLock == null || !writeLock.isValid()) {
             close();
-            throw new JournalException("Journal is already open for APPEND at %s", getLocation());
+            LOG.error().$("Cannot obtain lock on ").$(getLocation().getAbsolutePath()).$();
+            throw JournalWriterAlreadyOpenException.INSTANCE;
         }
 
         try {
@@ -840,7 +839,8 @@ public class JournalWriter<T> extends Journal<T> {
                 FileChannel ch = discardTxtRaf.getChannel();
                 discardSink = new FlexBufferSink(ch.position(ch.size()), 1024 * 1024);
             } catch (IOException e) {
-                throw new JournalException(e);
+                LOG.error().$(e).$();
+                throw JournalIOException.INSTANCE;
             }
         }
 
@@ -903,7 +903,8 @@ public class JournalWriter<T> extends Journal<T> {
                 discardSink.flush();
             }
         } catch (IOException e) {
-            throw new JournalException(e);
+            LOG.error().$(e).$();
+            throw JournalIOException.INSTANCE;
         }
     }
 

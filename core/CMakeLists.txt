@@ -17,10 +17,10 @@ set(SOURCE_FILES
         src/main/c/share/os.h)
 
 # JNI includes
-include_directories(${JAVA_HOME}/include/)
+include_directories($ENV{JAVA_HOME}/include/)
 
 if (APPLE)
-    include_directories(${JAVA_HOME}/include/darwin/)
+    include_directories($ENV{JAVA_HOME}/include/darwin/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/osx)
     set(SOURCE_FILES ${SOURCE_FILES}
             src/main/c/osx/kqueue.h
@@ -28,7 +28,7 @@ if (APPLE)
             src/main/c/share/net.c
             )
 elseif (UNIX)
-    include_directories(${JAVA_HOME}/include/linux/)
+    include_directories($ENV{JAVA_HOME}/include/linux/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
     set(SOURCE_FILES ${SOURCE_FILES}
             src/main/c/share/net.c
@@ -36,7 +36,7 @@ elseif (UNIX)
 endif (APPLE)
 
 if (WIN32)
-    include_directories(${JAVA_HOME}/include/win32/)
+    include_directories($ENV{JAVA_HOME}/include/win32/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/windows)
     set(SOURCE_FILES ${SOURCE_FILES}
             src/main/c/windows/files.c

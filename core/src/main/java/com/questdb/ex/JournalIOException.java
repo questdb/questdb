@@ -23,9 +23,9 @@
 
 package com.questdb.ex;
 
-public class JournalNoSuchFileException extends JournalException {
+public class JournalIOException extends JournalException {
+    public static final JournalIOException INSTANCE = new JournalIOException();
 
-    public JournalNoSuchFileException(Throwable cause) {
-        super(cause);
+    private JournalIOException() {
     }
 }
