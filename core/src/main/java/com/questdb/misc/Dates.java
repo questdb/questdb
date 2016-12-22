@@ -365,7 +365,17 @@ final public class Dates {
     }
 
     public static long parseDateTimeFmt3(CharSequence seq) throws NumericException {
-        return parseDateTimeFmt3(seq, 0, seq.length());
+        int lim = seq.length();
+        int p = 0;
+        int day = int0(seq, p, p += 2, lim);
+        checkChar(seq, p++, lim, '/');
+        int month = int0(seq, p, p += 2, lim);
+        checkRange(month, 1, 12);
+        checkChar(seq, p++, lim, '/');
+        int year = int0(seq, p, p + 4, lim);
+        boolean l = isLeapYear(year);
+        checkRange(day, 1, getDaysPerMonth(month, l));
+        return yearMillis(year, l) + monthOfYearMillis(month, l) + (day - 1) * DAY_MILLIS;
     }
 
     // YYYY-MM-DDThh:mm:ss.mmm
@@ -378,38 +388,34 @@ final public class Dates {
     }
 
     public static Interval parseInterval(CharSequence seq) throws NumericException {
-        return parseInterval(seq, 0, seq.length());
-    }
-
-    public static Interval parseInterval(CharSequence seq, final int pos, int lim) throws NumericException {
-        int len = lim - pos;
-        int p = pos;
-        if (len < 4) {
+        int lim = seq.length();
+        int p = 0;
+        if (lim < 4) {
             throw NumericException.INSTANCE;
         }
         int year = Numbers.parseInt(seq, p, p += 4);
         boolean l = isLeapYear(year);
-        if (checkLen(p, len)) {
+        if (checkLen(p, lim)) {
             checkChar(seq, p++, lim, '-');
             int month = Numbers.parseInt(seq, p, p += 2);
             checkRange(month, 1, 12);
-            if (checkLen(p, len)) {
+            if (checkLen(p, lim)) {
                 checkChar(seq, p++, lim, '-');
                 int day = Numbers.parseInt(seq, p, p += 2);
                 checkRange(day, 1, getDaysPerMonth(month, l));
-                if (checkLen(p, len)) {
+                if (checkLen(p, lim)) {
                     checkChar(seq, p++, lim, 'T');
                     int hour = Numbers.parseInt(seq, p, p += 2);
                     checkRange(hour, 0, 23);
-                    if (checkLen(p, len)) {
+                    if (checkLen(p, lim)) {
                         checkChar(seq, p++, lim, ':');
                         int min = Numbers.parseInt(seq, p, p += 2);
                         checkRange(min, 0, 59);
-                        if (checkLen(p, len)) {
+                        if (checkLen(p, lim)) {
                             checkChar(seq, p++, lim, ':');
                             int sec = Numbers.parseInt(seq, p, p += 2);
                             checkRange(sec, 0, 59);
-                            if (p < len) {
+                            if (p < lim) {
                                 throw NumericException.INSTANCE;
                             } else {
                                 // seconds
@@ -478,7 +484,7 @@ final public class Dates {
                 return new Interval(yearMillis(year, l) + monthOfYearMillis(month, l),
                         yearMillis(year, l)
                                 + monthOfYearMillis(month, l)
-                                + (DAYS_PER_MONTH[month - 1] - 1) * DAY_MILLIS
+                                + (getDaysPerMonth(month, l) - 1) * DAY_MILLIS
                                 + 23 * HOUR_MILLIS
                                 + 59 * MINUTE_MILLIS
                                 + 59 * SECOND_MILLIS
@@ -612,11 +618,8 @@ final public class Dates {
     }
 
     public static long parseTime24(CharSequence seq) throws NumericException {
-        return parseTime24(seq, 0, seq.length());
-    }
-
-    public static long parseTime24(CharSequence seq, int lo, int lim) throws NumericException {
-        int p = lo;
+        int lim = seq.length();
+        int p = 0;
         if (p + 2 > lim) {
             throw NumericException.INSTANCE;
         }
@@ -905,20 +908,6 @@ final public class Dates {
         return yearMillis(year, l)
                 + monthOfYearMillis(month, l)
                 + (day - 1) * DAY_MILLIS;
-    }
-
-    // DD/MM/YYYY
-    private static long parseDateTimeFmt3(CharSequence seq, int lo, int lim) throws NumericException {
-        int p = lo;
-        int day = int0(seq, p, p += 2, lim);
-        checkChar(seq, p++, lim, '/');
-        int month = int0(seq, p, p += 2, lim);
-        checkRange(month, 1, 12);
-        checkChar(seq, p++, lim, '/');
-        int year = int0(seq, p, p + 4, lim);
-        boolean l = isLeapYear(year);
-        checkRange(day, 1, getDaysPerMonth(month, l));
-        return yearMillis(year, l) + monthOfYearMillis(month, l) + (day - 1) * DAY_MILLIS;
     }
 
     private static long toMillis(int y, int m, int d) {

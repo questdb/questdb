@@ -201,6 +201,16 @@ public class DatesTest {
     }
 
     @Test
+    public void testLeapYearIntervals() throws Exception {
+        TestUtils.assertEquals("Interval{lo=2016-01-01T00:00:00.000Z, hi=2016-12-31T23:59:59.999Z}", Dates.parseInterval("2016").toString());
+        TestUtils.assertEquals("Interval{lo=2016-02-01T00:00:00.000Z, hi=2016-02-29T23:59:59.999Z}", Dates.parseInterval("2016-02").toString());
+        TestUtils.assertEquals("Interval{lo=2016-02-29T00:00:00.000Z, hi=2016-02-29T23:59:59.999Z}", Dates.parseInterval("2016-02-29").toString());
+        TestUtils.assertEquals("Interval{lo=2016-02-29T14:00:00.000Z, hi=2016-02-29T14:59:59.999Z}", Dates.parseInterval("2016-02-29T14").toString());
+        TestUtils.assertEquals("Interval{lo=2016-02-29T10:15:00.000Z, hi=2016-02-29T10:15:59.999Z}", Dates.parseInterval("2016-02-29T10:15").toString());
+        TestUtils.assertEquals("Interval{lo=2016-02-29T08:25:30.000Z, hi=2016-02-29T08:25:30.999Z}", Dates.parseInterval("2016-02-29T08:25:30").toString());
+    }
+
+    @Test
     public void testOverflowDate() throws Exception {
         Assert.assertEquals("4509540-01-02T00:00:00.000Z", Dates.toString(142245170150400000L));
     }
