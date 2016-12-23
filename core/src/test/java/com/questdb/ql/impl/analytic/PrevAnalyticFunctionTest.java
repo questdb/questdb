@@ -29,6 +29,7 @@ import com.questdb.ql.parser.QueryError;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class PrevAnalyticFunctionTest extends AbstractAllTypeTest {

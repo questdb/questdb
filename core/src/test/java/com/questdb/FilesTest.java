@@ -26,6 +26,7 @@ package com.questdb;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.ByteBuffers;
+import com.questdb.misc.Chars;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Files;
 import com.questdb.std.ObjList;
@@ -44,6 +45,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Comparator;
 
 public class FilesTest {
 
@@ -135,6 +137,14 @@ public class FilesTest {
                 }
             }
         }
+
+        names.sort(new Comparator<String>() {
+            @Override
+            public int compare(String o1, String o2) {
+                return Chars.compare(o1, o2);
+            }
+        });
+
         Assert.assertEquals("[.,..,a.txt]", names.toString());
     }
 

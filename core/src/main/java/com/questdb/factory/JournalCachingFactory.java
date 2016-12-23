@@ -41,7 +41,6 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     private final static Log LOG = LogFactory.getLog(JournalCachingFactory.class);
     private final CharSequenceObjHashMap<Journal> readers = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<JournalBulkReader> bulkReaders = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<JournalMetadata> metadata = new CharSequenceObjHashMap<>();
     private final ObjList<Journal> journalList = new ObjList<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private JournalFactoryPool pool;
@@ -51,7 +50,7 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         super(configuration);
     }
 
-    public JournalCachingFactory(JournalConfiguration configuration, JournalFactoryPool pool) {
+    JournalCachingFactory(JournalConfiguration configuration, JournalFactoryPool pool) {
         super(configuration);
         this.pool = pool;
     }
@@ -81,29 +80,21 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
             }
         } else {
             if (closed.compareAndSet(false, true)) {
-                for (int i = 0, sz = journalList.size(); i < sz; i++) {
-                    Journal journal = journalList.getQuick(i);
-                    journal.setCloseListener(null);
-                    if (journal.isOpen()) {
-                        journal.close();
-                    }
-                }
-                readers.clear();
-                bulkReaders.clear();
+                reset();
             }
         }
     }
 
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
-        String name = key.path();
-        JournalMetadata m = metadata.get(name);
-        if (m == null) {
-            m = super.getOrCreateMetadata(key);
-            metadata.put(name, m);
+    public void reset() {
+        for (int i = 0, sz = journalList.size(); i < sz; i++) {
+            Journal journal = journalList.getQuick(i);
+            journal.setCloseListener(null);
+            if (journal.isOpen()) {
+                journal.close();
+            }
         }
-        return m;
+        readers.clear();
+        bulkReaders.clear();
     }
 
     @Override
@@ -138,8 +129,6 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
             j.close();
             bulkReaders.remove(name);
         }
-
-        metadata.remove(name);
     }
 
     @Override

@@ -37,12 +37,12 @@ public class $ColsRecordSourceTest extends AbstractOptimiserTest {
 
     @Test
     public void testCompiled() throws Exception {
-        assertThat("abc\ta\tSYMBOL\tfalse\t\ttrue\t127\n" +
+        assertThat("abc\td\tDOUBLE\tfalse\t\tfalse\t0\n" +
                         "abc\tb\tBOOLEAN\tfalse\t\tfalse\t0\n" +
-                        "abc\td\tDOUBLE\tfalse\t\tfalse\t0\n" +
-                        "xyz\tx\tINT\tfalse\t\tfalse\t0\n" +
+                        "abc\ta\tSYMBOL\tfalse\t\ttrue\t127\n" +
+                        "xyz\tts\tDATE\ttrue\tYEAR\tfalse\t0\n" +
                         "xyz\ty\tSTRING\tfalse\t\ttrue\t31\n" +
-                        "xyz\tts\tDATE\ttrue\tYEAR\tfalse\t0\n",
-                "$cols");
+                        "xyz\tx\tINT\tfalse\t\tfalse\t0\n",
+                "$cols order by table_name, column_name");
     }
 }
