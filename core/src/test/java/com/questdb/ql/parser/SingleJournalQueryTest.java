@@ -2496,18 +2496,18 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testOrderByReplace() throws Exception {
         tabOfDates();
-        assertThat("x\n" +
-                        "2016, Oct 8\n" +
-                        "2016, Oct 9\n" +
-                        "2016, Nov 1\n" +
-                        "2016, Nov 2\n" +
-                        "2016, Nov 3\n" +
-                        "2016, Nov 4\n" +
-                        "2016, Nov 5\n" +
-                        "2016, Nov 6\n" +
-                        "2016, Nov 7\n" +
-                        "2016, Nov 8\n",
-                "select replace('(.+) (.+)$', '$2, $1', dtoa4(timestamp)) x from tab order by x asc limit 10", true);
+        assertThat("x\ttimestamp\n" +
+                        "2016, Oct 10\t2016-10-10T00:00:00.000Z\n" +
+                        "2016, Oct 11\t2016-10-11T00:00:00.000Z\n" +
+                        "2016, Oct 12\t2016-10-12T00:00:00.000Z\n" +
+                        "2016, Oct 13\t2016-10-13T00:00:00.000Z\n" +
+                        "2016, Oct 14\t2016-10-14T00:00:00.000Z\n" +
+                        "2016, Oct 15\t2016-10-15T00:00:00.000Z\n" +
+                        "2016, Oct 16\t2016-10-16T00:00:00.000Z\n" +
+                        "2016, Oct 17\t2016-10-17T00:00:00.000Z\n" +
+                        "2016, Oct 18\t2016-10-18T00:00:00.000Z\n" +
+                        "2016, Oct 19\t2016-10-19T00:00:00.000Z\n",
+                "select replace('(.+) (.+)$', '$2, $1', dtoa4(timestamp)) x, timestamp from tab order by x asc limit 10", true);
     }
 
     @Test

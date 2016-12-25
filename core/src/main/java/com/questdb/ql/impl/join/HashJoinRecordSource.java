@@ -31,10 +31,7 @@ import com.questdb.ql.impl.NullableRecord;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.join.hash.MultiRecordMap;
-import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.MapUtils;
-import com.questdb.ql.impl.map.RecordKeyCopier;
-import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
+import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.IntList;
 import com.questdb.std.str.CharSink;
@@ -42,6 +39,7 @@ import com.questdb.std.str.CharSink;
 import java.io.Closeable;
 
 public class HashJoinRecordSource extends AbstractCombinedRecordSource implements Closeable {
+    private static final MetadataTypeResolver.MetadataTypeResolverThreadLocal tlMetadataResolver = new MetadataTypeResolver.MetadataTypeResolverThreadLocal();
     private final RecordSource master;
     private final RecordSource slave;
     private final SplitRecordMetadata metadata;
@@ -73,18 +71,20 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     ) {
         this.master = master;
         this.slave = slave;
-        this.metadata = new SplitRecordMetadata(master.getMetadata(), slave.getMetadata());
+        final RecordMetadata mrm = master.getMetadata();
+        final RecordMetadata srm = slave.getMetadata();
+        this.metadata = new SplitRecordMetadata(mrm, srm);
         this.byRowId = slave.supportsRowIdAccess();
         this.masterColIndex = masterColIndices;
         this.slaveColIndex = slaveColIndices;
-        this.recordMap = byRowId ? new MultiRecordMap(slaveColIndex.size(), MapUtils.ROWID_RECORD_METADATA, keyPageSize, rowIdPageSize) :
-                new MultiRecordMap(slaveColIndex.size(), slave.getMetadata(), keyPageSize, dataPageSize);
+        this.recordMap = byRowId ? new MultiRecordMap(tlMetadataResolver.get().of(srm, slaveColIndices), MapUtils.ROWID_RECORD_METADATA, keyPageSize, rowIdPageSize) :
+                new MultiRecordMap(tlMetadataResolver.get().of(srm, slaveColIndices), srm, keyPageSize, dataPageSize);
         this.nullableRecord = new NullableRecord(byRowId ? slave.getRecord() : recordMap.getRecord());
-        this.record = new SplitRecord(master.getMetadata().getColumnCount(), slave.getMetadata().getColumnCount(), master.getRecord(), nullableRecord);
+        this.record = new SplitRecord(mrm.getColumnCount(), srm.getColumnCount(), master.getRecord(), nullableRecord);
         this.outer = outer;
-        this.storageFacade = new SplitRecordStorageFacade(master.getMetadata().getColumnCount());
-        this.masterCopier = compiler.compile(master.getMetadata(), masterColIndices);
-        this.slaveCopier = compiler.compile(slave.getMetadata(), slaveColIndices);
+        this.storageFacade = new SplitRecordStorageFacade(mrm.getColumnCount());
+        this.masterCopier = compiler.compile(mrm, masterColIndices);
+        this.slaveCopier = compiler.compile(srm, slaveColIndices);
     }
 
     @Override

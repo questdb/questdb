@@ -38,11 +38,13 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 public class RecordListRecord extends AbstractRecord {
-    private final DirectCharSequence csA = new DirectCharSequence();
-    private final DirectCharSequence csB = new DirectCharSequence();
+    //    private final DirectCharSequence csA = new DirectCharSequence();
+//    private final DirectCharSequence csB = new DirectCharSequence();
     private final MemoryPages mem;
     private final int headerSize;
     private final int[] offsets;
+    private final DirectCharSequence[] csA;
+    private final DirectCharSequence[] csB;
     private int fixedSize;
     private long address;
     private StorageFacade storageFacade;
@@ -50,6 +52,8 @@ public class RecordListRecord extends AbstractRecord {
     public RecordListRecord(RecordMetadata metadata, MemoryPages mem) {
         this.mem = mem;
         offsets = new int[metadata.getColumnCount()];
+        csA = new DirectCharSequence[offsets.length];
+        csB = new DirectCharSequence[offsets.length];
 
         int varColIndex = 0;
         for (int i = 0; i < offsets.length; i++) {
@@ -61,6 +65,8 @@ public class RecordListRecord extends AbstractRecord {
                 fixedSize += size;
             } else {
                 offsets[i] = -(varColIndex++);
+                csA[i] = new DirectCharSequence();
+                csB[i] = new DirectCharSequence();
             }
         }
 
@@ -131,7 +137,7 @@ public class RecordListRecord extends AbstractRecord {
         long readAddress = addressOf(col);
         final int len = Unsafe.getUnsafe().getInt(readAddress);
         if (len < 0) return null;
-        return csA.of(readAddress + 4, readAddress + 4 + len * 2);
+        return Unsafe.arrayGet(csA, col).of(readAddress + 4, readAddress + 4 + len * 2);
     }
 
     @Override
@@ -139,7 +145,7 @@ public class RecordListRecord extends AbstractRecord {
         long readAddress = addressOf(col);
         final int len = Unsafe.getUnsafe().getInt(readAddress);
         if (len < 0) return null;
-        return csB.of(readAddress + 4, readAddress + 4 + len * 2);
+        return Unsafe.arrayGet(csB, col).of(readAddress + 4, readAddress + 4 + len * 2);
     }
 
     @Override

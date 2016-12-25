@@ -41,6 +41,9 @@ import java.util.Map;
 public class DirectMapTest {
 
     private static final IntList COLUMN_TYPES = new IntList();
+    private static final IntList KEY_TYPES = new IntList();
+    private static final ColumnTypeResolver KEY_RESOLVER = new TypeListResolver().of(KEY_TYPES);
+    private static final ColumnTypeResolver VALUE_RESOLVER = new TypeListResolver().of(COLUMN_TYPES);
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -50,6 +53,18 @@ public class DirectMapTest {
         COLUMN_TYPES.add(ColumnType.BYTE);
         COLUMN_TYPES.add(ColumnType.DOUBLE);
         COLUMN_TYPES.add(ColumnType.FLOAT);
+
+        KEY_TYPES.add(ColumnType.STRING);
+        KEY_TYPES.add(ColumnType.LONG);
+        KEY_TYPES.add(ColumnType.BOOLEAN);
+        KEY_TYPES.add(ColumnType.INT);
+        KEY_TYPES.add(ColumnType.SHORT);
+        KEY_TYPES.add(ColumnType.BYTE);
+        KEY_TYPES.add(ColumnType.DOUBLE);
+        KEY_TYPES.add(ColumnType.FLOAT);
+        KEY_TYPES.add(ColumnType.LONG);
+        KEY_TYPES.add(ColumnType.STRING);
+        KEY_TYPES.add(ColumnType.BYTE);
     }
 
     @Test
@@ -68,7 +83,7 @@ public class DirectMapTest {
         final int tmpSize = 140;
         long tmp = Unsafe.malloc(tmpSize);
 
-        DirectMap map = new DirectMap(1024, 64, COLUMN_TYPES);
+        DirectMap map = new DirectMap(1024, KEY_RESOLVER, VALUE_RESOLVER);
         StringSink sink = new StringSink();
 
         HashMap<String, MapValue> hashMap = new HashMap<>();
@@ -206,7 +221,7 @@ public class DirectMapTest {
 
     @Test
     public void testValuesReadWrite() throws Exception {
-        DirectMap map = new DirectMap(1024, 64, COLUMN_TYPES);
+        DirectMap map = new DirectMap(1024, KEY_RESOLVER, VALUE_RESOLVER);
         HashMap<String, MapValue> hashMap = new HashMap<>();
         Rnd rnd = new Rnd();
         int n = 1000;

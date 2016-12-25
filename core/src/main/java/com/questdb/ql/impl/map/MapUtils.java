@@ -53,14 +53,6 @@ public class MapUtils {
         return map.getOrCreateValues(kw);
     }
 
-    public static IntList toTypeList(int type1, int type2) {
-        IntList l = tlTypeList.get();
-        l.clear();
-        l.add(type1);
-        l.add(type2);
-        return l;
-    }
-
     public static IntList toTypeList(int type) {
         IntList l = tlTypeList.get();
         l.clear();

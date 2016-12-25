@@ -28,9 +28,9 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.RecordList;
+import com.questdb.ql.impl.map.ColumnTypeResolver;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.std.IntList;
 import com.questdb.std.Mutable;
 import com.questdb.store.ColumnType;
 
@@ -38,12 +38,24 @@ import java.io.Closeable;
 import java.io.IOException;
 
 public class MultiRecordMap implements Closeable, Mutable {
-    private static final IntList valueCols = new IntList(2);
+    private static final ColumnTypeResolver VALUE_RESOLVER = new ColumnTypeResolver() {
+        @Override
+        public int count() {
+            return 2;
+        }
+
+        @Override
+        public int getColumnType(int index) {
+            assert index < 2;
+            return ColumnType.LONG;
+        }
+    };
+
     private final DirectMap map;
     private final RecordList records;
 
-    public MultiRecordMap(int keyCount, RecordMetadata valueMetadata, int keyPageSize, int valuePageSize) {
-        map = new DirectMap(keyPageSize, keyCount, valueCols);
+    public MultiRecordMap(ColumnTypeResolver keyResolver, RecordMetadata valueMetadata, int keyPageSize, int valuePageSize) {
+        map = new DirectMap(keyPageSize, keyResolver, VALUE_RESOLVER);
         records = new RecordList(valueMetadata, valuePageSize);
     }
 
@@ -85,10 +97,5 @@ public class MultiRecordMap implements Closeable, Mutable {
 
     public void setStorageFacade(StorageFacade storageFacade) {
         records.setStorageFacade(storageFacade);
-    }
-
-    static {
-        valueCols.add(ColumnType.LONG);
-        valueCols.add(ColumnType.LONG);
     }
 }

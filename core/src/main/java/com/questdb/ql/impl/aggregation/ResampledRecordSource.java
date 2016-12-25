@@ -38,6 +38,8 @@ import com.questdb.std.Transient;
 import com.questdb.std.str.CharSink;
 
 public class ResampledRecordSource extends AbstractCombinedRecordSource {
+    private final static com.questdb.std.ThreadLocal<VirtualColumnTypeResolver> tlAggregationTypeResolver = new VirtualColumnTypeResolver.ResolverThreadLocal();
+    private final static MetadataNameTypeResolver.MetadataNameTypeResolverThreadLocal tlMetadataTypeResolver = new MetadataNameTypeResolver.MetadataNameTypeResolverThreadLocal();
     private final DirectMap map;
     private final RecordSource recordSource;
     private final int tsIndex;
@@ -106,7 +108,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
         this.storageFacade = new DirectMapStorageFacade(columns.size() + 1, keyIndices);
         this.metadata = new DirectMapMetadata(rm, keyCols, columns);
         this.record = new DirectMapRecord(this.storageFacade);
-        this.map = new DirectMap(pageSize, keyCols.size(), AggregationUtils.toThreadLocalTypes(columns));
+        this.map = new DirectMap(pageSize, tlMetadataTypeResolver.get().of(rm, keyCols), tlAggregationTypeResolver.get().of(columns));
         this.recordSource = recordSource;
     }
 

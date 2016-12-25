@@ -50,6 +50,13 @@ public final class Chars {
         int ll = l.length();
         int rl = r.length();
 
+        for (int i = 0, n = ll < rl ? ll : rl; i < n; i++) {
+            int k = l.charAt(i) - r.charAt(i);
+            if (k != 0) {
+                return k;
+            }
+        }
+
         if (ll < rl) {
             return -1;
         }
@@ -58,12 +65,6 @@ public final class Chars {
             return 1;
         }
 
-        for (int i = 0, n = ll < rl ? ll : rl; i < n; i++) {
-            int k = l.charAt(i) - r.charAt(i);
-            if (k != 0) {
-                return k;
-            }
-        }
         return 0;
     }
 

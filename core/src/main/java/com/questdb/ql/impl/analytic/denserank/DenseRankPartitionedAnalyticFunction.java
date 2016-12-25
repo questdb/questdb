@@ -24,25 +24,24 @@
 package com.questdb.ql.impl.analytic.denserank;
 
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.impl.map.MapUtils;
+import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
-import com.questdb.store.ColumnType;
+import com.questdb.std.ThreadLocal;
 
 import java.io.Closeable;
 import java.io.IOException;
 
 public class DenseRankPartitionedAnalyticFunction extends AbstractRankAnalyticFunction implements Closeable {
 
+    private final static ThreadLocal<VirtualColumnTypeResolver> tlPartitionByTypeResolver = new VirtualColumnTypeResolver.ResolverThreadLocal();
     private final DirectMap map;
     private final ObjList<VirtualColumn> partitionBy;
 
     public DenseRankPartitionedAnalyticFunction(int pageSize, String name, ObjList<VirtualColumn> partitionBy) {
         super(name);
         this.partitionBy = partitionBy;
-        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(ColumnType.LONG));
+        this.map = new DirectMap(pageSize, tlPartitionByTypeResolver.get().of(partitionBy), LongResolver.INSTANCE);
     }
 
     @Override

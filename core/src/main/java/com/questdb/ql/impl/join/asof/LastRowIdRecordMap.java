@@ -29,13 +29,14 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapValues;
+import com.questdb.ql.impl.map.LongByteResolver;
+import com.questdb.ql.impl.map.TypeListResolver;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.IntList;
-import com.questdb.store.ColumnType;
 
 public class LastRowIdRecordMap implements LastRecordMap {
-    private static final IntList valueMetadata = new IntList();
+    private static final TypeListResolver.TypeListResolverThreadLocal tlTypeListResolver = new TypeListResolver.TypeListResolverThreadLocal();
     private final DirectMap map;
     private final IntHashSet slaveKeyIndexes;
     private final IntHashSet masterKeyIndexes;
@@ -69,7 +70,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
             slaveKeyIndexes.add(idx);
             slaveKeyTypes.add(slaveMetadata.getColumnQuick(idx).getType());
         }
-        this.map = new DirectMap(pageSize, ksz, valueMetadata);
+        this.map = new DirectMap(pageSize, tlTypeListResolver.get().of(masterKeyTypes), LongByteResolver.INSTANCE);
         this.metadata = slaveMetadata;
     }
 
@@ -122,10 +123,5 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
     private DirectMapValues getBySlave(Record record) {
         return map.getOrCreateValues(RecordUtils.createKey(map, record, slaveKeyIndexes, slaveKeyTypes));
-    }
-
-    static {
-        valueMetadata.add(ColumnType.LONG);
-        valueMetadata.add(ColumnType.BYTE);
     }
 }

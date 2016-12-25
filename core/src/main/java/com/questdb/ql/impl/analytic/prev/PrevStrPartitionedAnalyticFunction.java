@@ -31,15 +31,12 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.DirectMapEntry;
-import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.impl.map.MapUtils;
+import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
+import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectCharSequence;
-import com.questdb.store.ColumnType;
 import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.VariableColumn;
 
@@ -47,6 +44,9 @@ import java.io.Closeable;
 import java.io.IOException;
 
 public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Closeable {
+
+    private final static ThreadLocal<VirtualColumnTypeResolver> tlPartitionByTypeResolver = new VirtualColumnTypeResolver.ResolverThreadLocal();
+
     private final DirectMap map;
     private final DirectCharSequence cs = new DirectCharSequence();
     private final DirectCharSequence csB = new DirectCharSequence();
@@ -60,7 +60,7 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
     public PrevStrPartitionedAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
         this.partitionBy = partitionBy;
         this.valueColumn = valueColumn;
-        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(ColumnType.LONG, ColumnType.BYTE));
+        this.map = new DirectMap(pageSize, tlPartitionByTypeResolver.get().of(partitionBy), LongByteResolver.INSTANCE);
     }
 
     @Override

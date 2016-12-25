@@ -28,6 +28,7 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.ql.Record;
 import com.questdb.std.IntList;
+import com.questdb.std.Transient;
 import com.questdb.store.ColumnType;
 
 public class RecordKeyCopierCompiler {
@@ -37,7 +38,7 @@ public class RecordKeyCopierCompiler {
         this.asm = asm;
     }
 
-    public RecordKeyCopier compile(RecordMetadata meta, IntList columns) {
+    public RecordKeyCopier compile(RecordMetadata meta, @Transient IntList columns) {
         asm.clear();
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));

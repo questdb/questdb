@@ -27,24 +27,31 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.impl.map.MapUtils;
+import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
+import com.questdb.std.ObjectFactory;
+import com.questdb.std.ThreadLocal;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 import java.io.IOException;
 
 public class PrevPartitionedAnalyticFunction extends AbstractPrevAnalyticFunction implements Closeable {
+    private final static ThreadLocal<VirtualColumnTypeResolver> tlPartitionByTypeResolver = new VirtualColumnTypeResolver.ResolverThreadLocal();
+    private final static ThreadLocal<VirtualColumnTypeResolver2> tlVirtualColumnResolver = new ThreadLocal<>(new ObjectFactory<VirtualColumnTypeResolver2>() {
+        @Override
+        public VirtualColumnTypeResolver2 newInstance() {
+            return new VirtualColumnTypeResolver2();
+        }
+    });
     private final DirectMap map;
     private final ObjList<VirtualColumn> partitionBy;
 
     public PrevPartitionedAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
         super(valueColumn);
         this.partitionBy = partitionBy;
-        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(valueColumn.getType()));
+        this.map = new DirectMap(pageSize, tlPartitionByTypeResolver.get().of(partitionBy), tlVirtualColumnResolver.get().of(valueColumn));
     }
 
     @Override
@@ -142,5 +149,25 @@ public class PrevPartitionedAnalyticFunction extends AbstractPrevAnalyticFunctio
                 throw new JournalRuntimeException("Unsupported type: " + valueColumn.getType());
         }
 
+    }
+
+    private static class VirtualColumnTypeResolver2 implements ColumnTypeResolver {
+        private VirtualColumn column;
+
+        @Override
+        public int count() {
+            return 1;
+        }
+
+        @Override
+        public int getColumnType(int index) {
+            assert index == 0;
+            return column.getType();
+        }
+
+        public VirtualColumnTypeResolver2 of(VirtualColumn column) {
+            this.column = column;
+            return this;
+        }
     }
 }

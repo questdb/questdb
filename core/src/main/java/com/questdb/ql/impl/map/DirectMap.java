@@ -50,15 +50,15 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
     private int size = 0;
     private int mask;
 
-    public DirectMap(int pageSize, int keyCount, @Transient IntList valueColumnTypes) {
-        this(64, pageSize, 0.5f, keyCount, valueColumnTypes);
+    public DirectMap(int pageSize, @Transient ColumnTypeResolver keyResolver, @Transient ColumnTypeResolver valueResolver) {
+        this(64, pageSize, 0.5f, keyResolver, valueResolver);
     }
 
     private DirectMap(int capacity,
                       int pageSize,
                       float loadFactor,
-                      int keyCount,
-                      @Transient IntList valueColumnTypes) {
+                      ColumnTypeResolver keyResolver,
+                      ColumnTypeResolver valueResolver) {
         if (pageSize <= 0) {
             throw new IllegalArgumentException("pageSize must be > 0");
         }
@@ -74,13 +74,13 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         this.offsets = new DirectLongList(keyCapacity);
         this.offsets.setPos(keyCapacity);
         this.offsets.zero(-1);
-        int columnSplit = valueColumnTypes.size();
+        final int columnSplit = valueResolver.count();
         int[] valueOffsets = new int[columnSplit];
 
         int offset = 4;
-        for (int i = 0; i < valueOffsets.length; i++) {
+        for (int i = 0; i < columnSplit; i++) {
             valueOffsets[i] = offset;
-            switch (valueColumnTypes.getQuick(i)) {
+            switch (valueResolver.getColumnType(i)) {
                 case ColumnType.BYTE:
                 case ColumnType.BOOLEAN:
                     offset++;
@@ -99,15 +99,14 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
                     offset += 8;
                     break;
                 default:
-                    throw new JournalRuntimeException("value type is not supported: " + valueColumnTypes.get(i));
+                    throw new JournalRuntimeException("value type is not supported: " + valueResolver.getColumnType(i));
             }
-
         }
 
         this.values = new DirectMapValues(valueOffsets);
         this.keyBlockOffset = offset;
-        this.keyDataOffset = this.keyBlockOffset + 4 * keyCount;
-        this.entry = new DirectMapEntry(valueOffsets, keyDataOffset, keyBlockOffset, values);
+        this.keyDataOffset = this.keyBlockOffset + 4 * keyResolver.count();
+        this.entry = new DirectMapEntry(valueOffsets, keyDataOffset, keyBlockOffset, values, keyResolver);
         this.iterator = new DirectMapIterator(entry);
     }
 

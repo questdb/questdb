@@ -42,6 +42,8 @@ import java.util.Iterator;
 
 public class AggregatedRecordSource extends AbstractCombinedRecordSource implements Closeable {
 
+    private final static VirtualColumnTypeResolver.ResolverThreadLocal tlVirtualColumnTypeResolver = new VirtualColumnTypeResolver.ResolverThreadLocal();
+    private final static MetadataTypeResolver.MetadataTypeResolverThreadLocal tlMetadataTypeResolver = new MetadataTypeResolver.MetadataTypeResolverThreadLocal();
     private final DirectMap map;
     private final RecordSource recordSource;
     private final ObjList<AggregatorFunction> aggregators;
@@ -94,7 +96,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
         this.interceptors = interceptors;
         this.metadata = new DirectMapMetadata(rm, keyColumns, columns);
         this.storageFacade = new DirectMapStorageFacade(columns.size(), keyIndices);
-        this.map = new DirectMap(pageSize, keyColumnsSize, AggregationUtils.toThreadLocalTypes(columns));
+        this.map = new DirectMap(pageSize, tlMetadataTypeResolver.get().of(rm, keyIndices), tlVirtualColumnTypeResolver.get().of(columns));
         this.recordSource = recordSource;
         this.record = new DirectMapRecord(storageFacade);
     }

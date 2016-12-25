@@ -24,8 +24,10 @@
 package com.questdb.ql.impl.map;
 
 import com.questdb.misc.Unsafe;
+import com.questdb.std.Transient;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectCharSequence;
+import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
 
 public final class DirectMapEntry {
@@ -33,20 +35,32 @@ public final class DirectMapEntry {
     private final int keyDataOffset;
     private final int keyBlockOffset;
     private final int valueOffsets[];
-    private final DirectCharSequence csA = new DirectCharSequence();
-    private final DirectCharSequence csB = new DirectCharSequence();
+    private final DirectCharSequence csA[];
+    private final DirectCharSequence csB[];
     private final DirectMapValues values;
     private long address0;
     private long address1;
     private long address2;
     private char[] strBuf = null;
 
-    DirectMapEntry(int valueOffsets[], int keyDataOffset, int keyBlockOffset, DirectMapValues values) {
+    DirectMapEntry(int valueOffsets[], int keyDataOffset, int keyBlockOffset, DirectMapValues values, @Transient ColumnTypeResolver keyResolver) {
         this.split = valueOffsets.length;
         this.valueOffsets = valueOffsets;
         this.keyBlockOffset = keyBlockOffset;
         this.keyDataOffset = keyDataOffset;
         this.values = values;
+
+        int n = keyResolver.count();
+
+        csA = new DirectCharSequence[n + split];
+        csB = new DirectCharSequence[n + split];
+
+        for (int i = 0; i < n; i++) {
+            if (keyResolver.getColumnType(i) == ColumnType.STRING) {
+                csA[i + split] = new DirectCharSequence();
+                csB[i + split] = new DirectCharSequence();
+            }
+        }
     }
 
     public byte get(int index) {
@@ -70,11 +84,12 @@ public final class DirectMapEntry {
     }
 
     public CharSequence getFlyweightStr(int index) {
-        return getFlyweightStr0(index, csA);
+        assert index < csA.length;
+        return getFlyweightStr0(index, Unsafe.arrayGet(csA, index));
     }
 
     public CharSequence getFlyweightStrB(int index) {
-        return getFlyweightStr0(index, csB);
+        return getFlyweightStr0(index, Unsafe.arrayGet(csB, index));
     }
 
     public int getInt(int index) {

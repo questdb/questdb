@@ -30,19 +30,19 @@ import org.junit.Test;
 public class $ColsRecordSourceTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUp() throws Exception {
-        compiler.execute(factory, null, null, "create table xyz (x int, y string, ts date), index(y buckets 30) timestamp(ts) partition by YEAR");
+        compiler.execute(factory, null, null, "create table xy (x int, y string, ts date), index(y buckets 30) timestamp(ts) partition by YEAR");
         compiler.execute(factory, null, null, "create table abc (a symbol, b boolean, d double), index(a buckets 70)");
         $ColsRecordSource.init();
     }
 
     @Test
     public void testCompiled() throws Exception {
-        assertThat("abc\td\tDOUBLE\tfalse\t\tfalse\t0\n" +
+        assertThat("abc\ta\tSYMBOL\tfalse\t\ttrue\t127\n" +
                         "abc\tb\tBOOLEAN\tfalse\t\tfalse\t0\n" +
-                        "abc\ta\tSYMBOL\tfalse\t\ttrue\t127\n" +
-                        "xyz\tts\tDATE\ttrue\tYEAR\tfalse\t0\n" +
-                        "xyz\ty\tSTRING\tfalse\t\ttrue\t31\n" +
-                        "xyz\tx\tINT\tfalse\t\tfalse\t0\n",
+                        "abc\td\tDOUBLE\tfalse\t\tfalse\t0\n" +
+                        "xy\tts\tDATE\ttrue\tYEAR\tfalse\t0\n" +
+                        "xy\tx\tINT\tfalse\t\tfalse\t0\n" +
+                        "xy\ty\tSTRING\tfalse\t\ttrue\t31\n",
                 "$cols order by table_name, column_name");
     }
 }

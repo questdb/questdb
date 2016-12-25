@@ -30,7 +30,7 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.NullRecord;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.impl.map.MapUtils;
+import com.questdb.ql.impl.map.LongResolver;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.SymbolTable;
@@ -48,7 +48,7 @@ public abstract class AbstractOrderedAnalyticFunction implements AnalyticFunctio
     private RecordCursor cursor;
 
     public AbstractOrderedAnalyticFunction(int pageSize, VirtualColumn valueColumn) {
-        this.map = new DirectMap(pageSize, 1, MapUtils.ROWID_MAP_VALUES);
+        this.map = new DirectMap(pageSize, LongResolver.INSTANCE, LongResolver.INSTANCE);
         this.valueColumn = valueColumn;
     }
 

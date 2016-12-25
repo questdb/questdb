@@ -33,7 +33,8 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.impl.map.MapUtils;
+import com.questdb.ql.impl.map.LongResolver;
+import com.questdb.ql.impl.map.TypeListResolver;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.IntList;
@@ -42,6 +43,7 @@ import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public class LastVarRecordMap implements LastRecordMap {
+    private final static TypeListResolver.TypeListResolverThreadLocal tlTypeListResolver = new TypeListResolver.TypeListResolverThreadLocal();
     private final DirectMap map;
     private final LongList pages = new LongList();
     private final int pageSize;
@@ -123,7 +125,7 @@ public class LastVarRecordMap implements LastRecordMap {
         }
 
         this.varOffset = varOffset;
-        this.map = new DirectMap(offsetPageSize, ksz, MapUtils.ROWID_MAP_VALUES);
+        this.map = new DirectMap(offsetPageSize, tlTypeListResolver.get().of(masterKeyTypes), LongResolver.INSTANCE);
         this.metadata = slaveMetadata;
     }
 

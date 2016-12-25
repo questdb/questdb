@@ -26,21 +26,21 @@ package com.questdb.ql.impl.analytic.next;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.impl.map.MapUtils;
+import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
-import com.questdb.store.ColumnType;
+import com.questdb.std.ThreadLocal;
 
 public class NextPartitionedAnalyticFunction extends AbstractNextAnalyticFunction {
+    private final static ThreadLocal<VirtualColumnTypeResolver> tlPartitionByTypeResolver = new VirtualColumnTypeResolver.ResolverThreadLocal();
     private final DirectMap map;
     private final ObjList<VirtualColumn> partitionBy;
+
 
     public NextPartitionedAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
         super(pageSize, valueColumn);
         this.partitionBy = partitionBy;
-        this.map = new DirectMap(pageSize, partitionBy.size(), MapUtils.toTypeList(ColumnType.LONG));
+        this.map = new DirectMap(pageSize, tlPartitionByTypeResolver.get().of(partitionBy), LongResolver.INSTANCE);
     }
 
     @Override

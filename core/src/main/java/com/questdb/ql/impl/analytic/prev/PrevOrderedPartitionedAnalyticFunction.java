@@ -26,22 +26,22 @@ package com.questdb.ql.impl.analytic.prev;
 import com.questdb.misc.Misc;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.analytic.AbstractOrderedAnalyticFunction;
-import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.impl.map.MapUtils;
+import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
+import com.questdb.std.ThreadLocal;
 
 import java.io.IOException;
 
 public class PrevOrderedPartitionedAnalyticFunction extends AbstractOrderedAnalyticFunction {
 
+    private final static ThreadLocal<VirtualColumnTypeResolver> tlPartitionByTypeResolver = new VirtualColumnTypeResolver.ResolverThreadLocal();
     private final DirectMap prevMap;
     private final ObjList<VirtualColumn> partitionBy;
 
     public PrevOrderedPartitionedAnalyticFunction(int pageSize, ObjList<VirtualColumn> partitionBy, VirtualColumn valueColumn) {
         super(pageSize, valueColumn);
-        this.prevMap = new DirectMap(pageSize, 1, MapUtils.ROWID_MAP_VALUES);
+        this.prevMap = new DirectMap(pageSize, tlPartitionByTypeResolver.get().of(partitionBy), LongResolver.INSTANCE);
         this.partitionBy = partitionBy;
     }
 

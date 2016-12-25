@@ -81,7 +81,10 @@ public class RecordKeyCopierCompilerTest extends AbstractOptimiserTest {
         IntList valueTypes = new IntList();
         valueTypes.add(ColumnType.DOUBLE);
 
-        DirectMap map = new DirectMap(1024, keyColumns.size(), valueTypes);
+        MetadataTypeResolver metadataTypeResolver = new MetadataTypeResolver();
+        TypeListResolver typeListResolver = new TypeListResolver();
+
+        DirectMap map = new DirectMap(1024, metadataTypeResolver.of(src.getMetadata(), keyColumns), typeListResolver.of(valueTypes));
 
         RecordCursor cursor = src.prepareCursor(factory);
         while (cursor.hasNext()) {

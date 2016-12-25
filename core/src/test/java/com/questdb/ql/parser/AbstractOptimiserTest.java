@@ -41,7 +41,9 @@ import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.ClassRule;
 
 import java.io.File;
 import java.io.IOException;
@@ -50,23 +52,16 @@ import java.util.Map;
 
 public abstract class AbstractOptimiserTest {
 
-    private static File temp = Files.makeTempDir();
-    @ClassRule
-    public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(temp));
-
-    private static final JournalCachingFactory cachingFactory = new JournalCachingFactory(ModelConfiguration.MAIN.build(temp));
     protected static final StringSink sink = new StringSink();
     protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
     protected static final QueryCompiler compiler = new QueryCompiler();
     private static final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 16);
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private static final JsonParser jp = new JsonParser();
-
-    @AfterClass
-    public static void tearDown() throws Exception {
-        System.out.println("CLOSING");
-        cachingFactory.reset();
-    }
+    private static File temp = Files.makeTempDir();
+    @ClassRule
+    public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(temp));
+    private static final JournalCachingFactory cachingFactory = new JournalCachingFactory(ModelConfiguration.MAIN.build(temp));
 
     public static void assertSymbol(String query, int columnIndex) throws ParserException {
         try (RecordSource src = compiler.compile(cachingFactory, query)) {
@@ -78,6 +73,11 @@ public abstract class AbstractOptimiserTest {
                 TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));
             }
         }
+    }
+
+    @AfterClass
+    public static void tearDown() throws Exception {
+        cachingFactory.reset();
     }
 
     protected static void assertRowId(String query, String longColumn) throws ParserException {

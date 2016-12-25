@@ -27,7 +27,7 @@ import com.questdb.misc.Misc;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.MapUtils;
+import com.questdb.ql.impl.map.LongResolver;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -39,7 +39,7 @@ public abstract class AbstractRankOrderedAnalyticFunction extends AbstractRankAn
 
     public AbstractRankOrderedAnalyticFunction(int pageSize, String name) {
         super(name);
-        this.map = new DirectMap(pageSize, 1, MapUtils.ROWID_MAP_VALUES);
+        this.map = new DirectMap(pageSize, LongResolver.INSTANCE, LongResolver.INSTANCE);
     }
 
     @Override
