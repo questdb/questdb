@@ -33,9 +33,10 @@ import javax.net.ssl.*;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.channels.ByteChannel;
 import java.nio.channels.SocketChannel;
 
-public class SecureSocketChannel implements WrappedByteChannel {
+public class SecureSocketChannel implements ByteChannel {
 
     private static final Log LOG = LogFactory.getLog(SecureSocketChannel.class);
 
@@ -65,9 +66,6 @@ public class SecureSocketChannel implements WrappedByteChannel {
         swapBuf = ByteBuffer.allocateDirect(sslDataLimit * 2).order(ByteOrder.LITTLE_ENDIAN);
     }
 
-    public SocketChannel getChannel() {
-        return socketChannel;
-    }
 
     @Override
     public boolean isOpen() {

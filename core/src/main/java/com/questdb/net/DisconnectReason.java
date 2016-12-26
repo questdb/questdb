@@ -28,9 +28,6 @@ public final class DisconnectReason {
     public static final int IDLE = 2;
     public static final int SILLY = 3;
 
-    private DisconnectReason() {
-    }
-
     public static CharSequence nameOf(int disconnectReason) {
         switch (disconnectReason) {
             case PEER:

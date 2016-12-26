@@ -66,7 +66,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final ThreadLocal<FormatParser> PARSER = new ThreadLocal<>();
-    private static CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
+    private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
     private final JournalFactory factory;
     private final LocalValue<ImportHandlerContext> lvContext = new LocalValue<>();
     private final ServerConfiguration configuration;

@@ -24,14 +24,14 @@
 package com.questdb.ql.impl.join.asof;
 
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.AbstractRecord;
+import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.SymbolTable;
 
 import java.io.OutputStream;
 
-abstract class AbstractMemRecord extends AbstractRecord {
+abstract class AbstractMemRecord implements Record {
     @Override
     public byte get(int col) {
         return Unsafe.getUnsafe().getByte(address(col));

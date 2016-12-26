@@ -23,14 +23,14 @@
 
 package com.questdb.ql.impl.map;
 
-import com.questdb.ql.AbstractRecord;
+import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
-public class DirectMapRecord extends AbstractRecord {
+public class DirectMapRecord implements Record {
     private final StorageFacade storageFacade;
     private DirectMapEntry entry;
 

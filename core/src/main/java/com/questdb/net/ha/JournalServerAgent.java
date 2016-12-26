@@ -355,17 +355,13 @@ public class JournalServerAgent {
         } else {
             writerToReaderMap.put(augmentedReaderKey.getIndex(), JOURNAL_INDEX_NOT_FOUND);
             readerToWriterMap.extendAndSet(index, JOURNAL_INDEX_NOT_FOUND);
-            try {
-                removeReader(index);
-                clientStates.setQuick(index, null);
-                ok(channel);
-            } catch (JournalException e) {
-                error(channel, "Could not created reader for key: " + readerKey, e);
-            }
+            removeReader(index);
+            clientStates.setQuick(index, null);
+            ok(channel);
         }
     }
 
-    private void removeReader(int index) throws JournalException {
+    private void removeReader(int index) {
         Journal journal = readers.getQuiet(index);
         if (journal != null) {
             journal.close();

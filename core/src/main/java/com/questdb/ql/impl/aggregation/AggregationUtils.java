@@ -24,7 +24,6 @@
 package com.questdb.ql.impl.aggregation;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
@@ -36,22 +35,7 @@ public final class AggregationUtils {
             return new ObjList<>();
         }
     });
-    private static final ThreadLocal<IntList> TL_COLUMN_TYPES = new ThreadLocal<>(new ObjectFactory<IntList>() {
-        @Override
-        public IntList newInstance() {
-            return new IntList();
-        }
-    });
 
     private AggregationUtils() {
-    }
-
-    public static IntList toThreadLocalTypes(ObjList<? extends RecordColumnMetadata> metadata) {
-        IntList types = AggregationUtils.TL_COLUMN_TYPES.get();
-        types.clear();
-        for (int i = 0, n = metadata.size(); i < n; i++) {
-            types.add(metadata.getQuick(i).getType());
-        }
-        return types;
     }
 }

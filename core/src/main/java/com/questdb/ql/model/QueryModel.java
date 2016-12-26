@@ -73,8 +73,8 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator {
     private final ArrayDeque<ExprNode> exprNodeStack = new ArrayDeque<>();
     private final CharSequenceIntHashMap orderHash = new CharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExprNode> joinColumns = new ObjList<>(4);
+    private final CharSequenceObjHashMap<WithClauseModel> withClauses = new CharSequenceObjHashMap<>();
     private CharSequenceObjHashMap<Parameter> parameterMap = new CharSequenceObjHashMap<>();
-    private CharSequenceObjHashMap<WithClauseModel> withClauses = new CharSequenceObjHashMap<>();
     private ExprNode whereClause;
     private ExprNode postJoinWhereClause;
     private QueryModel nestedModel;

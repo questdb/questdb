@@ -55,8 +55,8 @@ public final class QueryParser {
     private final ObjectPool<RenameJournalModel> renameJournalModelPool = new ObjectPool<>(RenameJournalModel.FACTORY, 8);
     private final ObjectPool<WithClauseModel> withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, 16);
     private final Lexer secondaryLexer = new Lexer();
+    private final ExprParser exprParser = new ExprParser(exprNodePool);
     private Lexer lexer = new Lexer();
-    private ExprParser exprParser = new ExprParser(exprNodePool);
 
     public QueryParser() {
         ExprParser.configureLexer(lexer);

@@ -23,27 +23,49 @@
 
 package com.questdb.ql.impl.join.asof;
 
+import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectCharSequence;
+import com.questdb.store.ColumnType;
 
 abstract class AbstractVarMemRecord extends AbstractMemRecord {
 
-    private final DirectCharSequence cs = new DirectCharSequence();
-    private final DirectCharSequence csB = new DirectCharSequence();
+    private final DirectCharSequence csA[];
+    private final DirectCharSequence csB[];
+
+    public AbstractVarMemRecord(RecordMetadata metadata) {
+        int n = metadata.getColumnCount();
+        DirectCharSequence csA[] = null;
+        DirectCharSequence csB[] = null;
+
+
+        for (int i = 0; i < n; i++) {
+            if (metadata.getColumnQuick(i).getType() == ColumnType.STRING) {
+                if (csA == null) {
+                    csA = new DirectCharSequence[n];
+                    csB = new DirectCharSequence[n];
+                }
+
+                csA[i] = new DirectCharSequence();
+                csB[i] = new DirectCharSequence();
+            }
+        }
+
+        this.csA = csA;
+        this.csB = csB;
+    }
 
     @Override
     public CharSequence getFlyweightStr(int col) {
         long address = address() + getInt(col);
-        cs.of(address + 4, address + 4 + Unsafe.getUnsafe().getInt(address) * 2);
-        return cs;
+        return Unsafe.arrayGet(csA, col).of(address + 4, address + 4 + Unsafe.getUnsafe().getInt(address) * 2);
     }
 
     @Override
     public CharSequence getFlyweightStrB(int col) {
         long address = address() + getInt(col);
-        csB.of(address + 4, address + 4 + Unsafe.getUnsafe().getInt(address) * 2);
-        return csB;
+        return Unsafe.arrayGet(csB, col).of(address + 4, address + 4 + Unsafe.getUnsafe().getInt(address) * 2);
     }
 
 

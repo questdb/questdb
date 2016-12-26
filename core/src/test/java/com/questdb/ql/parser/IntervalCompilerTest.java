@@ -34,9 +34,9 @@ import org.junit.Test;
 
 public class IntervalCompilerTest {
 
-    private LongList a = new LongList();
-    private LongList b = new LongList();
-    private LongList out = new LongList();
+    private final LongList a = new LongList();
+    private final LongList b = new LongList();
+    private final LongList out = new LongList();
 
     @Before
     public void setUp() throws Exception {

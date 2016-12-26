@@ -53,13 +53,6 @@ public class MapUtils {
         return map.getOrCreateValues(kw);
     }
 
-    public static IntList toTypeList(int type) {
-        IntList l = tlTypeList.get();
-        l.clear();
-        l.add(type);
-        return l;
-    }
-
     public static void writeVirtualColumn(DirectMap.KeyWriter w, Record r, VirtualColumn vc) {
         switch (vc.getType()) {
             case ColumnType.BOOLEAN:

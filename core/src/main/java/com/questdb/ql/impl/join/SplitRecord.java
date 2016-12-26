@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.join;
 
-import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.IntList;
@@ -32,7 +31,7 @@ import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
-public class SplitRecord extends AbstractRecord {
+public class SplitRecord implements Record {
     private final ObjList<Record> records = new ObjList<>();
     private final IntList indices = new IntList();
 

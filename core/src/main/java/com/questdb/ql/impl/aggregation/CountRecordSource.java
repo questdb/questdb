@@ -124,11 +124,6 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
         private long count;
 
         @Override
-        public String asString(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public byte get(int col) {
             throw new UnsupportedOperationException();
         }

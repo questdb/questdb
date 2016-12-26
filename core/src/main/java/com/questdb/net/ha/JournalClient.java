@@ -257,7 +257,7 @@ public class JournalClient {
         }
     }
 
-    private byte[] getToken() throws JournalNetworkException, AuthenticationProviderException {
+    private byte[] getToken() throws AuthenticationProviderException {
         try {
             return credentialProvider.createToken();
         } catch (Throwable e) {
@@ -295,7 +295,7 @@ public class JournalClient {
         return charSequenceResponseConsumer.getValue();
     }
 
-    private void resubscribe() throws JournalNetworkException {
+    private void resubscribe() {
         for (int i = 0, n = subscriptions.size(); i < n; i++) {
             SubscriptionHolder h = subscriptions.get(i);
             subscribeOne(i, h, h.local.path(), false);
@@ -362,7 +362,7 @@ public class JournalClient {
         subscribe(new JournalKey<>(clazz, location), new JournalKey<>(clazz, location), journalListener);
     }
 
-    private void subscribeOne(int index, SubscriptionHolder holder, String loc, boolean newSubscription) throws JournalNetworkException {
+    private void subscribeOne(int index, SubscriptionHolder holder, String loc, boolean newSubscription) {
 
         if (newSubscription) {
             SubscriptionHolder sub = new SubscriptionHolder();
@@ -503,7 +503,7 @@ public class JournalClient {
 
     private final class Handler extends Thread {
 
-        public boolean isRunning() throws JournalNetworkException {
+        public boolean isRunning() {
             long cursor = subscriptionSubSequence.next();
             if (cursor < 0) {
                 return true;
@@ -520,7 +520,7 @@ public class JournalClient {
             return true;
         }
 
-        public boolean processSubscriptionQueue() throws JournalNetworkException {
+        public boolean processSubscriptionQueue() {
             long cursor = subscriptionSubSequence.next();
             if (cursor < 0) {
                 return true;

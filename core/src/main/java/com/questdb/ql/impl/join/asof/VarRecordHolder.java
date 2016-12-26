@@ -44,6 +44,8 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
     private boolean held = false;
 
     public VarRecordHolder(RecordMetadata metadata) {
+        super(metadata);
+
         int cc = metadata.getColumnCount();
         this.types = new IntList(cc);
         this.offsets = new IntList(cc);

@@ -23,15 +23,7 @@
 
 package com.questdb.net;
 
-import com.questdb.std.ObjectFactory;
-
 public class Event<C extends Context> {
-    public static final ObjectFactory<Event> FACTORY = new ObjectFactory<Event>() {
-        @Override
-        public Event newInstance() {
-            return new Event();
-        }
-    };
     public int channelStatus;
     public C context;
 }

@@ -23,14 +23,13 @@
 
 package com.questdb.ql.impl;
 
-import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
-public class NullableRecord extends AbstractRecord {
+public class NullableRecord implements Record {
     private final Record record;
     private boolean _null = false;
     private Record rec;

@@ -34,18 +34,12 @@ import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 public class ReconnectTest extends AbstractTest {
-    private JournalClient client;
-
-    @Before
-    public void setUp() {
-    }
 
     @Test
     public void testServerRestart() throws Exception {
@@ -58,7 +52,7 @@ public class ReconnectTest extends AbstractTest {
         server.start();
 
         final CountDownLatch connectedLatch = new CountDownLatch(1);
-        client = new JournalClient(
+        JournalClient client = new JournalClient(
                 new ClientConfig("localhost") {{
                     getReconnectPolicy().setLoginRetryCount(3);
                     getReconnectPolicy().setRetryCount(5);

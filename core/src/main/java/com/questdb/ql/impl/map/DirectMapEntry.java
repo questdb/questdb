@@ -52,15 +52,22 @@ public final class DirectMapEntry {
 
         int n = keyResolver.count();
 
-        csA = new DirectCharSequence[n + split];
-        csB = new DirectCharSequence[n + split];
+        DirectCharSequence csA[] = null;
+        DirectCharSequence csB[] = null;
 
         for (int i = 0; i < n; i++) {
             if (keyResolver.getColumnType(i) == ColumnType.STRING) {
+                if (csA == null) {
+                    csA = new DirectCharSequence[n + split];
+                    csB = new DirectCharSequence[n + split];
+                }
                 csA[i + split] = new DirectCharSequence();
                 csB[i + split] = new DirectCharSequence();
             }
         }
+
+        this.csA = csA;
+        this.csB = csB;
     }
 
     public byte get(int index) {

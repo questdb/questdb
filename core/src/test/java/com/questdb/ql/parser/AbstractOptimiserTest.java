@@ -58,7 +58,7 @@ public abstract class AbstractOptimiserTest {
     private static final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 16);
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private static final JsonParser jp = new JsonParser();
-    private static File temp = Files.makeTempDir();
+    private static final File temp = Files.makeTempDir();
     @ClassRule
     public static final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(temp));
     private static final JournalCachingFactory cachingFactory = new JournalCachingFactory(ModelConfiguration.MAIN.build(temp));

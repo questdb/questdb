@@ -38,11 +38,6 @@ public class NullRecord implements Record {
     }
 
     @Override
-    public String asString(int col) {
-        return null;
-    }
-
-    @Override
     public byte get(int col) {
         return 0;
     }

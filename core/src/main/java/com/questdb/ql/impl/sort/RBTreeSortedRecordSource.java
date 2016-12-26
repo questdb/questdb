@@ -57,9 +57,9 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private final TreeCursor cursor = new TreeCursor();
     private final FakeRecord fakeRecord = new FakeRecord();
     private final boolean byRowId;
+    private final Record sourceRecord;
     private long root = -1;
     private RecordCursor sourceCursor;
-    private Record sourceRecord;
 
     public RBTreeSortedRecordSource(RecordSource delegate, RecordComparator comparator, int keyPageSize, int valuePageSize) {
         this.delegate = delegate;
@@ -220,17 +220,17 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         Unsafe.getUnsafe().putLong(blockAddress, parent);
     }
 
-    @Override
-    public Record newRecord() {
-        return byRowId ? delegate.newRecord() : recordList.newRecord();
-    }
-
     private static long refOf(long blockAddress) {
         return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_REF);
     }
 
     private static long topOf(long blockAddress) {
         return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_TOP);
+    }
+
+    @Override
+    public Record newRecord() {
+        return byRowId ? delegate.newRecord() : recordList.newRecord();
     }
 
     private static void setRef(long blockAddress, long recRef) {

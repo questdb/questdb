@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
@@ -31,7 +30,7 @@ import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
-public class AnalyticRecord extends AbstractRecord {
+public class AnalyticRecord implements Record {
     private final ObjList<AnalyticFunction> functions;
     private final int split;
     private Record base;

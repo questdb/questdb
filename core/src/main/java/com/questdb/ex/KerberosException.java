@@ -24,7 +24,7 @@
 package com.questdb.ex;
 
 public class KerberosException extends Exception {
-    private int code;
+    private final int code;
 
     public KerberosException(int status) {
         super(toText(status));

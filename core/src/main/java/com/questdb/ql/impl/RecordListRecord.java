@@ -26,7 +26,7 @@ package com.questdb.ql.impl;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.AbstractRecord;
+import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.MemoryPages;
@@ -37,9 +37,7 @@ import com.questdb.store.ColumnType;
 import java.io.IOException;
 import java.io.OutputStream;
 
-public class RecordListRecord extends AbstractRecord {
-    //    private final DirectCharSequence csA = new DirectCharSequence();
-//    private final DirectCharSequence csB = new DirectCharSequence();
+public class RecordListRecord implements Record {
     private final MemoryPages mem;
     private final int headerSize;
     private final int[] offsets;
@@ -52,8 +50,9 @@ public class RecordListRecord extends AbstractRecord {
     public RecordListRecord(RecordMetadata metadata, MemoryPages mem) {
         this.mem = mem;
         offsets = new int[metadata.getColumnCount()];
-        csA = new DirectCharSequence[offsets.length];
-        csB = new DirectCharSequence[offsets.length];
+        DirectCharSequence[] csA = null;
+        DirectCharSequence[] csB = null;
+
 
         int varColIndex = 0;
         for (int i = 0; i < offsets.length; i++) {
@@ -65,10 +64,17 @@ public class RecordListRecord extends AbstractRecord {
                 fixedSize += size;
             } else {
                 offsets[i] = -(varColIndex++);
+                if (csA == null) {
+                    csA = new DirectCharSequence[offsets.length];
+                    csB = new DirectCharSequence[offsets.length];
+                }
                 csA[i] = new DirectCharSequence();
                 csB[i] = new DirectCharSequence();
             }
         }
+
+        this.csA = csA;
+        this.csB = csB;
 
         // Pad header size to 8 bytes.
         fixedSize = ((fixedSize + 7) >> 3) << 3;
@@ -134,6 +140,7 @@ public class RecordListRecord extends AbstractRecord {
 
     @Override
     public CharSequence getFlyweightStr(int col) {
+        assert col < csA.length;
         long readAddress = addressOf(col);
         final int len = Unsafe.getUnsafe().getInt(readAddress);
         if (len < 0) return null;

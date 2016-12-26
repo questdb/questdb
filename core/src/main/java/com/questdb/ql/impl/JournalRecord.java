@@ -25,13 +25,13 @@ package com.questdb.ql.impl;
 
 import com.questdb.Partition;
 import com.questdb.misc.Rows;
-import com.questdb.ql.AbstractRecord;
+import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
-public class JournalRecord extends AbstractRecord {
+public class JournalRecord implements Record {
     public Partition partition;
     public long rowid;
     public int partitionIndex = -1;

@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.virtual;
 
-import com.questdb.ql.AbstractRecord;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.VirtualColumn;
@@ -33,7 +32,7 @@ import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
-class VirtualRecord extends AbstractRecord {
+class VirtualRecord implements Record {
     private final int split;
     private final ObjList<VirtualColumn> virtualColumns;
     private final Record base;
