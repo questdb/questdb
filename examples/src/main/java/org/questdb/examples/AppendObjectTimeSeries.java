@@ -25,7 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
@@ -56,7 +56,7 @@ public class AppendObjectTimeSeries {
             ;
         }}.build(journalLocation);
 
-        try (WriterFactory writerFactory = new WriterFactory(configuration)) {
+        try (WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration)) {
 
             // delete existing quote journal
             Files.delete(new File(configuration.getJournalBase(), "quote"));

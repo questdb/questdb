@@ -26,8 +26,8 @@ package org.questdb.examples;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.CachingReaderFactory;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.ReaderFactoryImpl;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
@@ -47,8 +47,8 @@ public class SQLExamples {
             System.exit(1);
         }
 
-        try (WriterFactory factory = new WriterFactory(args[0]);
-             ReaderFactory readerFactory = new CachingReaderFactory(args[0])) {
+        try (WriterFactoryImpl factory = new WriterFactoryImpl(args[0]);
+             ReaderFactoryImpl readerFactory = new CachingReaderFactory(args[0])) {
 
             // import movies data to query
             ImportManager.importFile(factory, SQLExamples.class.getResource("/movies.csv").getFile(), ',', null);

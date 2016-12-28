@@ -24,7 +24,7 @@
 package com.questdb.ql.impl.aggregation;
 
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
@@ -117,7 +117,7 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+    public RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler) {
         this.interceptorWorkingSet = interceptors;
         map.clear();
         this.cursor = recordSource.prepareCursor(factory, cancellationHandler);

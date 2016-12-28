@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl.analytic;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
@@ -75,7 +75,7 @@ public class AnalyticRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+    public RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler) {
         this.cursor = delegate.prepareCursor(factory, cancellationHandler);
         this.storageFacade.prepare(cursor.getStorageFacade());
         prepareFunctions();

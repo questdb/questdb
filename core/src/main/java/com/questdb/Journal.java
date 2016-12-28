@@ -26,7 +26,7 @@ package com.questdb;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.JournalClosingListener;
+import com.questdb.factory.JournalCloseInterceptor;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.Constants;
 import com.questdb.factory.configuration.JournalMetadata;
@@ -74,10 +74,10 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private final BitSet inactiveColumns;
     private final long openFileTtl;
     private final long expireRecheckInterval;
-    TxLog txLog;
-    boolean open;
+    protected JournalCloseInterceptor closeInterceptor;
+    protected boolean open;
+    protected TxLog txLog;
     private volatile Partition<T> irregularPartition;
-    private JournalClosingListener closeListener;
     private TxIterator txIterator;
     private long lastExpireCheck = 0L;
 
@@ -99,7 +99,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     public void close() {
         if (open) {
 
-            if (closeListener != null && !closeListener.closing(this)) {
+            if (closeInterceptor != null && !closeInterceptor.canClose(this)) {
                 return;
             }
 
@@ -465,8 +465,8 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return this;
     }
 
-    public void setCloseListener(JournalClosingListener closeListener) {
-        this.closeListener = closeListener;
+    public void setCloseInterceptor(JournalCloseInterceptor closeInterceptor) {
+        this.closeInterceptor = closeInterceptor;
     }
 
     public long size() throws JournalException {

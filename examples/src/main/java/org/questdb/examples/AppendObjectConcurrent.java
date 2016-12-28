@@ -25,7 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -76,7 +76,7 @@ public class AppendObjectConcurrent {
         int nMessages = 1000000;
 
         JournalConfiguration configuration = ModelConfiguration.CONFIG.build(args[0]);
-        WriterFactory writerFactory = new WriterFactory(configuration);
+        WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration);
 
         // start publishing threads
         for (int i = 0; i < nThreads; i++) {

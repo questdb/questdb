@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Rows;
@@ -57,7 +57,7 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+    public RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler) {
         rowSource.toTop();
         cursor = null;
         this.partitionCursor = partitionSource.prepareCursor(factory);

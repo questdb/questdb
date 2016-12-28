@@ -25,8 +25,8 @@ package org.questdb.examples.replication.ssl;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.ReaderFactoryImpl;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.net.ha.JournalServer;
 import com.questdb.net.ha.config.ServerConfig;
 import org.questdb.examples.support.Price;
@@ -47,8 +47,8 @@ public class SslReplicationServerMain {
     }
 
     public void start() throws Exception {
-        WriterFactory writerFactory = new WriterFactory(location);
-        ReaderFactory readerFactory = new ReaderFactory(location);
+        WriterFactoryImpl writerFactory = new WriterFactoryImpl(location);
+        ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(location);
 
         JournalServer server = new JournalServer(
                 new ServerConfig() {{

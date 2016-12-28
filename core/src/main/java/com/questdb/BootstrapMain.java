@@ -23,9 +23,9 @@
 
 package com.questdb;
 
-import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.ReaderFactoryImpl;
 import com.questdb.factory.ReaderFactoryPool;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.log.*;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
@@ -91,8 +91,8 @@ class BootstrapMain {
         configureLoggers(configuration);
 
         final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
-        ReaderFactory readerFactory = new ReaderFactory(configuration.getDbPath().getAbsolutePath());
-        WriterFactory writerFactory = new WriterFactory(configuration.getDbPath().getAbsolutePath());
+        ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(configuration.getDbPath().getAbsolutePath());
+        WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration.getDbPath().getAbsolutePath());
 
         ReaderFactoryPool pool = new ReaderFactoryPool(readerFactory.getConfiguration(), configuration.getJournalPoolSize());
         matcher.put("/imp", new ImportHandler(configuration, writerFactory));

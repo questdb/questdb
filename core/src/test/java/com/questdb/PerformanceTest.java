@@ -27,6 +27,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.CachingReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Dates;
@@ -167,9 +168,11 @@ public class PerformanceTest extends AbstractTest {
 
     @Test
     public void testJournalAppendAndReadSpeed() throws JournalException, ParserException, NumericException {
+        int count = 10;
+        long t = 0;
+        long result;
+
         try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
-            long t = 0;
-            int count = 10;
             for (int i = -count; i < count; i++) {
                 w.truncate();
                 if (i == 0) {
@@ -180,7 +183,7 @@ public class PerformanceTest extends AbstractTest {
             }
 
 
-            long result = System.nanoTime() - t;
+            result = System.nanoTime() - t;
             LOG.info().$("append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
             if (enabled) {
                 Assert.assertTrue("Append speed must be under 400ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 400);
@@ -203,33 +206,34 @@ public class PerformanceTest extends AbstractTest {
             if (enabled) {
                 Assert.assertTrue("Read speed must be under 120ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 120);
             }
+        }
 
+        ReaderFactory readerFactory = theFactory.getCachingReaderFactory();
+        try (RecordSource rs = compile("quote")) {
             for (int i = -count; i < count; i++) {
                 if (i == 0) {
                     t = System.nanoTime();
                 }
-                try (RecordSource rs = compile("quote")) {
-                    RecordCursor s = rs.prepareCursor(getReaderFactory());
-                    int cnt = 0;
-                    for (Record r : s) {
-                        r.getLong(0);
-                        r.getSym(1);
-                        r.getDouble(2);
-                        r.getDouble(3);
-                        r.getInt(4);
-                        r.getInt(5);
-                        r.getSym(6);
-                        r.getSym(7);
-                        cnt++;
-                    }
-                    Assert.assertEquals(TEST_DATA_SIZE, cnt);
+                RecordCursor s = rs.prepareCursor(readerFactory);
+                int cnt = 0;
+                for (Record r : s) {
+                    r.getLong(0);
+                    r.getSym(1);
+                    r.getDouble(2);
+                    r.getDouble(3);
+                    r.getInt(4);
+                    r.getInt(5);
+                    r.getSym(6);
+                    r.getSym(7);
+                    cnt++;
                 }
+                Assert.assertEquals(TEST_DATA_SIZE, cnt);
             }
-            result = System.nanoTime() - t;
-            LOG.info().$("generic read (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
-            if (enabled) {
-                Assert.assertTrue("Read speed must be under 60ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 60);
-            }
+        }
+        result = System.nanoTime() - t;
+        LOG.info().$("generic read (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
+        if (enabled) {
+            Assert.assertTrue("Read speed must be under 60ms (" + TimeUnit.NANOSECONDS.toMillis(result) + ")", TimeUnit.NANOSECONDS.toMillis(result) < 60);
         }
     }
 

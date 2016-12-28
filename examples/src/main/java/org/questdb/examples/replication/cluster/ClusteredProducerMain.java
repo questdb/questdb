@@ -28,8 +28,8 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.ReaderFactoryImpl;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Numbers;
@@ -55,8 +55,8 @@ public class ClusteredProducerMain {
             $(Price.class).$ts();
         }}.build(pathToDatabase);
 
-        final WriterFactory writerFactory = new WriterFactory(configuration);
-        final ReaderFactory readerFactory = new ReaderFactory(configuration);
+        final WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration);
+        final ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(configuration);
 
         final JournalWriter<Price> writer = writerFactory.bulkWriter(new JournalKey<>(Price.class, 1000000000));
 

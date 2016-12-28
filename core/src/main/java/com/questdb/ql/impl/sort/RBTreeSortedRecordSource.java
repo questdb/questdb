@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl.sort;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
@@ -90,7 +90,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+    public RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler) {
         clear();
         setSourceCursor(delegate.prepareCursor(factory, cancellationHandler));
         if (byRowId) {
@@ -228,17 +228,17 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_TOP);
     }
 
-    @Override
-    public Record newRecord() {
-        return byRowId ? delegate.newRecord() : recordList.newRecord();
-    }
-
     private static void setRef(long blockAddress, long recRef) {
         Unsafe.getUnsafe().putLong(blockAddress + O_REF, recRef);
     }
 
     private static void setTop(long blockAddress, long recRef) {
         Unsafe.getUnsafe().putLong(blockAddress + O_TOP, recRef);
+    }
+
+    @Override
+    public Record newRecord() {
+        return byRowId ? delegate.newRecord() : recordList.newRecord();
     }
 
     private static void setRight(long blockAddress, long right) {

@@ -25,8 +25,8 @@ package com.questdb.net.ha;
 
 import com.questdb.Journal;
 import com.questdb.JournalWriter;
-import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
@@ -55,11 +55,11 @@ public class SSLTest {
 
     }});
 
-    public JournalReaderFactory getReaderFactory() {
+    public ReaderFactory getReaderFactory() {
         return theFactory.getReaderFactory();
     }
 
-    public JournalWriterFactory getWriterFactory() {
+    public WriterFactory getWriterFactory() {
         return theFactory.getWriterFactory();
     }
 

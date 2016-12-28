@@ -24,7 +24,7 @@
 package com.questdb.ql.impl.interval;
 
 import com.questdb.Partition;
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.PartitionCursor;
 import com.questdb.ql.PartitionSlice;
@@ -61,7 +61,7 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     }
 
     @Override
-    public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) {
+    public PartitionCursor prepareCursor(ReaderFactory readerFactory) {
         intervalIndex = 0;
         needPartition = true;
         partitionCursor = partitionSource.prepareCursor(readerFactory);

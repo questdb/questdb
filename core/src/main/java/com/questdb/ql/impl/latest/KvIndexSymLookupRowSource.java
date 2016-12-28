@@ -25,7 +25,7 @@ package com.questdb.ql.impl.latest;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.*;
 import com.questdb.std.str.CharSink;
@@ -62,7 +62,7 @@ public class KvIndexSymLookupRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void prepare(JournalReaderFactory factory, StorageFacade facade, CancellationHandler cancellationHandler) {
+    public void prepare(ReaderFactory factory, StorageFacade facade, CancellationHandler cancellationHandler) {
         symbolKey = facade.getSymbolTable(columnIndex).getQuick(value);
     }
 

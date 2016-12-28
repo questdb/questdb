@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.CancellationHandler;
@@ -49,7 +49,7 @@ public class NoRowIdRecordSource extends AbstractRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+    public RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler) {
         return delegate.prepareCursor(factory, cancellationHandler);
     }
 

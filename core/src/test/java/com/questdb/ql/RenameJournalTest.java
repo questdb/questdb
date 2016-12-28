@@ -29,7 +29,7 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.CachingReaderFactory;
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.ReaderFactoryPool;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
@@ -154,7 +154,7 @@ public class RenameJournalTest extends AbstractTest {
         assertJournal(getReaderFactory(), "y");
     }
 
-    private void assertJournal(JournalReaderFactory f, String dest) throws IOException, ParserException {
+    private void assertJournal(ReaderFactory f, String dest) throws IOException, ParserException {
         try (RecordSource rs = compiler.compile(f, dest)) {
             printer.print(rs, f);
             TestUtils.assertEquals("999\n", sink);

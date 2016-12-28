@@ -25,7 +25,7 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.iter.*;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Interval;
@@ -327,12 +327,12 @@ public class IteratorTest extends AbstractTest {
     }
 
     private static class Generator implements Runnable {
-        private final JournalWriterFactory factory;
+        private final WriterFactory factory;
         private final CyclicBarrier barrier;
         private final CountDownLatch latch;
         private final int index;
 
-        private Generator(JournalWriterFactory factory, CyclicBarrier barrier, int index, CountDownLatch latch) {
+        private Generator(WriterFactory factory, CyclicBarrier barrier, int index, CountDownLatch latch) {
             this.factory = factory;
             this.barrier = barrier;
             this.index = index;

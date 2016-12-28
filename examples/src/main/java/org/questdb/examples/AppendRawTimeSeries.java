@@ -27,7 +27,7 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Rnd;
 
@@ -41,7 +41,7 @@ public class AppendRawTimeSeries {
         final String location = args[0];
 
         // factory can be reused in application and must be explicitly closed when no longer needed.
-        try (WriterFactory writerFactory = new WriterFactory(location)) {
+        try (WriterFactoryImpl writerFactory = new WriterFactoryImpl(location)) {
             // Lets add some random data to journal "customers".
             // This journal does not have associated java object. We will leverage generic data access
             // to populate it.

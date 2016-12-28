@@ -25,7 +25,6 @@ package com.questdb.net.http.handlers;
 
 import com.questdb.ex.*;
 import com.questdb.factory.CachingReaderFactory;
-import com.questdb.factory.JournalWriterFactory;
 import com.questdb.factory.ReaderFactoryPool;
 import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -225,7 +224,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
         return LOG.error().$('[').$(fd).$("] ");
     }
 
-    private RecordSource executeQuery(ChunkedResponse r, JournalWriterFactory writerFactory, ReaderFactoryPool pool) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
+    private RecordSource executeQuery(ChunkedResponse r, WriterFactory writerFactory, ReaderFactoryPool pool) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
         QueryCompiler compiler = COMPILER.get();
         ParsedModel model = compiler.parse(query);
         switch (model.getModelType()) {

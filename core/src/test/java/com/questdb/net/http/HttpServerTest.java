@@ -31,6 +31,7 @@ import com.questdb.ex.NumericException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.factory.CachingReaderFactory;
 import com.questdb.factory.WriterFactory;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.iter.clock.Clock;
 import com.questdb.log.Log;
@@ -377,7 +378,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportIntoBusyJournal2() throws Exception {
-        WriterFactory f = new WriterFactory(getReaderFactory().getConfiguration().getJournalBase().getAbsolutePath());
+        WriterFactory f = new WriterFactoryImpl(getReaderFactory().getConfiguration().getJournalBase().getAbsolutePath());
 
         try (JournalWriter w = f.writer(new JournalStructure("small.csv").$int("X").$int("Y").$())) {
             JournalEntryWriter ew = w.entryWriter();

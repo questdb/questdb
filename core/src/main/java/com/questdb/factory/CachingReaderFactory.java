@@ -37,7 +37,7 @@ import com.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class CachingReaderFactory extends ReaderFactory implements JournalClosingListener {
+public class CachingReaderFactory extends ReaderFactoryImpl implements JournalCloseInterceptor {
     private final static Log LOG = LogFactory.getLog(CachingReaderFactory.class);
     private final CharSequenceObjHashMap<Journal> readers = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<JournalBulkReader> bulkReaders = new CharSequenceObjHashMap<>();
@@ -67,7 +67,7 @@ public class CachingReaderFactory extends ReaderFactory implements JournalClosin
         JournalBulkReader<T> result = bulkReaders.get(name);
         if (result == null) {
             result = super.bulkReader(key);
-            result.setCloseListener(this);
+            result.setCloseInterceptor(this);
             bulkReaders.put(name, result);
             journalList.add(result);
         }
@@ -76,20 +76,25 @@ public class CachingReaderFactory extends ReaderFactory implements JournalClosin
 
     @Override
     @SuppressWarnings("unchecked")
-    public <T> Journal<T> reader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
-        String name = key.path();
+    public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
+        String name = metadata.getKey().path();
         Journal result = readers.get(name);
         if (result == null) {
             if (getConfiguration().exists(name) != JournalConfiguration.EXISTS) {
                 LOG.error().$("Journal does not exist: ").$(name).$();
                 throw JournalDoesNotExistException.INSTANCE;
             }
-            result = super.reader(metadata, key);
-            result.setCloseListener(this);
+            result = super.reader(metadata);
+            result.setCloseInterceptor(this);
             readers.put(name, result);
             journalList.add(result);
         }
         return result;
+    }
+
+    @Override
+    public boolean canClose(Journal journal) {
+        return false;
     }
 
     @Override
@@ -110,22 +115,17 @@ public class CachingReaderFactory extends ReaderFactory implements JournalClosin
     public void closeJournal(CharSequence name) {
         Journal j = readers.get(name);
         if (j != null) {
-            j.setCloseListener(null);
+            j.setCloseInterceptor(null);
             j.close();
             readers.remove(name);
         }
 
         j = bulkReaders.get(name);
         if (j != null) {
-            j.setCloseListener(null);
+            j.setCloseInterceptor(null);
             j.close();
             bulkReaders.remove(name);
         }
-    }
-
-    @Override
-    public boolean closing(Journal journal) {
-        return false;
     }
 
     public void refresh() {
@@ -137,7 +137,7 @@ public class CachingReaderFactory extends ReaderFactory implements JournalClosin
     public void reset() {
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
             Journal journal = journalList.getQuick(i);
-            journal.setCloseListener(null);
+            journal.setCloseInterceptor(null);
             if (journal.isOpen()) {
                 journal.close();
             }

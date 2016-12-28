@@ -26,7 +26,7 @@ package org.questdb.examples;
 import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
@@ -51,7 +51,7 @@ public class AppendObjectPartitioned {
         }
 
         String journalLocation = args[0];
-        try (WriterFactory writerFactory = new WriterFactory(new JournalConfigurationBuilder() {{
+        try (WriterFactoryImpl writerFactory = new WriterFactoryImpl(new JournalConfigurationBuilder() {{
             $(Quote.class)
                     .location("quote-by-day")
                     // partition by day

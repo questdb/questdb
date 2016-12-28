@@ -25,7 +25,7 @@ package com.questdb;
 
 
 import com.questdb.ex.JournalException;
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.ReaderFactoryPool;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.misc.Files;
@@ -46,8 +46,8 @@ public class ReaderFactoryPoolTest extends AbstractTest {
         JournalConfiguration configuration = getReaderFactory().getConfiguration();
         try {
             final ReaderFactoryPool pool = new ReaderFactoryPool(configuration, 1);
-            JournalReaderFactory factory1 = pool.get();
-            JournalReaderFactory factory2 = pool.get();
+            ReaderFactory factory1 = pool.get();
+            ReaderFactory factory2 = pool.get();
 
             Assert.assertNotNull(factory1);
             Assert.assertNotNull(factory2);
@@ -70,7 +70,7 @@ public class ReaderFactoryPoolTest extends AbstractTest {
         JournalConfiguration configuration = getReaderFactory().getConfiguration();
         try {
             final ReaderFactoryPool pool = new ReaderFactoryPool(configuration, 2);
-            JournalReaderFactory factory = pool.get();
+            ReaderFactory factory = pool.get();
             factory.close();
             factory = pool.get();
             Assert.assertEquals(1, pool.getOpenCount());
@@ -109,7 +109,7 @@ public class ReaderFactoryPoolTest extends AbstractTest {
                             try {
                                 barrier.await();
                                 for (int k = 0; k < 10; k++) {
-                                    try (JournalReaderFactory rf = pool.get()) {
+                                    try (ReaderFactory rf = pool.get()) {
                                         try (Journal<Quote> r = rf.reader(Quote.class)) {
                                             Assert.assertEquals(recordCount, r.query().all().asResultSet().read().length);
                                         }
@@ -166,7 +166,7 @@ public class ReaderFactoryPoolTest extends AbstractTest {
                     @Override
                     public void run() {
                         try {
-                            JournalReaderFactory[] factories = new JournalReaderFactory[size];
+                            ReaderFactory[] factories = new ReaderFactory[size];
                             for (int i = 0; i < size; i++) {
                                 factories[i] = pool.get();
                             }

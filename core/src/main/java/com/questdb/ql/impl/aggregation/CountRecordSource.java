@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl.aggregation;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
@@ -58,7 +58,7 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+    public RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler) {
         done = false;
         partitionCursor = partitionSource.prepareCursor(factory);
         computeCount();

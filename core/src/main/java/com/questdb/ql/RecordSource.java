@@ -23,7 +23,7 @@
 
 package com.questdb.ql;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.ops.Parameter;
 import com.questdb.std.CharSequenceObjHashMap;
@@ -40,9 +40,9 @@ public interface RecordSource extends Sinkable, Closeable, RecordFactory {
 
     Parameter getParam(CharSequence name);
 
-    RecordCursor prepareCursor(JournalReaderFactory factory);
+    RecordCursor prepareCursor(ReaderFactory factory);
 
-    RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler);
+    RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler);
 
     void setParameterMap(CharSequenceObjHashMap<Parameter> map);
 

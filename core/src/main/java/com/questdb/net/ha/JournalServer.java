@@ -27,7 +27,7 @@ import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalDisconnectedChannelException;
 import com.questdb.ex.JournalNetworkException;
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.NamedDaemonThreadFactory;
@@ -69,7 +69,7 @@ public class JournalServer {
     private static final int ER_ANNOUNCE_LEADER = 8;
     private final AtomicInteger writerIdGenerator = new AtomicInteger(0);
     private final ObjIntHashMap<JournalWriter> writers = new ObjIntHashMap<>();
-    private final JournalReaderFactory factory;
+    private final ReaderFactory factory;
     private final JournalEventBridge bridge;
     private final ServerConfig config;
     private final ThreadPoolExecutor service;
@@ -87,23 +87,23 @@ public class JournalServer {
     private boolean activeNotified = false;
     private ClusterStatusListener clusterStatusListener;
 
-    public JournalServer(JournalReaderFactory factory) {
+    public JournalServer(ReaderFactory factory) {
         this(new ServerConfig(), factory);
     }
 
-    public JournalServer(JournalReaderFactory factory, AuthorizationHandler authorizationHandler) {
+    public JournalServer(ReaderFactory factory, AuthorizationHandler authorizationHandler) {
         this(new ServerConfig(), factory, authorizationHandler);
     }
 
-    public JournalServer(ServerConfig config, JournalReaderFactory factory) {
+    public JournalServer(ServerConfig config, ReaderFactory factory) {
         this(config, factory, null);
     }
 
-    public JournalServer(ServerConfig config, JournalReaderFactory factory, AuthorizationHandler authorizationHandler) {
+    public JournalServer(ServerConfig config, ReaderFactory factory, AuthorizationHandler authorizationHandler) {
         this(config, factory, authorizationHandler, 0);
     }
 
-    public JournalServer(ServerConfig config, JournalReaderFactory factory, AuthorizationHandler authorizationHandler, int instance) {
+    public JournalServer(ServerConfig config, ReaderFactory factory, AuthorizationHandler authorizationHandler, int instance) {
         this.config = config;
         this.factory = factory;
         this.service = new ThreadPoolExecutor(
@@ -132,7 +132,7 @@ public class JournalServer {
         return channels.size();
     }
 
-    public JournalReaderFactory getFactory() {
+    public ReaderFactory getFactory() {
         return factory;
     }
 

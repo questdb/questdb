@@ -29,7 +29,7 @@ import com.questdb.JournalWriter;
 import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -277,7 +277,7 @@ public final class TestUtils {
         }
     }
 
-    public static void assertStrings(RecordSource src, JournalReaderFactory factory) {
+    public static void assertStrings(RecordSource src, ReaderFactory factory) {
         RecordCursor cursor = src.prepareCursor(factory);
         RecordMetadata metadata = src.getMetadata();
         final int len = metadata.getColumnCount();

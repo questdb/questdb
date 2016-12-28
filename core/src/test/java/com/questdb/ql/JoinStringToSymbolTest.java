@@ -24,8 +24,8 @@
 package com.questdb.ql;
 
 import com.questdb.JournalWriter;
-import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.model.Album;
 import com.questdb.model.Band;
@@ -61,11 +61,11 @@ public class JoinStringToSymbolTest {
     private JournalWriter<Band> bw;
     private JournalWriter<Album> aw;
 
-    public JournalReaderFactory getReaderFactory() {
+    public ReaderFactory getReaderFactory() {
         return theFactory.getReaderFactory();
     }
 
-    public JournalWriterFactory getWriterFactory() {
+    public WriterFactory getWriterFactory() {
         return theFactory.getWriterFactory();
     }
 

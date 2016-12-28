@@ -25,8 +25,8 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.ReaderFactoryImpl;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.txt.ExportManager;
@@ -43,8 +43,8 @@ public class SQLExportToTextFile {
             System.exit(1);
         }
 
-        WriterFactory writerFactory = new WriterFactory(args[0]);
-        ReaderFactory readerFactory = new ReaderFactory(args[0]);
+        WriterFactoryImpl writerFactory = new WriterFactoryImpl(args[0]);
+        ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(args[0]);
 
         // import movies data to query
         ImportManager.importFile(writerFactory, SQLExamples.class.getResource("/movies.csv").getFile(), ',', null);

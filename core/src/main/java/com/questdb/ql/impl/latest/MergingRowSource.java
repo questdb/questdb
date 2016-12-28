@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl.latest;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.*;
 import com.questdb.std.str.CharSink;
@@ -48,7 +48,7 @@ public class MergingRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void prepare(JournalReaderFactory factory, StorageFacade facade, CancellationHandler cancellationHandler) {
+    public void prepare(ReaderFactory factory, StorageFacade facade, CancellationHandler cancellationHandler) {
         lhs.prepare(factory, facade, cancellationHandler);
         rhs.prepare(factory, facade, cancellationHandler);
     }

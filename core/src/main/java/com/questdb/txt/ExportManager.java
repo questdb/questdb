@@ -24,7 +24,7 @@
 package com.questdb.txt;
 
 import com.questdb.ex.JournalException;
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.ql.RecordSource;
 import com.questdb.txt.sink.FileSink;
 
@@ -36,7 +36,7 @@ public final class ExportManager {
     private ExportManager() {
     }
 
-    public static void export(RecordSource from, JournalReaderFactory factory, File to, char delimiter) throws JournalException, IOException {
+    public static void export(RecordSource from, ReaderFactory factory, File to, char delimiter) throws JournalException, IOException {
         if (to.isDirectory()) {
             throw new JournalException(to + "cannot be a directory");
         }

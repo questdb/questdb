@@ -25,7 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.txt.ImportManager;
 
 import java.io.IOException;
@@ -39,7 +39,7 @@ public class AppendTextFile {
             System.exit(1);
         }
 
-        try (WriterFactory writerFactory = new WriterFactory(args[0])) {
+        try (WriterFactoryImpl writerFactory = new WriterFactoryImpl(args[0])) {
             // import manager will determine file structure automatically
             ImportManager.importFile(writerFactory, AppendTextFile.class.getResource("/movies.csv").getFile(), ',', null);
         }

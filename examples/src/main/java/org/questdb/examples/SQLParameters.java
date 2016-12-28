@@ -25,8 +25,8 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.ReaderFactoryImpl;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.ql.RecordSource;
@@ -47,8 +47,8 @@ public class SQLParameters {
         }
 
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        ReaderFactory readerFactory = new ReaderFactory(configuration);
-        WriterFactory writerFactory = new WriterFactory(configuration);
+        ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(configuration);
+        WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration);
 
 
         // import movies data to query

@@ -23,10 +23,7 @@
 
 package com.questdb.test.tools;
 
-import com.questdb.factory.CachingReaderFactory;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.ReaderFactoryPool;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.*;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
@@ -40,8 +37,8 @@ public class TheFactory implements TestRule {
 
     private final JournalConfigurationBuilder builder;
     private JournalConfiguration configuration;
-    private WriterFactory writerFactory;
-    private ReaderFactory readerFactory;
+    private WriterFactoryImpl writerFactory;
+    private ReaderFactoryImpl readerFactory;
     private ReaderFactoryPool readerFactoryPool;
     private CachingReaderFactory cachingReaderFactory;
 
@@ -96,7 +93,7 @@ public class TheFactory implements TestRule {
 
     public ReaderFactory getReaderFactory() {
         if (readerFactory == null) {
-            readerFactory = new ReaderFactory(configuration);
+            readerFactory = new ReaderFactoryImpl(configuration);
         }
         return readerFactory;
     }
@@ -110,7 +107,7 @@ public class TheFactory implements TestRule {
 
     public WriterFactory getWriterFactory() {
         if (writerFactory == null) {
-            writerFactory = new WriterFactory(configuration);
+            writerFactory = new WriterFactoryImpl(configuration);
         }
         return writerFactory;
     }

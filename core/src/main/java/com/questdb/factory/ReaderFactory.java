@@ -23,87 +23,40 @@
 
 package com.questdb.factory;
 
-import com.questdb.*;
+import com.questdb.Journal;
+import com.questdb.JournalBulkReader;
+import com.questdb.JournalKey;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 
-import java.io.File;
+import java.io.Closeable;
 
-public class ReaderFactory extends AbstractFactory implements JournalReaderFactory {
+public interface ReaderFactory extends Closeable {
 
-    public ReaderFactory(String databaseHome) {
-        super(databaseHome);
-    }
+    <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException;
 
-    public ReaderFactory(JournalConfiguration configuration) {
-        super(configuration);
-    }
+    <T> JournalBulkReader<T> bulkReader(Class<T> clazz) throws JournalException;
 
-    @Override
-    public <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException {
-        return bulkReader(new JournalKey<>(clazz, location));
-    }
+    JournalBulkReader bulkReader(String location) throws JournalException;
 
-    @Override
-    public <T> JournalBulkReader<T> bulkReader(Class<T> clazz) throws JournalException {
-        return bulkReader(new JournalKey<>(clazz));
-    }
+    <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException;
 
-    @Override
-    public JournalBulkReader bulkReader(String location) throws JournalException {
-        return bulkReader(new JournalKey<>(location));
-    }
+    void close();
 
-    @Override
-    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        return new JournalBulkReader<>(getOrCreateMetadata(key));
-    }
+    JournalConfiguration getConfiguration();
 
-    public <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
-        JournalMetadata<T> metadata = getConfiguration().createMetadata(key);
-        File location = new File(metadata.getLocation());
-        if (!location.exists()) {
-            // create blank journal
-            new JournalWriter<>(metadata).close();
-        }
-        return metadata;
-    }
+    <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException;
 
-    @Override
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return reader(getOrCreateMetadata(key));
-    }
+    <T> Journal<T> reader(JournalKey<T> key) throws JournalException;
 
-    @Override
-    public <T> Journal<T> reader(Class<T> clazz) throws JournalException {
-        return reader(new JournalKey<>(clazz));
-    }
+    <T> Journal<T> reader(Class<T> clazz) throws JournalException;
 
-    @Override
-    public <T> Journal<T> reader(Class<T> clazz, String location) throws JournalException {
-        return reader(new JournalKey<>(clazz, location));
-    }
+    <T> Journal<T> reader(Class<T> clazz, String location) throws JournalException;
 
-    @Override
-    public Journal reader(String location) throws JournalException {
-        return reader(new JournalKey<>(location));
-    }
+    Journal reader(String location) throws JournalException;
 
-    @Override
-    public <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException {
-        return reader(new JournalKey<>(clazz, location, PartitionBy.DEFAULT, recordHint));
-    }
+    <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException;
 
-    @Override
-    public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
-        return reader(metadata, metadata.getKey());
-    }
-
-    @Override
-    public <T> Journal<T> reader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
-        return new Journal<>(metadata);
-    }
-
-
+    <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException;
 }

@@ -176,6 +176,9 @@ public class JournalWriter<T> extends Journal<T> {
     @Override
     public final void close() {
         if (open) {
+            if (closeInterceptor != null && !closeInterceptor.canClose(this)) {
+                return;
+            }
             try {
                 if (isCommitOnClose()) {
                     commit();

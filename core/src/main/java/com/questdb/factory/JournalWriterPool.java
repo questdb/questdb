@@ -23,30 +23,59 @@
 
 package com.questdb.factory;
 
+import com.questdb.Journal;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
+import com.questdb.factory.configuration.JournalConfiguration;
+import com.questdb.factory.configuration.JournalMetadata;
 
 import java.util.concurrent.ConcurrentHashMap;
 
-public class JournalWriterPool {
+public class JournalWriterPool extends WriterFactoryImpl implements JournalCloseInterceptor {
 
     public static final int ALLOC_BEGIN = 1;
     public static final int ALLOC_FAILURE = 2;
 
-    private final JournalWriterFactory factory;
     private final ConcurrentHashMap<String, Integer> allocMap = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, JournalWriter> writerMap = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> busyMap = new ConcurrentHashMap<>();
 
-    public JournalWriterPool(JournalWriterFactory factory) {
-        this.factory = factory;
+    public JournalWriterPool(String databaseHome) {
+        super(databaseHome);
     }
 
-    public JournalWriter get(String path) throws JournalException {
+    public JournalWriterPool(JournalConfiguration configuration) {
+        super(configuration);
+    }
+
+    @Override
+    public <T> JournalWriter<T> bulkWriter(JournalMetadata<T> metadata) throws JournalException {
+        return get(metadata, true);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> JournalWriter<T> writer(JournalMetadata<T> metadata) throws JournalException {
+        return get(metadata, false);
+    }
+
+    @Override
+    public boolean canClose(Journal journal) {
+        String path = journal.getName();
+        if (writerMap.get(path) == journal && busyMap.get(path) == Thread.currentThread().getId()) {
+            busyMap.put(path, -1L);
+        }
+        return false;
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> JournalWriter<T> get(JournalMetadata<T> metadata, boolean bulk) throws JournalException {
+        final String path = metadata.getKey().path();
 
         if (allocMap.putIfAbsent(path, ALLOC_BEGIN) == null) {
             try {
-                JournalWriter w = factory.writer(path);
+                JournalWriter w = bulk ? super.bulkWriter(metadata) : super.writer(metadata);
+                w.setCloseInterceptor(this);
                 writerMap.put(path, w);
                 busyMap.put(path, Thread.currentThread().getId());
                 return w;
@@ -63,13 +92,4 @@ public class JournalWriterPool {
 
         return null;
     }
-
-    public void release(JournalWriter writer) {
-        String path = writer.getName();
-        if (writerMap.get(path) == writer && busyMap.get(path) == Thread.currentThread().getId()) {
-            busyMap.put(path, -1L);
-        }
-    }
-
-
 }

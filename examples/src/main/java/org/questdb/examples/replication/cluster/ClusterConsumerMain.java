@@ -27,8 +27,8 @@ import com.questdb.Journal;
 import com.questdb.JournalIterators;
 import com.questdb.JournalKey;
 import com.questdb.PartitionBy;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.ReaderFactoryImpl;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalClient;
@@ -43,8 +43,8 @@ public class ClusterConsumerMain {
             $(Price.class).$ts();
         }}.build(args[0]);
 
-        final WriterFactory writerFactory = new WriterFactory(configuration);
-        final ReaderFactory readerFactory = new ReaderFactory(configuration);
+        final WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration);
+        final ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(configuration);
 
         final JournalClient client = new JournalClient(new ClientConfig("127.0.0.1:7080,127.0.0.1:7090") {{
             getReconnectPolicy().setRetryCount(6);

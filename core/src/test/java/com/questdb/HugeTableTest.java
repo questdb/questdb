@@ -23,7 +23,7 @@
 
 package com.questdb;
 
-import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -44,7 +44,7 @@ public class HugeTableTest {
         ;
     }});
 
-    public static JournalWriterFactory getFactory() {
+    public static WriterFactory getFactory() {
         return theFactory.getWriterFactory();
     }
 

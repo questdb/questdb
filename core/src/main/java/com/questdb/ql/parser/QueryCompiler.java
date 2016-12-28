@@ -30,9 +30,9 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.CachingReaderFactory;
-import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.ReaderFactoryPool;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.*;
 import com.questdb.misc.*;
 import com.questdb.net.http.ServerConfiguration;
@@ -145,11 +145,11 @@ public class QueryCompiler {
         columnNamePrefixLen = 3;
     }
 
-    public RecordSource compile(JournalReaderFactory factory, CharSequence query) throws ParserException {
+    public RecordSource compile(ReaderFactory factory, CharSequence query) throws ParserException {
         return compile(factory, parse(query));
     }
 
-    public RecordSource compile(JournalReaderFactory factory, ParsedModel model) throws ParserException {
+    public RecordSource compile(ReaderFactory factory, ParsedModel model) throws ParserException {
         if (model.getModelType() == ParsedModel.QUERY) {
             clearState();
             final QueryModel qm = (QueryModel) model;
@@ -161,7 +161,7 @@ public class QueryCompiler {
         throw new IllegalArgumentException("QueryModel expected");
     }
 
-    public JournalWriter createWriter(JournalWriterFactory writerFactory, JournalReaderFactory readerFactory, ParsedModel model) throws ParserException, JournalException {
+    public JournalWriter createWriter(WriterFactory writerFactory, ReaderFactory readerFactory, ParsedModel model) throws ParserException, JournalException {
         if (model.getModelType() != ParsedModel.CREATE_JOURNAL) {
             throw new IllegalArgumentException("create table statement expected");
         }
@@ -260,15 +260,15 @@ public class QueryCompiler {
         }
     }
 
-    public JournalWriter createWriter(JournalWriterFactory writerFactory, JournalReaderFactory readerFactory, CharSequence statement) throws ParserException, JournalException {
+    public JournalWriter createWriter(WriterFactory writerFactory, ReaderFactory readerFactory, CharSequence statement) throws ParserException, JournalException {
         return createWriter(writerFactory, readerFactory, parse(statement));
     }
 
-    public void execute(JournalWriterFactory writerFactory, CachingReaderFactory cachingFactory, ReaderFactoryPool pool, CharSequence statement) throws ParserException, JournalException {
+    public void execute(WriterFactory writerFactory, CachingReaderFactory cachingFactory, ReaderFactoryPool pool, CharSequence statement) throws ParserException, JournalException {
         execute(writerFactory, cachingFactory, pool, parse(statement));
     }
 
-    public void execute(JournalWriterFactory writerFactory,
+    public void execute(WriterFactory writerFactory,
                         CachingReaderFactory cachingFactory,
                         ReaderFactoryPool pool,
                         ParsedModel model) throws ParserException, JournalException {
@@ -817,7 +817,7 @@ public class QueryCompiler {
         constNameToToken.clear();
     }
 
-    private RecordSource compile(QueryModel model, JournalReaderFactory factory) throws ParserException {
+    private RecordSource compile(QueryModel model, ReaderFactory factory) throws ParserException {
         optimiseInvertedBooleans(model);
         optimiseOrderBy(model, ORDER_BY_UNKNOWN);
         optimiseSubQueries(model, factory);
@@ -975,7 +975,7 @@ public class QueryCompiler {
         }
     }
 
-    private RecordSource compileJoins(QueryModel model, JournalReaderFactory factory) throws ParserException {
+    private RecordSource compileJoins(QueryModel model, ReaderFactory factory) throws ParserException {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
         RecordSource master = null;
@@ -1047,7 +1047,7 @@ public class QueryCompiler {
         }
     }
 
-    private RecordSource compileJournal(QueryModel model, JournalReaderFactory factory) throws ParserException {
+    private RecordSource compileJournal(QueryModel model, ReaderFactory factory) throws ParserException {
         if (SysFactories.getFactory(model.getJournalName().token) != null) {
             return compileSysView(model, factory);
         } else {
@@ -1056,7 +1056,7 @@ public class QueryCompiler {
     }
 
     @SuppressWarnings("ConstantConditions")
-    private RecordSource compileJournal0(QueryModel model, JournalReaderFactory factory) throws ParserException {
+    private RecordSource compileJournal0(QueryModel model, ReaderFactory factory) throws ParserException {
 
         applyLimit(model);
 
@@ -1269,7 +1269,7 @@ public class QueryCompiler {
         return recordSource;
     }
 
-    private RecordSource compileNoOptimise(QueryModel model, JournalReaderFactory factory) throws ParserException {
+    private RecordSource compileNoOptimise(QueryModel model, ReaderFactory factory) throws ParserException {
         RecordSource rs;
         try {
             if (model.getJoinModels().size() > 1) {
@@ -1302,16 +1302,16 @@ public class QueryCompiler {
         return new VirtualColumnRecordSource(rs, outer);
     }
 
-    private RecordSource compileSourceInternal(JournalReaderFactory factory, CharSequence query) throws ParserException {
+    private RecordSource compileSourceInternal(ReaderFactory factory, CharSequence query) throws ParserException {
         return compile((QueryModel) parser.parseInternal(query), factory);
     }
 
-    private RecordSource compileSubQuery(QueryModel model, JournalReaderFactory factory) throws ParserException {
+    private RecordSource compileSubQuery(QueryModel model, ReaderFactory factory) throws ParserException {
         applyLimit(model);
         return filter(model, compileNoOptimise(model.getNestedModel(), factory));
     }
 
-    private RecordSource compileSysView(QueryModel model, JournalReaderFactory factory) throws ParserException {
+    private RecordSource compileSysView(QueryModel model, ReaderFactory factory) throws ParserException {
         applyLimit(model);
         SystemViewFactory fact = SysFactories.getFactory(model.getJournalName().token);
         if (fact == null) {
@@ -1336,7 +1336,7 @@ public class QueryCompiler {
         }
     }
 
-    private void copy(JournalReaderFactory factory, RecordSource rs, JournalWriter w) throws JournalException {
+    private void copy(ReaderFactory factory, RecordSource rs, JournalWriter w) throws JournalException {
         final int tsIndex = w.getMetadata().getTimestampIndex();
         if (tsIndex == -1) {
             copyNonPartitioned(rs.prepareCursor(factory), w, copyHelperCompiler.compile(rs.getMetadata(), w.getMetadata()));
@@ -1999,7 +1999,7 @@ public class QueryCompiler {
         }
     }
 
-    private void optimiseJoins(QueryModel parent, JournalReaderFactory factory) throws ParserException {
+    private void optimiseJoins(QueryModel parent, ReaderFactory factory) throws ParserException {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
 
         int n = joinModels.size();
@@ -2105,7 +2105,7 @@ public class QueryCompiler {
      * @param factory factory is used to collect journal columns.
      * @throws ParserException usually syntax exceptions
      */
-    private void optimiseSubQueries(QueryModel model, JournalReaderFactory factory) throws ParserException {
+    private void optimiseSubQueries(QueryModel model, ReaderFactory factory) throws ParserException {
         QueryModel nm;
         ObjList<QueryModel> jm = model.getJoinModels();
         ObjList<ExprNode> where = model.parseWhereClause();
@@ -2177,7 +2177,7 @@ public class QueryCompiler {
     }
 
     // todo: remove
-    CharSequence plan(JournalReaderFactory factory, CharSequence query) throws ParserException {
+    CharSequence plan(ReaderFactory factory, CharSequence query) throws ParserException {
         QueryModel model = (QueryModel) parser.parse(query);
         resetAndOptimise(model, factory);
         return model.plan();
@@ -2281,7 +2281,7 @@ public class QueryCompiler {
     }
 
     private void renameJournal(
-            JournalWriterFactory writerFactory,
+            WriterFactory writerFactory,
             CachingReaderFactory cachingFactory,
             ReaderFactoryPool pool,
             RenameJournalModel model) throws ParserException {
@@ -2440,12 +2440,12 @@ public class QueryCompiler {
         return node;
     }
 
-    private void resetAndOptimise(QueryModel model, JournalReaderFactory factory) throws ParserException {
+    private void resetAndOptimise(QueryModel model, ReaderFactory factory) throws ParserException {
         clearState();
         optimiseJoins(model, factory);
     }
 
-    private void resolveJoinMetadata(QueryModel parent, int index, JournalReaderFactory factory) throws ParserException {
+    private void resolveJoinMetadata(QueryModel parent, int index, ReaderFactory factory) throws ParserException {
         QueryModel model = parent.getJoinModels().getQuick(index);
         RecordMetadata metadata;
         if (model.getJournalName() != null) {

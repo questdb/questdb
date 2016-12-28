@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl.sys;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.log.Log;
@@ -93,7 +93,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+    public RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler) {
         records.clear();
         NativeLPSZ name = tlNativeLpsz.get();
         int bufSz = metaSize;

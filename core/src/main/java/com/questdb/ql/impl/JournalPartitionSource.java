@@ -27,7 +27,7 @@ import com.questdb.Journal;
 import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.PartitionCursor;
 import com.questdb.ql.PartitionSlice;
@@ -59,7 +59,7 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
 
     @Override
     @SuppressWarnings("unchecked")
-    public PartitionCursor prepareCursor(JournalReaderFactory factory) {
+    public PartitionCursor prepareCursor(ReaderFactory factory) {
         try {
             this.journal = factory.reader(metadata);
             this.journal.refresh();

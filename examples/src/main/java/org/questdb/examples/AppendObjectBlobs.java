@@ -26,7 +26,7 @@ package org.questdb.examples;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.factory.configuration.JournalStructure;
@@ -42,7 +42,7 @@ public class AppendObjectBlobs {
         final String dirToIndex = args[1];
 
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        WriterFactory writerFactory = new WriterFactory(configuration);
+        WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration);
 
         JournalWriter writer = writerFactory.writer(new JournalStructure("files") {{
             $sym("name").index();

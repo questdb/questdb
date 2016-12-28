@@ -27,7 +27,7 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
 import com.questdb.ex.*;
-import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
@@ -55,7 +55,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     public static final int ATOMICITY_RELAXED = 1;
 
     private static final Log LOG = LogFactory.getLog(JournalImportListener.class);
-    private final JournalWriterFactory factory;
+    private final WriterFactory factory;
     private final LongList errors = new LongList();
     private String location;
     private ObjList<ImportedColumnMetadata> metadata;
@@ -65,7 +65,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     private boolean durable;
     private int atomicity;
 
-    public JournalImportListener(JournalWriterFactory factory) {
+    public JournalImportListener(WriterFactory factory) {
         this.factory = factory;
     }
 

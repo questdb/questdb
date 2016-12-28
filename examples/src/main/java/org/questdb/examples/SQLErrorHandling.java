@@ -25,8 +25,8 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.ReaderFactoryImpl;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.ql.parser.QueryCompiler;
@@ -46,8 +46,8 @@ public class SQLErrorHandling {
             System.exit(1);
         }
 
-        try (WriterFactory writerFactory = new WriterFactory(args[0]);
-             ReaderFactory readerFactory = new ReaderFactory(args[0])) {
+        try (WriterFactoryImpl writerFactory = new WriterFactoryImpl(args[0]);
+             ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(args[0])) {
 
             // import movies data to query
             ImportManager.importFile(writerFactory, SQLErrorHandling.class.getResource("/movies.csv").getFile(), ',', null);

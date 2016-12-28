@@ -26,7 +26,7 @@ package com.questdb.ql.impl.lambda;
 import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.*;
 import com.questdb.ql.impl.JournalRecord;
@@ -66,7 +66,7 @@ public class KvIndexIntLambdaHeadRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void prepare(JournalReaderFactory factory, StorageFacade fa, CancellationHandler cancellationHandler) {
+    public void prepare(ReaderFactory factory, StorageFacade fa, CancellationHandler cancellationHandler) {
         if (filter != null) {
             filter.prepare(fa);
         }

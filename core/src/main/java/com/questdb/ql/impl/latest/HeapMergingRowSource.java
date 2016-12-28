@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl.latest;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.*;
@@ -49,7 +49,7 @@ public class HeapMergingRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void prepare(JournalReaderFactory factory, StorageFacade facade, CancellationHandler cancellationHandler) {
+    public void prepare(ReaderFactory factory, StorageFacade facade, CancellationHandler cancellationHandler) {
         for (int i = 0, n = sources.length; i < n; i++) {
             Unsafe.arrayGet(sources, i).prepare(factory, facade, cancellationHandler);
         }

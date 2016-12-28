@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.VirtualColumn;
@@ -47,7 +47,7 @@ public class FilteredRowSource implements RowSource, RowCursor {
     }
 
     @Override
-    public void prepare(JournalReaderFactory factory, StorageFacade facade, CancellationHandler cancellationHandler) {
+    public void prepare(ReaderFactory factory, StorageFacade facade, CancellationHandler cancellationHandler) {
         delegate.prepare(factory, facade, cancellationHandler);
         filter.prepare(facade);
     }

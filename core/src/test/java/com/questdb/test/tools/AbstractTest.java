@@ -24,8 +24,8 @@
 package com.questdb.test.tools;
 
 import com.questdb.ex.ParserException;
-import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
 import com.questdb.ql.Record;
@@ -62,11 +62,11 @@ public abstract class AbstractTest {
         }
     }
 
-    public JournalReaderFactory getReaderFactory() {
+    public ReaderFactory getReaderFactory() {
         return theFactory.getReaderFactory();
     }
 
-    public JournalWriterFactory getWriterFactory() {
+    public WriterFactory getWriterFactory() {
         return theFactory.getWriterFactory();
     }
 

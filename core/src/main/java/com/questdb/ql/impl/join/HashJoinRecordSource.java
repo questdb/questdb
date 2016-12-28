@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl.join;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
@@ -100,7 +100,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+    public RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler) {
         this.hashTableCursor = null;
         this.recordMap.clear();
         this.slaveCursor = slave.prepareCursor(factory, cancellationHandler);

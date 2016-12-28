@@ -24,7 +24,7 @@
 package com.questdb.ql.impl;
 
 import com.questdb.Partition;
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.ql.PartitionCursor;
 import com.questdb.ql.PartitionSlice;
@@ -48,7 +48,7 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
-    public PartitionCursor prepareCursor(JournalReaderFactory readerFactory) {
+    public PartitionCursor prepareCursor(ReaderFactory readerFactory) {
         return this;
     }
 

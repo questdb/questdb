@@ -26,8 +26,8 @@ package com.questdb.net.ha;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.JournalReaderFactory;
-import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.model.Quote;
@@ -459,7 +459,7 @@ public class ClusterControllerTest extends AbstractTest {
         }
     }
 
-    private ClusterController createController2(final JournalWriter writer, int instance, final JournalWriterFactory writerFactory, final JournalReaderFactory readerFactory, final AtomicInteger active, final AtomicInteger standby, final AtomicInteger shutdown) throws JournalException {
+    private ClusterController createController2(final JournalWriter writer, int instance, final WriterFactory writerFactory, final ReaderFactory readerFactory, final AtomicInteger active, final AtomicInteger standby, final AtomicInteger shutdown) {
         return new ClusterController(
                 new ServerConfig() {{
                     addNode(new ServerNode(4, "localhost:7040"));
@@ -499,7 +499,7 @@ public class ClusterControllerTest extends AbstractTest {
         );
     }
 
-    private ClusterController createControllerX(final JournalWriter writer, int instance, final JournalWriterFactory writerFactory, JournalReaderFactory readerFactory, final CountDownLatch active, final CountDownLatch standby, final CountDownLatch shutdown) throws JournalException {
+    private ClusterController createControllerX(final JournalWriter writer, int instance, final WriterFactory writerFactory, ReaderFactory readerFactory, final CountDownLatch active, final CountDownLatch standby, final CountDownLatch shutdown) {
         return new ClusterController(
                 new ServerConfig() {{
                     addNode(new ServerNode(0, "localhost:7080"));

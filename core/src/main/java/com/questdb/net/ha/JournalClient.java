@@ -30,7 +30,7 @@ import com.questdb.ex.IncompatibleJournalException;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
@@ -88,7 +88,7 @@ public class JournalClient {
     private final ObjList<JournalDeltaConsumer> deltaConsumers = new ObjList<>();
     private final IntList statusSentList = new IntList();
     private final CharSequenceHashSet subscribedJournals = new CharSequenceHashSet();
-    private final JournalWriterFactory factory;
+    private final WriterFactory factory;
     private final CommandProducer commandProducer = new CommandProducer();
     private final CommandConsumer commandConsumer = new CommandConsumer();
     private final ObjList<SubscriptionHolder> subscriptions = new ObjList<>();
@@ -109,23 +109,23 @@ public class JournalClient {
     private StatsCollectingReadableByteChannel statsChannel;
     private volatile boolean running = false;
 
-    public JournalClient(JournalWriterFactory factory) {
+    public JournalClient(WriterFactory factory) {
         this(factory, null);
     }
 
-    public JournalClient(JournalWriterFactory factory, CredentialProvider credentialProvider) {
+    public JournalClient(WriterFactory factory, CredentialProvider credentialProvider) {
         this(new ClientConfig(), factory, credentialProvider, null);
     }
 
-    public JournalClient(ClientConfig config, JournalWriterFactory factory) {
+    public JournalClient(ClientConfig config, WriterFactory factory) {
         this(config, factory, null, null);
     }
 
-    public JournalClient(ClientConfig config, JournalWriterFactory factory, CredentialProvider credentialProvider) {
+    public JournalClient(ClientConfig config, WriterFactory factory, CredentialProvider credentialProvider) {
         this(config, factory, credentialProvider, null);
     }
 
-    public JournalClient(ClientConfig config, JournalWriterFactory factory, CredentialProvider credentialProvider, Callback callback) {
+    public JournalClient(ClientConfig config, WriterFactory factory, CredentialProvider credentialProvider, Callback callback) {
         this.config = config;
         this.factory = factory;
         this.credentialProvider = credentialProvider;

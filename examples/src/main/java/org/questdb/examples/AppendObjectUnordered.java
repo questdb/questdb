@@ -25,8 +25,8 @@ package org.questdb.examples;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.ReaderFactoryImpl;
+import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.misc.Files;
 import org.questdb.examples.support.Quote;
 
@@ -48,8 +48,8 @@ public class AppendObjectUnordered {
 
         String journalLocation = args[0];
 
-        try (ReaderFactory readerFactory = new ReaderFactory(journalLocation);
-             WriterFactory writerFactory = new WriterFactory(journalLocation)) {
+        try (ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(journalLocation);
+             WriterFactoryImpl writerFactory = new WriterFactoryImpl(journalLocation)) {
 
             // delete existing quote journal
             Files.delete(new File(readerFactory.getConfiguration().getJournalBase(), "quote-unordered"));

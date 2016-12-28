@@ -25,8 +25,8 @@ package com.questdb.factory;
 
 import com.questdb.Journal;
 
-public interface JournalClosingListener {
+public interface JournalCloseInterceptor {
 
-    boolean closing(Journal journal);
+    boolean canClose(Journal journal);
 
 }

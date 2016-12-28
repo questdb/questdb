@@ -27,7 +27,7 @@ import com.questdb.JournalKey;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -186,7 +186,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator {
         withClauses.clear();
     }
 
-    public RecordMetadata collectJournalMetadata(JournalReaderFactory factory) throws ParserException {
+    public RecordMetadata collectJournalMetadata(ReaderFactory factory) throws ParserException {
         if (journalMetadata != null) {
             return journalMetadata;
         }
@@ -219,7 +219,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator {
         }
     }
 
-    public void createColumnNameHistogram(JournalReaderFactory factory) throws ParserException {
+    public void createColumnNameHistogram(ReaderFactory factory) throws ParserException {
         columnNameHistogram.clear();
         createColumnNameHistogram0(columnNameHistogram, this, factory, false);
     }
@@ -504,7 +504,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator {
         }
     }
 
-    private static void createColumnNameHistogram0(CharSequenceIntHashMap histogram, QueryModel model, JournalReaderFactory factory, boolean ignoreJoins) throws ParserException {
+    private static void createColumnNameHistogram0(CharSequenceIntHashMap histogram, QueryModel model, ReaderFactory factory, boolean ignoreJoins) throws ParserException {
         ObjList<QueryModel> jm = model.getJoinModels();
         int jmSize = ignoreJoins ? 0 : jm.size();
 

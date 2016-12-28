@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl.join;
 
-import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.ql.*;
@@ -40,7 +40,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     private final SplitRecordStorageFacade storageFacade;
     private final NullableRecord nullableRecord;
     private final int split;
-    private JournalReaderFactory factory;
+    private ReaderFactory factory;
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
     private boolean nextSlave = false;
@@ -67,7 +67,7 @@ public class CrossJoinRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public RecordCursor prepareCursor(JournalReaderFactory factory, CancellationHandler cancellationHandler) {
+    public RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler) {
         nextSlave = false;
         this.factory = factory;
         masterCursor = masterSource.prepareCursor(factory, cancellationHandler);
