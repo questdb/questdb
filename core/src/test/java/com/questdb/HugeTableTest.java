@@ -23,14 +23,12 @@
 
 package com.questdb;
 
-import com.questdb.ex.JournalConfigurationException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.factory.JournalWriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
-import com.questdb.test.tools.JournalTestFactory;
+import com.questdb.test.tools.TheFactory;
 import org.junit.ClassRule;
 import org.junit.Test;
 
@@ -38,46 +36,38 @@ import java.util.concurrent.TimeUnit;
 
 public class HugeTableTest {
 
-    @ClassRule
-    public static final JournalTestFactory factory;
     private static final Log LOG = LogFactory.getLog(HugeTableTest.class);
+    @ClassRule
+    public static TheFactory theFactory = new TheFactory(new JournalConfigurationBuilder() {{
+        $(Name.class).recordCountHint(15000000).txCountHint(1)
+                .$sym("name").valueCountHint(15000000).index().noCache()
+        ;
+    }});
+
+    public static JournalWriterFactory getFactory() {
+        return theFactory.getWriterFactory();
+    }
 
     @Test
     public void testLargeSymbolTable() throws Exception {
+        try (JournalWriter<Name> w = getFactory().writer(Name.class, "name")) {
+            Name name = new Name();
+            Rnd rnd = new Rnd();
 
-        JournalWriter<Name> w = factory.writer(Name.class, "name");
-
-        Name name = new Name();
-        Rnd rnd = new Rnd();
-
-        long t = 0;
-        for (int i = -500000; i < 2000000; i++) {
-            if (i == 0) {
-                t = System.nanoTime();
+            long t = 0;
+            for (int i = -500000; i < 2000000; i++) {
+                if (i == 0) {
+                    t = System.nanoTime();
+                }
+                name.name = rnd.nextString(10);
+                w.append(name);
             }
-            name.name = rnd.nextString(10);
-            w.append(name);
+            w.commit();
+            LOG.info().$("Appended 2M symbols in ").$(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t)).$("ms").$();
         }
-        w.commit();
-
-        LOG.info().$("Appended 2M symbols in ").$(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t)).$("ms").$();
     }
 
     public static class Name {
         String name;
-    }
-
-    static {
-        try {
-            factory = new JournalTestFactory(
-                    new JournalConfigurationBuilder() {{
-                        $(Name.class).recordCountHint(15000000).txCountHint(1)
-                                .$sym("name").valueCountHint(15000000).index().noCache()
-                        ;
-                    }}.build(Files.makeTempDir())
-            );
-        } catch (JournalConfigurationException e) {
-            throw new JournalRuntimeException(e);
-        }
     }
 }

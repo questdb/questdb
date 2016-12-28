@@ -39,7 +39,7 @@ public class ResamplingTest extends AbstractOptimiserTest {
     public static void setUp() throws Exception {
         int recordCount = 10000;
         int employeeCount = 10;
-        try (JournalWriter orders = factory.writer(
+        try (JournalWriter orders = getWriterFactory().writer(
                 new JournalStructure("orders").
                         $int("orderId").
                         $int("customerId").
@@ -79,7 +79,7 @@ public class ResamplingTest extends AbstractOptimiserTest {
             orders.commit();
         }
 
-        try (JournalWriter orders2 = factory.writer(
+        try (JournalWriter orders2 = getWriterFactory().writer(
                 new JournalStructure("orders2").
                         $int("orderId").
                         $int("customerId").
@@ -122,7 +122,7 @@ public class ResamplingTest extends AbstractOptimiserTest {
             orders2.commit();
         }
 
-        try (JournalWriter orders2 = factory.writer(
+        try (JournalWriter orders2 = getWriterFactory().writer(
                 new JournalStructure("orders4").
                         $int("orderId").
                         $int("customerId").
@@ -165,7 +165,7 @@ public class ResamplingTest extends AbstractOptimiserTest {
             orders2.commit();
         }
 
-        JournalWriter orders3 = factory.writer(
+        JournalWriter orders3 = getWriterFactory().writer(
                 new JournalStructure("orders3").
                         $int("orderId").
                         $int("customerId").

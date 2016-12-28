@@ -26,7 +26,9 @@ package org.questdb.examples;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.WriterFactory;
+import com.questdb.factory.configuration.JournalConfiguration;
+import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.factory.configuration.JournalStructure;
 
 import java.io.*;
@@ -37,12 +39,12 @@ public class AppendObjectBlobs {
 
     public static void main(String[] args) throws JournalException, IOException {
 
-        final String nfsdb = args[0];
         final String dirToIndex = args[1];
 
-        JournalFactory factory = new JournalFactory(nfsdb);
+        JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
+        WriterFactory writerFactory = new WriterFactory(configuration);
 
-        JournalWriter writer = factory.writer(new JournalStructure("files") {{
+        JournalWriter writer = writerFactory.writer(new JournalStructure("files") {{
             $sym("name").index();
             $bin("data");
             $ts();

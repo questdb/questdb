@@ -34,42 +34,43 @@ public class JournalRecoveryTest extends AbstractTest {
 
     @Test
     public void testLagRecovery() throws Exception {
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        TestUtils.generateQuoteData(origin, 100000, new Interval("2013-01-01T00:00:00.000Z", "2013-05-30T12:55:00.000Z"));
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+            TestUtils.generateQuoteData(origin, 100000, new Interval("2013-01-01T00:00:00.000Z", "2013-05-30T12:55:00.000Z"));
 
-        try (Journal<Quote> r = factory.reader(Quote.class, "origin")) {
-            Assert.assertEquals(100000, r.size());
-        }
+            try (Journal<Quote> r = getReaderFactory().reader(Quote.class, "origin")) {
+                Assert.assertEquals(100000, r.size());
+            }
 
-        long ts;
-        try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
-            w.disableCommitOnClose();
-            w.append(origin.query().all().asResultSet().subset(0, 15000));
-            w.mergeAppend(origin.query().all().asResultSet().subset(15000, 17000));
-            w.commit();
-            ts = w.getMaxTimestamp();
+            long ts;
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+                w.disableCommitOnClose();
+                w.append(origin.query().all().asResultSet().subset(0, 15000));
+                w.mergeAppend(origin.query().all().asResultSet().subset(15000, 17000));
+                w.commit();
+                ts = w.getMaxTimestamp();
 
-            w.mergeAppend(origin.query().all().asResultSet().subset(16000, 27000));
-            w.mergeAppend(origin.query().all().asResultSet().subset(23000, 37000));
-            Assert.assertTrue(ts < w.getMaxTimestamp());
-            Assert.assertEquals(37672, w.size());
-        }
+                w.mergeAppend(origin.query().all().asResultSet().subset(16000, 27000));
+                w.mergeAppend(origin.query().all().asResultSet().subset(23000, 37000));
+                Assert.assertTrue(ts < w.getMaxTimestamp());
+                Assert.assertEquals(37672, w.size());
+            }
 
-        try (Journal<Quote> w = factory.reader(Quote.class)) {
-            Assert.assertEquals(ts, w.getMaxTimestamp());
-            Assert.assertEquals(17000, w.size());
-        }
+            try (Journal<Quote> w = getReaderFactory().reader(Quote.class)) {
+                Assert.assertEquals(ts, w.getMaxTimestamp());
+                Assert.assertEquals(17000, w.size());
+            }
 
-        try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
-            Assert.assertEquals(ts, w.getMaxTimestamp());
-            Assert.assertEquals(17000, w.size());
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+                Assert.assertEquals(ts, w.getMaxTimestamp());
+                Assert.assertEquals(17000, w.size());
+            }
         }
     }
 
     @Test
     public void testRecovery() throws Exception {
         long ts;
-        try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
             w.disableCommitOnClose();
             Assert.assertFalse(w.isCommitOnClose());
             TestUtils.generateQuoteData(w, 10000, new Interval("2013-01-01T00:00:00.000Z", "2013-02-28T12:55:00.000Z"));
@@ -78,12 +79,12 @@ public class JournalRecoveryTest extends AbstractTest {
             Assert.assertTrue(w.getMaxTimestamp() > ts);
         }
 
-        try (Journal<Quote> w = factory.reader(Quote.class)) {
+        try (Journal<Quote> w = getReaderFactory().reader(Quote.class)) {
             Assert.assertEquals(ts, w.getMaxTimestamp());
             Assert.assertEquals(10000, w.size());
         }
 
-        try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
             w.disableCommitOnClose();
             Assert.assertEquals(ts, w.getMaxTimestamp());
             Assert.assertEquals(10000, w.size());

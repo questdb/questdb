@@ -28,7 +28,6 @@ import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.ex.SlowWritableChannelException;
-import com.questdb.factory.JournalFactory;
 import com.questdb.factory.JournalWriterFactory;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalMetadata;
@@ -67,11 +66,11 @@ public class ImportHandler extends AbstractMultipartHandler {
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final ThreadLocal<FormatParser> PARSER = new ThreadLocal<>();
     private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
-    private final JournalFactory factory;
+    private final JournalWriterFactory factory;
     private final LocalValue<ImportHandlerContext> lvContext = new LocalValue<>();
     private final ServerConfiguration configuration;
 
-    public ImportHandler(ServerConfiguration configuration, JournalFactory factory) {
+    public ImportHandler(ServerConfiguration configuration, JournalWriterFactory factory) {
         this.factory = factory;
         this.configuration = configuration;
     }

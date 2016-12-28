@@ -23,23 +23,23 @@
 
 package com.questdb;
 
-import com.questdb.factory.JournalCachingFactory;
+import com.questdb.factory.CachingReaderFactory;
 import com.questdb.misc.Files;
 import com.questdb.model.Quote;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class JournalCachingFactoryTest extends AbstractTest {
+public class CachingReaderFactoryTest extends AbstractTest {
 
     @Test
     public void testFactory() throws Exception {
 
         // create journals so there is something to read.
-        factory.writer(Quote.class);
-        factory.writer(Quote.class, "loc");
+        getWriterFactory().writer(Quote.class).close();
+        getWriterFactory().writer(Quote.class, "loc").close();
 
-        JournalCachingFactory cachingFactory = new JournalCachingFactory(factory.getConfiguration());
+        CachingReaderFactory cachingFactory = new CachingReaderFactory(getReaderFactory().getConfiguration());
 
         // create first reader
         Journal<Quote> reader = cachingFactory.reader(Quote.class);

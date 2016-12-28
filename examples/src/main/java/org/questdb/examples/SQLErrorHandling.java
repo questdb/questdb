@@ -25,7 +25,8 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.ql.parser.QueryCompiler;
@@ -45,10 +46,11 @@ public class SQLErrorHandling {
             System.exit(1);
         }
 
-        try (JournalFactory factory = new JournalFactory(args[0])) {
+        try (WriterFactory writerFactory = new WriterFactory(args[0]);
+             ReaderFactory readerFactory = new ReaderFactory(args[0])) {
 
             // import movies data to query
-            ImportManager.importFile(factory, SQLErrorHandling.class.getResource("/movies.csv").getFile(), ',', null);
+            ImportManager.importFile(writerFactory, SQLErrorHandling.class.getResource("/movies.csv").getFile(), ',', null);
 
             // Create SQL engine instance.
             QueryCompiler compiler = new QueryCompiler();
@@ -60,7 +62,7 @@ public class SQLErrorHandling {
 
             try {
                 // in case of exception all allocated resources are freed automatically
-                compiler.compile(factory, "'movies.csv' where movieIds = :id");
+                compiler.compile(readerFactory, "'movies.csv' where movieIds = :id");
             } catch (ParserException e) {
                 LOG.error().$("At (").$(QueryError.getPosition()).$(") : ").$(QueryError.getMessage()).$();
             }

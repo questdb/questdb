@@ -28,7 +28,9 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
+import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Numbers;
 import com.questdb.net.ha.ClusterController;
@@ -49,11 +51,14 @@ public class ClusteredProducerMain {
 
         final String pathToDatabase = args[0];
         final int instance = Numbers.parseInt(args[1]);
-        final JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
+        final JournalConfiguration configuration = new JournalConfigurationBuilder() {{
             $(Price.class).$ts();
-        }}.build(pathToDatabase));
+        }}.build(pathToDatabase);
 
-        final JournalWriter<Price> writer = factory.bulkWriter(new JournalKey<>(Price.class, 1000000000));
+        final WriterFactory writerFactory = new WriterFactory(configuration);
+        final ReaderFactory readerFactory = new ReaderFactory(configuration);
+
+        final JournalWriter<Price> writer = writerFactory.bulkWriter(new JournalKey<>(Price.class, 1000000000));
 
         final WorkerController wc = new WorkerController(writer);
 
@@ -63,7 +68,8 @@ public class ClusteredProducerMain {
                     addNode(new ServerNode(2, "127.0.0.1:7090"));
                 }},
                 new ClientConfig(),
-                factory,
+                writerFactory,
+                readerFactory,
                 instance,
                 new ArrayList<JournalWriter>() {{
                     add(writer);

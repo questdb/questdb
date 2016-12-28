@@ -29,10 +29,10 @@ import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.JournalCachingFactory;
-import com.questdb.factory.JournalFactory;
-import com.questdb.factory.JournalFactoryPool;
+import com.questdb.factory.CachingReaderFactory;
 import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.ReaderFactoryPool;
 import com.questdb.factory.configuration.*;
 import com.questdb.misc.*;
 import com.questdb.net.http.ServerConfiguration;
@@ -161,7 +161,7 @@ public class QueryCompiler {
         throw new IllegalArgumentException("QueryModel expected");
     }
 
-    public JournalWriter createWriter(JournalFactory factory, ParsedModel model) throws ParserException, JournalException {
+    public JournalWriter createWriter(JournalWriterFactory writerFactory, JournalReaderFactory readerFactory, ParsedModel model) throws ParserException, JournalException {
         if (model.getModelType() != ParsedModel.CREATE_JOURNAL) {
             throw new IllegalArgumentException("create table statement expected");
         }
@@ -169,7 +169,7 @@ public class QueryCompiler {
         CreateJournalModel cm = (CreateJournalModel) model;
 
         final String name = cm.getName().token;
-        switch (factory.getConfiguration().exists(name)) {
+        switch (writerFactory.getConfiguration().exists(name)) {
             case JournalConfiguration.EXISTS:
                 throw QueryError.$(cm.getName().position, "Journal already exists");
             case JournalConfiguration.EXISTS_FOREIGN:
@@ -183,7 +183,7 @@ public class QueryCompiler {
         RecordSource rs;
         QueryModel queryModel = cm.getQueryModel();
         if (queryModel != null) {
-            rs = compile(queryModel, factory);
+            rs = compile(queryModel, readerFactory);
         } else {
             rs = null;
         }
@@ -241,11 +241,11 @@ public class QueryCompiler {
                 }
             }
 
-            JournalWriter w = factory.bulkWriter(struct);
+            JournalWriter w = writerFactory.bulkWriter(struct);
 
             if (rs != null) {
                 try {
-                    copy(factory, rs, w);
+                    copy(readerFactory, rs, w);
                 } catch (Throwable e) {
                     w.close();
                     throw e;
@@ -260,26 +260,26 @@ public class QueryCompiler {
         }
     }
 
-    public JournalWriter createWriter(JournalFactory factory, CharSequence statement) throws ParserException, JournalException {
-        return createWriter(factory, parse(statement));
+    public JournalWriter createWriter(JournalWriterFactory writerFactory, JournalReaderFactory readerFactory, CharSequence statement) throws ParserException, JournalException {
+        return createWriter(writerFactory, readerFactory, parse(statement));
     }
 
-    public void execute(JournalFactory factory, JournalCachingFactory cachingFactory, JournalFactoryPool pool, CharSequence statement) throws ParserException, JournalException {
-        execute(factory, cachingFactory, pool, parse(statement));
+    public void execute(JournalWriterFactory writerFactory, CachingReaderFactory cachingFactory, ReaderFactoryPool pool, CharSequence statement) throws ParserException, JournalException {
+        execute(writerFactory, cachingFactory, pool, parse(statement));
     }
 
-    public void execute(JournalFactory factory,
-                        JournalCachingFactory cachingFactory,
-                        JournalFactoryPool pool,
+    public void execute(JournalWriterFactory writerFactory,
+                        CachingReaderFactory cachingFactory,
+                        ReaderFactoryPool pool,
                         ParsedModel model) throws ParserException, JournalException {
         switch (model.getModelType()) {
             case ParsedModel.CREATE_JOURNAL:
-                createWriter(factory, model).close();
+                createWriter(writerFactory, cachingFactory, model).close();
                 break;
             case ParsedModel.QUERY:
                 throw new IllegalArgumentException("Statement expected");
             case ParsedModel.RENAME_JOURNAL:
-                renameJournal(factory, cachingFactory, pool, (RenameJournalModel) model);
+                renameJournal(writerFactory, cachingFactory, pool, (RenameJournalModel) model);
                 break;
             default:
                 throw new IllegalArgumentException("Unknown statement");
@@ -1336,7 +1336,7 @@ public class QueryCompiler {
         }
     }
 
-    private void copy(JournalFactory factory, RecordSource rs, JournalWriter w) throws JournalException {
+    private void copy(JournalReaderFactory factory, RecordSource rs, JournalWriter w) throws JournalException {
         final int tsIndex = w.getMetadata().getTimestampIndex();
         if (tsIndex == -1) {
             copyNonPartitioned(rs.prepareCursor(factory), w, copyHelperCompiler.compile(rs.getMetadata(), w.getMetadata()));
@@ -2281,9 +2281,9 @@ public class QueryCompiler {
     }
 
     private void renameJournal(
-            JournalFactory factory,
-            JournalCachingFactory cachingFactory,
-            JournalFactoryPool pool,
+            JournalWriterFactory writerFactory,
+            CachingReaderFactory cachingFactory,
+            ReaderFactoryPool pool,
             RenameJournalModel model) throws ParserException {
 
         String from = Chars.stripQuotes(model.getFrom().token);
@@ -2297,7 +2297,7 @@ public class QueryCompiler {
         }
 
         try {
-            factory.getConfiguration().rename(from, to);
+            writerFactory.getConfiguration().rename(from, to);
         } catch (JournalException e) {
             throw QueryError.position(model.getFrom().position).$(e.getMessage()).$();
         } finally {

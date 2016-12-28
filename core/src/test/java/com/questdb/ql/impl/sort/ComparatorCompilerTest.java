@@ -46,7 +46,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
 
     @Test
     public void testAllGetters() throws Exception {
-        JournalWriter w = factory.writer(new JournalStructure("xyz")
+        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("xyz")
                 .$bool("bool")
                 .$byte("byte")
                 .$double("double")
@@ -57,47 +57,47 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
                 .$short("short")
                 .$str("str")
                 .$sym("sym")
-                .$());
+                .$())) {
 
-        JournalEntryWriter ew = w.entryWriter();
+            JournalEntryWriter ew = w.entryWriter();
 
-        ew.putBool(0, true);
-        ew.put(1, (byte) 13);
-        ew.putDouble(2, 20.12);
-        ew.putFloat(3, 10.15f);
-        ew.putInt(4, 4);
-        ew.putLong(5, 9988908080988890L);
-        ew.putDate(6, 88979879L);
-        ew.putShort(7, (short) 902);
-        ew.putStr(8, "complexity made simple");
-        ew.putSym(9, "questdb");
-        ew.append();
+            ew.putBool(0, true);
+            ew.put(1, (byte) 13);
+            ew.putDouble(2, 20.12);
+            ew.putFloat(3, 10.15f);
+            ew.putInt(4, 4);
+            ew.putLong(5, 9988908080988890L);
+            ew.putDate(6, 88979879L);
+            ew.putShort(7, (short) 902);
+            ew.putStr(8, "complexity made simple");
+            ew.putSym(9, "questdb");
+            ew.append();
 
-        ew = w.entryWriter();
-        ew.put(1, (byte) 13);
-        ew.putDouble(2, 20.12);
-        ew.putFloat(3, 10.15f);
-        ew.putInt(4, 4);
-        ew.putLong(5, 9988908080988890L);
-        ew.putDate(6, 88979879L);
-        ew.putShort(7, (short) 902);
-        ew.putStr(8, "complexity made simple");
-        ew.putSym(9, "appsicle");
-        ew.append();
+            ew = w.entryWriter();
+            ew.put(1, (byte) 13);
+            ew.putDouble(2, 20.12);
+            ew.putFloat(3, 10.15f);
+            ew.putInt(4, 4);
+            ew.putLong(5, 9988908080988890L);
+            ew.putDate(6, 88979879L);
+            ew.putShort(7, (short) 902);
+            ew.putStr(8, "complexity made simple");
+            ew.putSym(9, "appsicle");
+            ew.append();
 
-        w.commit();
-        w.close();
+            w.commit();
 
-        IntList indices = new IntList();
-        for (int i = 0, n = w.getMetadata().getColumnCount(); i < n; i++) {
-            indices.add(i + 1);
+            IntList indices = new IntList();
+            for (int i = 0, n = w.getMetadata().getColumnCount(); i < n; i++) {
+                indices.add(i + 1);
+            }
+            RecordSource rs = compileSource("xyz");
+            RecordComparator rc = cc.compile(rs.getMetadata(), indices);
+            RBTreeSortedRecordSource map = new RBTreeSortedRecordSource(rs, rc, 1024 * 1024, 4 * 1024 * 1024);
+
+            sink.clear();
+            printer.print(map, getCachingFactory());
         }
-        RecordSource rs = compileSource("xyz");
-        RecordComparator rc = cc.compile(rs.getMetadata(), indices);
-        RBTreeSortedRecordSource map = new RBTreeSortedRecordSource(rs, rc, 1024 * 1024, 4 * 1024 * 1024);
-
-        sink.clear();
-        printer.print(map, factory);
         TestUtils.assertEquals(
                 "false\t13\t20.120000000000\t10.1500\t4\t9988908080988890\t1970-01-02T00:42:59.879Z\t902\tcomplexity made simple\tappsicle\n" +
                         "true\t13\t20.120000000000\t10.1500\t4\t9988908080988890\t1970-01-02T00:42:59.879Z\t902\tcomplexity made simple\tquestdb\n",

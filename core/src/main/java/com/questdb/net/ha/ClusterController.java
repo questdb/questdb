@@ -26,7 +26,8 @@ package com.questdb.net.ha;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.JournalWriterFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.net.ha.config.ClientConfig;
@@ -41,7 +42,8 @@ public class ClusterController {
     private final Log LOG = LogFactory.getLog(ClusterController.class);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final ClusterStatusListener listener;
-    private final JournalFactory factory;
+    private final JournalWriterFactory writerFactory;
+    private final JournalReaderFactory readerFactory;
     private final List<JournalWriter> writers;
     private final ServerConfig serverConfig;
     private final ClientConfig clientConfig;
@@ -54,14 +56,16 @@ public class ClusterController {
     public ClusterController(
             ServerConfig serverConfig
             , ClientConfig clientConfig
-            , JournalFactory factory
+            , JournalWriterFactory writerFactory
+            , JournalReaderFactory readerFactory
             , final int instance
             , List<JournalWriter> writers
             , ClusterStatusListener listener
     ) {
         this.serverConfig = serverConfig;
         this.clientConfig = clientConfig;
-        this.factory = factory;
+        this.writerFactory = writerFactory;
+        this.readerFactory = readerFactory;
         this.writers = writers;
         this.listener = listener;
         this.thisNode = serverConfig.getNodeByUID(instance);
@@ -89,7 +93,7 @@ public class ClusterController {
 
     public void start() throws JournalNetworkException {
         if (running.compareAndSet(false, true)) {
-            server = new JournalServer(serverConfig, factory, null, thisNode.getId());
+            server = new JournalServer(serverConfig, readerFactory, null, thisNode.getId());
             for (int i = 0, k = writers.size(); i < k; i++) {
                 server.publish(writers.get(i));
             }
@@ -130,7 +134,7 @@ public class ClusterController {
                 clientConfig.clearNodes();
                 clientConfig.addNode(activeNode);
 
-                client = new JournalClient(clientConfig, factory, null, clientCallback);
+                client = new JournalClient(clientConfig, writerFactory, null, clientCallback);
                 LOG.info().$(thisNode.toString()).$(" Subscribing journals").$();
                 for (int i = 0, sz = writers.size(); i < sz; i++) {
                     JournalWriter w = writers.get(i);

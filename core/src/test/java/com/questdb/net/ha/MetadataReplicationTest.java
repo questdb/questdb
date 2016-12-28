@@ -40,26 +40,25 @@ public class MetadataReplicationTest extends AbstractTest {
     @Test
     public void testReplication() throws Exception {
 
-        JournalWriter w = factory.writer(Quote.class);
+        try (JournalWriter w = getWriterFactory().writer(Quote.class)) {
 
-        MockByteChannel channel = new MockByteChannel();
-        HugeBufferProducer p = new HugeBufferProducer(new File(w.getMetadata().getLocation(), JournalConfiguration.FILE_NAME));
-        HugeBufferConsumer c = new HugeBufferConsumer(new File(w.getMetadata().getLocation(), "_remote"));
-        p.write(channel);
-        c.read(channel);
+            MockByteChannel channel = new MockByteChannel();
+            HugeBufferProducer p = new HugeBufferProducer(new File(w.getMetadata().getLocation(), JournalConfiguration.FILE_NAME));
+            HugeBufferConsumer c = new HugeBufferConsumer(new File(w.getMetadata().getLocation(), "_remote"));
+            p.write(channel);
+            c.read(channel);
 
-        JournalWriter w2 = factory.writer(
-                new JournalStructure(
-                        new JournalMetadata(c.getHb())
-                ).location("xyz")
-        );
+            try (JournalWriter w2 = getWriterFactory().writer(
+                    new JournalStructure(
+                            new JournalMetadata(c.getHb())
+                    ).location("xyz")
+            )) {
 
-        Assert.assertTrue(w.getMetadata().isCompatible(w2.getMetadata(), false));
+                Assert.assertTrue(w.getMetadata().isCompatible(w2.getMetadata(), false));
+            }
+            p.free();
+            c.free();
+        }
 
-        w2.close();
-        w.close();
-
-        p.free();
-        c.free();
     }
 }

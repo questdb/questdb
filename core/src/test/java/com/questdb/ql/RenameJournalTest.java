@@ -28,32 +28,30 @@ import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.JournalCachingFactory;
-import com.questdb.factory.JournalFactoryPool;
+import com.questdb.factory.CachingReaderFactory;
 import com.questdb.factory.JournalReaderFactory;
-import com.questdb.misc.Files;
-import com.questdb.model.configuration.ModelConfiguration;
+import com.questdb.factory.ReaderFactoryPool;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
-import com.questdb.test.tools.JournalTestFactory;
+import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.IOException;
 
-public class RenameJournalTest {
+public class RenameJournalTest extends AbstractTest {
     private static final QueryCompiler compiler = new QueryCompiler();
-    @Rule
-    public final JournalTestFactory factory = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
 
     private final StringSink sink = new StringSink();
     private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-    private final JournalFactoryPool pool = new JournalFactoryPool(factory.getConfiguration(), 2);
+
+    public ReaderFactoryPool getReaderFactoryPool() {
+        return theFactory.getReaderFactoryPool();
+    }
 
     @Before
     public void setUp() throws Exception {
@@ -65,14 +63,14 @@ public class RenameJournalTest {
     public void testJournalAlreadyOpenButIdle() throws Exception {
         createX();
 
-        JournalCachingFactory f = pool.get();
+        CachingReaderFactory f = getReaderFactoryPool().get();
         assertJournal(f, "x");
         sink.clear();
 
-        compiler.execute(factory, f, null, "rename table x to y");
-        assertJournal(factory, "y");
+        compiler.execute(getWriterFactory(), f, null, "rename table x to y");
+        assertJournal(getReaderFactory(), "y");
 
-        // make sure caching factory doesn't return old journal
+        // make sure caching readerFactory doesn't return old journal
         try {
             f.reader(new JournalKey("x"));
             Assert.fail();
@@ -91,13 +89,13 @@ public class RenameJournalTest {
 
         sink.clear();
         createX();
-        assertJournal(factory, "x");
+        assertJournal(getReaderFactory(), "x");
     }
 
     @Test
     public void testNonLiteralFrom() throws Exception {
         try {
-            compiler.execute(factory, null, pool, "rename table 1+2 to 'c d'");
+            compiler.execute(getWriterFactory(), null, getReaderFactoryPool(), "rename table 1+2 to 'c d'");
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(14, QueryError.getPosition());
@@ -107,7 +105,7 @@ public class RenameJournalTest {
     @Test
     public void testNonLiteralTo() throws Exception {
         try {
-            compiler.execute(factory, null, pool, "rename table x to 5+5");
+            compiler.execute(getWriterFactory(), null, getReaderFactoryPool(), "rename table x to 5+5");
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(19, QueryError.getPosition());
@@ -118,30 +116,30 @@ public class RenameJournalTest {
     public void testReleaseOfJournalInPool() throws Exception {
         createX();
 
-        JournalCachingFactory f = pool.get();
+        CachingReaderFactory f = getReaderFactoryPool().get();
         assertJournal(f, "x");
         f.close();
 
         sink.clear();
 
-        compiler.execute(factory, null, pool, "rename table x to y");
-        assertJournal(factory, "y");
+        compiler.execute(getWriterFactory(), null, getReaderFactoryPool(), "rename table x to y");
+        assertJournal(getReaderFactory(), "y");
 
         sink.clear();
         createX();
-        assertJournal(factory, "x");
+        assertJournal(getReaderFactory(), "x");
     }
 
     @Test
     public void testRenameQuoted() throws Exception {
         create("'a b'");
-        compiler.execute(factory, null, pool, "rename table 'a b' to 'c d'");
+        compiler.execute(getWriterFactory(), null, getReaderFactoryPool(), "rename table 'a b' to 'c d'");
     }
 
     @Test
     public void testSimpleNonExisting() throws Exception {
         try {
-            compiler.execute(factory, null, null, "rename table x to y");
+            compiler.execute(getWriterFactory(), null, null, "rename table x to y");
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(13, QueryError.getPosition());
@@ -152,8 +150,8 @@ public class RenameJournalTest {
     @Test
     public void testSimpleRename() throws Exception {
         createX();
-        compiler.execute(factory, null, null, "rename table x to y");
-        assertJournal(factory, "y");
+        compiler.execute(getWriterFactory(), null, null, "rename table x to y");
+        assertJournal(getReaderFactory(), "y");
     }
 
     private void assertJournal(JournalReaderFactory f, String dest) throws IOException, ParserException {
@@ -164,7 +162,7 @@ public class RenameJournalTest {
     }
 
     private void create(String name) throws JournalException, ParserException {
-        try (JournalWriter w = compiler.createWriter(factory, "create table " + name + "(a int) record hint 100")) {
+        try (JournalWriter w = compiler.createWriter(getWriterFactory(), getReaderFactory(), "create table " + name + "(a int) record hint 100")) {
             JournalEntryWriter ew = w.entryWriter();
             ew.putInt(0, 999);
             ew.append();

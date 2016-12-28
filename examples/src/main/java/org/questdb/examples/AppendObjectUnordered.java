@@ -25,7 +25,8 @@ package org.questdb.examples;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.misc.Files;
 import org.questdb.examples.support.Quote;
 
@@ -47,12 +48,13 @@ public class AppendObjectUnordered {
 
         String journalLocation = args[0];
 
-        try (JournalFactory factory = new JournalFactory(journalLocation)) {
+        try (ReaderFactory readerFactory = new ReaderFactory(journalLocation);
+             WriterFactory writerFactory = new WriterFactory(journalLocation)) {
 
             // delete existing quote journal
-            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-unordered"));
+            Files.delete(new File(readerFactory.getConfiguration().getJournalBase(), "quote-unordered"));
 
-            try (JournalWriter<Quote> writer = factory.writer(Quote.class)) {
+            try (JournalWriter<Quote> writer = writerFactory.writer(Quote.class)) {
 
                 final int count = 1000000;
                 final String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};

@@ -42,7 +42,7 @@ public class GenericAppendPerfTest extends AbstractTest {
     public void testAppend() throws Exception {
 
 
-        JournalWriter wg = factory.writer(
+        try (JournalWriter wg = getWriterFactory().writer(
                 new JournalStructure("qq") {{
                     $sym("sym").index().buckets(20);
                     $double("bid");
@@ -53,12 +53,12 @@ public class GenericAppendPerfTest extends AbstractTest {
                     $sym("mode").buckets(1);
                     recordCountHint(TEST_DATA_SIZE);
                 }}
-        );
-
-        long t = System.nanoTime();
-        TestUtils.generateQuoteDataGeneric(wg, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
-        wg.commit();
-        long result = System.nanoTime() - t;
-        LOG.info().$("generic append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result) / 2).$("ms").$();
+        )) {
+            long t = System.nanoTime();
+            TestUtils.generateQuoteDataGeneric(wg, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
+            wg.commit();
+            long result = System.nanoTime() - t;
+            LOG.info().$("generic append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result) / 2).$("ms").$();
+        }
     }
 }

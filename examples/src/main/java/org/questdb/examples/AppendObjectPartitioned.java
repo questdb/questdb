@@ -26,7 +26,7 @@ package org.questdb.examples;
 import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
@@ -51,7 +51,7 @@ public class AppendObjectPartitioned {
         }
 
         String journalLocation = args[0];
-        try (JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
+        try (WriterFactory writerFactory = new WriterFactory(new JournalConfigurationBuilder() {{
             $(Quote.class)
                     .location("quote-by-day")
                     // partition by day
@@ -61,11 +61,11 @@ public class AppendObjectPartitioned {
             ;
         }}.build(journalLocation))) {
 
-            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-by-day"));
+            Files.delete(new File(writerFactory.getConfiguration().getJournalBase(), "quote-by-day"));
 
             // default partition type for Quote is MONTH (see ModelConfiguration)
             // you can change it in runtime and also, optionally put journal in alternative location
-            try (JournalWriter<Quote> writer = factory.writer(Quote.class)) {
+            try (JournalWriter<Quote> writer = writerFactory.writer(Quote.class)) {
 
                 final int count = 1000000;
                 final String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};

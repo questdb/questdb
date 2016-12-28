@@ -27,7 +27,6 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.misc.Misc;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.test.tools.AbstractTest;
@@ -40,34 +39,33 @@ public class MultiColumnJoinTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
 
-        factory.getConfiguration().exists("");
-        JournalWriter a = factory.writer(new JournalStructure("a").$int("x").$str("y").$double("amount").$());
-        JournalWriter b = factory.writer(new JournalStructure("b").$int("x").$str("y").$str("name").$());
+        getReaderFactory().getConfiguration().exists("");
+        try (JournalWriter a = getWriterFactory().writer(new JournalStructure("a").$int("x").$str("y").$double("amount").$())) {
+            try (JournalWriter b = getWriterFactory().writer(new JournalStructure("b").$int("x").$str("y").$str("name").$())) {
 
-        Rnd rnd = new Rnd();
+                Rnd rnd = new Rnd();
 
-        for (int i = 0; i < 10; i++) {
-            int x = rnd.nextInt();
-            String y = rnd.nextString(rnd.nextPositiveInt() % 15);
+                for (int i = 0; i < 10; i++) {
+                    int x = rnd.nextInt();
+                    String y = rnd.nextString(rnd.nextPositiveInt() % 15);
 
-            JournalEntryWriter ewa = a.entryWriter();
-            JournalEntryWriter ewb = b.entryWriter();
+                    JournalEntryWriter ewa = a.entryWriter();
+                    JournalEntryWriter ewb = b.entryWriter();
 
-            ewa.putInt(0, x);
-            ewa.putStr(1, y);
-            ewa.putDouble(2, rnd.nextDouble());
-            ewa.append();
+                    ewa.putInt(0, x);
+                    ewa.putStr(1, y);
+                    ewa.putDouble(2, rnd.nextDouble());
+                    ewa.append();
 
-            ewb.putInt(0, x);
-            ewb.putStr(1, y);
-            ewb.putStr(2, rnd.nextChars(rnd.nextPositiveInt() % 20));
-            ewb.append();
+                    ewb.putInt(0, x);
+                    ewb.putStr(1, y);
+                    ewb.putStr(2, rnd.nextChars(rnd.nextPositiveInt() % 20));
+                    ewb.append();
+                }
+            }
+//            a.commit();
+//            b.commit();
         }
-        a.commit();
-        b.commit();
-
-        Misc.free(a);
-        Misc.free(b);
     }
 
     @Test

@@ -67,14 +67,14 @@ public class JournalServerAgentTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         channel = new MockByteChannel();
-        quoteWriter = factory.writer(Quote.class);
-        tradeWriter = factory.writer(Trade.class);
+        quoteWriter = getWriterFactory().writer(Quote.class);
+        tradeWriter = getWriterFactory().writer(Trade.class);
         ServerConfig config = new ServerConfig() {{
             setHeartbeatFrequency(100);
             setEnableMultiCast(false);
         }};
 
-        server = new JournalServer(config, factory);
+        server = new JournalServer(config, getReaderFactory());
         server.publish(quoteWriter);
         agent = new JournalServerAgent(server, new InetSocketAddress(NetworkConfig.DEFAULT_DATA_PORT), null);
         hugeBufferConsumer = new HugeBufferConsumer(temp.newFile());
@@ -82,75 +82,78 @@ public class JournalServerAgentTest extends AbstractTest {
 
     @After
     public void tearDown() {
+        quoteWriter.close();
+        tradeWriter.close();
+        server.halt();
         agent.close();
         hugeBufferConsumer.free();
     }
 
     @Test
     public void testIncrementalInteraction() throws Exception {
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        TestUtils.generateQuoteData(origin, 200);
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+            TestUtils.generateQuoteData(origin, 200);
 
-        server.start();
-        JournalWriter<Quote> quoteClientWriter = factory.writer(Quote.class, "client");
+            server.start();
+            try (JournalWriter<Quote> quoteClientWriter = getWriterFactory().writer(Quote.class, "client")) {
 
-        JournalDeltaConsumer quoteDeltaConsumer = new JournalDeltaConsumer(quoteClientWriter);
+                JournalDeltaConsumer quoteDeltaConsumer = new JournalDeltaConsumer(quoteClientWriter);
 
-        // send quote journal key
-        commandProducer.write(channel, Command.ADD_KEY_CMD);
-        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getMetadata().getKey()));
-        agent.process(channel);
-        charSequenceResponseConsumer.read(channel);
-        TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
-        hugeBufferConsumer.read(channel);
+                // send quote journal key
+                commandProducer.write(channel, Command.ADD_KEY_CMD);
+                setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getMetadata().getKey()));
+                agent.process(channel);
+                charSequenceResponseConsumer.read(channel);
+                TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
+                hugeBufferConsumer.read(channel);
 
-        // send quote state
-        commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
-        journalClientStateProducer.write(channel, new IndexedJournal(0, quoteClientWriter));
-        agent.process(channel);
-        charSequenceResponseConsumer.read(channel);
-        TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
+                // send quote state
+                commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
+                journalClientStateProducer.write(channel, new IndexedJournal(0, quoteClientWriter));
+                agent.process(channel);
+                charSequenceResponseConsumer.read(channel);
+                TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
 
-        quoteWriter.append(origin.query().all().asResultSet().subset(0, 100));
-        quoteWriter.commit();
+                quoteWriter.append(origin.query().all().asResultSet().subset(0, 100));
+                quoteWriter.commit();
 
-        commandProducer.write(channel, Command.CLIENT_READY_CMD);
-        agent.process(channel);
+                commandProducer.write(channel, Command.CLIENT_READY_CMD);
+                agent.process(channel);
 
-        commandConsumer.read(channel);
-        Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getCommand());
+                commandConsumer.read(channel);
+                Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getCommand());
 
-        Assert.assertEquals(0, intResponseConsumer.getValue(channel));
-        quoteDeltaConsumer.read(channel);
-        Assert.assertEquals(100, quoteClientWriter.size());
+                Assert.assertEquals(0, intResponseConsumer.getValue(channel));
+                quoteDeltaConsumer.read(channel);
+                Assert.assertEquals(100, quoteClientWriter.size());
 
-        commandConsumer.read(channel);
-        Assert.assertEquals(Command.SERVER_READY_CMD, commandConsumer.getCommand());
+                commandConsumer.read(channel);
+                Assert.assertEquals(Command.SERVER_READY_CMD, commandConsumer.getCommand());
 
-        quoteWriter.append(origin.query().all().asResultSet().subset(100, 200));
-        quoteWriter.commit();
+                quoteWriter.append(origin.query().all().asResultSet().subset(100, 200));
+                quoteWriter.commit();
 
-        // send quote state
-        commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
-        journalClientStateProducer.write(channel, new IndexedJournal(0, quoteClientWriter));
-        agent.process(channel);
-        charSequenceResponseConsumer.read(channel);
-        TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
+                // send quote state
+                commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
+                journalClientStateProducer.write(channel, new IndexedJournal(0, quoteClientWriter));
+                agent.process(channel);
+                charSequenceResponseConsumer.read(channel);
+                TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
 
-        commandProducer.write(channel, Command.CLIENT_READY_CMD);
-        agent.process(channel);
+                commandProducer.write(channel, Command.CLIENT_READY_CMD);
+                agent.process(channel);
 
-        commandConsumer.read(channel);
-        Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getCommand());
+                commandConsumer.read(channel);
+                Assert.assertEquals(Command.JOURNAL_DELTA_CMD, commandConsumer.getCommand());
 
-        Assert.assertEquals(0, intResponseConsumer.getValue(channel));
-        quoteDeltaConsumer.read(channel);
-        Assert.assertEquals(200, quoteClientWriter.size());
+                Assert.assertEquals(0, intResponseConsumer.getValue(channel));
+                quoteDeltaConsumer.read(channel);
+                Assert.assertEquals(200, quoteClientWriter.size());
 
-        commandConsumer.read(channel);
-        Assert.assertEquals(Command.SERVER_READY_CMD, commandConsumer.getCommand());
-
-        server.halt();
+                commandConsumer.read(channel);
+                Assert.assertEquals(Command.SERVER_READY_CMD, commandConsumer.getCommand());
+            }
+        }
     }
 
     @Test
@@ -158,9 +161,9 @@ public class JournalServerAgentTest extends AbstractTest {
         server.publish(tradeWriter);
         server.start();
 
-        Journal<Quote> quoteClientWriter = factory.writer(Quote.class, "client");
+        try (Journal<Quote> quoteClientWriter = getWriterFactory().writer(Quote.class, "client")) {
 
-        // send quote journal key
+            // send quote journal key
 //        commandProducer.write(channel, Command.ADD_KEY_CMD);
 //        setKeyRequestProducer.write(channel, new IndexedJournalKey(3, quoteWriter.getKey()));
 //        agent.process(channel);
@@ -170,26 +173,25 @@ public class JournalServerAgentTest extends AbstractTest {
 //        Assert.assertEquals("Journal index is too large. Max 1", charSequenceResponseConsumer.getValue());
 
 
-        commandProducer.write(channel, Command.ADD_KEY_CMD);
-        setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getMetadata().getKey()));
-        agent.process(channel);
-        charSequenceResponseConsumer.read(channel);
-        TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
-        hugeBufferConsumer.read(channel);
+            commandProducer.write(channel, Command.ADD_KEY_CMD);
+            setKeyRequestProducer.write(channel, new IndexedJournalKey(0, quoteWriter.getMetadata().getKey()));
+            agent.process(channel);
+            charSequenceResponseConsumer.read(channel);
+            TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
+            hugeBufferConsumer.read(channel);
 
-        commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
-        journalClientStateProducer.write(channel, new IndexedJournal(1, quoteClientWriter));
-        agent.process(channel);
-        charSequenceResponseConsumer.read(channel);
-        TestUtils.assertEquals("Journal index does not match key request", charSequenceResponseConsumer.getValue());
+            commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
+            journalClientStateProducer.write(channel, new IndexedJournal(1, quoteClientWriter));
+            agent.process(channel);
+            charSequenceResponseConsumer.read(channel);
+            TestUtils.assertEquals("Journal index does not match key request", charSequenceResponseConsumer.getValue());
 
-        commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
-        journalClientStateProducer.write(channel, new IndexedJournal(0, quoteClientWriter));
-        agent.process(channel);
-        charSequenceResponseConsumer.read(channel);
-        TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
-
-        server.halt();
+            commandProducer.write(channel, Command.DELTA_REQUEST_CMD);
+            journalClientStateProducer.write(channel, new IndexedJournal(0, quoteClientWriter));
+            agent.process(channel);
+            charSequenceResponseConsumer.read(channel);
+            TestUtils.assertEquals("OK", charSequenceResponseConsumer.getValue());
+        }
     }
 
     @Test

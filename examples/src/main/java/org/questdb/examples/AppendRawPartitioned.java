@@ -28,7 +28,7 @@ import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Rnd;
 
@@ -42,11 +42,11 @@ public class AppendRawPartitioned {
         final String location = args[0];
 
         // factory can be reused in application and must be explicitly closed when no longer needed.
-        try (JournalFactory factory = new JournalFactory(location)) {
+        try (WriterFactory writerFactory = new WriterFactory(location)) {
             // Lets add some random data to journal "customers".
             // This journal does not have associated java object. We will leverage generic data access
             // to populate it.
-            try (JournalWriter writer = factory.writer(
+            try (JournalWriter writer = writerFactory.writer(
                     new JournalStructure("customers").
                             $int("id").
                             $str("name").

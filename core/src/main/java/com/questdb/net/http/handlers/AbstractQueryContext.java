@@ -24,9 +24,10 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.ex.*;
-import com.questdb.factory.JournalCachingFactory;
-import com.questdb.factory.JournalFactory;
-import com.questdb.factory.JournalFactoryPool;
+import com.questdb.factory.CachingReaderFactory;
+import com.questdb.factory.JournalWriterFactory;
+import com.questdb.factory.ReaderFactoryPool;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -73,7 +74,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     long skip;
     long stop;
     Record record;
-    JournalCachingFactory factory;
+    CachingReaderFactory factory;
     int queryState = QUERY_PREFIX;
     int columnIndex;
 
@@ -109,8 +110,8 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
 
     public void compileQuery(
             ChunkedResponse r,
-            JournalFactoryPool pool,
-            JournalFactory writerFactory,
+            ReaderFactoryPool pool,
+            WriterFactory writerFactory,
             AtomicLong misses,
             AtomicLong hits) throws IOException {
         try {
@@ -224,7 +225,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
         return LOG.error().$('[').$(fd).$("] ");
     }
 
-    private RecordSource executeQuery(ChunkedResponse r, JournalFactory writerFactory, JournalFactoryPool pool) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
+    private RecordSource executeQuery(ChunkedResponse r, JournalWriterFactory writerFactory, ReaderFactoryPool pool) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
         QueryCompiler compiler = COMPILER.get();
         ParsedModel model = compiler.parse(query);
         switch (model.getModelType()) {

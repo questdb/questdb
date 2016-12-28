@@ -41,49 +41,51 @@ public class BinaryTest extends AbstractTest {
 
     @Test
     public void testBinaryAppend() throws Exception {
-        JournalWriter<Band> writer = factory.writer(Band.class);
+        try (JournalWriter<Band> writer = getWriterFactory().writer(Band.class)) {
 
-        Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
-        List<byte[]> bytes = new ArrayList<>();
-        for (int i = 0; i < 3; i++) {
-            bytes.add(r.nextBytes((3 - i) * 1024));
-        }
+            Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
+            List<byte[]> bytes = new ArrayList<>();
+            for (int i = 0; i < 3; i++) {
+                bytes.add(r.nextBytes((3 - i) * 1024));
+            }
 
-        writer.append(new Band().setName("Supertramp").setType("jazz").setImage(bytes.get(0)));
-        writer.append(new Band().setName("TinieTempah").setType("rap").setImage(bytes.get(1)));
-        writer.append(new Band().setName("Rihanna").setType("pop").setImage(bytes.get(2)));
-        writer.commit();
+            writer.append(new Band().setName("Supertramp").setType("jazz").setImage(bytes.get(0)));
+            writer.append(new Band().setName("TinieTempah").setType("rap").setImage(bytes.get(1)));
+            writer.append(new Band().setName("Rihanna").setType("pop").setImage(bytes.get(2)));
+            writer.commit();
 
-        int count = 0;
-        for (Band b : writer) {
-            Assert.assertArrayEquals(bytes.get(count), b.getImage().array());
-            count++;
+            int count = 0;
+            for (Band b : writer) {
+                Assert.assertArrayEquals(bytes.get(count), b.getImage().array());
+                count++;
+            }
         }
     }
 
     @Test
     public void testBinaryPerformance() throws Exception {
 
-        JournalWriter<Band> writer = factory.bulkWriter(Band.class);
-        final int count = 20000;
-        Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
+        try (JournalWriter<Band> writer = getWriterFactory().bulkWriter(Band.class)) {
+            final int count = 20000;
+            Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
 
-        byte[] bytes = r.nextBytes(10240);
-        String[] types = new String[]{"jazz", "rap", "pop", "rock", "soul"};
-        String[] bands = new String[1200];
-        for (int i = 0; i < bands.length; i++) {
-            bands[i] = r.nextString(10);
-        }
+            byte[] bytes = r.nextBytes(10240);
+            String[] types = new String[]{"jazz", "rap", "pop", "rock", "soul"};
+            String[] bands = new String[1200];
+            for (int i = 0; i < bands.length; i++) {
+                bands[i] = r.nextString(10);
+            }
 
-        long t = System.nanoTime();
-        Band band = new Band();
-        for (int i = 0; i < count; i++) {
-            band.setName(bands[Math.abs(r.nextInt() % bands.length)]);
-            band.setType(types[Math.abs(r.nextInt() % types.length)]);
-            band.setImage(bytes);
-            writer.append(band);
+            long t = System.nanoTime();
+            Band band = new Band();
+            for (int i = 0; i < count; i++) {
+                band.setName(bands[Math.abs(r.nextInt() % bands.length)]);
+                band.setType(types[Math.abs(r.nextInt() % types.length)]);
+                band.setImage(bytes);
+                writer.append(band);
+            }
+            writer.commit();
+            LOGGER.info().$("Appended ").$(count).$(" 10k blobs in ").$(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t)).$("ms.").$();
         }
-        writer.commit();
-        LOGGER.info().$("Appended ").$(count).$(" 10k blobs in ").$(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t)).$("ms.").$();
     }
 }

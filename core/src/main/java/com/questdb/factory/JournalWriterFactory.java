@@ -63,5 +63,5 @@ public interface JournalWriterFactory {
 
     <T> JournalWriter<T> writer(MetadataBuilder<T> metadataBuilder) throws JournalException;
 
-    <T> JournalWriter<T> writer(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException;
+    <T> JournalWriter<T> writer(JournalMetadata<T> metadata) throws JournalException;
 }

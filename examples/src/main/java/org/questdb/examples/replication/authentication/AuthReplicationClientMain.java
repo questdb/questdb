@@ -25,7 +25,10 @@ package org.questdb.examples.replication.authentication;
 
 import com.questdb.Journal;
 import com.questdb.JournalIterators;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
+import com.questdb.factory.configuration.JournalConfiguration;
+import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalClient;
 import com.questdb.net.ha.auth.CredentialProvider;
 import com.questdb.store.JournalListener;
@@ -40,15 +43,18 @@ import java.io.UnsupportedEncodingException;
  */
 public class AuthReplicationClientMain {
     public static void main(String[] args) throws Exception {
-        JournalFactory factory = new JournalFactory(args[0]);
-        final JournalClient client = new JournalClient(factory, new CredentialProvider() {
+        JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
+        ReaderFactory readerFactory = new ReaderFactory(configuration);
+        WriterFactory writerFactory = new WriterFactory(configuration);
+
+        final JournalClient client = new JournalClient(writerFactory, new CredentialProvider() {
             @Override
             public byte[] createToken() throws UnsupportedEncodingException {
                 return "MY SECRET".getBytes("UTF8");
             }
         });
 
-        final Journal<Price> reader = factory.bulkReader(Price.class, "price-copy");
+        final Journal<Price> reader = readerFactory.bulkReader(Price.class, "price-copy");
 
         client.subscribe(Price.class, null, "price-copy", new JournalListener() {
             @Override

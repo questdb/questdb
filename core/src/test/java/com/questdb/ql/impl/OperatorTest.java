@@ -44,9 +44,9 @@ public class OperatorTest extends AbstractOptimiserTest {
         // this does thread local allocations that
         // should not be accounted for while
         // measuring query allocations and de-allocations
-        factory.getConfiguration().exists("");
+        getWriterFactory().getConfiguration().exists("");
 
-        try (JournalWriter w = factory.bulkWriter(new JournalStructure("abc")
+        try (JournalWriter w = getWriterFactory().bulkWriter(new JournalStructure("abc")
                 .$int("i")
                 .$double("d")
                 .$float("f")

@@ -29,6 +29,7 @@ import com.questdb.misc.Dates;
 import com.questdb.model.Quote;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestData;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -44,7 +45,12 @@ public class LagTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        rw = factory.writer(Quote.class);
+        rw = getWriterFactory().writer(Quote.class);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        rw.close();
     }
 
     @Test
@@ -58,7 +64,7 @@ public class LagTest extends AbstractTest {
         rw.mergeAppend(data1);
         rw.commit();
 
-        Journal<Quote> reader = factory.reader(Quote.class);
+        Journal<Quote> reader = getReaderFactory().reader(Quote.class);
         reader.query().all().asResultSet().read();
 
         // simple append scenario
@@ -154,25 +160,28 @@ public class LagTest extends AbstractTest {
 
     @Test
     public void testLagDelete() throws Exception {
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        TestData.appendQuoteData2(origin);
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+            TestData.appendQuoteData2(origin);
 
-        rw.mergeAppend(origin.query().all().asResultSet().subset(0, 300));
-        rw.commit();
+            rw.mergeAppend(origin.query().all().asResultSet().subset(0, 300));
+            rw.commit();
 
-        String lagName;
-        try (Journal<Quote> r = factory.reader(Quote.class)) {
-            Assert.assertEquals(300, r.size());
-            lagName = r.getIrregularPartition().getName();
-        }
 
-        rw.mergeAppend(origin.query().all().asResultSet().subset(300, 400));
-        rw.mergeAppend(origin.query().all().asResultSet().subset(400, 500));
-        rw.mergeAppend(origin.query().all().asResultSet().subset(500, 600));
+            String lagName;
+            try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+                Assert.assertEquals(300, r.size());
+                lagName = r.getIrregularPartition().getName();
+            }
 
-        try (Journal<Quote> r = factory.reader(Quote.class)) {
-            Assert.assertEquals(300, r.size());
-            Assert.assertEquals(lagName, r.getIrregularPartition().getName());
+            rw.mergeAppend(origin.query().all().asResultSet().subset(300, 400));
+            rw.mergeAppend(origin.query().all().asResultSet().subset(400, 500));
+            rw.mergeAppend(origin.query().all().asResultSet().subset(500, 600));
+
+
+            try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+                Assert.assertEquals(300, r.size());
+                Assert.assertEquals(lagName, r.getIrregularPartition().getName());
+            }
         }
     }
 
@@ -204,7 +213,7 @@ public class LagTest extends AbstractTest {
 
         rw.close();
 
-        rw = factory.writer(Quote.class);
+        rw = getWriterFactory().writer(Quote.class);
         Assert.assertEquals(6, rw.size());
         Assert.assertEquals(5, rw.openOrCreateLagPartition().size());
         rw.purgeTempPartitions();

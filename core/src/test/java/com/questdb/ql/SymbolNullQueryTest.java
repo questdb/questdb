@@ -43,7 +43,7 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
         int tradeCount = 100;
         int quoteCount = 300;
 
-        JournalWriter trades = factory.writer(
+        JournalWriter trades = getWriterFactory().writer(
                 new JournalStructure("trades").
                         $int("quoteId").
                         $sym("tag1").
@@ -52,7 +52,7 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
                         $ts()
         );
 
-        JournalWriter quotes = factory.writer(
+        JournalWriter quotes = getWriterFactory().writer(
                 new JournalStructure("quotes").
                         $int("quoteId").
                         $sym("tag").

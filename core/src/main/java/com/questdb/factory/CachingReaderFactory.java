@@ -37,20 +37,24 @@ import com.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class JournalCachingFactory extends AbstractJournalReaderFactory implements JournalClosingListener {
-    private final static Log LOG = LogFactory.getLog(JournalCachingFactory.class);
+public class CachingReaderFactory extends ReaderFactory implements JournalClosingListener {
+    private final static Log LOG = LogFactory.getLog(CachingReaderFactory.class);
     private final CharSequenceObjHashMap<Journal> readers = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<JournalBulkReader> bulkReaders = new CharSequenceObjHashMap<>();
     private final ObjList<Journal> journalList = new ObjList<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
-    private JournalFactoryPool pool;
+    private ReaderFactoryPool pool;
     private boolean inPool = false;
 
-    public JournalCachingFactory(JournalConfiguration configuration) {
+    public CachingReaderFactory(String databaseHome) {
+        super(databaseHome);
+    }
+
+    public CachingReaderFactory(JournalConfiguration configuration) {
         super(configuration);
     }
 
-    JournalCachingFactory(JournalConfiguration configuration, JournalFactoryPool pool) {
+    CachingReaderFactory(JournalConfiguration configuration, ReaderFactoryPool pool) {
         super(configuration);
         this.pool = pool;
     }
@@ -71,33 +75,6 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
     }
 
     @Override
-    public void close() {
-        if (pool != null) {
-            // To not release twice.
-            if (!inPool) {
-                inPool = true;
-                pool.release(this);
-            }
-        } else {
-            if (closed.compareAndSet(false, true)) {
-                reset();
-            }
-        }
-    }
-
-    public void reset() {
-        for (int i = 0, sz = journalList.size(); i < sz; i++) {
-            Journal journal = journalList.getQuick(i);
-            journal.setCloseListener(null);
-            if (journal.isOpen()) {
-                journal.close();
-            }
-        }
-        readers.clear();
-        bulkReaders.clear();
-    }
-
-    @Override
     @SuppressWarnings("unchecked")
     public <T> Journal<T> reader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
         String name = key.path();
@@ -113,6 +90,21 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
             journalList.add(result);
         }
         return result;
+    }
+
+    @Override
+    public void close() {
+        if (pool != null) {
+            // To not release twice.
+            if (!inPool) {
+                inPool = true;
+                pool.release(this);
+            }
+        } else {
+            if (closed.compareAndSet(false, true)) {
+                reset();
+            }
+        }
     }
 
     public void closeJournal(CharSequence name) {
@@ -140,6 +132,18 @@ public class JournalCachingFactory extends AbstractJournalReaderFactory implemen
         for (int i = 0, sz = journalList.size(); i < sz; i++) {
             journalList.getQuick(i).refresh();
         }
+    }
+
+    public void reset() {
+        for (int i = 0, sz = journalList.size(); i < sz; i++) {
+            Journal journal = journalList.getQuick(i);
+            journal.setCloseListener(null);
+            if (journal.isOpen()) {
+                journal.close();
+            }
+        }
+        readers.clear();
+        bulkReaders.clear();
     }
 
     private void checkBlocked(String name) throws JournalException {

@@ -21,19 +21,29 @@
  *
  ******************************************************************************/
 
-package com.questdb;
+package com.questdb.factory;
 
-import com.questdb.model.Quote;
-import com.questdb.test.tools.AbstractTest;
-import com.questdb.test.tools.TestUtils;
-import org.junit.Test;
+import com.questdb.factory.configuration.JournalConfiguration;
+import com.questdb.factory.configuration.JournalConfigurationBuilder;
 
-public class WriterDoubleCloseTest extends AbstractTest {
-    @Test
-    public void testDoubleClose() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
-            TestUtils.generateQuoteData(w, 100);
-            w.close();
-        }
+import java.io.Closeable;
+
+public class AbstractFactory implements Closeable {
+    private final JournalConfiguration configuration;
+
+    public AbstractFactory(JournalConfiguration configuration) {
+        this.configuration = configuration;
+    }
+
+    public AbstractFactory(String databaseHome) {
+        this(new JournalConfigurationBuilder().build(databaseHome));
+    }
+
+    @Override
+    public void close() {
+    }
+
+    public JournalConfiguration getConfiguration() {
+        return configuration;
     }
 }

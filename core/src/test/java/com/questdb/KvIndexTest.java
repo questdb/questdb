@@ -42,7 +42,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Before
     public void setUp() {
-        indexFile = new File(factory.getConfiguration().getJournalBase(), "index-test");
+        indexFile = new File(getReaderFactory().getConfiguration().getJournalBase(), "index-test");
     }
 
     @Test

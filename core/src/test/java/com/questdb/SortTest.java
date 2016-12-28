@@ -32,6 +32,7 @@ import com.questdb.query.ResultSet;
 import com.questdb.query.api.Query;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -39,12 +40,18 @@ import org.junit.Test;
 public class SortTest extends AbstractTest {
 
     private Query<TestEntity> q;
+    private JournalWriter<TestEntity> w;
 
     @Before
     public void setUp() throws Exception {
-        JournalWriter<TestEntity> w = factory.writer(TestEntity.class);
+        w = getWriterFactory().writer(TestEntity.class);
         TestUtils.generateTestEntityData(w, 1000, Dates.parseDateTime("2012-05-15T10:55:00.000Z"), 100000);
         q = w.query();
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        w.close();
     }
 
     @Test

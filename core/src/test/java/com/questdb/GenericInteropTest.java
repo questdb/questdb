@@ -43,47 +43,48 @@ public class GenericInteropTest extends AbstractTest {
 
     @Test
     public void testGenericAll() throws Exception {
-        JournalWriter writer = makeGenericWriter();
-        JournalEntryWriter w = writer.entryWriter();
+        try (JournalWriter writer = makeGenericWriter()) {
+            JournalEntryWriter w = writer.entryWriter();
 
-        w.putSym(0, "EURUSD");
-        w.putDate(1, 19999);
-        w.putDouble(2, 1.24);
-        w.putDouble(3, 1.25);
-        w.putInt(4, 10000);
-        w.putInt(5, 12000);
-        w.putInt(6, 1);
-        w.putStr(7, "OK");
-        w.putStr(8, "system");
-        w.putStr(9, "EURUSD:GLOBAL");
-        w.putBool(10, true);
-        w.putNull(11);
-        w.putLong(12, 13141516);
-        w.putShort(13, (short) 25000);
-        w.append();
+            w.putSym(0, "EURUSD");
+            w.putDate(1, 19999);
+            w.putDouble(2, 1.24);
+            w.putDouble(3, 1.25);
+            w.putInt(4, 10000);
+            w.putInt(5, 12000);
+            w.putInt(6, 1);
+            w.putStr(7, "OK");
+            w.putStr(8, "system");
+            w.putStr(9, "EURUSD:GLOBAL");
+            w.putBool(10, true);
+            w.putNull(11);
+            w.putLong(12, 13141516);
+            w.putShort(13, (short) 25000);
+            w.append();
 
-        w = writer.entryWriter();
+            w = writer.entryWriter();
 
-        w.putSym(0, "EURUSD");
-        w.putDate(1, 20000);
-        w.putDouble(2, 1.23);
-        w.putDouble(3, 1.26);
-        w.putInt(4, 11000);
-        w.putInt(5, 13000);
-        w.putInt(6, 2);
-        w.putStr(7, "STALE");
-        w.putStr(8, "system");
-        w.putStr(9, "EURUSD:GLOBAL");
-        w.putBool(10, false);
-        w.putNull(11);
-        w.putLong(12, 23242526);
-        w.putShort(13, (short) 30000);
-        w.append();
+            w.putSym(0, "EURUSD");
+            w.putDate(1, 20000);
+            w.putDouble(2, 1.23);
+            w.putDouble(3, 1.26);
+            w.putInt(4, 11000);
+            w.putInt(5, 13000);
+            w.putInt(6, 2);
+            w.putStr(7, "STALE");
+            w.putStr(8, "system");
+            w.putStr(9, "EURUSD:GLOBAL");
+            w.putBool(10, false);
+            w.putNull(11);
+            w.putLong(12, 23242526);
+            w.putShort(13, (short) 30000);
+            w.append();
 
-        writer.commit();
+            writer.commit();
+        }
 
         try (RecordSource rs = compile("test")) {
-            RecordCursor src = rs.prepareCursor(factory);
+            RecordCursor src = rs.prepareCursor(getReaderFactory());
 
             Record e;
 
@@ -129,30 +130,31 @@ public class GenericInteropTest extends AbstractTest {
 
     @Test
     public void testGenericStructureMismatch() throws Exception {
-        JournalWriter writer = makeGenericWriter();
-        JournalEntryWriter w = writer.entryWriter();
+        try (JournalWriter writer = makeGenericWriter()) {
+            JournalEntryWriter w = writer.entryWriter();
 
-        w.putSym(0, "EURUSD");
-        w.putDate(1, 19999);
-        w.putDouble(2, 1.24);
-        w.putDouble(3, 1.25);
-        w.putInt(4, 10000);
-        w.putInt(5, 12000);
-        w.putInt(6, 1);
-        w.putStr(7, "OK");
-        w.putStr(8, "system");
-        w.putStr(9, "EURUSD:GLOBAL");
-        w.putBool(10, true);
-        w.putNull(11);
-        w.putLong(12, 13141516);
-        w.putShort(13, (short) 25000);
-        w.append();
-        writer.commit();
+            w.putSym(0, "EURUSD");
+            w.putDate(1, 19999);
+            w.putDouble(2, 1.24);
+            w.putDouble(3, 1.25);
+            w.putInt(4, 10000);
+            w.putInt(5, 12000);
+            w.putInt(6, 1);
+            w.putStr(7, "OK");
+            w.putStr(8, "system");
+            w.putStr(9, "EURUSD:GLOBAL");
+            w.putBool(10, true);
+            w.putNull(11);
+            w.putLong(12, 13141516);
+            w.putShort(13, (short) 25000);
+            w.append();
+            writer.commit();
 
-        writer.close();
+            writer.close();
+        }
 
         try {
-            factory.writer(new JournalStructure("test") {{
+            getWriterFactory().writer(new JournalStructure("test") {{
                 $str("sym");
                 $date("created");
             }});
@@ -164,49 +166,51 @@ public class GenericInteropTest extends AbstractTest {
 
     @Test
     public void testGenericWriteObjectRead() throws Exception {
-        JournalWriter writer = makeGenericWriter();
+        try (JournalWriter writer = makeGenericWriter()) {
 
-        JournalEntryWriter w = writer.entryWriter();
+            JournalEntryWriter w = writer.entryWriter();
 
-        w.putSym(0, "EURUSD");
-        w.putDate(1, 19999);
-        w.putDouble(2, 1.24);
-        w.putDouble(3, 1.25);
-        w.putInt(4, 10000);
-        w.putInt(5, 12000);
-        w.putInt(6, 1);
-        w.putStr(7, "OK");
-        w.putStr(8, "system");
-        w.putStr(9, "EURUSD:GLOBAL");
-        w.putBool(10, true);
-        w.putNull(11);
-        w.putLong(12, 1234567);
-        w.putShort(13, (short) 11000);
-        w.append();
+            w.putSym(0, "EURUSD");
+            w.putDate(1, 19999);
+            w.putDouble(2, 1.24);
+            w.putDouble(3, 1.25);
+            w.putInt(4, 10000);
+            w.putInt(5, 12000);
+            w.putInt(6, 1);
+            w.putStr(7, "OK");
+            w.putStr(8, "system");
+            w.putStr(9, "EURUSD:GLOBAL");
+            w.putBool(10, true);
+            w.putNull(11);
+            w.putLong(12, 1234567);
+            w.putShort(13, (short) 11000);
+            w.append();
 
-        writer.commit();
+            writer.commit();
+        }
 
-        Journal<Data> reader = factory.reader(Data.class, "test");
+        try (Journal<Data> reader = getReaderFactory().reader(Data.class, "test")) {
 
-        Iterator<Data> src = JournalIterators.bufferedIterator(reader);
-        Assert.assertTrue(src.hasNext());
-        Data d;
-        Assert.assertNotNull(d = src.next());
+            Iterator<Data> src = JournalIterators.bufferedIterator(reader);
+            Assert.assertTrue(src.hasNext());
+            Data d;
+            Assert.assertNotNull(d = src.next());
 
-        Assert.assertEquals("EURUSD", d.sym);
-        Assert.assertEquals(19999, d.created);
-        Assert.assertEquals(1.24, d.bid, 0.000001);
-        Assert.assertEquals(1.25, d.ask, 0.000001);
-        Assert.assertEquals(10000, d.bidSize);
-        Assert.assertEquals(12000, d.askSize);
-        Assert.assertEquals(1, d.id);
-        Assert.assertEquals("OK", d.status);
-        Assert.assertEquals("system", d.user);
-        Assert.assertEquals("EURUSD:GLOBAL", d.rateId);
-        Assert.assertTrue(d.active);
-        Assert.assertNull(d.nullable);
-        Assert.assertEquals(1234567, d.ticks);
-        Assert.assertEquals(11000, d.modulo);
+            Assert.assertEquals("EURUSD", d.sym);
+            Assert.assertEquals(19999, d.created);
+            Assert.assertEquals(1.24, d.bid, 0.000001);
+            Assert.assertEquals(1.25, d.ask, 0.000001);
+            Assert.assertEquals(10000, d.bidSize);
+            Assert.assertEquals(12000, d.askSize);
+            Assert.assertEquals(1, d.id);
+            Assert.assertEquals("OK", d.status);
+            Assert.assertEquals("system", d.user);
+            Assert.assertEquals("EURUSD:GLOBAL", d.rateId);
+            Assert.assertTrue(d.active);
+            Assert.assertNull(d.nullable);
+            Assert.assertEquals(1234567, d.ticks);
+            Assert.assertEquals(11000, d.modulo);
+        }
     }
 
     @Test
@@ -214,7 +218,7 @@ public class GenericInteropTest extends AbstractTest {
 
         File location = null;
 
-        try (JournalWriter w = factory.writer(new JournalStructure("test") {{
+        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("test") {{
             $int("id").index();
             $str("status?\0x");
         }})) {
@@ -228,7 +232,7 @@ public class GenericInteropTest extends AbstractTest {
 
         Files.deleteOrException(location);
 
-        try (JournalWriter w = factory.writer(new JournalStructure("test") {{
+        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("test") {{
             $int("id").index();
             $str("status");
         }})) {
@@ -238,7 +242,7 @@ public class GenericInteropTest extends AbstractTest {
 
     @Test
     public void testObjectGenericObjectWriteSequence() throws Exception {
-        JournalWriter<Data> writer = factory.writer(new JournalMetadataBuilder<Data>(Data.class) {{
+        JournalWriter<Data> writer = getWriterFactory().writer(new JournalMetadataBuilder<Data>(Data.class) {{
             $date("created");
             $sym("sym").index();
             $int("id").index();
@@ -267,30 +271,29 @@ public class GenericInteropTest extends AbstractTest {
 
         writer.close();
 
-        JournalWriter writer2 = makeGenericWriter();
-        JournalEntryWriter w = writer2.entryWriter();
+        try (JournalWriter writer2 = makeGenericWriter()) {
+            JournalEntryWriter w = writer2.entryWriter();
 
-        w.putSym(0, "EURUSD");
-        w.putDate(1, 19999);
-        w.putDouble(2, 1.24);
-        w.putDouble(3, 1.25);
-        w.putInt(4, 10000);
-        w.putInt(5, 12000);
-        w.putInt(6, 2);
-        w.putStr(7, "OK");
-        w.putStr(8, "system");
-        w.putStr(9, "EURUSD:GLOBAL");
-        w.putBool(10, true);
-        w.putNull(11);
-        w.putLong(12, 1234567);
-        w.putShort(13, (short) 11000);
-        w.append();
+            w.putSym(0, "EURUSD");
+            w.putDate(1, 19999);
+            w.putDouble(2, 1.24);
+            w.putDouble(3, 1.25);
+            w.putInt(4, 10000);
+            w.putInt(5, 12000);
+            w.putInt(6, 2);
+            w.putStr(7, "OK");
+            w.putStr(8, "system");
+            w.putStr(9, "EURUSD:GLOBAL");
+            w.putBool(10, true);
+            w.putNull(11);
+            w.putLong(12, 1234567);
+            w.putShort(13, (short) 11000);
+            w.append();
 
-        writer2.commit();
+            writer2.commit();
+        }
 
-        writer2.close();
-
-        writer = factory.writer(Data.class, "test");
+        writer = getWriterFactory().writer(Data.class, "test");
 
         d.sym = "HKDUSD";
         d.created = 40000;
@@ -310,7 +313,7 @@ public class GenericInteropTest extends AbstractTest {
         writer.append(d);
         writer.commit();
 
-        Journal<Data> reader = factory.reader(Data.class, "test");
+        Journal<Data> reader = getReaderFactory().reader(Data.class, "test");
         String expected = "Data{sym='GBPUSD', created=30000, bid=0.65, ask=0.66, bidSize=1000, askSize=1100, id=1, status='OK', user='system', rateId='GBPUSD:GLOBAL', active=true, nullable='null', ticks=12345678, modulo=425}\n" +
                 "Data{sym='EURUSD', created=19999, bid=1.24, ask=1.25, bidSize=10000, askSize=12000, id=2, status='OK', user='system', rateId='EURUSD:GLOBAL', active=true, nullable='null', ticks=1234567, modulo=11000}\n" +
                 "Data{sym='HKDUSD', created=40000, bid=2.88, ask=2.89, bidSize=1000, askSize=1100, id=3, status='OK', user='system', rateId='HKDUSD:GLOBAL', active=true, nullable='null', ticks=989931, modulo=398}\n";
@@ -320,38 +323,41 @@ public class GenericInteropTest extends AbstractTest {
             builder.append(data).append('\n');
         }
         TestUtils.assertEquals(expected, builder);
+
+        writer.close();
     }
 
     @Test
     public void testObjectWriteGenericRead() throws Exception {
-        JournalWriter<Data> writer = factory.writer(new JournalMetadataBuilder<Data>(Data.class) {{
+        try (JournalWriter<Data> writer = getWriterFactory().writer(new JournalMetadataBuilder<Data>(Data.class) {{
             $sym("sym").index();
             $int("id").index();
             $str("rateId").index();
             location("test");
-        }});
+        }})) {
 
-        Data d = new Data();
-        d.sym = "GBPUSD";
-        d.created = 30000;
-        d.bid = 0.65;
-        d.ask = 0.66;
-        d.bidSize = 1000;
-        d.askSize = 1100;
-        d.id = 1;
-        d.status = "OK";
-        d.user = "system";
-        d.rateId = "GBPUSD:GLOBAL";
-        d.active = true;
-        d.nullable = null;
-        d.ticks = 12345678;
-        d.modulo = 425;
+            Data d = new Data();
+            d.sym = "GBPUSD";
+            d.created = 30000;
+            d.bid = 0.65;
+            d.ask = 0.66;
+            d.bidSize = 1000;
+            d.askSize = 1100;
+            d.id = 1;
+            d.status = "OK";
+            d.user = "system";
+            d.rateId = "GBPUSD:GLOBAL";
+            d.active = true;
+            d.nullable = null;
+            d.ticks = 12345678;
+            d.modulo = 425;
 
-        writer.append(d);
-        writer.commit();
+            writer.append(d);
+            writer.commit();
+        }
 
         try (RecordSource rs = compile("test")) {
-            RecordCursor src = rs.prepareCursor(factory);
+            RecordCursor src = rs.prepareCursor(getReaderFactory());
             Record e;
 
             Assert.assertTrue(src.hasNext());
@@ -378,48 +384,47 @@ public class GenericInteropTest extends AbstractTest {
 
     @Test
     public void testPartialObjectReader() throws Exception {
-        JournalWriter writer = makeGenericWriter();
+        try (JournalWriter writer = makeGenericWriter()) {
 
-        JournalEntryWriter w = writer.entryWriter();
+            JournalEntryWriter w = writer.entryWriter();
 
-        w.putSym(0, "EURUSD");
-        w.putDate(1, 19999);
-        w.putDouble(2, 1.24);
-        w.putDouble(3, 1.25);
-        w.putInt(4, 10000);
-        w.putInt(5, 12000);
-        w.putInt(6, 1);
-        w.putStr(7, "OK");
-        w.putStr(8, "system");
-        w.putStr(9, "EURUSD:GLOBAL");
-        w.putBool(10, true);
-        w.putNull(11);
-        w.putLong(12, 13141516);
-        w.putShort(13, (short) 25000);
-        w.append();
-        writer.commit();
-
-        writer.close();
-
-
-        Journal<Partial> reader = factory.reader(Partial.class, "test");
-
-        String expected = "Partial{sym='EURUSD', created=19999, bid=1.24, ask=1.25, bidSize=10000, askSize=12000}";
-
-        StringBuilder builder = new StringBuilder();
-        for (Partial p : JournalIterators.bufferedIterator(reader)) {
-            builder.append(p);
+            w.putSym(0, "EURUSD");
+            w.putDate(1, 19999);
+            w.putDouble(2, 1.24);
+            w.putDouble(3, 1.25);
+            w.putInt(4, 10000);
+            w.putInt(5, 12000);
+            w.putInt(6, 1);
+            w.putStr(7, "OK");
+            w.putStr(8, "system");
+            w.putStr(9, "EURUSD:GLOBAL");
+            w.putBool(10, true);
+            w.putNull(11);
+            w.putLong(12, 13141516);
+            w.putShort(13, (short) 25000);
+            w.append();
+            writer.commit();
         }
-        TestUtils.assertEquals(expected, builder);
+
+
+        try (Journal<Partial> reader = getReaderFactory().reader(Partial.class, "test")) {
+
+            String expected = "Partial{sym='EURUSD', created=19999, bid=1.24, ask=1.25, bidSize=10000, askSize=12000}";
+
+            StringBuilder builder = new StringBuilder();
+            for (Partial p : JournalIterators.bufferedIterator(reader)) {
+                builder.append(p);
+            }
+            TestUtils.assertEquals(expected, builder);
+        }
     }
 
     @Test
     public void testPartialObjectWriter() throws Exception {
-        JournalWriter writer = makeGenericWriter();
-        writer.close();
+        makeGenericWriter().close();
 
         try {
-            factory.writer(Partial.class, "test");
+            getWriterFactory().writer(Partial.class, "test");
             Assert.fail("Expected exception");
         } catch (JournalException ignore) {
             // ignore exception
@@ -427,7 +432,7 @@ public class GenericInteropTest extends AbstractTest {
     }
 
     private JournalWriter makeGenericWriter() throws JournalException {
-        return factory.writer(new JournalStructure("test") {{
+        return getWriterFactory().writer(new JournalStructure("test") {{
             $sym("sym").index();
             $date("created");
             $double("bid");

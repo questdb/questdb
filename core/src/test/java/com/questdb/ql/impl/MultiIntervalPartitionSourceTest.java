@@ -39,28 +39,28 @@ public class MultiIntervalPartitionSourceTest extends AbstractTest {
 
     @Test
     public void testIntervalMerge() throws Exception {
-
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-
-        TestUtils.generateQuoteData(w, 600, Dates.parseDateTime("2014-03-10T02:00:00.000Z"), Dates.MINUTE_MILLIS);
-        w.commit();
-
         StringSink sink = new StringSink();
-        RecordSourcePrinter p = new RecordSourcePrinter(sink);
 
-        LongList intervals = new LongList();
-        intervals.add(Dates.parseDateTime("2014-03-10T07:00:00.000Z"));
-        intervals.add(Dates.parseDateTime("2014-03-10T07:15:00.000Z"));
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            TestUtils.generateQuoteData(w, 600, Dates.parseDateTime("2014-03-10T02:00:00.000Z"), Dates.MINUTE_MILLIS);
+            w.commit();
 
-        p.print(
-                new JournalRecordSource(
-                        new MultiIntervalPartitionSource(
-                                new JournalPartitionSource(w.getMetadata(), true),
-                                intervals
-                        ),
-                        new AllRowSource()
-                ), factory
-        );
+            RecordSourcePrinter p = new RecordSourcePrinter(sink);
+
+            LongList intervals = new LongList();
+            intervals.add(Dates.parseDateTime("2014-03-10T07:00:00.000Z"));
+            intervals.add(Dates.parseDateTime("2014-03-10T07:15:00.000Z"));
+
+            p.print(
+                    new JournalRecordSource(
+                            new MultiIntervalPartitionSource(
+                                    new JournalPartitionSource(w.getMetadata(), true),
+                                    intervals
+                            ),
+                            new AllRowSource()
+                    ), getReaderFactory()
+            );
+        }
 
         final String expected = "2014-03-10T07:00:00.000Z\tGKN.L\t290.000000000000\t320.000000000000\t1070060020\t627764827\tFast trading\tLXE\n" +
                 "2014-03-10T07:01:00.000Z\tLLOY.L\t0.001271238521\t0.000000010817\t855783502\t444545168\tFast trading\tLXE\n" +

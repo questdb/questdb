@@ -41,41 +41,44 @@ import org.junit.Test;
 public class MergingRowSourceTest extends AbstractTest {
     @Test
     public void testHeapMerge() throws JournalException, NumericException {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
 
-        RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);
-        RowSource srcB = new KvIndexSymLookupRowSource("sym", "WTB.L", true);
+            RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);
+            RowSource srcB = new KvIndexSymLookupRowSource("sym", "WTB.L", true);
 
-        RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new HeapMergingRowSource(srcA, srcB));
+            RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new HeapMergingRowSource(srcA, srcB));
 
-        long last = 0;
-        RecordCursor c = rs.prepareCursor(factory);
-        int ts = rs.getMetadata().getColumnIndex("timestamp");
-        while (c.hasNext()) {
-            long r = c.next().getDate(ts);
-            Assert.assertTrue(r > last);
-            last = r;
+            long last = 0;
+            RecordCursor c = rs.prepareCursor(getReaderFactory());
+            int ts = rs.getMetadata().getColumnIndex("timestamp");
+            while (c.hasNext()) {
+                long r = c.next().getDate(ts);
+                Assert.assertTrue(r > last);
+                last = r;
+            }
         }
     }
 
     @Test
     public void testMerge() throws JournalException, NumericException {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
 
-        RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);
-        RowSource srcB = new KvIndexSymLookupRowSource("sym", "WTB.L", true);
+            RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);
+            RowSource srcB = new KvIndexSymLookupRowSource("sym", "WTB.L", true);
 
-        RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new MergingRowSource(srcA, srcB));
+            try (RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new MergingRowSource(srcA, srcB))) {
 
-        long last = 0;
-        RecordCursor c = rs.prepareCursor(factory);
-        int ts = rs.getMetadata().getColumnIndex("timestamp");
-        while (c.hasNext()) {
-            long r = c.next().getDate(ts);
-            Assert.assertTrue(r > last);
-            last = r;
+                long last = 0;
+                RecordCursor c = rs.prepareCursor(getReaderFactory());
+                int ts = rs.getMetadata().getColumnIndex("timestamp");
+                while (c.hasNext()) {
+                    long r = c.next().getDate(ts);
+                    Assert.assertTrue(r > last);
+                    last = r;
+                }
+            }
         }
     }
 

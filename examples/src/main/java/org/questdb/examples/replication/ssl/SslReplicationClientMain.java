@@ -25,7 +25,10 @@ package org.questdb.examples.replication.ssl;
 
 import com.questdb.Journal;
 import com.questdb.JournalIterators;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
+import com.questdb.factory.configuration.JournalConfiguration;
+import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalClient;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.store.JournalListener;
@@ -40,7 +43,10 @@ import java.io.InputStream;
  */
 public class SslReplicationClientMain {
     public static void main(String[] args) throws Exception {
-        JournalFactory factory = new JournalFactory(args[0]);
+        JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
+        ReaderFactory readerFactory = new ReaderFactory(configuration);
+        WriterFactory writerFactory = new WriterFactory(configuration);
+
         final JournalClient client = new JournalClient(
                 new ClientConfig() {{
                     getSslConfig().setSecure(true);
@@ -59,10 +65,10 @@ public class SslReplicationClientMain {
                         getSslConfig().setTrustStore(is, "changeit");
                     }
                 }}
-                , factory
+                , writerFactory
         );
 
-        final Journal<Price> reader = factory.bulkReader(Price.class, "price-copy");
+        final Journal<Price> reader = readerFactory.bulkReader(Price.class, "price-copy");
 
         client.subscribe(Price.class, null, "price-copy", new JournalListener() {
             @Override

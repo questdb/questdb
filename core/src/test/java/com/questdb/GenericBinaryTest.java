@@ -46,59 +46,65 @@ public class GenericBinaryTest extends AbstractTest {
         try (JournalWriter generic = getGenericWriter()) {
             writeInputStream(generic, bytes);
         }
-        assertEquals(bytes, readObject(getWriter()));
+        try (JournalWriter<BinContainer> w = getWriter()) {
+            assertEquals(bytes, readObject(w));
+        }
     }
 
     @Test
     public void testInputOutput() throws Exception {
-        JournalWriter writer = getGenericWriter();
-        List<byte[]> expected = getBytes();
-        writeInputStream(writer, expected);
-        assertEquals(expected, readOutputStream());
+        try (JournalWriter writer = getGenericWriter()) {
+            List<byte[]> expected = getBytes();
+            writeInputStream(writer, expected);
+            assertEquals(expected, readOutputStream());
+        }
     }
 
     @Test
     public void testOutputInput() throws Exception {
-        JournalWriter writer = getGenericWriter();
-        List<byte[]> expected = getBytes();
-        writeOutputStream(writer, expected);
+        try (JournalWriter writer = getGenericWriter()) {
+            List<byte[]> expected = getBytes();
+            writeOutputStream(writer, expected);
 
-        List<byte[]> actual = new ArrayList<>();
-        try (RecordSource rs = compile("bintest")) {
-            for (Record e : rs.prepareCursor(factory)) {
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                InputStream in = e.getBin(0);
+            List<byte[]> actual = new ArrayList<>();
+            try (RecordSource rs = compile("bintest")) {
+                for (Record e : rs.prepareCursor(getReaderFactory())) {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    InputStream in = e.getBin(0);
 
-                int b;
-                while ((b = in.read()) != -1) {
-                    out.write(b);
+                    int b;
+                    while ((b = in.read()) != -1) {
+                        out.write(b);
+                    }
+                    actual.add(out.toByteArray());
                 }
-                actual.add(out.toByteArray());
-            }
 
-            assertEquals(expected, actual);
+                assertEquals(expected, actual);
+            }
         }
     }
 
     @Test
     public void testOutputOutput() throws Exception {
-        JournalWriter writer = getGenericWriter();
-        List<byte[]> expected = getBytes();
-        writeOutputStream(writer, expected);
-        assertEquals(expected, readOutputStream());
+        try (JournalWriter writer = getGenericWriter()) {
+            List<byte[]> expected = getBytes();
+            writeOutputStream(writer, expected);
+            assertEquals(expected, readOutputStream());
+        }
     }
 
     @Test
     public void testUnclosedOutputOutput() throws Exception {
-        JournalWriter writer = getGenericWriter();
-        List<byte[]> expected = getBytes();
-        for (int i = 0; i < expected.size(); i++) {
-            JournalEntryWriter w = writer.entryWriter();
-            w.putBin(0).write(expected.get(i));
-            w.append();
+        try (JournalWriter writer = getGenericWriter()) {
+            List<byte[]> expected = getBytes();
+            for (int i = 0; i < expected.size(); i++) {
+                JournalEntryWriter w = writer.entryWriter();
+                w.putBin(0).write(expected.get(i));
+                w.append();
+            }
+            writer.commit();
+            assertEquals(expected, readOutputStream());
         }
-        writer.commit();
-        assertEquals(expected, readOutputStream());
     }
 
     private void assertEquals(List<byte[]> expected, List<byte[]> actual) {
@@ -117,14 +123,14 @@ public class GenericBinaryTest extends AbstractTest {
     }
 
     private JournalWriter getGenericWriter() throws JournalException {
-        return factory.writer(new JournalStructure("bintest") {{
-                                  $bin("image");
-                              }}
+        return getWriterFactory().writer(new JournalStructure("bintest") {{
+                                             $bin("image");
+                                         }}
         );
     }
 
     private JournalWriter<BinContainer> getWriter() throws JournalException {
-        return factory.writer(BinContainer.class, "bintest");
+        return getWriterFactory().writer(BinContainer.class, "bintest");
     }
 
     private List<byte[]> readObject(Journal<BinContainer> reader) {
@@ -140,7 +146,7 @@ public class GenericBinaryTest extends AbstractTest {
     private List<byte[]> readOutputStream() throws ParserException {
         List<byte[]> result = new ArrayList<>();
         try (RecordSource rs = compile("bintest")) {
-            for (Record e : rs.prepareCursor(factory)) {
+            for (Record e : rs.prepareCursor(getReaderFactory())) {
                 ByteArrayOutputStream o = new ByteArrayOutputStream();
                 e.getBin(0, o);
                 result.add(o.toByteArray());

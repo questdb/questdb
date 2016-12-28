@@ -38,69 +38,73 @@ import org.junit.Test;
 public class RecordKeyCopierCompilerTest extends AbstractOptimiserTest {
     @Test
     public void testCompiler() throws Exception {
-        JournalWriter w = compiler.createWriter(factory, "create table x (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING, y BOOLEAN) timestamp(t) partition by MONTH record hint 100");
-        JournalEntryWriter ew = w.entryWriter();
-        IntList keyColumns = new IntList();
-        ew.putInt(0, 12345);
-        keyColumns.add(0);
+        try (JournalWriter w = compiler.createWriter(getWriterFactory(), getCachingFactory(), "create table x (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING, y BOOLEAN) timestamp(t) partition by MONTH record hint 100")) {
+            JournalEntryWriter ew = w.entryWriter();
+            IntList keyColumns = new IntList();
+            ew.putInt(0, 12345);
+            keyColumns.add(0);
 
-        ew.put(1, (byte) 128);
-        keyColumns.add(1);
+            ew.put(1, (byte) 128);
+            keyColumns.add(1);
 
-        ew.putShort(2, (short) 6500);
-        keyColumns.add(2);
+            ew.putShort(2, (short) 6500);
+            keyColumns.add(2);
 
-        ew.putLong(3, 123456789);
-        keyColumns.add(3);
+            ew.putLong(3, 123456789);
+            keyColumns.add(3);
 
-        ew.putFloat(4, 0.345f);
-        keyColumns.add(4);
+            ew.putFloat(4, 0.345f);
+            keyColumns.add(4);
 
-        ew.putDouble(5, 0.123456789);
-        keyColumns.add(5);
+            ew.putDouble(5, 0.123456789);
+            keyColumns.add(5);
 
-        ew.putDate(6, 10000000000L);
-        keyColumns.add(6);
+            ew.putDate(6, 10000000000L);
+            keyColumns.add(6);
 
-        ew.putSym(9, "xyz");
-        keyColumns.add(9);
+            ew.putSym(9, "xyz");
+            keyColumns.add(9);
 
-        ew.putStr(10, "abc");
-        keyColumns.add(10);
+            ew.putStr(10, "abc");
+            keyColumns.add(10);
 
-        ew.putBool(11, true);
-        keyColumns.add(11);
+            ew.putBool(11, true);
+            keyColumns.add(11);
 
-        ew.append();
-        w.commit();
+            ew.append();
+            w.commit();
 
-        RecordSource src = compileSource("x");
-        RecordKeyCopierCompiler cc = new RecordKeyCopierCompiler(new BytecodeAssembler());
-        RecordKeyCopier copier = cc.compile(src.getMetadata(), keyColumns);
 
-        IntList valueTypes = new IntList();
-        valueTypes.add(ColumnType.DOUBLE);
+            try (RecordSource src = compileSource("x")) {
+                RecordKeyCopierCompiler cc = new RecordKeyCopierCompiler(new BytecodeAssembler());
+                RecordKeyCopier copier = cc.compile(src.getMetadata(), keyColumns);
 
-        MetadataTypeResolver metadataTypeResolver = new MetadataTypeResolver();
-        TypeListResolver typeListResolver = new TypeListResolver();
+                IntList valueTypes = new IntList();
+                valueTypes.add(ColumnType.DOUBLE);
 
-        DirectMap map = new DirectMap(1024, metadataTypeResolver.of(src.getMetadata(), keyColumns), typeListResolver.of(valueTypes));
+                MetadataTypeResolver metadataTypeResolver = new MetadataTypeResolver();
+                TypeListResolver typeListResolver = new TypeListResolver();
 
-        RecordCursor cursor = src.prepareCursor(factory);
-        while (cursor.hasNext()) {
-            Record r = cursor.next();
-            DirectMap.KeyWriter kw = map.keyWriter();
-            copier.copy(r, kw);
-            DirectMapValues val = map.getOrCreateValues(kw);
-            val.putDouble(0, 5000.01);
-        }
+                try (DirectMap map = new DirectMap(1024, metadataTypeResolver.of(src.getMetadata(), keyColumns), typeListResolver.of(valueTypes))) {
 
-        cursor.toTop();
-        while (cursor.hasNext()) {
-            Record r = cursor.next();
-            DirectMap.KeyWriter kw = map.keyWriter();
-            copier.copy(r, kw);
-            Assert.assertEquals(map.getValues(kw).getDouble(0), 5000.01, 0.00000001);
+                    RecordCursor cursor = src.prepareCursor(getCachingFactory());
+                    while (cursor.hasNext()) {
+                        Record r = cursor.next();
+                        DirectMap.KeyWriter kw = map.keyWriter();
+                        copier.copy(r, kw);
+                        DirectMapValues val = map.getOrCreateValues(kw);
+                        val.putDouble(0, 5000.01);
+                    }
+
+                    cursor.toTop();
+                    while (cursor.hasNext()) {
+                        Record r = cursor.next();
+                        DirectMap.KeyWriter kw = map.keyWriter();
+                        copier.copy(r, kw);
+                        Assert.assertEquals(map.getValues(kw).getDouble(0), 5000.01, 0.00000001);
+                    }
+                }
+            }
         }
     }
 }

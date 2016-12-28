@@ -29,6 +29,7 @@ import com.questdb.model.Quote;
 import com.questdb.query.ResultSet;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -41,7 +42,12 @@ public class JournalRefreshTest extends AbstractTest {
 
     @Before
     public void before() throws JournalException {
-        rw = factory.writer(Quote.class);
+        rw = getWriterFactory().writer(Quote.class);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        rw.close();
     }
 
     @Test
@@ -49,58 +55,61 @@ public class JournalRefreshTest extends AbstractTest {
         rw.append(new Quote().setMode("A").setSym("B").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis()));
         rw.compact();
         rw.commit();
-
-        Journal<Quote> reader = factory.reader(Quote.class);
-        reader.query().all().asResultSet().read();
         rw.close();
 
-        JournalWriter<Quote> writer = factory.writer(Quote.class);
-        writer.append(new Quote().setMode("A").setSym("B").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis()));
+        try (Journal<Quote> reader = getReaderFactory().reader(Quote.class)) {
+            reader.query().all().asResultSet().read();
 
-        Quote expected = new Quote().setMode("A").setSym("B22").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis());
-        writer.append(expected);
-        writer.commit();
+            try (JournalWriter<Quote> writer = getWriterFactory().writer(Quote.class)) {
+                writer.append(new Quote().setMode("A").setSym("B").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis()));
 
-        reader.refresh();
-        ResultSet<Quote> rs = reader.query().all().asResultSet();
-        // at this point we used to get an IllegalArgumentException because we
-        // were reaching outside of buffer of compacted column
-        Quote q = rs.read(rs.size() - 1);
-        Assert.assertEquals(expected, q);
+                Quote expected = new Quote().setMode("A").setSym("B22").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis());
+                writer.append(expected);
+                writer.commit();
+
+                reader.refresh();
+                ResultSet<Quote> rs = reader.query().all().asResultSet();
+                // at this point we used to get an IllegalArgumentException because we
+                // were reaching outside of buffer of compacted column
+                Quote q = rs.read(rs.size() - 1);
+                Assert.assertEquals(expected, q);
+            }
+        }
     }
 
     @Test
     public void testLagDetach() throws Exception {
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        Journal<Quote> reader = factory.reader(Quote.class);
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+            Journal<Quote> reader = getReaderFactory().reader(Quote.class);
 
-        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T02:00:00.000Z"));
-        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
+            TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T02:00:00.000Z"));
+            TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
 
-        rw.append(origin.query().all().asResultSet().subset(0, 500));
-        rw.commit();
-        reader.refresh();
-        Assert.assertEquals(rw.size(), reader.size());
+            rw.append(origin.query().all().asResultSet().subset(0, 500));
+            rw.commit();
+            reader.refresh();
+            Assert.assertEquals(rw.size(), reader.size());
 
-        rw.append(origin.query().all().asResultSet().subset(500, 600));
-        rw.commit();
-        reader.refresh();
-        Assert.assertEquals(rw.size(), reader.size());
+            rw.append(origin.query().all().asResultSet().subset(500, 600));
+            rw.commit();
+            reader.refresh();
+            Assert.assertEquals(rw.size(), reader.size());
 
-        rw.mergeAppend(origin.query().all().asResultSet().subset(500, 600));
-        rw.commit();
-        reader.refresh();
-        Assert.assertEquals(rw.size(), reader.size());
+            rw.mergeAppend(origin.query().all().asResultSet().subset(500, 600));
+            rw.commit();
+            reader.refresh();
+            Assert.assertEquals(rw.size(), reader.size());
 
-        rw.removeIrregularPartition();
-        rw.commit();
-        reader.refresh();
-        Assert.assertEquals(rw.size(), reader.size());
+            rw.removeIrregularPartition();
+            rw.commit();
+            reader.refresh();
+            Assert.assertEquals(rw.size(), reader.size());
+        }
     }
 
     @Test
     public void testPartitionRescan() throws Exception {
-        Journal<Quote> reader = factory.reader(Quote.class);
+        Journal<Quote> reader = getReaderFactory().reader(Quote.class);
 
         Assert.assertEquals(0, reader.size());
         TestUtils.generateQuoteData(rw, 1001);
@@ -125,18 +134,18 @@ public class JournalRefreshTest extends AbstractTest {
         rw.append(q1);
         rw.close();
 
-        rw = factory.writer(Quote.class);
+        rw = getWriterFactory().writer(Quote.class);
 
-        Journal<Quote> r = factory.reader(Quote.class);
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+            for (Quote v : r) {
+                Assert.assertEquals(q1, v);
+            }
 
-        for (Quote v : r) {
-            Assert.assertEquals(q1, v);
-        }
+            rw.append(q2);
 
-        rw.append(q2);
-
-        for (Quote v : r) {
-            Assert.assertEquals(q1, v);
+            for (Quote v : r) {
+                Assert.assertEquals(q1, v);
+            }
         }
     }
 
@@ -147,7 +156,7 @@ public class JournalRefreshTest extends AbstractTest {
         rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.toMillis(2013, 1, 10, 14, 0)));
         rw.commit();
 
-        Journal<Quote> r = factory.reader(Quote.class);
+        Journal<Quote> r = getReaderFactory().reader(Quote.class);
         Assert.assertEquals(2, r.size());
 
         // append data to same partition
@@ -196,7 +205,7 @@ public class JournalRefreshTest extends AbstractTest {
         TestUtils.generateQuoteData(rw, 1000, Dates.parseDateTime("2013-09-04T10:00:00.000Z"));
         rw.commit();
 
-        Journal<Quote> r = factory.reader(Quote.class);
+        Journal<Quote> r = getReaderFactory().reader(Quote.class);
 
         Assert.assertEquals(10, r.getSymbolTable("sym").size());
         r.getSymbolTable("sym").preLoad();

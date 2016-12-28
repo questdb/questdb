@@ -782,7 +782,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 new RecordKeyCopierCompiler(new BytecodeAssembler())
         );
         sink.clear();
-        printer.print(r, factory);
+        printer.print(r, getCachingFactory());
         TestUtils.assertEquals(expected, sink);
         assertThat(expected, "customers c join orders o on c.customerId = o.customerId where customerName ~ 'PJFSREKEUNMKWOF'");
     }
@@ -1698,7 +1698,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     private static void generateJoinData() throws JournalException, NumericException {
-        JournalWriter customers = factory.writer(
+        JournalWriter customers = getWriterFactory().writer(
                 new JournalStructure("customers").
                         $int("customerId").
                         $str("customerName").
@@ -1710,14 +1710,14 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         $ts()
         );
 
-        JournalWriter categories = factory.writer(
+        JournalWriter categories = getWriterFactory().writer(
                 new JournalStructure("categories").
                         $sym("category").index().buckets(100).
                         $str("description").
                         $ts()
         );
 
-        JournalWriter employees = factory.writer(
+        JournalWriter employees = getWriterFactory().writer(
                 new JournalStructure("employees").
                         $str("employeeId").index().buckets(2048).
                         $str("firstName").
@@ -1726,7 +1726,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         $ts()
         );
 
-        JournalWriter orderDetails = factory.writer(
+        JournalWriter orderDetails = getWriterFactory().writer(
                 new JournalStructure("orderDetails").
                         $int("orderDetailId").
                         $int("orderId").
@@ -1735,7 +1735,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         $ts()
         );
 
-        JournalWriter orders = factory.writer(
+        JournalWriter orders = getWriterFactory().writer(
                 new JournalStructure("orders").
                         $int("orderId").
                         $int("customerId").index().
@@ -1746,7 +1746,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         $()
         );
 
-        JournalWriter products = factory.writer(
+        JournalWriter products = getWriterFactory().writer(
                 new JournalStructure("products").
                         $int("productId").
                         $str("productName").
@@ -1757,14 +1757,14 @@ public class JoinQueryTest extends AbstractOptimiserTest {
         );
 
 
-        JournalWriter shippers = factory.writer(
+        JournalWriter shippers = getWriterFactory().writer(
                 new JournalStructure("shippers").
                         $sym("shipper").
                         $str("phone").
                         $ts()
         );
 
-        JournalWriter suppliers = factory.writer(
+        JournalWriter suppliers = getWriterFactory().writer(
                 new JournalStructure("suppliers").
                         $sym("supplier").buckets(100).
                         $str("contactName").

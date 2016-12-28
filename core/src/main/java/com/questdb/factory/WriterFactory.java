@@ -29,17 +29,16 @@ import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.MetadataBuilder;
 
-public class JournalFactory extends AbstractJournalReaderFactory implements JournalReaderFactory, JournalWriterFactory {
+public class WriterFactory extends AbstractFactory implements JournalWriterFactory {
 
-    public JournalFactory(String journalBase) {
-        super(new JournalConfigurationBuilder().build(journalBase));
+    public WriterFactory(String databaseHome) {
+        super(databaseHome);
     }
 
-    public JournalFactory(JournalConfiguration configuration) {
+    public WriterFactory(JournalConfiguration configuration) {
         super(configuration);
     }
 
@@ -79,7 +78,6 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public JournalWriter bulkWriter(String location) throws JournalException {
         return bulkWriter(new JournalKey<>(location));
     }
@@ -88,6 +86,7 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
     public <T> JournalWriter<T> writer(Class<T> clazz) throws JournalException {
         return writer(new JournalKey<>(clazz));
     }
+
 
     @Override
     public <T> JournalWriter<T> writer(Class<T> clazz, String location) throws JournalException {
@@ -106,25 +105,16 @@ public class JournalFactory extends AbstractJournalReaderFactory implements Jour
 
     @Override
     public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
-        return writer(getConfiguration().createMetadata(key), key);
+        return writer(getConfiguration().createMetadata(key));
     }
 
     @Override
     public <T> JournalWriter<T> writer(MetadataBuilder<T> metadataBuilder) throws JournalException {
-        JournalMetadata<T> metadata = getConfiguration().buildWithRootLocation(metadataBuilder);
-        return writer(metadata, metadata.getKey());
+        return writer(getConfiguration().buildWithRootLocation(metadataBuilder));
     }
 
     @Override
-    public <T> JournalWriter<T> writer(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
+    public <T> JournalWriter<T> writer(JournalMetadata<T> metadata) throws JournalException {
         return new JournalWriter<>(metadata);
-    }
-
-    /**
-     * Inherited method, this implementation does not own created journals
-     * and has nothing to close.
-     */
-    @Override
-    public void close() {
     }
 }

@@ -63,7 +63,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
                     setEnableMultiCast(false);
                 }}
-                , factory
+                , getReaderFactory()
                 ,
                 new AuthorizationHandler() {
                     @Override
@@ -73,7 +73,7 @@ public class AuthorizationTest extends AbstractTest {
                 });
 
 
-        JournalClient client = new JournalClient(local, factory, new CredentialProvider() {
+        JournalClient client = new JournalClient(local, getWriterFactory(), new CredentialProvider() {
             @Override
             public byte[] createToken() {
                 return "SECRET".getBytes();
@@ -89,7 +89,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , factory
+                , getReaderFactory()
                 ,
                 new AuthorizationHandler() {
                     @Override
@@ -103,7 +103,7 @@ public class AuthorizationTest extends AbstractTest {
 
             final AtomicInteger authErrors = new AtomicInteger();
             final CountDownLatch error = new CountDownLatch(1);
-            JournalClient client = new JournalClient(local, factory, null, new JournalClient.Callback() {
+            JournalClient client = new JournalClient(local, getWriterFactory(), null, new JournalClient.Callback() {
                 @Override
                 public void onEvent(int evt) {
                     switch (evt) {
@@ -134,7 +134,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , factory
+                , getReaderFactory()
                 ,
                 new AuthorizationHandler() {
                     @Override
@@ -149,7 +149,7 @@ public class AuthorizationTest extends AbstractTest {
 
         JournalClient client = new JournalClient(
                 local,
-                factory,
+                getWriterFactory(),
                 new CredentialProvider() {
                     @Override
                     public byte[] createToken() {
@@ -191,7 +191,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , factory
+                , getReaderFactory()
                 ,
                 new AuthorizationHandler() {
                     @Override
@@ -203,7 +203,7 @@ public class AuthorizationTest extends AbstractTest {
 
         final AtomicInteger authErrorCount = new AtomicInteger();
         final CountDownLatch terminated = new CountDownLatch(1);
-        JournalClient client = new JournalClient(local, factory, new SSOCredentialProvider("HOST/test"),
+        JournalClient client = new JournalClient(local, getWriterFactory(), new SSOCredentialProvider("HOST/test"),
                 new JournalClient.Callback() {
                     @Override
                     public void onEvent(int evt) {
@@ -238,7 +238,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , factory
+                , getReaderFactory()
                 ,
                 new AuthorizationHandler() {
                     @Override
@@ -250,7 +250,7 @@ public class AuthorizationTest extends AbstractTest {
         final AtomicInteger authErrorCount = new AtomicInteger();
         final CountDownLatch serverError = new CountDownLatch(1);
 
-        JournalClient client = new JournalClient(local, factory, new CredentialProvider() {
+        JournalClient client = new JournalClient(local, getWriterFactory(), new CredentialProvider() {
             @Override
             public byte[] createToken() {
                 return "SECRET".getBytes();
@@ -286,38 +286,39 @@ public class AuthorizationTest extends AbstractTest {
 
     private void beginSync(JournalServer server, JournalClient client) throws JournalException, JournalNetworkException, InterruptedException, NumericException {
         int size = 100000;
-        JournalWriter<Quote> remote = factory.writer(Quote.class, "remote", 2 * size);
-        server.publish(remote);
-        server.start();
-        try {
-            final CountDownLatch latch = new CountDownLatch(1);
-            client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
-                @Override
-                public void onCommit() {
-                    latch.countDown();
-                }
-
-                @Override
-                public void onEvent(int event) {
-
-                }
-            });
-
-            client.start();
-
+        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote", 2 * size)) {
+            server.publish(remote);
+            server.start();
             try {
-                TestUtils.generateQuoteData(remote, size);
+                final CountDownLatch latch = new CountDownLatch(1);
+                client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
+                    @Override
+                    public void onCommit() {
+                        latch.countDown();
+                    }
 
-                latch.await();
+                    @Override
+                    public void onEvent(int event) {
 
-                Journal<Quote> local = factory.reader(Quote.class, "local");
-                TestUtils.assertDataEquals(remote, local);
+                    }
+                });
 
+                client.start();
+
+                try {
+                    TestUtils.generateQuoteData(remote, size);
+
+                    latch.await();
+
+                    Journal<Quote> local = getReaderFactory().reader(Quote.class, "local");
+                    TestUtils.assertDataEquals(remote, local);
+
+                } finally {
+                    client.halt();
+                }
             } finally {
-                client.halt();
+                server.halt(0, TimeUnit.SECONDS);
             }
-        } finally {
-            server.halt(0, TimeUnit.SECONDS);
         }
     }
 }

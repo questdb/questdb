@@ -25,7 +25,8 @@ package org.questdb.examples;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.WriterFactory;
+import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Rnd;
@@ -74,50 +75,50 @@ public class AppendObjectConcurrent {
         int nThreads = 2;
         int nMessages = 1000000;
 
-        try (JournalFactory factory = new JournalFactory(ModelConfiguration.CONFIG.build(args[0]))) {
+        JournalConfiguration configuration = ModelConfiguration.CONFIG.build(args[0]);
+        WriterFactory writerFactory = new WriterFactory(configuration);
 
-            // start publishing threads
-            for (int i = 0; i < nThreads; i++) {
-                new Thread(new Publisher(queue, pubSequence, nMessages)).start();
-            }
+        // start publishing threads
+        for (int i = 0; i < nThreads; i++) {
+            new Thread(new Publisher(queue, pubSequence, nMessages)).start();
+        }
 
-            // consume messages in main thread
-            int count = 0;
-            int deadline = nMessages * nThreads;
+        // consume messages in main thread
+        int count = 0;
+        int deadline = nMessages * nThreads;
 
-            try (JournalWriter<Quote> writer = factory.writer(Quote.class)) {
-                while (count < deadline) {
-                    long cursor = subSequence.next();
-                    if (cursor < 0) {
-                        LockSupport.parkNanos(1);
-                        continue;
-                    }
+        try (JournalWriter<Quote> writer = writerFactory.writer(Quote.class)) {
+            while (count < deadline) {
+                long cursor = subSequence.next();
+                if (cursor < 0) {
+                    LockSupport.parkNanos(1);
+                    continue;
+                }
 
-                    long available = subSequence.available();
-                    while (cursor < available) {
-                        Quote q = queue.get(cursor++);
-                        q.setTimestamp(System.currentTimeMillis());
-                        try {
-                            writer.append(q);
-                        } catch (JournalException e) {
-                            // append may fail, log and continue
-
-                            // N.B. this logging uses builder pattern to construct message. Building finishes with $() call.
-                            LOG.error().$("Sequence failed: ").$(cursor - 1).$(e).$();
-                        }
-                        count++;
-                    }
-                    subSequence.done(available - 1);
+                long available = subSequence.available();
+                while (cursor < available) {
+                    Quote q = queue.get(cursor++);
+                    q.setTimestamp(System.currentTimeMillis());
                     try {
-                        writer.commit();
+                        writer.append(q);
                     } catch (JournalException e) {
-                        // something serious, attempt to rollback
-                        LOG.error().$("Batch commit() failed [").$(available - 1).$(']').$(e).$();
+                        // append may fail, log and continue
+
+                        // N.B. this logging uses builder pattern to construct message. Building finishes with $() call.
+                        LOG.error().$("Sequence failed: ").$(cursor - 1).$(e).$();
                     }
+                    count++;
+                }
+                subSequence.done(available - 1);
+                try {
+                    writer.commit();
+                } catch (JournalException e) {
+                    // something serious, attempt to rollback
+                    LOG.error().$("Batch commit() failed [").$(available - 1).$(']').$(e).$();
                 }
             }
-            LOG.info().$("Writer done").$();
         }
+        LOG.info().$("Writer done").$();
     }
 
     private static class Publisher implements Runnable {

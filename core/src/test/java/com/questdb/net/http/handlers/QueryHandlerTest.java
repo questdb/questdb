@@ -28,7 +28,7 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.JournalFactoryPool;
+import com.questdb.factory.ReaderFactoryPool;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Files;
@@ -51,7 +51,8 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
-    private static JournalFactoryPool factoryPool;
+
+    private static ReaderFactoryPool factoryPool;
     private static HttpServer server;
     private static QueryHandler handler;
 
@@ -59,12 +60,12 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public static void setUp() throws Exception {
         final ServerConfiguration serverConfiguration = new ServerConfiguration();
         serverConfiguration.setHttpThreads(1);
-        factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
-        handler = new QueryHandler(factoryPool, serverConfiguration, factory);
+        factoryPool = new ReaderFactoryPool(getWriterFactory().getConfiguration(), 1);
+        handler = new QueryHandler(factoryPool, serverConfiguration, getWriterFactory());
 
         server = new HttpServer(serverConfiguration, new SimpleUrlMatcher() {{
             put("/js", handler);
-            put("/chk", new ExistenceCheckHandler(factory));
+            put("/chk", new ExistenceCheckHandler(getCachingFactory()));
             put("/csv", new CsvHandler(factoryPool, serverConfiguration));
         }});
 
@@ -256,7 +257,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     }
 
     private static void generateJournal(String name, QueryResponse.Tab[] recs, int count) throws JournalException, NumericException {
-        try (JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure(name).
                         $sym("id").
                         $double("x").

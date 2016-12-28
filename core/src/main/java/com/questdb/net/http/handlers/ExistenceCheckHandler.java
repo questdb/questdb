@@ -23,7 +23,7 @@
 
 package com.questdb.net.http.handlers;
 
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.JournalReaderFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.misc.Chars;
 import com.questdb.net.http.ContextHandler;
@@ -36,7 +36,7 @@ public class ExistenceCheckHandler implements ContextHandler {
 
     private final JournalConfiguration configuration;
 
-    public ExistenceCheckHandler(final JournalFactory factory) {
+    public ExistenceCheckHandler(final JournalReaderFactory factory) {
         this.configuration = factory.getConfiguration();
     }
 

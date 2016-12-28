@@ -25,7 +25,7 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Dates;
@@ -49,68 +49,76 @@ public class JournalTest extends AbstractTest {
 
     @Test(expected = JournalException.class)
     public void testAddPartitionOutOfOrder() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        w.getAppendPartition(Dates.parseDateTime("2012-02-10T10:00:00.000Z"));
-        w.getAppendPartition(Dates.parseDateTime("2012-01-10T10:00:00.000Z"));
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            w.getAppendPartition(Dates.parseDateTime("2012-02-10T10:00:00.000Z"));
+            w.getAppendPartition(Dates.parseDateTime("2012-01-10T10:00:00.000Z"));
+        }
     }
 
     @Test
     public void testAppendBreak() throws Exception {
         Rnd random = new Rnd(System.nanoTime(), System.currentTimeMillis());
-        JournalWriter<TestEntity> w = factory.writer(TestEntity.class);
-        try {
-            w.append(new TestEntity().setSym("ABC").setDStr("test1"));
-            w.append(new TestEntity().setSym("ABC").setDStr(random.nextString(100)));
-            w.append(new TestEntity().setSym("ABC").setDStr(random.nextString(70000)).setTimestamp(-1));
-        } catch (Exception e) {
-            // OK
-        } finally {
-            w.commit();
-        }
-        w.append(new TestEntity().setSym("ABC").setDStr(random.nextString(300)));
+        try (JournalWriter<TestEntity> w = getWriterFactory().writer(TestEntity.class)) {
+            try {
+                w.append(new TestEntity().setSym("ABC").setDStr("test1"));
+                w.append(new TestEntity().setSym("ABC").setDStr(random.nextString(100)));
+                w.append(new TestEntity().setSym("ABC").setDStr(random.nextString(70000)).setTimestamp(-1));
+            } catch (Exception e) {
+                // OK
+            } finally {
+                w.commit();
+            }
+            w.append(new TestEntity().setSym("ABC").setDStr(random.nextString(300)));
 
-        Assert.assertEquals(3, w.query().all().withKeys("ABC").asResultSet().size());
-        Assert.assertEquals(1, w.query().head().withKeys("ABC").asResultSet().size());
+            Assert.assertEquals(3, w.query().all().withKeys("ABC").asResultSet().size());
+            Assert.assertEquals(1, w.query().head().withKeys("ABC").asResultSet().size());
+        }
     }
 
     @Test
     public void testCreateNewReader() throws Exception {
-        Assert.assertEquals(0, factory.reader(Quote.class, "brand-new").size());
-        Assert.assertEquals(0, factory.bulkReader(Quote.class, "brand-new2").size());
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class, "brand-new")) {
+            Assert.assertEquals(0, r.size());
+        }
 
+        try (Journal<Quote> r = getReaderFactory().bulkReader(Quote.class, "brand-new2")) {
+            Assert.assertEquals(0, r.size());
+        }
     }
 
     @Test
     public void testDecrementRowID() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 1000);
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            TestUtils.generateQuoteData(w, 1000);
 
-        ResultSet<Quote> rs = w.query().all().asResultSet();
+            ResultSet<Quote> rs = w.query().all().asResultSet();
 
-        for (int i = 1; i < rs.size(); i++) {
-            Assert.assertEquals(rs.getRowID(i - 1), w.decrementRowID(rs.getRowID(i)));
+            for (int i = 1; i < rs.size(); i++) {
+                Assert.assertEquals(rs.getRowID(i - 1), w.decrementRowID(rs.getRowID(i)));
+            }
         }
     }
 
     @Test
     public void testIncrementRowID() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 1000);
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            TestUtils.generateQuoteData(w, 1000);
 
-        ResultSet<Quote> rs = w.query().all().asResultSet();
+            ResultSet<Quote> rs = w.query().all().asResultSet();
 
-        for (int i = 1; i < rs.size(); i++) {
-            Assert.assertEquals(rs.getRowID(i), w.incrementRowID(rs.getRowID(i - 1)));
+            for (int i = 1; i < rs.size(); i++) {
+                Assert.assertEquals(rs.getRowID(i), w.incrementRowID(rs.getRowID(i - 1)));
+            }
         }
     }
 
     @Test
     public void testInvalidColumnName() throws Exception {
-        File base = factory.getConfiguration().getJournalBase();
+        File base = getReaderFactory().getConfiguration().getJournalBase();
         File dir = new File(base, "x");
         Assert.assertFalse(dir.exists());
         try {
-            factory.writer(new JournalStructure("x").$sym("x").index().$sym("y").index().$sym("z\0is\0bad").index().$());
+            getWriterFactory().writer(new JournalStructure("x").$sym("x").index().$sym("y").index().$sym("z\0is\0bad").index().$());
             Assert.fail();
         } catch (JournalException ignore) {
         }
@@ -120,48 +128,49 @@ public class JournalTest extends AbstractTest {
 
     @Test
     public void testMaxRowID() throws JournalException, NumericException {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 100);
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            TestUtils.generateQuoteData(w, 100);
 
-        long maxRowID = w.getMaxRowID();
-        int partitionID = Rows.toPartitionIndex(maxRowID);
-        long localRowID = Rows.toLocalRowID(maxRowID);
-        Assert.assertEquals(w.getLastPartition().getPartitionIndex(), partitionID);
-        Assert.assertEquals(w.getLastPartition().size() - 1, localRowID);
-        Assert.assertEquals(35184372088864L, maxRowID);
+            long maxRowID = w.getMaxRowID();
+            int partitionID = Rows.toPartitionIndex(maxRowID);
+            long localRowID = Rows.toLocalRowID(maxRowID);
+            Assert.assertEquals(w.getLastPartition().getPartitionIndex(), partitionID);
+            Assert.assertEquals(w.getLastPartition().size() - 1, localRowID);
+            Assert.assertEquals(35184372088864L, maxRowID);
+        }
     }
 
     @Test
     public void testMaxRowIDBlankJournal() throws Exception {
-        Journal<Quote> journal = factory.writer(Quote.class);
-        Assert.assertEquals(-1, journal.getMaxRowID());
+        try (Journal<Quote> journal = getWriterFactory().writer(Quote.class)) {
+            Assert.assertEquals(-1, journal.getMaxRowID());
+        }
     }
 
     @Test
     public void testMaxRowIDForJournalWithEmptyPartition() throws Exception {
-        JournalWriter<Quote> journal = factory.writer(Quote.class);
-        journal.getAppendPartition(System.currentTimeMillis());
-        Assert.assertEquals(-1, journal.getMaxRowID());
+        try (JournalWriter<Quote> journal = getWriterFactory().writer(Quote.class)) {
+            journal.getAppendPartition(System.currentTimeMillis());
+            Assert.assertEquals(-1, journal.getMaxRowID());
+        }
     }
 
     @Test
     public void testMaxRowIDOnEmptyReader() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        w.close();
-
-        Journal<Quote> r = factory.reader(Quote.class).select("sym");
+        getWriterFactory().writer(Quote.class).close();
+        Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym");
         Assert.assertEquals(-1, r.getMaxRowID());
         Assert.assertNull(r.getLastPartition());
     }
 
     @Test
     public void testMaxRowIDOnReader() throws Exception {
-        try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
             TestUtils.generateQuoteData(w, 1000, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
             w.commit();
         }
 
-        Journal<Quote> r = factory.reader(Quote.class).select("sym");
+        Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym");
         Assert.assertEquals(999, r.getMaxRowID());
     }
 
@@ -169,7 +178,7 @@ public class JournalTest extends AbstractTest {
     public void testOfflinePartition() throws Exception {
         int SIZE = 50000;
         File location;
-        try (JournalWriter<Quote> origin = factory.writer(Quote.class, "origin", SIZE)) {
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin", SIZE)) {
             TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
             origin.commit();
             location = new File(origin.getLocation(), "2014-03");
@@ -177,7 +186,7 @@ public class JournalTest extends AbstractTest {
 
         Files.deleteOrException(location);
 
-        try (JournalWriter<Quote> origin = factory.writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
             Assert.assertEquals(25914, origin.size());
             TestUtils.generateQuoteData(origin, 3000, Dates.parseDateTime("2014-03-30T00:11:00Z"), 10000);
             Assert.assertEquals(28914, origin.size());
@@ -188,21 +197,21 @@ public class JournalTest extends AbstractTest {
 
     @Test
     public void testOpenJournalWithWrongPartitionType() throws Exception {
-        JournalWriter<Quote> w = factory.writer(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE));
-        TestUtils.generateQuoteData(w, 1000);
-        w.close();
+        try (JournalWriter<Quote> w = getWriterFactory().writer(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE))) {
+            TestUtils.generateQuoteData(w, 1000);
+        }
 
         try {
-            factory.writer(new JournalKey<>(Quote.class, "quote", PartitionBy.MONTH));
+            getWriterFactory().writer(new JournalKey<>(Quote.class, "quote", PartitionBy.MONTH));
             Assert.fail("Exception expected");
         } catch (JournalException e) {
             // expect exception
         }
 
-        JournalFactory f2 = new JournalFactory(new JournalConfigurationBuilder() {{
+        WriterFactory f2 = new WriterFactory(new JournalConfigurationBuilder() {{
             $(Quote.class)
                     .$sym("mode");
-        }}.build(factory.getConfiguration().getJournalBase()));
+        }}.build(getReaderFactory().getConfiguration().getJournalBase()));
 
         try {
             f2.writer(new JournalKey<>(Quote.class, "quote"));
@@ -214,8 +223,9 @@ public class JournalTest extends AbstractTest {
 
     @Test
     public void testReadableColumns() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestData.appendQuoteData1(w);
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            TestData.appendQuoteData1(w);
+        }
 
         String expected = "null\tALDW\t0.25400183821760114\t0.0\t0\t0\tnull\tnull\n" +
                 "null\tHSBA.L\t0.2534455148850241\t0.0\t0\t0\tnull\tnull\n" +
@@ -228,14 +238,14 @@ public class JournalTest extends AbstractTest {
                 "null\tAMD\t0.061826046796662926\t0.0\t0\t0\tnull\tnull\n" +
                 "null\tHSBA.L\t0.30903524429086027\t0.0\t0\t0\tnull\tnull";
 
-        Journal<Quote> r = factory.reader(Quote.class).select("sym", "bid");
+        Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym", "bid");
         TestUtils.assertEquals(expected, r.query().all().asResultSet().subset(90, 100));
     }
 
     @Test
     public void testReindex() throws JournalException, NumericException {
         File path;
-        try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
             TestData.appendQuoteData1(w);
             path = w.getLocation();
         }
@@ -243,14 +253,14 @@ public class JournalTest extends AbstractTest {
         Files.deleteOrException(new File(path, "2013-02/sym.r"));
         Files.deleteOrException(new File(path, "2013-02/sym.k"));
 
-        Journal<Quote> journal = factory.reader(Quote.class);
+        Journal<Quote> journal = getReaderFactory().reader(Quote.class);
         try {
             journal.query().head().withKeys().asResultSet().read();
             Assert.fail("Expected exception here");
         } catch (JournalException e) {
             // do nothing
         }
-        try (JournalWriter<Quote> w = factory.writer(Quote.class)) {
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
             w.rebuildIndexes();
         }
         Assert.assertEquals(3, journal.query().head().withKeys().asResultSet().read().length);
@@ -259,61 +269,66 @@ public class JournalTest extends AbstractTest {
     @Test
     public void testRollbackToMiddle() throws Exception {
 
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        JournalWriter<Quote> w2 = factory.writer(Quote.class, "ctrl");
-        TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
-        w.commit();
-        TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
-        w.commit();
-        TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
-        w.commit();
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            try (JournalWriter<Quote> w2 = getWriterFactory().writer(Quote.class, "ctrl")) {
+                TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
+                w.commit();
+                TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
+                w.commit();
+                TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
+                w.commit();
 
-        long pin = w.getTxPin();
+                long pin = w.getTxPin();
 
-        w2.append(w);
-        w2.commit();
+                w2.append(w);
+                w2.commit();
 
-        TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
-        w.commit();
-        TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
-        w.commit();
-        TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
-        w.commit();
-        TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
-        w.commit();
+                TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
+                w.commit();
+                TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
+                w.commit();
+                TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
+                w.commit();
+                TestUtils.generateQuoteData(w, 1000, w.getMaxTimestamp());
+                w.commit();
 
-        w.rollback(3, pin);
+                w.rollback(3, pin);
 
-        TestUtils.assertDataEquals(w2, w);
+                TestUtils.assertDataEquals(w2, w);
 
-        Assert.assertEquals(3, w.getTxn());
+                Assert.assertEquals(3, w.getTxn());
+            }
+        }
     }
 
     @Test
     public void testSingleWriterModel() throws Exception {
-        JournalWriter<Quote> writer = factory.writer(Quote.class);
-        Assert.assertTrue(writer != null);
+        try (JournalWriter<Quote> writer = getWriterFactory().writer(Quote.class)) {
+            Assert.assertTrue(writer != null);
 
-        try {
-            factory.writer(Quote.class);
-            Assert.fail("Able to open second writer - error");
-        } catch (JournalException e) {
-            // ignore
+            try {
+                getWriterFactory().writer(Quote.class);
+                Assert.fail("Able to open second writer - error");
+            } catch (JournalException e) {
+                // ignore
+            }
+            // check if we can open a reader
+            Assert.assertTrue(getReaderFactory().reader(Quote.class) != null);
+            // check if we can open writer in alt location
+            try (JournalWriter w = getWriterFactory().writer(Quote.class, "test-Quote")) {
+                Assert.assertTrue(w != null);
+            }
         }
-        // check if we can open a reader
-        Assert.assertTrue(factory.reader(Quote.class) != null);
-        // check if we can open writer in alt location
-        Assert.assertTrue(factory.writer(Quote.class, "test-Quote") != null);
     }
 
     @Test
     public void testSizeAfterCompaction() throws JournalException, NumericException {
         long sizeAfterCompaction;
-        try (JournalWriter<Quote> w = factory.writer(Quote.class, "quote", 1000000)) {
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote", 1000000)) {
             TestData.appendQuoteData2(w);
         }
 
-        try (JournalWriter<Quote> w = factory.writer(Quote.class, "quote")) {
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote")) {
             File f = new File(w.getLocation(), "2013-03/sym.d");
             long size = f.length();
             w.compact();
@@ -321,7 +336,7 @@ public class JournalTest extends AbstractTest {
             Assert.assertTrue(sizeAfterCompaction < size);
         }
 
-        try (Journal<Quote> r = factory.reader(Quote.class, "quote")) {
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class, "quote")) {
             Assert.assertEquals(1000, r.query().all().size());
             File f = new File(r.getLocation(), "2013-03/sym.d");
             Assert.assertEquals(sizeAfterCompaction, f.length());
@@ -331,185 +346,198 @@ public class JournalTest extends AbstractTest {
     @Test
     public void testTxLagTumbleDrier() throws Exception {
         int SIZE = 1000000;
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin", SIZE / 12);
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q", SIZE / 12);
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin", SIZE / 12)) {
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q", SIZE / 12)) {
 
-        TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
-        origin.commit();
+                TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+                origin.commit();
 
-        ResultSet<Quote> originRs = origin.query().all().asResultSet();
-        int blockSize = 5130;
-        Rnd rnd = new Rnd(System.currentTimeMillis(), System.nanoTime());
+                ResultSet<Quote> originRs = origin.query().all().asResultSet();
+                int blockSize = 5130;
+                Rnd rnd = new Rnd(System.currentTimeMillis(), System.nanoTime());
 
-        try {
-            for (int i = 0; i < originRs.size(); ) {
-                int d = Math.min(i + blockSize, originRs.size());
-                w.mergeAppend(originRs.subset(i, d));
+                try {
+                    for (int i = 0; i < originRs.size(); ) {
+                        int d = Math.min(i + blockSize, originRs.size());
+                        w.mergeAppend(originRs.subset(i, d));
 
-                if (rnd.nextBoolean()) {
-                    w.commit();
-                    i += blockSize;
-                } else {
-                    w.rollback();
+                        if (rnd.nextBoolean()) {
+                            w.commit();
+                            i += blockSize;
+                        } else {
+                            w.rollback();
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
 
-        Assert.assertFalse(w.isTxActive());
-        TestUtils.assertDataEquals(origin, w);
+                Assert.assertFalse(w.isTxActive());
+                TestUtils.assertDataEquals(origin, w);
+            }
+        }
     }
 
     @Test
     public void testTxListener() throws Exception {
         int SIZE = 10000;
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
 
-        TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), SIZE);
-        origin.commit();
+                TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), SIZE);
+                origin.commit();
 
-        TestJournalListener lsnr = new TestJournalListener();
-        w.setJournalListener(lsnr);
-
-
-        w.append(origin.query().all().asResultSet().subset(0, 1000));
-        w.commit();
-        Assert.assertTrue(lsnr.isNotifyAsyncNoWait());
+                TestJournalListener lsnr = new TestJournalListener();
+                w.setJournalListener(lsnr);
+                w.append(origin.query().all().asResultSet().subset(0, 1000));
+                w.commit();
+                Assert.assertTrue(lsnr.isNotifyAsyncNoWait());
+            }
+        }
     }
 
     @Test
     public void testTxRefresh() throws Exception {
         int SIZE = 50000;
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin", SIZE);
-        TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
-        origin.commit();
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin", SIZE)) {
+            TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            origin.commit();
 
-        JournalWriter<Quote> w = factory.writer(Quote.class, "quote", SIZE);
-        w.append(origin);
-
-        // check that refresh does not affect uncommitted changes
-        w.refresh();
-        TestUtils.assertEquals(origin, w);
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote", SIZE)) {
+                w.append(origin);
+                // check that refresh does not affect uncommitted changes
+                w.refresh();
+                TestUtils.assertEquals(origin, w);
+            }
+        }
     }
 
     @Test
     public void testTxRollbackLag() throws JournalException, NumericException {
         int SIZE = 150000;
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin", SIZE);
-        TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
-        origin.commit();
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin", SIZE)) {
+            TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            origin.commit();
 
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        w.append(origin.query().all().asResultSet().subset(0, 100000));
-        w.commit();
-        w.mergeAppend(origin.query().all().asResultSet().subset(100000, 120000));
-        w.commit();
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+                w.append(origin.query().all().asResultSet().subset(0, 100000));
+                w.commit();
+                w.mergeAppend(origin.query().all().asResultSet().subset(100000, 120000));
+                w.commit();
 
-        Journal<Quote> r = factory.reader(Quote.class);
-        TestUtils.assertEquals(w, r);
-        w.mergeAppend(origin.query().all().asResultSet().subset(120000, 150000));
-        w.rollback();
-        TestUtils.assertEquals(w, r);
-        w.mergeAppend(origin.query().all().asResultSet().subset(120000, 150000));
-        w.commit();
+                try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+                    TestUtils.assertEquals(w, r);
+                    w.mergeAppend(origin.query().all().asResultSet().subset(120000, 150000));
+                    w.rollback();
+                    TestUtils.assertEquals(w, r);
+                    w.mergeAppend(origin.query().all().asResultSet().subset(120000, 150000));
+                    w.commit();
 
-        r.refresh();
-        TestUtils.assertEquals(w, r);
-        TestUtils.assertDataEquals(origin, w);
+                    r.refresh();
+                    TestUtils.assertEquals(w, r);
+                    TestUtils.assertDataEquals(origin, w);
+                }
+            }
+        }
     }
 
     @Test
     public void testTxRollbackMultiplePartitions() throws Exception {
         int SIZE = 50000;
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin", SIZE);
-        TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
-        origin.commit();
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin", SIZE)) {
+            TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            origin.commit();
 
-        JournalWriter<Quote> w = factory.writer(Quote.class, "quote", SIZE);
-        w.append(origin);
-        w.commit();
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote", SIZE)) {
+                w.append(origin);
+                w.commit();
 
-        TestUtils.generateQuoteData(w, 50000, Dates.parseDateTime("2014-03-30T00:11:00Z"), 100000);
+                TestUtils.generateQuoteData(w, 50000, Dates.parseDateTime("2014-03-30T00:11:00Z"), 100000);
 
-        Assert.assertEquals(100000, w.size());
-        Assert.assertEquals(50000, origin.size());
+                Assert.assertEquals(100000, w.size());
+                Assert.assertEquals(50000, origin.size());
 
-        w.rollback();
-        TestUtils.assertEquals(origin, w);
+                w.rollback();
+                TestUtils.assertEquals(origin, w);
+            }
+        }
     }
 
     @Test
     public void testTxRollbackSamePartition() throws Exception {
         int SIZE = 50000;
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin", SIZE);
-        TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
-        origin.commit();
-        JournalWriter<Quote> w = factory.writer(Quote.class, "quote", SIZE);
-        w.append(origin);
-        w.commit();
-        TestUtils.generateQuoteData(w, 20, Dates.parseDateTime("2014-03-30T00:11:00Z"), 100);
-        Assert.assertEquals(50020, w.size());
-        Assert.assertEquals(50000, origin.size());
-        w.rollback();
-        TestUtils.assertEquals(origin, w);
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin", SIZE)) {
+            TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            origin.commit();
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote", SIZE)) {
+                w.append(origin);
+                w.commit();
+                TestUtils.generateQuoteData(w, 20, Dates.parseDateTime("2014-03-30T00:11:00Z"), 100);
+                Assert.assertEquals(50020, w.size());
+                Assert.assertEquals(50000, origin.size());
+                w.rollback();
+                TestUtils.assertEquals(origin, w);
+            }
+        }
     }
 
     @Test
     public void testTxRollbackToEmpty() throws Exception {
         int SIZE = 100000;
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin", SIZE);
-        TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
-        origin.commit();
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin", SIZE)) {
+            TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            origin.commit();
 
-        try (JournalWriter<Quote> w = factory.writer(Quote.class, "quote", SIZE)) {
-            w.append(origin);
-            w.rollback();
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote", SIZE)) {
+                w.append(origin);
+                w.rollback();
 
-            Assert.assertEquals(0, w.size());
-            Assert.assertEquals(1, w.getPartitionCount());
-            Assert.assertEquals(0, w.getSymbolTable("sym").size());
-            Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, w.getSymbolTable("sym").getQuick("LLOY.L"));
-            Assert.assertNull(w.getLastPartition());
-            Partition<Quote> p = w.getPartition(w.getPartitionCount() - 1, false);
-            Assert.assertNotNull(p);
-            Assert.assertEquals(0, p.getIndexForColumn("sym").size());
+                Assert.assertEquals(0, w.size());
+                Assert.assertEquals(1, w.getPartitionCount());
+                Assert.assertEquals(0, w.getSymbolTable("sym").size());
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, w.getSymbolTable("sym").getQuick("LLOY.L"));
+                Assert.assertNull(w.getLastPartition());
+                Partition<Quote> p = w.getPartition(w.getPartitionCount() - 1, false);
+                Assert.assertNotNull(p);
+                Assert.assertEquals(0, p.getIndexForColumn("sym").size());
+            }
         }
     }
 
     @Test
     public void testTxTumbleDrier() throws Exception {
         int SIZE = 1000000;
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin", SIZE / 12);
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q", SIZE / 12);
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin", SIZE / 12)) {
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q", SIZE / 12)) {
 
-        TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
-        origin.commit();
+                TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+                origin.commit();
 
-        ResultSet<Quote> originRs = origin.query().all().asResultSet();
-        int blockSize = 5130;
-        Rnd rnd = new Rnd(System.currentTimeMillis(), System.nanoTime());
+                ResultSet<Quote> originRs = origin.query().all().asResultSet();
+                int blockSize = 5130;
+                Rnd rnd = new Rnd(System.currentTimeMillis(), System.nanoTime());
 
-        try {
-            for (int i = 0; i < originRs.size(); ) {
-                int d = Math.min(i + blockSize, originRs.size());
-                ResultSet<Quote> rs = originRs.subset(i, d);
-                w.append(rs);
+                try {
+                    for (int i = 0; i < originRs.size(); ) {
+                        int d = Math.min(i + blockSize, originRs.size());
+                        ResultSet<Quote> rs = originRs.subset(i, d);
+                        w.append(rs);
 
-                if (rnd.nextBoolean()) {
-                    w.commit();
-                    i += blockSize;
-                } else {
-                    w.rollback();
+                        if (rnd.nextBoolean()) {
+                            w.commit();
+                            i += blockSize;
+                        } else {
+                            w.rollback();
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
 
-        Assert.assertFalse(w.isTxActive());
-        TestUtils.assertDataEquals(origin, w);
+                Assert.assertFalse(w.isTxActive());
+                TestUtils.assertDataEquals(origin, w);
+            }
+        }
     }
 
     private static class TestJournalListener implements JournalListener {

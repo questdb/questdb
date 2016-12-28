@@ -33,6 +33,7 @@ import com.questdb.net.ha.producer.JournalClientStateProducer;
 import com.questdb.net.ha.producer.JournalSymbolTableProducer;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -50,9 +51,9 @@ public class JournalSymbolTableTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        origin = factory.writer(Quote.class, "origin");
-        master = factory.writer(Quote.class, "master");
-        slave = factory.writer(Quote.class, "slave");
+        origin = getWriterFactory().writer(Quote.class, "origin");
+        master = getWriterFactory().writer(Quote.class, "master");
+        slave = getWriterFactory().writer(Quote.class, "slave");
 
         channel = new MockByteChannel();
 
@@ -63,7 +64,13 @@ public class JournalSymbolTableTest extends AbstractTest {
         origin.append(new Quote().setSym("CD").setEx("EX2").setMode("M2"));
         origin.append(new Quote().setSym("EF").setEx("EX3").setMode("M2"));
         origin.append(new Quote().setSym("GH").setEx("EX3").setMode("M3"));
+    }
 
+    @After
+    public void tearDown() throws Exception {
+        origin.close();
+        master.close();
+        slave.close();
     }
 
     @Test

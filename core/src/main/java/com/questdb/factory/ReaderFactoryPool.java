@@ -35,10 +35,10 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class JournalFactoryPool implements Closeable {
-    private static final Log LOG = LogFactory.getLog(JournalFactoryPool.class);
+public class ReaderFactoryPool implements Closeable {
+    private static final Log LOG = LogFactory.getLog(ReaderFactoryPool.class);
     private final static Object NULL = new Object();
-    private final ConcurrentLinkedDeque<JournalCachingFactory> pool;
+    private final ConcurrentLinkedDeque<CachingReaderFactory> pool;
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final JournalConfiguration configuration;
     private final AtomicInteger openCount = new AtomicInteger();
@@ -46,7 +46,7 @@ public class JournalFactoryPool implements Closeable {
     private final ConcurrentMap<String, Object> stopList = new ConcurrentHashMap<>();
 
     @SuppressWarnings("unchecked")
-    public JournalFactoryPool(JournalConfiguration configuration, int capacity) {
+    public ReaderFactoryPool(JournalConfiguration configuration, int capacity) {
         this.configuration = configuration;
         this.capacity = capacity;
         this.pool = new ConcurrentLinkedDeque<>();
@@ -54,8 +54,8 @@ public class JournalFactoryPool implements Closeable {
 
     public void blockName(String name) {
         stopList.putIfAbsent(name, NULL);
-        JournalCachingFactory factory;
-        ObjList<JournalCachingFactory> list = new ObjList<>();
+        CachingReaderFactory factory;
+        ObjList<CachingReaderFactory> list = new ObjList<>();
         while ((factory = pool.poll()) != null) {
             list.add(factory);
             factory.closeJournal(name);
@@ -69,24 +69,24 @@ public class JournalFactoryPool implements Closeable {
     @Override
     public void close() {
         if (running.compareAndSet(true, false)) {
-            JournalCachingFactory factory;
+            CachingReaderFactory factory;
             while ((factory = pool.poll()) != null) {
                 try {
                     factory.clearPool();
                     factory.close();
                 } catch (Throwable ex) {
-                    LOG.info().$("Error closing JournalCachingFactory. Continuing.").$(ex).$();
+                    LOG.info().$("Error closing CachingReaderFactory. Continuing.").$(ex).$();
                 }
             }
         }
     }
 
-    public JournalCachingFactory get() throws InterruptedException {
+    public CachingReaderFactory get() throws InterruptedException {
         if (running.get()) {
-            JournalCachingFactory factory = pool.poll();
+            CachingReaderFactory factory = pool.poll();
             if (factory == null) {
                 openCount.incrementAndGet();
-                factory = new JournalCachingFactory(configuration, this);
+                factory = new CachingReaderFactory(configuration, this);
             } else {
                 factory.setInUse();
             }
@@ -116,7 +116,7 @@ public class JournalFactoryPool implements Closeable {
         stopList.remove(name);
     }
 
-    void release(final JournalCachingFactory factory) {
+    void release(final CachingReaderFactory factory) {
         if (running.get() && openCount.get() <= capacity) {
             factory.expireOpenFiles();
             pool.push(factory);

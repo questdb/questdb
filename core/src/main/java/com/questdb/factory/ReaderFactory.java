@@ -28,15 +28,16 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 
-import java.io.Closeable;
 import java.io.File;
 
-public abstract class AbstractJournalReaderFactory implements JournalReaderFactory, Closeable {
+public class ReaderFactory extends AbstractFactory implements JournalReaderFactory {
 
-    private final JournalConfiguration configuration;
+    public ReaderFactory(String databaseHome) {
+        super(databaseHome);
+    }
 
-    AbstractJournalReaderFactory(JournalConfiguration configuration) {
-        this.configuration = configuration;
+    public ReaderFactory(JournalConfiguration configuration) {
+        super(configuration);
     }
 
     @Override
@@ -59,15 +60,8 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
         return new JournalBulkReader<>(getOrCreateMetadata(key));
     }
 
-    @Override
-    public abstract void close();
-
-    public JournalConfiguration getConfiguration() {
-        return configuration;
-    }
-
     public <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
-        JournalMetadata<T> metadata = configuration.createMetadata(key);
+        JournalMetadata<T> metadata = getConfiguration().createMetadata(key);
         File location = new File(metadata.getLocation());
         if (!location.exists()) {
             // create blank journal
@@ -110,4 +104,6 @@ public abstract class AbstractJournalReaderFactory implements JournalReaderFacto
     public <T> Journal<T> reader(JournalMetadata<T> metadata, JournalKey<T> key) throws JournalException {
         return new Journal<>(metadata);
     }
+
+
 }

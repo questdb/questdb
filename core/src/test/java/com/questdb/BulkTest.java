@@ -23,7 +23,6 @@
 
 package com.questdb;
 
-import com.questdb.factory.JournalFactory;
 import com.questdb.model.Quote;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
@@ -34,45 +33,46 @@ public class BulkTest extends AbstractTest {
     @Test
     public void testBulkWrite() throws Exception {
         final int batchSize = 1000000;
-        JournalWriter<Quote> writer = factory.bulkWriter(Quote.class);
-        Journal<Quote> reader = factory.bulkReader(Quote.class);
+        try (JournalWriter<Quote> writer = getWriterFactory().bulkWriter(Quote.class)) {
+            try (Journal<Quote> reader = getReaderFactory().bulkReader(Quote.class)) {
 
-        TestUtils.generateQuoteData(writer, batchSize, System.currentTimeMillis(), 12 * 30L * 24L * 60L * 60L * 1000L / batchSize);
-        writer.commit();
+                TestUtils.generateQuoteData(writer, batchSize, System.currentTimeMillis(), 12 * 30L * 24L * 60L * 60L * 1000L / batchSize);
+                writer.commit();
 
-        Assert.assertTrue(reader.refresh());
-        long count = 0;
-        for (Quote q : JournalIterators.bufferedIterator(reader)) {
-            assert q != null;
-            count++;
+                Assert.assertTrue(reader.refresh());
+                long count = 0;
+                for (Quote q : JournalIterators.bufferedIterator(reader)) {
+                    assert q != null;
+                    count++;
+                }
+                Assert.assertEquals(batchSize, count);
+            }
         }
-        Assert.assertEquals(batchSize, count);
     }
 
     @Test
     public void testDurable() throws Exception {
-        JournalFactory f = factory;
         final int batchSize = 100000;
         final int iterations = 10;
-        JournalWriter<Quote> writer = f.bulkWriter(Quote.class);
-        Journal<Quote> reader = f.bulkReader(Quote.class);
+        try (JournalWriter<Quote> writer = getWriterFactory().bulkWriter(Quote.class)) {
+            try (Journal<Quote> reader = getReaderFactory().bulkReader(Quote.class)) {
+                long start = System.currentTimeMillis();
+                long p = 10L * 24L * 60L * 60L * 1000L;
+                for (int i = 0; i < iterations; i++) {
+                    TestUtils.generateQuoteData(writer, batchSize, start, p / batchSize);
+                    writer.commitDurable();
+                    start += p;
+                }
 
+                Assert.assertTrue(reader.refresh());
 
-        long start = System.currentTimeMillis();
-        long p = 10L * 24L * 60L * 60L * 1000L;
-        for (int i = 0; i < iterations; i++) {
-            TestUtils.generateQuoteData(writer, batchSize, start, p / batchSize);
-            writer.commitDurable();
-            start += p;
+                long count = 0;
+                for (Quote q : JournalIterators.bufferedIterator(reader)) {
+                    assert q != null;
+                    count++;
+                }
+                Assert.assertEquals(batchSize * iterations, count);
+            }
         }
-
-        Assert.assertTrue(reader.refresh());
-
-        long count = 0;
-        for (Quote q : JournalIterators.bufferedIterator(reader)) {
-            assert q != null;
-            count++;
-        }
-        Assert.assertEquals(batchSize * iterations, count);
     }
 }

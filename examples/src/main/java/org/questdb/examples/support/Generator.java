@@ -26,7 +26,7 @@ package org.questdb.examples.support;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
@@ -37,7 +37,7 @@ import java.io.File;
 import java.util.Random;
 
 public class Generator {
-    public static void createCustomers(JournalFactory factory) throws JournalException {
+    public static void createCustomers(WriterFactory factory) throws JournalException {
         // Lets add some random data to journal "customers".
         // This journal does not have associated java object. We will leverage generic data access
         // to populate it.

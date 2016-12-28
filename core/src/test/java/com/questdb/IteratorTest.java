@@ -25,11 +25,12 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.JournalWriterFactory;
 import com.questdb.iter.*;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Interval;
 import com.questdb.model.Quote;
+import com.questdb.std.ObjList;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -57,109 +58,119 @@ public class IteratorTest extends AbstractTest {
     @Test
     @SuppressWarnings("unused")
     public void testBufferedIncrementIterator() throws Exception {
-        Journal<Quote> r = factory.reader(Quote.class);
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        TestUtils.generateQuoteData(origin, 10000);
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+                try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+                    TestUtils.generateQuoteData(origin, 10000);
 
-        int count = 0;
-        for (Quote q : JournalIterators.incrementBufferedIterator(r)) {
-            count++;
+                    int count = 0;
+                    for (Quote q : JournalIterators.incrementBufferedIterator(r)) {
+                        count++;
+                    }
+
+                    Assert.assertEquals(0, count);
+                    w.append(origin.query().all().asResultSet().subset(0, 5000));
+                    w.commit();
+
+                    for (Quote q : JournalIterators.incrementBufferedIterator(r)) {
+                        count++;
+                    }
+                    Assert.assertEquals(5000, count);
+                    w.append(origin.query().all().asResultSet().subset(5000, 10000));
+                    w.commit();
+
+                    count = 0;
+                    for (Quote q : JournalIterators.incrementBufferedIterator(r)) {
+                        count++;
+                    }
+                    Assert.assertEquals(5000, count);
+                }
+            }
         }
-
-        Assert.assertEquals(0, count);
-        w.append(origin.query().all().asResultSet().subset(0, 5000));
-        w.commit();
-
-        for (Quote q : JournalIterators.incrementBufferedIterator(r)) {
-            count++;
-        }
-        Assert.assertEquals(5000, count);
-        w.append(origin.query().all().asResultSet().subset(5000, 10000));
-        w.commit();
-
-        count = 0;
-        for (Quote q : JournalIterators.incrementBufferedIterator(r)) {
-            count++;
-        }
-        Assert.assertEquals(5000, count);
     }
 
     @Test
     public void testEmptyPartitionFollowedByNonEmpty() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        w.getAppendPartition(Dates.parseDateTime("2012-01-10T10:00:00.000Z"));
-        w.append(new Quote().setSym("TST").setTimestamp(Dates.parseDateTime("2012-02-10T10:00:00.000Z")));
-
-        Assert.assertTrue(w.iterator().hasNext());
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            w.getAppendPartition(Dates.parseDateTime("2012-01-10T10:00:00.000Z"));
+            w.append(new Quote().setSym("TST").setTimestamp(Dates.parseDateTime("2012-02-10T10:00:00.000Z")));
+            Assert.assertTrue(w.iterator().hasNext());
+        }
     }
 
     @Test
     @SuppressWarnings("unused")
     public void testIncrementIterator() throws Exception {
-        Journal<Quote> r = factory.reader(Quote.class);
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        TestUtils.generateQuoteData(origin, 10000);
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+                try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+                    TestUtils.generateQuoteData(origin, 10000);
 
-        int count = 0;
-        for (Quote q : JournalIterators.incrementIterator(r)) {
-            count++;
+                    int count = 0;
+                    for (Quote q : JournalIterators.incrementIterator(r)) {
+                        count++;
+                    }
+
+                    Assert.assertEquals(0, count);
+                    w.append(origin.query().all().asResultSet().subset(0, 5000));
+                    w.commit();
+
+                    for (Quote q : JournalIterators.incrementIterator(r)) {
+                        count++;
+                    }
+                    Assert.assertEquals(5000, count);
+                    w.append(origin.query().all().asResultSet().subset(5000, 10000));
+                    w.commit();
+
+                    count = 0;
+                    for (Quote q : JournalIterators.incrementIterator(r)) {
+                        count++;
+                    }
+                    Assert.assertEquals(5000, count);
+                }
+            }
         }
-
-        Assert.assertEquals(0, count);
-        w.append(origin.query().all().asResultSet().subset(0, 5000));
-        w.commit();
-
-        for (Quote q : JournalIterators.incrementIterator(r)) {
-            count++;
-        }
-        Assert.assertEquals(5000, count);
-        w.append(origin.query().all().asResultSet().subset(5000, 10000));
-        w.commit();
-
-        count = 0;
-        for (Quote q : JournalIterators.incrementIterator(r)) {
-            count++;
-        }
-        Assert.assertEquals(5000, count);
     }
 
     @Test
     public void testJournalIterator() throws JournalException, NumericException {
 
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 1000);
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            TestUtils.generateQuoteData(w, 1000);
 
-        Journal<Quote> r = factory.reader(Quote.class);
+            Journal<Quote> r = getReaderFactory().reader(Quote.class);
 
-        List<Quote> posList = new ArrayList<>((int) r.size());
-        for (Quote q : r) {
-            posList.add(q);
-        }
+            List<Quote> posList = new ArrayList<>((int) r.size());
+            for (Quote q : r) {
+                posList.add(q);
+            }
 
-        int i = 0;
-        for (Quote q : JournalIterators.bufferedIterator(r)) {
-            Assert.assertEquals(q, posList.get(i++));
-        }
-        i = 0;
-        for (Quote q : r.query().all().bufferedIterator()) {
-            Assert.assertEquals(q, posList.get(i++));
-        }
-        i = 0;
-        for (Quote q : r.getPartition(0, true).bufferedIterator()) {
-            Assert.assertEquals(q, posList.get(i++));
+            int i = 0;
+            for (Quote q : JournalIterators.bufferedIterator(r)) {
+                Assert.assertEquals(q, posList.get(i++));
+            }
+            i = 0;
+            for (Quote q : r.query().all().bufferedIterator()) {
+                Assert.assertEquals(q, posList.get(i++));
+            }
+            i = 0;
+            for (Quote q : r.getPartition(0, true).bufferedIterator()) {
+                Assert.assertEquals(q, posList.get(i++));
+            }
         }
     }
 
     @Test
     public void testJournalParallelIterator() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 100000);
-        Journal<Quote> r = factory.reader(Quote.class);
-        Journal<Quote> r2 = factory.reader(Quote.class);
-        try (ConcurrentIterator<Quote> it = JournalIterators.concurrentIterator(r)) {
-            TestUtils.assertEquals(JournalIterators.bufferedIterator(r2), it);
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            TestUtils.generateQuoteData(w, 100000);
+            try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+                try (Journal<Quote> r2 = getReaderFactory().reader(Quote.class)) {
+                    try (ConcurrentIterator<Quote> it = JournalIterators.concurrentIterator(r)) {
+                        TestUtils.assertEquals(JournalIterators.bufferedIterator(r2), it);
+                    }
+                }
+            }
         }
     }
 
@@ -167,11 +178,11 @@ public class IteratorTest extends AbstractTest {
     public void testMerge() throws Exception {
         populateQuotes();
         List<Journal<Quote>> journals = new ArrayList<Journal<Quote>>() {{
-            add(factory.reader(Quote.class, "quote-0"));
-            add(factory.reader(Quote.class, "quote-1"));
-            add(factory.reader(Quote.class, "quote-2"));
-            add(factory.reader(Quote.class, "quote-3"));
-            add(factory.reader(Quote.class, "quote-4"));
+            add(getReaderFactory().reader(Quote.class, "quote-0"));
+            add(getReaderFactory().reader(Quote.class, "quote-1"));
+            add(getReaderFactory().reader(Quote.class, "quote-2"));
+            add(getReaderFactory().reader(Quote.class, "quote-3"));
+            add(getReaderFactory().reader(Quote.class, "quote-4"));
         }};
 
         List<JournalIterator<Quote>> list = new ArrayList<>();
@@ -189,38 +200,46 @@ public class IteratorTest extends AbstractTest {
     @Test
     public void testMergeAppend() throws Exception {
         populateQuotes();
-        List<Journal<Quote>> journals = new ArrayList<Journal<Quote>>() {{
-            add(factory.reader(Quote.class, "quote-0"));
-            add(factory.reader(Quote.class, "quote-1"));
-            add(factory.reader(Quote.class, "quote-2"));
-            add(factory.reader(Quote.class, "quote-3"));
-            add(factory.reader(Quote.class, "quote-4"));
+        ObjList<Journal<Quote>> journals = new ObjList<Journal<Quote>>() {{
+            add(getReaderFactory().reader(Quote.class, "quote-0"));
+            add(getReaderFactory().reader(Quote.class, "quote-1"));
+            add(getReaderFactory().reader(Quote.class, "quote-2"));
+            add(getReaderFactory().reader(Quote.class, "quote-3"));
+            add(getReaderFactory().reader(Quote.class, "quote-4"));
         }};
 
-        JournalWriter<Quote> writer = factory.writer(Quote.class, "quote-merge");
-        writer.mergeAppend(JournalIterators.bufferedIterator(journals.get(3)));
-        writer.commit();
+        try {
+
+            try (JournalWriter<Quote> writer = getWriterFactory().writer(Quote.class, "quote-merge")) {
+                writer.mergeAppend(JournalIterators.bufferedIterator(journals.get(3)));
+                writer.commit();
 
 
-        List<JournalPeekingIterator<Quote>> list = new ArrayList<>();
-        for (int i = 0; i < journals.size(); i++) {
-            list.add(JournalIterators.bufferedIterator(journals.get(i)));
+                List<JournalPeekingIterator<Quote>> list = new ArrayList<>();
+                for (int i = 0; i < journals.size(); i++) {
+                    list.add(JournalIterators.bufferedIterator(journals.get(i)));
+                }
+                writer.mergeAppend(MergingPeekingIterator.mergePeek(list, comparator));
+                writer.commit();
+                Assert.assertEquals(60000, writer.size());
+                TestUtils.assertOrder(JournalIterators.bufferedIterator(writer));
+            }
+        } finally {
+            for (int i = 0, n = journals.size(); i < n; i++) {
+                journals.getQuick(i).close();
+            }
         }
-        writer.mergeAppend(MergingPeekingIterator.mergePeek(list, comparator));
-        writer.commit();
-        Assert.assertEquals(60000, writer.size());
-        TestUtils.assertOrder(JournalIterators.bufferedIterator(writer));
     }
 
     @Test
     public void testMergePeeking() throws Exception {
         populateQuotes();
         List<Journal<Quote>> journals = new ArrayList<Journal<Quote>>() {{
-            add(factory.reader(Quote.class, "quote-0"));
-            add(factory.reader(Quote.class, "quote-1"));
-            add(factory.reader(Quote.class, "quote-2"));
-            add(factory.reader(Quote.class, "quote-3"));
-            add(factory.reader(Quote.class, "quote-4"));
+            add(getReaderFactory().reader(Quote.class, "quote-0"));
+            add(getReaderFactory().reader(Quote.class, "quote-1"));
+            add(getReaderFactory().reader(Quote.class, "quote-2"));
+            add(getReaderFactory().reader(Quote.class, "quote-3"));
+            add(getReaderFactory().reader(Quote.class, "quote-4"));
         }};
 
         List<JournalPeekingIterator<Quote>> list = new ArrayList<>();
@@ -279,14 +298,14 @@ public class IteratorTest extends AbstractTest {
 
     @Test
     public void testResultSetParallelIterator() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class);
-        TestUtils.generateQuoteData(w, 100000, new Interval("2014-01-01T00:00:00.000Z", "2014-02-10T00:00:00.000Z"));
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            TestUtils.generateQuoteData(w, 100000, new Interval("2014-01-01T00:00:00.000Z", "2014-02-10T00:00:00.000Z"));
+            try (
+                    Journal<Quote> r1 = getReaderFactory().reader(Quote.class);
+                    Journal<Quote> r2 = getReaderFactory().reader(Quote.class);
+                    ConcurrentIterator<Quote> expected = JournalIterators.concurrentIterator(r1);
+                    ConcurrentIterator<Quote> actual = r2.query().all().concurrentIterator()) {
 
-        Journal<Quote> r1 = factory.reader(Quote.class);
-        Journal<Quote> r2 = factory.reader(Quote.class);
-
-        try (ConcurrentIterator<Quote> expected = JournalIterators.concurrentIterator(r1)) {
-            try (ConcurrentIterator<Quote> actual = r2.query().all().concurrentIterator()) {
                 TestUtils.assertEquals(expected, actual);
             }
         }
@@ -299,7 +318,7 @@ public class IteratorTest extends AbstractTest {
         ExecutorService service = Executors.newCachedThreadPool();
         try {
             for (int i = 0; i < count; i++) {
-                service.submit(new Generator(factory, cyclicBarrier, i, countDownLatch));
+                service.submit(new Generator(getWriterFactory(), cyclicBarrier, i, countDownLatch));
             }
             countDownLatch.await();
         } finally {
@@ -308,12 +327,12 @@ public class IteratorTest extends AbstractTest {
     }
 
     private static class Generator implements Runnable {
-        private final JournalFactory factory;
+        private final JournalWriterFactory factory;
         private final CyclicBarrier barrier;
         private final CountDownLatch latch;
         private final int index;
 
-        private Generator(JournalFactory factory, CyclicBarrier barrier, int index, CountDownLatch latch) {
+        private Generator(JournalWriterFactory factory, CyclicBarrier barrier, int index, CountDownLatch latch) {
             this.factory = factory;
             this.barrier = barrier;
             this.index = index;

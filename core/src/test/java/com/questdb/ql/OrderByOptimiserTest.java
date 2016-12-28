@@ -38,7 +38,7 @@ public class OrderByOptimiserTest extends AbstractOptimiserTest {
 
     @BeforeClass
     public static void setUpClass() throws Exception {
-        JournalWriter w = factory.writer(
+        JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").index().buckets(128).
                         $double("x").
@@ -49,7 +49,7 @@ public class OrderByOptimiserTest extends AbstractOptimiserTest {
         );
         w.close();
 
-        w = factory.writer(
+        w = getWriterFactory().writer(
                 new JournalStructure("tex").
                         $sym("id").index().buckets(128).
                         $double("amount").
@@ -58,7 +58,7 @@ public class OrderByOptimiserTest extends AbstractOptimiserTest {
 
         w.close();
 
-        factory.getConfiguration().exists("");
+        getWriterFactory().getConfiguration().exists("");
     }
 
     @Before

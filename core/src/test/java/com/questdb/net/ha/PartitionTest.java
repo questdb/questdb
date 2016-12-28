@@ -37,6 +37,7 @@ import com.questdb.net.ha.producer.JournalSymbolTableProducer;
 import com.questdb.net.ha.producer.PartitionDeltaProducer;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -57,9 +58,9 @@ public class PartitionTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        origin = factory.writer(Quote.class, "origin");
-        master = factory.writer(Quote.class, "master");
-        slave = factory.writer(Quote.class, "slave");
+        origin = getWriterFactory().writer(Quote.class, "origin");
+        master = getWriterFactory().writer(Quote.class, "master");
+        slave = getWriterFactory().writer(Quote.class, "slave");
 
         masterPartition = master.getAppendPartition(timestamp);
         slavePartition = slave.getAppendPartition(timestamp);
@@ -69,6 +70,13 @@ public class PartitionTest extends AbstractTest {
         channel = new MockByteChannel();
 
         TestUtils.generateQuoteData(origin, 1000, timestamp);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        origin.close();
+        master.close();
+        slave.close();
     }
 
     @Test

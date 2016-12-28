@@ -23,7 +23,7 @@
 
 package com.questdb.net.http.handlers;
 
-import com.questdb.factory.JournalFactoryPool;
+import com.questdb.factory.ReaderFactoryPool;
 import com.questdb.iter.clock.MilliClock;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
@@ -54,12 +54,12 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
 
     @Test
     public void testCsvHandlerConsistency() throws Exception {
-        testHandler(new CsvHandler(new JournalFactoryPool(factory.getConfiguration(), 1), new ServerConfiguration()));
+        testHandler(new CsvHandler(new ReaderFactoryPool(getWriterFactory().getConfiguration(), 1), new ServerConfiguration()));
     }
 
     @Test
     public void testCsvOutput() throws Exception {
-        ContextHandler handler = new CsvHandler(new JournalFactoryPool(factory.getConfiguration(), 1), new ServerConfiguration());
+        ContextHandler handler = new CsvHandler(new ReaderFactoryPool(getWriterFactory().getConfiguration(), 1), new ServerConfiguration());
         handler.setupThread();
         TestChannel channel = new TestChannel(QUERY1);
         String expected = "\"id\",\"x\",\"y\",\"z\",\"w\",\"timestamp\"\r\n" +
@@ -177,7 +177,7 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
 
     @Test
     public void testQueryHandlerConsistency() throws Exception {
-        testHandler(new QueryHandler(new JournalFactoryPool(factory.getConfiguration(), 1), new ServerConfiguration(), factory));
+        testHandler(new QueryHandler(new ReaderFactoryPool(getWriterFactory().getConfiguration(), 1), new ServerConfiguration(), getWriterFactory()));
     }
 
     private void testHandler(ContextHandler handler) throws Exception {

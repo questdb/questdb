@@ -29,8 +29,8 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.FatalError;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
-import com.questdb.factory.JournalCachingFactory;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.CachingReaderFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.iter.clock.Clock;
 import com.questdb.log.Log;
@@ -133,7 +133,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testConcurrentImport() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, factory));
+            put("/imp", new ImportHandler(configuration, getWriterFactory()));
         }});
         server.start();
 
@@ -169,11 +169,11 @@ public class HttpServerTest extends AbstractJournalTest {
 
             latch.await();
 
-            try (Journal r = factory.reader("test-import.csv")) {
+            try (Journal r = getReaderFactory().reader("test-import.csv")) {
                 Assert.assertEquals("First failed", 129, r.size());
             }
 
-            try (Journal r = factory.reader("test-import-nan.csv")) {
+            try (Journal r = getReaderFactory().reader("test-import-nan.csv")) {
                 Assert.assertEquals("Second failed", 129, r.size());
             }
         } finally {
@@ -335,11 +335,11 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportAppend() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, factory));
+            put("/imp", new ImportHandler(configuration, getWriterFactory()));
         }});
         server.start();
 
-        try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
+        try (CachingReaderFactory f = new CachingReaderFactory(getReaderFactory().getConfiguration())) {
             try {
                 Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", null, null));
                 Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null, null));
@@ -356,10 +356,10 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportIntoBusyJournal() throws Exception {
-        try (JournalWriter ignored = factory.writer(new JournalStructure("test-import.csv").$int("x").$())) {
+        try (JournalWriter ignored = getWriterFactory().writer(new JournalStructure("test-import.csv").$int("x").$())) {
             final ServerConfiguration configuration = new ServerConfiguration();
             HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-                put("/imp", new ImportHandler(configuration, factory));
+                put("/imp", new ImportHandler(configuration, getWriterFactory()));
             }});
             server.start();
 
@@ -377,7 +377,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportIntoBusyJournal2() throws Exception {
-        JournalFactory f = new JournalFactory(factory.getConfiguration().getJournalBase().getAbsolutePath());
+        WriterFactory f = new WriterFactory(getReaderFactory().getConfiguration().getJournalBase().getAbsolutePath());
 
         try (JournalWriter w = f.writer(new JournalStructure("small.csv").$int("X").$int("Y").$())) {
             JournalEntryWriter ew = w.entryWriter();
@@ -388,7 +388,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
             final ServerConfiguration configuration = new ServerConfiguration();
             HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-                put("/imp", new ImportHandler(configuration, factory));
+                put("/imp", new ImportHandler(configuration, getWriterFactory()));
             }});
             server.start();
 
@@ -408,11 +408,11 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportNumberPrefixedColumn() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, factory));
+            put("/imp", new ImportHandler(configuration, getWriterFactory()));
         }});
         server.start();
 
-        try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
+        try (CachingReaderFactory f = new CachingReaderFactory(getReaderFactory().getConfiguration())) {
             try {
                 Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-num-prefix.csv", "http://localhost:9000/imp?fmt=json", null, null));
                 StringSink sink = new StringSink();
@@ -432,11 +432,11 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportOverwrite() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, factory));
+            put("/imp", new ImportHandler(configuration, getWriterFactory()));
         }});
         server.start();
 
-        try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
+        try (CachingReaderFactory f = new CachingReaderFactory(getReaderFactory().getConfiguration())) {
             try {
                 StringSink sink = new StringSink();
                 RecordSourcePrinter printer = new RecordSourcePrinter(sink);
@@ -461,7 +461,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportUnknownFormat() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, factory));
+            put("/imp", new ImportHandler(configuration, getWriterFactory()));
         }});
 
         server.start();
@@ -480,12 +480,12 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportWrongType() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, factory));
+            put("/imp", new ImportHandler(configuration, getWriterFactory()));
         }});
 
         server.start();
 
-        try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
+        try (CachingReaderFactory f = new CachingReaderFactory(getReaderFactory().getConfiguration())) {
             try {
                 Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", "IsoDate=DATE_ISO&IntCol=DOUBLE", null));
                 Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", "IsoDate=DATE_ISO", null));
@@ -494,13 +494,13 @@ public class HttpServerTest extends AbstractJournalTest {
                 QueryCompiler qc = new QueryCompiler(configuration);
                 RecordSource src1 = qc.compile(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'");
                 try {
-                    printer.print(src1, factory);
+                    printer.print(src1, getReaderFactory());
                     TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
                 } finally {
                     Misc.free(src1);
                 }
 
-                RecordSource src2 = qc.compile(factory, "'test-import.csv'");
+                RecordSource src2 = qc.compile(getReaderFactory(), "'test-import.csv'");
                 try {
                     Assert.assertEquals(ColumnType.DOUBLE, src2.getMetadata().getColumn("IntCol").getType());
                 } finally {
@@ -516,12 +516,12 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportWrongTypeStrictAtomicity() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, factory));
+            put("/imp", new ImportHandler(configuration, getWriterFactory()));
         }});
 
         server.start();
 
-        try (JournalCachingFactory f = new JournalCachingFactory(factory.getConfiguration())) {
+        try (CachingReaderFactory f = new CachingReaderFactory(getReaderFactory().getConfiguration())) {
             try {
                 Assert.assertEquals(400, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?atomicity=strict", "IsoDate=DATE_ISO&IntCol=DATE_ISO", null));
                 StringSink sink = new StringSink();
@@ -529,7 +529,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 QueryCompiler qc = new QueryCompiler(configuration);
                 RecordSource src1 = qc.compile(f, "select count() from 'test-import.csv'");
                 try {
-                    printer.print(src1, factory);
+                    printer.print(src1, getReaderFactory());
                     TestUtils.assertEquals("0\n", sink);
                 } finally {
                     Misc.free(src1);

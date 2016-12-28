@@ -24,7 +24,7 @@
 package com.questdb.net.http.handlers;
 
 import com.google.gson.JsonSyntaxException;
-import com.questdb.factory.JournalFactoryPool;
+import com.questdb.factory.ReaderFactoryPool;
 import com.questdb.net.http.HttpServer;
 import com.questdb.net.http.QueryResponse;
 import com.questdb.net.http.ServerConfiguration;
@@ -41,14 +41,14 @@ public class QueryHandlerSmallBufferTest extends AbstractOptimiserTest {
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     private static final int RECORD_COUNT = 10000;
-    private static JournalFactoryPool factoryPool;
+    private static ReaderFactoryPool factoryPool;
     private static HttpServer server;
     private static QueryHandler handler;
 
     @BeforeClass
     public static void setUp() throws Exception {
-        factoryPool = new JournalFactoryPool(factory.getConfiguration(), 1);
-        handler = new QueryHandler(factoryPool, new ServerConfiguration(), factory);
+        factoryPool = new ReaderFactoryPool(getWriterFactory().getConfiguration(), 1);
+        handler = new QueryHandler(factoryPool, new ServerConfiguration(), getWriterFactory());
 
         ServerConfiguration configuration = new ServerConfiguration();
         configuration.setHttpBufRespContent(128);

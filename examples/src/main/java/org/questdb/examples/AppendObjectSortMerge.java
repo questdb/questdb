@@ -25,7 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
 import org.questdb.examples.support.Quote;
@@ -52,7 +52,7 @@ public class AppendObjectSortMerge {
 
         String journalLocation = args[0];
 
-        try (JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
+        try (WriterFactory writerFactory = new WriterFactory(new JournalConfigurationBuilder() {{
             $(Quote.class)
                     .location("quote-lag")
                     .lag(24, TimeUnit.HOURS) // enable lag
@@ -61,9 +61,9 @@ public class AppendObjectSortMerge {
         }}.build(journalLocation))) {
 
             // delete existing quote journal
-            Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-lag"));
+            Files.delete(new File(writerFactory.getConfiguration().getJournalBase(), "quote-lag"));
 
-            try (JournalWriter<Quote> writer = factory.writer(Quote.class)) {
+            try (JournalWriter<Quote> writer = writerFactory.writer(Quote.class)) {
 
                 final String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
                 final Random r = new Random(System.currentTimeMillis());

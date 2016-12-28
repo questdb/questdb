@@ -24,7 +24,7 @@
 package com.questdb;
 
 import com.questdb.ex.JournalException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.ReaderFactory;
 import com.questdb.misc.Dates;
 import com.questdb.model.Quote;
 import com.questdb.model.configuration.ModelConfiguration;
@@ -44,11 +44,11 @@ public class LockTest extends AbstractTest {
     public void testLockAcrossClassLoaders() throws JournalException, ClassNotFoundException, IllegalAccessException, InstantiationException, NoSuchMethodException, InvocationTargetException {
         URLClassLoader classLoader = new URLClassLoader(((URLClassLoader) this.getClass().getClassLoader()).getURLs(), null);
 
-        JournalWriter<Quote> rw = factory.writer(Quote.class);
+        JournalWriter<Quote> rw = getWriterFactory().writer(Quote.class);
         rw.close();
         rw.delete();
 
-        rw = factory.writer(Quote.class);
+        rw = getWriterFactory().writer(Quote.class);
 
         List<Quote> data = new ArrayList<>();
         data.add(new Quote().setSym("S1").setTimestamp(Dates.toMillis(2013, 3, 10, 15, 0)));
@@ -56,9 +56,9 @@ public class LockTest extends AbstractTest {
         rw.mergeAppend(data);
         rw.commit();
 
-        new TestAccessor(factory.getConfiguration().getJournalBase());
+        new TestAccessor(getReaderFactory().getConfiguration().getJournalBase());
         classLoader.loadClass("com.questdb.LockTest$TestAccessor").getConstructor(File.class)
-                .newInstance(factory.getConfiguration().getJournalBase());
+                .newInstance(getReaderFactory().getConfiguration().getJournalBase());
 
         rw.close();
         rw.delete();
@@ -66,10 +66,10 @@ public class LockTest extends AbstractTest {
 
     public static class TestAccessor {
         public TestAccessor(File journalBase) throws JournalException {
-            JournalFactory factory = new JournalFactory(ModelConfiguration.MAIN.build(journalBase));
-            Journal<Quote> reader = factory.reader(Quote.class);
-            Assert.assertEquals(2, reader.size());
-            reader.close();
+            try (ReaderFactory factory = new ReaderFactory(ModelConfiguration.MAIN.build(journalBase))) {
+                Journal<Quote> reader = factory.reader(Quote.class);
+                Assert.assertEquals(2, reader.size());
+            }
         }
     }
 }

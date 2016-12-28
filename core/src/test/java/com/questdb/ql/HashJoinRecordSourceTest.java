@@ -24,11 +24,10 @@
 package com.questdb.ql;
 
 import com.questdb.JournalWriter;
-import com.questdb.ex.JournalConfigurationException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.JournalWriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.BytecodeAssembler;
-import com.questdb.misc.Files;
 import com.questdb.model.Album;
 import com.questdb.model.Band;
 import com.questdb.ql.impl.AllRowSource;
@@ -39,38 +38,41 @@ import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
-import com.questdb.test.tools.JournalTestFactory;
+import com.questdb.test.tools.TheFactory;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 
 public class HashJoinRecordSourceTest {
     @Rule
-    public final JournalTestFactory factory;
+    public final TheFactory theFactory = new TheFactory(new JournalConfigurationBuilder() {{
+        $(Band.class).$ts();
+        $(Album.class).$ts("releaseDate");
+
+    }});
+
     private JournalWriter<Band> bw;
     private JournalWriter<Album> aw;
 
-    public HashJoinRecordSourceTest() {
-        try {
-            this.factory = new JournalTestFactory(
-                    new JournalConfigurationBuilder() {{
-                        $(Band.class).$ts();
-                        $(Album.class).$ts("releaseDate");
 
-                    }}.build(Files.makeTempDir())
-            );
-        } catch (JournalConfigurationException e) {
-            throw new JournalRuntimeException(e);
-        }
+    public JournalReaderFactory getReaderFactory() {
+        return theFactory.getReaderFactory();
+    }
+
+    public JournalWriterFactory getWriterFactory() {
+        return theFactory.getWriterFactory();
     }
 
     @Before
     public void setUp() throws Exception {
-        bw = factory.writer(Band.class);
-        aw = factory.writer(Album.class);
+        bw = getWriterFactory().writer(Band.class);
+        aw = getWriterFactory().writer(Album.class);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        bw.close();
+        aw.close();
     }
 
     @Test
@@ -110,7 +112,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.print(joinResult, factory);
+        p.print(joinResult, getReaderFactory());
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -155,7 +157,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.print(joinResult, factory);
+        p.print(joinResult, getReaderFactory());
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -202,7 +204,7 @@ public class HashJoinRecordSourceTest {
                     add("url");
                 }}
         );
-        p.print(joinResult, factory);
+        p.print(joinResult, getReaderFactory());
         Assert.assertEquals("pop\thttp://band1.com\n" +
                 "rock\thttp://band1.com\n" +
                 "\thttp://band2.com\n" +

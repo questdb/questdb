@@ -58,124 +58,129 @@ public class ScenarioTest extends AbstractTest {
     public void testLagTrickle() throws Exception {
 
         // prepare test data
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        TestData.appendQuoteData2(origin);
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+            TestData.appendQuoteData2(origin);
 
-        final JournalWriter<Quote> randomOrigin = factory.writer(new JournalKey<>(Quote.class, "origin-rnd", PartitionBy.NONE, false));
-        randomOrigin.append(origin.query().all().asResultSet().shuffle(new Rnd()));
-        origin.close();
+            try (final JournalWriter<Quote> randomOrigin = getWriterFactory().writer(new JournalKey<>(Quote.class, "origin-rnd", PartitionBy.NONE, false))) {
+                randomOrigin.append(origin.query().all().asResultSet().shuffle(new Rnd()));
 
-        final JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
-        final Journal<Quote> remoteReader = factory.reader(Quote.class, "remote");
 
-        // create empty journal
-        factory.writer(Quote.class, "local").close();
+                try (final JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+                    try (final Journal<Quote> remoteReader = getReaderFactory().reader(Quote.class, "remote")) {
 
-        // setup local where data should be trickling from client
-        final Journal<Quote> local = factory.reader(Quote.class, "local");
-        Assert.assertEquals(0, local.size());
+                        // create empty journal
+                        getWriterFactory().writer(Quote.class, "local").close();
 
-        JournalServer server = new JournalServer(serverConfig, factory);
-        JournalClient client = new JournalClient(clientConfig, factory);
+                        // setup local where data should be trickling from client
+                        final Journal<Quote> local = getReaderFactory().reader(Quote.class, "local");
+                        Assert.assertEquals(0, local.size());
 
-        server.publish(remote);
-        server.start();
+                        JournalServer server = new JournalServer(serverConfig, getReaderFactory());
+                        JournalClient client = new JournalClient(clientConfig, getWriterFactory());
 
-        final AtomicInteger errors = new AtomicInteger();
+                        server.publish(remote);
+                        server.start();
 
-        final CountDownLatch ready = new CountDownLatch(1);
-        client.subscribe(Quote.class, "remote", "local", new JournalListener() {
-            @Override
-            public void onCommit() {
-                try {
-                    if (local.refresh() && local.size() == 33) {
-                        ready.countDown();
+                        final AtomicInteger errors = new AtomicInteger();
+
+                        final CountDownLatch ready = new CountDownLatch(1);
+                        client.subscribe(Quote.class, "remote", "local", new JournalListener() {
+                            @Override
+                            public void onCommit() {
+                                try {
+                                    if (local.refresh() && local.size() == 33) {
+                                        ready.countDown();
+                                    }
+                                } catch (JournalException e) {
+                                    errors.incrementAndGet();
+                                    e.printStackTrace();
+                                }
+                            }
+
+                            @Override
+                            public void onEvent(int event) {
+                                if (event != JournalEvents.EVT_JNL_SUBSCRIBED) {
+                                    errors.incrementAndGet();
+                                }
+                            }
+                        });
+
+
+                        client.start();
+
+                        int n = 0;
+                        while (n < 400) {
+                            lagIteration(randomOrigin, remote, n, n + 10);
+                            n += 10;
+                        }
+
+                        Assert.assertTrue(ready.await(10, TimeUnit.SECONDS));
+
+                        server.halt();
+                        client.halt();
+
+                        local.refresh();
+                        remoteReader.refresh();
+                        TestUtils.assertEquals(remoteReader, local);
+
+                        Assert.assertEquals(0, errors.get());
                     }
-                } catch (JournalException e) {
-                    errors.incrementAndGet();
-                    e.printStackTrace();
                 }
             }
-
-            @Override
-            public void onEvent(int event) {
-                if (event != JournalEvents.EVT_JNL_SUBSCRIBED) {
-                    errors.incrementAndGet();
-                }
-            }
-        });
-
-
-        client.start();
-
-        int n = 0;
-        while (n < 400) {
-            lagIteration(randomOrigin, remote, n, n + 10);
-            n += 10;
         }
-
-        Assert.assertTrue(ready.await(10, TimeUnit.SECONDS));
-
-        server.halt();
-        client.halt();
-
-        local.refresh();
-        remoteReader.refresh();
-        TestUtils.assertEquals(remoteReader, local);
-
-        Assert.assertEquals(0, errors.get());
     }
 
     @Test
     public void testSingleJournalTrickle() throws Exception {
-        JournalServer server = new JournalServer(serverConfig, factory);
-        JournalClient client = new JournalClient(clientConfig, factory);
+        JournalServer server = new JournalServer(serverConfig, getReaderFactory());
+        JournalClient client = new JournalClient(clientConfig, getWriterFactory());
 
         // prepare test data
-        JournalWriter<Quote> origin = factory.writer(Quote.class, "origin");
-        TestData.appendQuoteData1(origin);
-        Assert.assertEquals(100, origin.size());
+        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+            TestData.appendQuoteData1(origin);
+            Assert.assertEquals(100, origin.size());
 
-        // setup remote we will be trickling test data into
-        JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
+            // setup remote we will be trickling test data into
+            try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
 
-        // create empty journal
-        Journal<Quote> local = factory.writer(Quote.class, "local");
-        local.close();
+                getWriterFactory().writer(Quote.class, "local").close();
 
-        // setup local where data should be trickling from client
-        local = factory.reader(Quote.class, "local");
-        Assert.assertEquals(0, local.size());
+                // setup local where data should be trickling from client
+                try (Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
+                    Assert.assertEquals(0, local.size());
 
-        server.publish(remote);
-        server.start();
+                    server.publish(remote);
+                    server.start();
 
-        client.subscribe(Quote.class, "remote", "local");
-        client.start();
+                    client.subscribe(Quote.class, "remote", "local");
+                    client.start();
 
-        try {
-            iteration("2013-02-10T10:03:20.000Z\tALDW\t0.32885755937534\t0.5741201360255567\t1836077773\t693649102\tFast trading\tSK\n" +
-                            "2013-02-10T10:06:40.000Z\tAMD\t0.16781047061245025\t0.4831627617900026\t1423050407\t141794980\tFast trading\tGR\n" +
-                            "2013-02-10T10:07:30.000Z\tHSBA.L\t0.04724340267969518\t0.5988337212476811\t178180342\t1522085049\tFast trading\tSK\n",
-                    origin, remote, local, 0, 10
-            );
+                    try {
+                        iteration("2013-02-10T10:03:20.000Z\tALDW\t0.32885755937534\t0.5741201360255567\t1836077773\t693649102\tFast trading\tSK\n" +
+                                        "2013-02-10T10:06:40.000Z\tAMD\t0.16781047061245025\t0.4831627617900026\t1423050407\t141794980\tFast trading\tGR\n" +
+                                        "2013-02-10T10:07:30.000Z\tHSBA.L\t0.04724340267969518\t0.5988337212476811\t178180342\t1522085049\tFast trading\tSK\n",
+                                origin, remote, local, 0, 10
+                        );
 
-            iteration("2013-02-10T10:15:50.000Z\tALDW\t0.7976166367363274\t0.06448758069572669\t1436005581\t1897226585\tFast trading\tGR\n" +
-                            "2013-02-10T10:15:00.000Z\tAMD\t0.6789043827286667\t0.771921575501964\t580589771\t1159590077\tFast trading\tLXE\n" +
-                            "2013-02-10T10:14:10.000Z\tHSBA.L\t0.984512894941384\t0.2664006899723862\t1288300070\t838312365\tFast trading\tLXE\n",
-                    origin, remote, local, 10, 20
-            );
+                        iteration("2013-02-10T10:15:50.000Z\tALDW\t0.7976166367363274\t0.06448758069572669\t1436005581\t1897226585\tFast trading\tGR\n" +
+                                        "2013-02-10T10:15:00.000Z\tAMD\t0.6789043827286667\t0.771921575501964\t580589771\t1159590077\tFast trading\tLXE\n" +
+                                        "2013-02-10T10:14:10.000Z\tHSBA.L\t0.984512894941384\t0.2664006899723862\t1288300070\t838312365\tFast trading\tLXE\n",
+                                origin, remote, local, 10, 20
+                        );
 
-            iteration("2013-02-10T10:24:10.000Z\tALDW\t0.26008876203627374\t0.04354393444455451\t25334630\t1835685418\tFast trading\tGR\n" +
-                            "2013-02-10T10:23:20.000Z\tAMD\t0.9757637204046299\t0.7654386171943978\t23937995\t992860510\tFast trading\tLXE\n" +
-                            "2013-02-10T10:21:40.000Z\tHSBA.L\t0.5630111081489209\t0.4222995146933318\t1534594684\t1153925552\tFast trading\tLN\n",
-                    origin, remote, local, 20, 30
-            );
+                        iteration("2013-02-10T10:24:10.000Z\tALDW\t0.26008876203627374\t0.04354393444455451\t25334630\t1835685418\tFast trading\tGR\n" +
+                                        "2013-02-10T10:23:20.000Z\tAMD\t0.9757637204046299\t0.7654386171943978\t23937995\t992860510\tFast trading\tLXE\n" +
+                                        "2013-02-10T10:21:40.000Z\tHSBA.L\t0.5630111081489209\t0.4222995146933318\t1534594684\t1153925552\tFast trading\tLN\n",
+                                origin, remote, local, 20, 30
+                        );
 
-        } finally {
 
-            client.halt();
-            server.halt();
+                    } finally {
+                        client.halt();
+                        server.halt();
+                    }
+                }
+            }
         }
     }
 

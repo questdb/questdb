@@ -34,6 +34,7 @@ import com.questdb.net.ha.producer.JournalClientStateProducer;
 import com.questdb.net.ha.producer.JournalDeltaProducer;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -52,16 +53,23 @@ public abstract class AbstractJournalTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        origin = factory.writer(Quote.class, "origin");
-        slave = factory.writer(Quote.class, "slave");
-        master = factory.writer(Quote.class, "master");
+        origin = getWriterFactory().writer(Quote.class, "origin");
+        slave = getWriterFactory().writer(Quote.class, "slave");
+        master = getWriterFactory().writer(Quote.class, "master");
 
         journalClientStateProducer = new JournalClientStateProducer();
         journalClientStateConsumer = new JournalClientStateConsumer();
 
-        journalDeltaProducer = new JournalDeltaProducer(factory.reader(Quote.class, "master"));
+        journalDeltaProducer = new JournalDeltaProducer(getReaderFactory().reader(Quote.class, "master"));
         journalDeltaConsumer = new JournalDeltaConsumer(slave);
         channel = new MockByteChannel();
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        origin.close();
+        slave.close();
+        master.close();
     }
 
     void executeSequence(boolean expectContent) throws JournalNetworkException, JournalException {

@@ -365,87 +365,88 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testAtoI() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").$str("intC").$()
-        );
+        )) {
 
-        StringSink sink = new StringSink();
-        Rnd rnd = new Rnd();
-        for (int i = 0; i < 30; i++) {
-            sink.clear();
-            Numbers.append(sink, rnd.nextInt());
-            CharSequence cs = rnd.nextChars(4);
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, rnd.nextBoolean() ? cs : sink);
-            ew.append();
+            StringSink sink = new StringSink();
+            Rnd rnd = new Rnd();
+            for (int i = 0; i < 30; i++) {
+                sink.clear();
+                Numbers.append(sink, rnd.nextInt());
+                CharSequence cs = rnd.nextChars(4);
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, rnd.nextBoolean() ? cs : sink);
+                ew.append();
+            }
+            w.commit();
+
+
+            final String expected = "-1148479920\t-1148479920\n" +
+                    "1326447242\t1326447242\n" +
+                    "-1436881714\t-1436881714\n" +
+                    "-409854405\t-409854405\n" +
+                    "1125579207\t1125579207\n" +
+                    "-1844391305\t-1844391305\n" +
+                    "-1125169127\t-1125169127\n" +
+                    "-2119387831\t-2119387831\n" +
+                    "-422941535\t-422941535\n" +
+                    "-2132716300\t-2132716300\n" +
+                    "-483853667\t-483853667\n" +
+                    "NaN\tQQUL\n" +
+                    "-1418341054\t-1418341054\n" +
+                    "936627841\t936627841\n" +
+                    "NaN\tFBVT\n" +
+                    "-1515787781\t-1515787781\n" +
+                    "-1538602195\t-1538602195\n" +
+                    "-10505757\t-10505757\n" +
+                    "NaN\tICWE\n" +
+                    "1876812930\t1876812930\n" +
+                    "NaN\tOTSE\n" +
+                    "-916132123\t-916132123\n" +
+                    "NaN\tLYXW\n" +
+                    "NaN\tYLSU\n" +
+                    "-1768335227\t-1768335227\n" +
+                    "-876466531\t-876466531\n" +
+                    "NaN\tQBZX\n" +
+                    "NaN\tVIKJ\n" +
+                    "-2088317486\t-2088317486\n" +
+                    "614536941\t614536941\n";
+            assertThat(expected, "select atoi(intC), intC from tab");
+
+
+            assertThat("-1.14847992E9\t-1148479920\n" +
+                            "1.326447242E9\t1326447242\n" +
+                            "-1.436881714E9\t-1436881714\n" +
+                            "-4.09854405E8\t-409854405\n" +
+                            "1.125579207E9\t1125579207\n" +
+                            "-1.844391305E9\t-1844391305\n" +
+                            "-1.125169127E9\t-1125169127\n" +
+                            "-2.119387831E9\t-2119387831\n" +
+                            "-4.22941535E8\t-422941535\n" +
+                            "-2.1327163E9\t-2132716300\n" +
+                            "-4.83853667E8\t-483853667\n" +
+                            "NaN\tQQUL\n" +
+                            "-1.418341054E9\t-1418341054\n" +
+                            "9.36627841E8\t936627841\n" +
+                            "NaN\tFBVT\n" +
+                            "-1.515787781E9\t-1515787781\n" +
+                            "-1.538602195E9\t-1538602195\n" +
+                            "-1.0505757E7\t-10505757\n" +
+                            "NaN\tICWE\n" +
+                            "1.87681293E9\t1876812930\n" +
+                            "NaN\tOTSE\n" +
+                            "-9.16132123E8\t-916132123\n" +
+                            "NaN\tLYXW\n" +
+                            "NaN\tYLSU\n" +
+                            "-1.768335227E9\t-1768335227\n" +
+                            "-8.76466531E8\t-876466531\n" +
+                            "NaN\tQBZX\n" +
+                            "NaN\tVIKJ\n" +
+                            "-2.088317486E9\t-2088317486\n" +
+                            "6.14536941E8\t614536941\n",
+                    "select atod(intC), intC from tab");
         }
-        w.commit();
-
-
-        final String expected = "-1148479920\t-1148479920\n" +
-                "1326447242\t1326447242\n" +
-                "-1436881714\t-1436881714\n" +
-                "-409854405\t-409854405\n" +
-                "1125579207\t1125579207\n" +
-                "-1844391305\t-1844391305\n" +
-                "-1125169127\t-1125169127\n" +
-                "-2119387831\t-2119387831\n" +
-                "-422941535\t-422941535\n" +
-                "-2132716300\t-2132716300\n" +
-                "-483853667\t-483853667\n" +
-                "NaN\tQQUL\n" +
-                "-1418341054\t-1418341054\n" +
-                "936627841\t936627841\n" +
-                "NaN\tFBVT\n" +
-                "-1515787781\t-1515787781\n" +
-                "-1538602195\t-1538602195\n" +
-                "-10505757\t-10505757\n" +
-                "NaN\tICWE\n" +
-                "1876812930\t1876812930\n" +
-                "NaN\tOTSE\n" +
-                "-916132123\t-916132123\n" +
-                "NaN\tLYXW\n" +
-                "NaN\tYLSU\n" +
-                "-1768335227\t-1768335227\n" +
-                "-876466531\t-876466531\n" +
-                "NaN\tQBZX\n" +
-                "NaN\tVIKJ\n" +
-                "-2088317486\t-2088317486\n" +
-                "614536941\t614536941\n";
-        assertThat(expected, "select atoi(intC), intC from tab");
-
-
-        assertThat("-1.14847992E9\t-1148479920\n" +
-                        "1.326447242E9\t1326447242\n" +
-                        "-1.436881714E9\t-1436881714\n" +
-                        "-4.09854405E8\t-409854405\n" +
-                        "1.125579207E9\t1125579207\n" +
-                        "-1.844391305E9\t-1844391305\n" +
-                        "-1.125169127E9\t-1125169127\n" +
-                        "-2.119387831E9\t-2119387831\n" +
-                        "-4.22941535E8\t-422941535\n" +
-                        "-2.1327163E9\t-2132716300\n" +
-                        "-4.83853667E8\t-483853667\n" +
-                        "NaN\tQQUL\n" +
-                        "-1.418341054E9\t-1418341054\n" +
-                        "9.36627841E8\t936627841\n" +
-                        "NaN\tFBVT\n" +
-                        "-1.515787781E9\t-1515787781\n" +
-                        "-1.538602195E9\t-1538602195\n" +
-                        "-1.0505757E7\t-10505757\n" +
-                        "NaN\tICWE\n" +
-                        "1.87681293E9\t1876812930\n" +
-                        "NaN\tOTSE\n" +
-                        "-9.16132123E8\t-916132123\n" +
-                        "NaN\tLYXW\n" +
-                        "NaN\tYLSU\n" +
-                        "-1.768335227E9\t-1768335227\n" +
-                        "-8.76466531E8\t-876466531\n" +
-                        "NaN\tQBZX\n" +
-                        "NaN\tVIKJ\n" +
-                        "-2.088317486E9\t-2088317486\n" +
-                        "6.14536941E8\t614536941\n",
-                "select atod(intC), intC from tab");
     }
 
     @Test
@@ -918,9 +919,10 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInAsColumn() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
-        TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
-        w.commit();
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+            TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            w.commit();
+        }
 
         final String expected = "BP.L\t0.000000253226\t1022.955993652344\t2015-02-13T02:59:34.000Z\ttrue\n" +
                 "GKN.L\t688.000000000000\t256.000000000000\t2015-02-13T02:59:50.000Z\tfalse\n";
@@ -930,9 +932,10 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInAsColumnAliased() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
-        TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
-        w.commit();
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+            TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            w.commit();
+        }
 
         final String expected = "BP.L\t0.000000253226\t1022.955993652344\t2015-02-13T02:59:34.000Z\ttrue\n" +
                 "GKN.L\t688.000000000000\t256.000000000000\t2015-02-13T02:59:50.000Z\tfalse\n";
@@ -942,7 +945,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testIntComparison() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").index().buckets(128).
                         $double("x").
@@ -951,25 +954,26 @@ public class SingleJournalQueryTest extends AbstractTest {
                         $int("i2").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 128);
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = getNames(rnd, 128);
 
-        int mask = 127;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = 127;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putSym(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putInt(3, rnd.nextInt() & 63);
-            ew.putInt(4, rnd.nextInt() & 63);
-            ew.putDate(5, t += 10);
-            ew.append();
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putSym(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putInt(3, rnd.nextInt() & 63);
+                ew.putInt(4, rnd.nextInt() & 63);
+                ew.putDate(5, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
 
         final String expected1 = "XSPEPTTKIBWFCKD\t290.742401123047\t0.000001862155\t2\t1\n" +
                 "XSPEPTTKIBWFCKD\t294.856933593750\t-539.875854492188\t55\t42\n" +
@@ -1167,28 +1171,29 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testIntMultiplication() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $int("x").
                         $int("y").
                         $str("z").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
+            Rnd rnd = new Rnd();
 
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 1000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putInt(0, rnd.nextInt() & 255);
-            ew.putInt(1, rnd.nextInt() & 255);
-            ew.putStr(2, rnd.nextString(4));
-            ew.putDate(3, t += 10);
-            ew.append();
+            for (int i = 0; i < 1000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putInt(0, rnd.nextInt() & 255);
+                ew.putInt(1, rnd.nextInt() & 255);
+                ew.putStr(2, rnd.nextString(4));
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
 
         final String expected1 = "29512\t-129\t119\t248\tCBJF\t2015-03-12T00:00:01.370Z\n" +
                 "30906\t49\t202\t153\tCJZJ\t2015-03-12T00:00:07.470Z\n" +
@@ -1199,9 +1204,10 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testIntervalAndIndexHeapSearch() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
-        TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
-        w.commit();
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+            TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            w.commit();
+        }
 
         final String expected =
                 "ADM.L\t837.343750000000\t0.061431560665\t2015-02-12T10:00:04.000Z\n" +
@@ -1239,35 +1245,36 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testIntervalAndIndexSearch() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
-        TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
-        w.commit();
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+            TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            w.commit();
 
-        final String expected = "ADM.L\t837.343750000000\t0.061431560665\t2015-02-12T10:00:04.000Z\n" +
-                "BP.L\t564.425537109375\t0.000000003711\t2015-02-12T10:00:40.000Z\n" +
-                "BP.L\t768.000000000000\t0.000000011709\t2015-02-12T10:01:18.000Z\n" +
-                "BP.L\t512.000000000000\t74.948242187500\t2015-02-12T10:01:31.000Z\n" +
-                "BP.L\t980.000000000000\t133.570312500000\t2015-02-12T10:02:14.000Z\n" +
-                "ADM.L\t768.000000000000\t296.109375000000\t2015-02-12T10:02:35.000Z\n" +
-                "BP.L\t807.750000000000\t705.548904418945\t2015-02-12T10:02:49.000Z\n" +
-                "BP.L\t949.156250000000\t63.068359375000\t2015-02-12T10:02:53.000Z\n" +
-                "ADM.L\t768.000000000000\t0.000047940810\t2015-02-12T10:03:19.000Z\n" +
-                "BP.L\t968.953491210938\t0.029868379235\t2015-02-12T10:03:21.000Z\n" +
-                "ADM.L\t512.000000000000\t0.000000000000\t2015-02-12T10:03:31.000Z\n" +
-                "BP.L\t512.000000000000\t0.000000318310\t2015-02-12T10:03:56.000Z\n" +
-                "BP.L\t788.000000000000\t55.569427490234\t2015-02-12T10:04:02.000Z\n" +
-                "BP.L\t768.000000000000\t924.000000000000\t2015-02-12T10:04:04.000Z\n" +
-                "ADM.L\t718.848632812500\t907.609375000000\t2015-02-12T10:04:13.000Z\n" +
-                "ADM.L\t965.062500000000\t0.000000591804\t2015-02-12T10:04:22.000Z\n" +
-                "ADM.L\t696.000000000000\t9.672361135483\t2015-02-12T10:04:25.000Z\n" +
-                "BP.L\t992.000000000000\t0.750000000000\t2015-02-12T10:04:27.000Z\n" +
-                "BP.L\t518.117187500000\t765.889160156250\t2015-02-12T10:04:33.000Z\n";
-        assertThat(expected, "select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00;5m' and sym in ('BP.L','ADM.L') and bid > 500");
+            final String expected = "ADM.L\t837.343750000000\t0.061431560665\t2015-02-12T10:00:04.000Z\n" +
+                    "BP.L\t564.425537109375\t0.000000003711\t2015-02-12T10:00:40.000Z\n" +
+                    "BP.L\t768.000000000000\t0.000000011709\t2015-02-12T10:01:18.000Z\n" +
+                    "BP.L\t512.000000000000\t74.948242187500\t2015-02-12T10:01:31.000Z\n" +
+                    "BP.L\t980.000000000000\t133.570312500000\t2015-02-12T10:02:14.000Z\n" +
+                    "ADM.L\t768.000000000000\t296.109375000000\t2015-02-12T10:02:35.000Z\n" +
+                    "BP.L\t807.750000000000\t705.548904418945\t2015-02-12T10:02:49.000Z\n" +
+                    "BP.L\t949.156250000000\t63.068359375000\t2015-02-12T10:02:53.000Z\n" +
+                    "ADM.L\t768.000000000000\t0.000047940810\t2015-02-12T10:03:19.000Z\n" +
+                    "BP.L\t968.953491210938\t0.029868379235\t2015-02-12T10:03:21.000Z\n" +
+                    "ADM.L\t512.000000000000\t0.000000000000\t2015-02-12T10:03:31.000Z\n" +
+                    "BP.L\t512.000000000000\t0.000000318310\t2015-02-12T10:03:56.000Z\n" +
+                    "BP.L\t788.000000000000\t55.569427490234\t2015-02-12T10:04:02.000Z\n" +
+                    "BP.L\t768.000000000000\t924.000000000000\t2015-02-12T10:04:04.000Z\n" +
+                    "ADM.L\t718.848632812500\t907.609375000000\t2015-02-12T10:04:13.000Z\n" +
+                    "ADM.L\t965.062500000000\t0.000000591804\t2015-02-12T10:04:22.000Z\n" +
+                    "ADM.L\t696.000000000000\t9.672361135483\t2015-02-12T10:04:25.000Z\n" +
+                    "BP.L\t992.000000000000\t0.750000000000\t2015-02-12T10:04:27.000Z\n" +
+                    "BP.L\t518.117187500000\t765.889160156250\t2015-02-12T10:04:33.000Z\n";
+            assertThat(expected, "select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00;5m' and sym in ('BP.L','ADM.L') and bid > 500");
+        }
     }
 
     @Test
     public void testIntervalIntrinsicFalse() throws Exception {
-        try (JournalWriter<Quote> w = factory.writer(Quote.class, "q")) {
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
             TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
             assertEmpty("select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00' and timestamp = '2015-02-12T12:00:00'");
@@ -1330,7 +1337,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidLatestByColumn1() throws Exception {
-        factory.writer(Quote.class, "q");
+        getWriterFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp from q latest by symx where sym in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1341,7 +1348,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidLatestByColumn2() throws Exception {
-        factory.writer(Quote.class, "q");
+        getWriterFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp from q latest by ask where sym in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1352,7 +1359,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidLatestByColumn3() throws Exception {
-        factory.writer(Quote.class, "q");
+        getWriterFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp from q latest by mode where sym in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1363,7 +1370,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidLiteralColumn() throws Exception {
-        factory.writer(Quote.class, "q");
+        getWriterFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp1 from q latest by sym where sym in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1384,7 +1391,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidVirtualColumn() throws Exception {
-        factory.writer(Quote.class, "q");
+        getWriterFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, (bid+ask2)/2, timestamp from q latest by sym where sym in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1394,7 +1401,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidWhereColumn1() throws Exception {
-        factory.writer(Quote.class, "q");
+        getWriterFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp from q where sym2 in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1404,7 +1411,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidWhereColumn2() throws Exception {
-        factory.writer(Quote.class, "q");
+        getWriterFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp from q where sym in ('GKN.L') and ask2 > 100");
         } catch (ParserException e) {
@@ -1426,7 +1433,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testJournalRefresh() throws Exception {
         createTabWithNaNs();
         assertThat("10000\n", "select count() from tab");
-        try (JournalWriter w = factory.bulkWriter("tab")) {
+        try (JournalWriter w = getWriterFactory().bulkWriter("tab")) {
             appendNaNs(w, Dates.parseDateTime("2015-10-12T00:00:00.000Z"));
         }
         assertThat("20000\n", "select count() from tab");
@@ -1476,9 +1483,10 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testLatestBySym() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
-        TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
-        w.commit();
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+            TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            w.commit();
+        }
 
         final String expected = "TLW.L\t0.000000000000\t0.000000048727\t2015-02-13T02:58:41.000Z\n" +
                 "ADM.L\t0.000000106175\t0.102090202272\t2015-02-13T02:58:59.000Z\n" +
@@ -1496,9 +1504,10 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testLatestBySymList() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
-        TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
-        w.commit();
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+            TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            w.commit();
+        }
 
         final String expected = "BP.L\t0.000000253226\t1022.955993652344\t2015-02-13T02:59:34.000Z\n" +
                 "GKN.L\t688.000000000000\t256.000000000000\t2015-02-13T02:59:50.000Z\n";
@@ -1507,9 +1516,10 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testLatestBySymNoFilter() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
-        TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
-        w.commit();
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+            TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            w.commit();
+        }
 
         final String expected = "RRS.L\t946.798400878906\t0.012493257411\t2015-02-13T02:59:43.000Z\n" +
                 "ABF.L\t800.000000000000\t0.000625604152\t2015-02-13T02:59:46.000Z\n" +
@@ -2025,7 +2035,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testMissingEqualsArgument() throws Exception {
-        factory.writer(Quote.class, "q");
+        getWriterFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select id, x, y, timestamp from q where id = ");
         } catch (ParserException e) {
@@ -2120,31 +2130,32 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testMultipleStrIdSearch() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(32).
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 1024);
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = getNames(rnd, 1024);
 
-        int mask = 1023;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = 1023;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
 
         final String expected = "UHUTMTRRNGCIPFZ\t0.000006506322\t-261.000000000000\t2015-03-12T00:00:00.220Z\n" +
                 "FZICFOQEVPXJYQR\t0.000000166602\t367.625000000000\t2015-03-12T00:00:00.260Z\n" +
@@ -2186,31 +2197,32 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testMultipleStrIdSearchUsingHeapMerge() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(32).
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 1024);
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = getNames(rnd, 1024);
 
-        int mask = 1023;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = 1023;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
 
         final String expected =
                 "UHUTMTRRNGCIPFZ\t0.000006506322\t-261.000000000000\t2015-03-12T00:00:00.220Z\n" +
@@ -2528,7 +2540,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         sink.clear();
         try (RecordSource src = compile("select id, z from tab limit :xyz")) {
             src.getParam(":xyz").set(10L);
-            printer.print(src, factory, false);
+            printer.print(src, getReaderFactory(), false);
             TestUtils.assertEquals(expected, sink);
         }
 
@@ -2536,7 +2548,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         sink.clear();
         try (RecordSource src = compile("select id, z from tab limit :xyz")) {
             src.getParam(":xyz").set(10L);
-            printer.print(src, factory, false);
+            printer.print(src, getReaderFactory(), false);
             TestUtils.assertEquals(expected, sink);
         }
 
@@ -2544,7 +2556,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         sink.clear();
         try (RecordSource src = compile("select id, z from tab limit :xyz")) {
             src.getParam(":xyz").set(5L);
-            printer.print(src, factory, false);
+            printer.print(src, getReaderFactory(), false);
 
             final String expected2 = "YDVRVNGSTEQODRZ\t-99\n" +
                     "RIIYMHOWKCDNZNL\t-397\n" +
@@ -2574,14 +2586,14 @@ public class SingleJournalQueryTest extends AbstractTest {
         try (RecordSource src = compile("select id, z from tab where z > :min limit :lim")) {
             src.getParam(":min").set(450);
             src.getParam(":lim").set(10L);
-            printer.print(src, factory, false);
+            printer.print(src, getReaderFactory(), false);
         }
 
         sink.clear();
         try (RecordSource src = compile("select id, z from tab where :min < z limit :lim")) {
             src.getParam(":min").set(450);
             src.getParam(":lim").set(10L);
-            printer.print(src, factory, false);
+            printer.print(src, getReaderFactory(), false);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -2599,7 +2611,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         createTabWithNaNs2();
         sink.clear();
         try (RecordSource src = compile("select id, z from tab where z > :min limit :lim")) {
-            printer.print(src, factory, false);
+            printer.print(src, getReaderFactory(), false);
         }
     }
 
@@ -2816,7 +2828,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testScaledDoubleComparison() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").index().buckets(128).
                         $double("x").
@@ -2825,25 +2837,26 @@ public class SingleJournalQueryTest extends AbstractTest {
                         $int("i2").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 128);
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = getNames(rnd, 128);
 
-        int mask = 127;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = 127;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putSym(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putInt(3, rnd.nextInt() & 63);
-            ew.putInt(4, rnd.nextInt() & 63);
-            ew.putDate(5, t += 10);
-            ew.append();
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putSym(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putInt(3, rnd.nextInt() & 63);
+                ew.putInt(4, rnd.nextInt() & 63);
+                ew.putDate(5, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
 
         final String expected = "YYVSYYEQBORDTQH\t0.000000012344\t0.000000017585\n" +
                 "OXPKRGIIHYHBOQM\t0.000000042571\t0.000000046094\n" +
@@ -2888,34 +2901,35 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testSearchByIntIdUnindexed() throws Exception {
 
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $int("id").
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        int[] ids = new int[4096];
-        for (int i = 0; i < ids.length; i++) {
-            ids[i] = rnd.nextPositiveInt();
+            Rnd rnd = new Rnd();
+            int[] ids = new int[4096];
+            for (int i = 0; i < ids.length; i++) {
+                ids[i] = rnd.nextPositiveInt();
+            }
+
+            int mask = ids.length - 1;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+
+            for (int i = 0; i < 100000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putInt(0, ids[rnd.nextInt() & mask]);
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-
-        int mask = ids.length - 1;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-
-        for (int i = 0; i < 100000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putInt(0, ids[rnd.nextInt() & mask]);
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
-        }
-        w.commit();
 
         final String expected = "1148688404\t19.165769577026\t0.002435457427\t2015-03-12T00:00:10.150Z\n" +
                 "1148688404\t0.000000444469\t2.694594800472\t2015-03-12T00:00:28.400Z\n" +
@@ -2958,31 +2972,32 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testSearchByStringIdInUnindexed() throws Exception {
 
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        int n = 4 * 1024;
-        ObjHashSet<String> names = getNames(rnd, n);
+            Rnd rnd = new Rnd();
+            int n = 4 * 1024;
+            ObjHashSet<String> names = getNames(rnd, n);
 
-        int mask = n - 1;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = n - 1;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 100000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+            for (int i = 0; i < 100000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
 
         final String expected = "VEGPIGSVMYWRTXV\t0.000015968965\t675.997558593750\n" +
                 "VEGPIGSVMYWRTXV\t86.369699478149\t0.000017492367\n" +
@@ -3035,31 +3050,31 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testSearchByStringIdInUnindexed2() throws Exception {
 
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
+            Rnd rnd = new Rnd();
+            int n = 4 * 1024;
+            ObjHashSet<String> names = getNames(rnd, n);
 
-        Rnd rnd = new Rnd();
-        int n = 4 * 1024;
-        ObjHashSet<String> names = getNames(rnd, n);
+            int mask = n - 1;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        int mask = n - 1;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-        for (int i = 0; i < 100000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+            for (int i = 0; i < 100000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
 
         final String expected = "JKEQQKQWPJVCFKV\t-141.875000000000\t2.248494863510\n" +
                 "JKEQQKQWPJVCFKV\t-311.641113281250\t-398.023437500000\n" +
@@ -3087,31 +3102,32 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testSearchByStringIdIndexed() throws Exception {
 
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(32).
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 1024);
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = getNames(rnd, 1024);
 
-        int mask = 1023;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = 1023;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
 
-        for (int i = 0; i < 100000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+            for (int i = 0; i < 100000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
 
         final String expected = "XTPNHTDCEBYWXBB\t-292.000000000000\t0.000000006354\t2015-03-12T00:00:02.290Z\n" +
                 "XTPNHTDCEBYWXBB\t7.197236061096\t2.818476676941\t2015-03-12T00:00:27.340Z\n" +
@@ -3312,142 +3328,145 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testSearchIndexedStrNull() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(128).
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < 128; i++) {
-            names.add(rnd.nextString(15));
-        }
-
-        int mask = 127;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            if ((rnd.nextPositiveInt() % 10) == 0) {
-                ew.putNull(0);
-            } else {
-                ew.putStr(0, names.get(rnd.nextInt() & mask));
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = new ObjHashSet<>();
+            for (int i = 0; i < 128; i++) {
+                names.add(rnd.nextString(15));
             }
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
-        }
-        w.commit();
 
+            int mask = 127;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                if ((rnd.nextPositiveInt() % 10) == 0) {
+                    ew.putNull(0);
+                } else {
+                    ew.putStr(0, names.get(rnd.nextInt() & mask));
+                }
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
+        }
         assertNullSearch();
     }
 
     @Test
     public void testSearchIndexedSymNull() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").index().buckets(128).
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 128);
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = getNames(rnd, 128);
 
-        int mask = 127;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = 127;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            if ((rnd.nextPositiveInt() % 10) == 0) {
-                ew.putNull(0);
-            } else {
-                ew.putSym(0, names.get(rnd.nextInt() & mask));
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                if ((rnd.nextPositiveInt() % 10) == 0) {
+                    ew.putNull(0);
+                } else {
+                    ew.putSym(0, names.get(rnd.nextInt() & mask));
+                }
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
             }
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+            w.commit();
         }
-        w.commit();
 
         assertNullSearch();
     }
 
     @Test
     public void testSearchUnindexedStrNull() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = new ObjHashSet<>();
-        for (int i = 0; i < 128; i++) {
-            names.add(rnd.nextString(15));
-        }
-
-        int mask = 127;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            if ((rnd.nextPositiveInt() % 10) == 0) {
-                ew.putNull(0);
-            } else {
-                ew.putStr(0, names.get(rnd.nextInt() & mask));
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = new ObjHashSet<>();
+            for (int i = 0; i < 128; i++) {
+                names.add(rnd.nextString(15));
             }
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+
+            int mask = 127;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                if ((rnd.nextPositiveInt() % 10) == 0) {
+                    ew.putNull(0);
+                } else {
+                    ew.putStr(0, names.get(rnd.nextInt() & mask));
+                }
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
 
         assertNullSearch();
     }
 
     @Test
     public void testSearchUnindexedSymNull() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 128);
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = getNames(rnd, 128);
 
-        int mask = 127;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = 127;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            if ((rnd.nextPositiveInt() % 10) == 0) {
-                ew.putNull(0);
-            } else {
-                ew.putSym(0, names.get(rnd.nextInt() & mask));
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                if ((rnd.nextPositiveInt() % 10) == 0) {
+                    ew.putNull(0);
+                } else {
+                    ew.putSym(0, names.get(rnd.nextInt() & mask));
+                }
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
             }
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+            w.commit();
         }
-        w.commit();
 
         assertNullSearch();
     }
@@ -3465,28 +3484,29 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testStrConcat() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("x").
                         $str("y").
                         $int("z").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
+            Rnd rnd = new Rnd();
 
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 1000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, rnd.nextString(4));
-            ew.putStr(1, rnd.nextString(2));
-            ew.putInt(2, rnd.nextInt());
-            ew.putDate(3, t += 10);
-            ew.append();
+            for (int i = 0; i < 1000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, rnd.nextString(4));
+                ew.putStr(1, rnd.nextString(2));
+                ew.putInt(2, rnd.nextInt());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
 
         final String expected = "CJOU-OU\n" +
                 "CQJS-HG\n" +
@@ -3884,30 +3904,31 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testSymRegex() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").index().buckets(128).
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 128);
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = getNames(rnd, 128);
 
-        int mask = 127;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = 127;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putSym(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putSym(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
+            }
+            w.commit();
         }
-        w.commit();
 
         final String expected = "EENNEBQQEMXDKXE\t0.005532926181\t2015-03-12T00:01:38.290Z\n" +
                 "EDNKRCGKSQDCMUM\t201.500000000000\t2015-03-12T00:01:38.780Z\n" +
@@ -3965,30 +3986,31 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testUnindexedIntNaN() throws Exception {
-        JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $int("id").
                         $double("x").
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(0);
-            } else {
-                ew.putInt(0, rnd.nextInt());
+            Rnd rnd = new Rnd();
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(0);
+                } else {
+                    ew.putInt(0, rnd.nextInt());
+                }
+                ew.putDouble(1, rnd.nextDouble());
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDate(3, t += 10);
+                ew.append();
             }
-            ew.putDouble(1, rnd.nextDouble());
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDate(3, t += 10);
-            ew.append();
+            w.commit();
         }
-        w.commit();
 
         final String expected = "NaN\t768.000000000000\t-408.000000000000\n" +
                 "NaN\t256.000000000000\t-455.750000000000\n" +
@@ -4020,8 +4042,9 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testVirtualColumnQuery() throws Exception {
-        JournalWriter<Quote> w = factory.writer(Quote.class, "q");
-        TestUtils.generateQuoteData(w, 100);
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+            TestUtils.generateQuoteData(w, 100);
+        }
 
         final String expected = "BT-A.L\t0.474883438625\t0.000001189157\t1.050231933594\n" +
                 "ADM.L\t-51.014269662148\t104.021850585938\t0.006688738358\n" +
@@ -4186,7 +4209,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createIndexedTab() throws JournalException, NumericException {
-        try (JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(16).
                         $double("x").
@@ -4214,7 +4237,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTab() throws JournalException, NumericException {
-        try (JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -4242,7 +4265,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabNoNaNs() throws JournalException, NumericException {
-        try (JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -4275,7 +4298,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabWithNaNs() throws JournalException, NumericException {
-        try (JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -4301,7 +4324,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabWithNaNs20(JournalStructure struct) throws JournalException, NumericException {
-        try (JournalWriter w = factory.writer(struct)) {
+        try (JournalWriter w = getWriterFactory().writer(struct)) {
 
             Rnd rnd = new Rnd();
             int n = 128;
@@ -4348,7 +4371,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabWithNullsAndTime() throws JournalException, NumericException {
-        try (JournalWriter w = factory.writer(new JournalStructure("tab").
+        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("tab").
                 $str("id").index().
                 $str("time").
                 $date("date"))) {
@@ -4366,7 +4389,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabWithSymbol() throws JournalException, NumericException {
-        JournalWriter w = factory.writer(
+        JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(16).
                         $sym("sym").
@@ -4409,7 +4432,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     private void tabOfDates() throws JournalException, NumericException {
         long t = Dates.parseDateTime("2016-10-08T00:00:00.000Z");
-        try (JournalWriter w = factory.writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $ts().
                         recordCountHint(100)

@@ -51,11 +51,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUpClass() throws Exception {
 
-        factory.getConfiguration().exists("");
+        getWriterFactory().getConfiguration().exists("");
 
         int xcount = 100;
         int ycount = 10;
-        JournalWriter xw = factory.writer(new JournalStructure("x")
+        JournalWriter xw = getWriterFactory().writer(new JournalStructure("x")
                 .$ts()
                 .$sym("ccy")
                 .$double("rate")
@@ -70,7 +70,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 .$()
         );
 
-        JournalWriter yw = factory.writer(new JournalStructure("y")
+        JournalWriter yw = getWriterFactory().writer(new JournalStructure("y")
                 .$ts()
                 .$sym("ccy")
                 .$double("amount")
@@ -117,14 +117,14 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
 
         // records for adjacent join test
 
-        JournalWriter jwa = factory.writer(new JournalStructure("a")
+        JournalWriter jwa = getWriterFactory().writer(new JournalStructure("a")
                 .$ts()
                 .$sym("ccy")
                 .$double("rate")
                 .$()
         );
 
-        JournalWriter jwb = factory.writer(new JournalStructure("b")
+        JournalWriter jwb = getWriterFactory().writer(new JournalStructure("b")
                 .$ts()
                 .$sym("ccy")
                 .$double("amount")
@@ -284,10 +284,10 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 128
                 , 128
         )) {
-            printer.print(source, factory);
+            printer.print(source, getCachingFactory());
             TestUtils.assertEquals(expected, sink);
             sink.clear();
-            printer.print(source, factory);
+            printer.print(source, getCachingFactory());
             TestUtils.assertEquals(expected, sink);
         }
         Assert.assertEquals(memUsed, Unsafe.getMemUsed());
@@ -313,10 +313,10 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , new NoRowIdRecordSource().of(compileSource("select timestamp, ccy, rate, amount, contra, ln, fl, sh, b from x"))
                 , 0
         )) {
-            printer.print(source, factory);
+            printer.print(source, getCachingFactory());
             TestUtils.assertEquals(expected, sink);
             sink.clear();
-            printer.print(source, factory);
+            printer.print(source, getCachingFactory());
             TestUtils.assertEquals(expected, sink);
         }
 
@@ -393,10 +393,10 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 512
                 , 512
         )) {
-            printer.print(source, factory, true);
+            printer.print(source, getCachingFactory(), true);
             TestUtils.assertEquals(expected, sink);
             sink.clear();
-            printer.print(source, factory, true);
+            printer.print(source, getCachingFactory(), true);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -421,10 +421,10 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 "2015-03-10T00:08:00.000Z\tSWHYRX\t-810.375000000000\tPULKHMJLLKQZJIONCLBYNYYWYBEPKPNZXNYWIGPCMLCBMUPYMRIGQWSZMUMXMSYXCEEDCL\t2015-03-10T00:07:50.000Z\tPEHNRX\t-969.125000000000\t0.207036912441\tSUZHUEVVELXBCOGQQGZZNTEZNOOZGQPKNLKUWCXHYPNZEBESMTXULVCTMKCZJGHRIMUNWUUQHXCRSLYJFTDNSEPESIUROKI\tVTJWCP\t0.3852\t27447\t3768436831039810156\ttrue\n" +
                 "2015-03-10T00:09:00.000Z\tSWHYRX\t-384.000000000000\tZGUJBKNTPYXUBYXGDDULXVVSCNJINCQSDOQILSLXZEMDBLNXHYUUTVSXURFLRJLIUC\t2015-03-10T00:08:50.000Z\tVTJWCP\t-1024.000000000000\t0.000000084048\tJOZWRXKMTFXRYPHFPUYWNLBVVHNSJLVKRTLXHBHDHIMFYOJREFU\tSWHYRX\t0.4008\t-25237\t-2694211234414702926\ttrue\n" +
                 "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\tVTJWCP\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
-        printer.print(source, factory);
+        printer.print(source, getCachingFactory());
         TestUtils.assertEquals(expected, sink);
         sink.clear();
-        printer.print(source, factory);
+        printer.print(source, getCachingFactory());
         TestUtils.assertEquals(expected, sink);
     }
 
@@ -443,7 +443,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         )) {
             StringSink testSink = new StringSink();
             int idx = source.getMetadata().getColumnIndex("trader");
-            for (Record r : source.prepareCursor(factory)) {
+            for (Record r : source.prepareCursor(getCachingFactory())) {
                 testSink.clear();
                 r.getStr(idx, testSink);
 
@@ -482,10 +482,10 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 512
                 , 512
         )) {
-            printer.print(source, factory, true);
+            printer.print(source, getCachingFactory(), true);
             TestUtils.assertEquals(expected, sink);
             sink.clear();
-            printer.print(source, factory, true);
+            printer.print(source, getCachingFactory(), true);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -510,7 +510,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                     "2015-03-10T00:08:00.000Z\tSWHYRX\t-810.375000000000\tPULKHMJLLKQZJIONCLBYNYYWYBEPKPNZXNYWIGPCMLCBMUPYMRIGQWSZMUMXMSYXCEEDCL\t2015-03-10T00:07:50.000Z\tPEHNRX\t-969.125000000000\t0.207036912441\tSUZHUEVVELXBCOGQQGZZNTEZNOOZGQPKNLKUWCXHYPNZEBESMTXULVCTMKCZJGHRIMUNWUUQHXCRSLYJFTDNSEPESIUROKI\tVTJWCP\t0.3852\t27447\t3768436831039810156\ttrue\n" +
                     "2015-03-10T00:09:00.000Z\tSWHYRX\t-384.000000000000\tZGUJBKNTPYXUBYXGDDULXVVSCNJINCQSDOQILSLXZEMDBLNXHYUUTVSXURFLRJLIUC\t2015-03-10T00:08:50.000Z\tVTJWCP\t-1024.000000000000\t0.000000084048\tJOZWRXKMTFXRYPHFPUYWNLBVVHNSJLVKRTLXHBHDHIMFYOJREFU\tSWHYRX\t0.4008\t-25237\t-2694211234414702926\ttrue\n" +
                     "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\tVTJWCP\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
-            printer.print(source, factory);
+            printer.print(source, getCachingFactory());
             TestUtils.assertEquals(expected, sink);
         }
     }

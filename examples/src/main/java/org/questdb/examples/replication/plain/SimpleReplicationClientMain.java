@@ -25,7 +25,10 @@ package org.questdb.examples.replication.plain;
 
 import com.questdb.Journal;
 import com.questdb.JournalIterators;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
+import com.questdb.factory.configuration.JournalConfiguration;
+import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalClient;
 import com.questdb.store.JournalListener;
 import org.questdb.examples.support.Price;
@@ -37,10 +40,13 @@ import org.questdb.examples.support.Price;
  */
 public class SimpleReplicationClientMain {
     public static void main(String[] args) throws Exception {
-        JournalFactory factory = new JournalFactory(args[0]);
-        final JournalClient client = new JournalClient(factory);
+        JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
+        ReaderFactory readerFactory = new ReaderFactory(configuration);
+        WriterFactory writerFactory = new WriterFactory(configuration);
 
-        final Journal<Price> reader = factory.bulkReader(Price.class, "price-copy");
+        final JournalClient client = new JournalClient(writerFactory);
+
+        final Journal<Price> reader = readerFactory.bulkReader(Price.class, "price-copy");
 
         client.subscribe(Price.class, null, "price-copy", new JournalListener() {
             @Override

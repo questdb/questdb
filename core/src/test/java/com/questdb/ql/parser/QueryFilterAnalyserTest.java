@@ -34,6 +34,7 @@ import com.questdb.ql.model.IntrinsicValue;
 import com.questdb.std.ObjectPool;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -57,9 +58,14 @@ public class QueryFilterAnalyserTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        w = factory.writer(Quote.class);
+        w = getWriterFactory().writer(Quote.class);
         exprNodeObjectPool.clear();
         ExprParser.configureLexer(lexer);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        w.close();
     }
 
     @Test

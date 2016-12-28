@@ -24,18 +24,17 @@
 package com.questdb.ql;
 
 import com.questdb.JournalWriter;
-import com.questdb.ex.JournalConfigurationException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.JournalWriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
-import com.questdb.misc.Files;
 import com.questdb.model.Album;
 import com.questdb.model.Band;
 import com.questdb.ql.impl.AllRowSource;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.join.CrossJoinRecordSource;
-import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
+import com.questdb.test.tools.TheFactory;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Before;
@@ -44,38 +43,36 @@ import org.junit.Test;
 
 public class JoinStringToSymbolTest {
     @Rule
-    public final JournalTestFactory factory;
+    public final TheFactory theFactory = new TheFactory(new JournalConfigurationBuilder() {{
+        $(Band.class)
+                .$sym("name").index()
+                .$sym("type")
+                .$bin("image")
+                .$ts()
+        ;
+
+        $(Album.class)
+                .$str("band").index()
+                .$sym("name").index()
+                .$ts("releaseDate");
+
+    }});
 
     private JournalWriter<Band> bw;
     private JournalWriter<Album> aw;
 
-    public JoinStringToSymbolTest() {
-        try {
-            this.factory = new JournalTestFactory(
-                    new JournalConfigurationBuilder() {{
-                        $(Band.class)
-                                .$sym("name").index()
-                                .$sym("type")
-                                .$bin("image")
-                                .$ts()
-                        ;
+    public JournalReaderFactory getReaderFactory() {
+        return theFactory.getReaderFactory();
+    }
 
-                        $(Album.class)
-                                .$str("band").index()
-                                .$sym("name").index()
-                                .$ts("releaseDate");
-
-                    }}.build(Files.makeTempDir())
-            );
-        } catch (JournalConfigurationException e) {
-            throw new JournalRuntimeException(e);
-        }
+    public JournalWriterFactory getWriterFactory() {
+        return theFactory.getWriterFactory();
     }
 
     @Before
     public void setUp() throws Exception {
-        bw = factory.writer(Band.class);
-        aw = factory.writer(Album.class);
+        bw = getWriterFactory().writer(Band.class);
+        aw = getWriterFactory().writer(Album.class);
     }
 
     @Test
@@ -95,17 +92,11 @@ public class JoinStringToSymbolTest {
 
         StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
-        p.print(
-                new CrossJoinRecordSource(
-                        new JournalRecordSource(
-                                new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()
-                        ),
-
-                        new JournalRecordSource(
-                                new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()
-                        )
-                ), factory
-        );
+        try (RecordSource rs = new CrossJoinRecordSource(new JournalRecordSource(
+                new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()), new JournalRecordSource(
+                new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()))) {
+            p.print(rs, getReaderFactory());
+        }
 
         final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\n" +
                 "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband2\thttp://band2.com\thiphop\t\n" +

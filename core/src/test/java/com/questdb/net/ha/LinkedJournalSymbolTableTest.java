@@ -33,6 +33,7 @@ import com.questdb.net.ha.producer.JournalClientStateProducer;
 import com.questdb.net.ha.producer.JournalSymbolTableProducer;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -50,9 +51,9 @@ public class LinkedJournalSymbolTableTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        origin = factory.writer(RDFNode.class, "origin");
-        master = factory.writer(RDFNode.class, "master");
-        slave = factory.writer(RDFNode.class, "slave");
+        origin = getWriterFactory().writer(RDFNode.class, "origin");
+        master = getWriterFactory().writer(RDFNode.class, "master");
+        slave = getWriterFactory().writer(RDFNode.class, "slave");
 
         channel = new MockByteChannel();
 
@@ -63,6 +64,13 @@ public class LinkedJournalSymbolTableTest extends AbstractTest {
         origin.append(new RDFNode().setObj("O2").setSubj("S1"));
         origin.append(new RDFNode().setObj("O3").setSubj("S2"));
         origin.append(new RDFNode().setObj("S2").setSubj("S1"));
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        origin.close();
+        master.close();
+        slave.close();
     }
 
     @Test

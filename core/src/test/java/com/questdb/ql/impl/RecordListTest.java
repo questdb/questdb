@@ -45,7 +45,7 @@ public class RecordListTest extends AbstractTest {
 
     @Test
     public void testAllFieldTypesField() throws JournalException, IOException, ParserException {
-        writeAndReadRecords(factory.writer(AllFieldTypes.class), 1000, 64 * 1024,
+        writeAndReadRecords(getWriterFactory().writer(AllFieldTypes.class), 1000, 64 * 1024,
                 new RecordGenerator<AllFieldTypes>() {
                     @Override
                     public void assertRecord(Record value, int i) throws IOException {
@@ -95,7 +95,7 @@ public class RecordListTest extends AbstractTest {
 
     @Test
     public void testBlankList() throws Exception {
-        writeAndReadRecords(factory.writer(LongValue.class), 0, 450,
+        writeAndReadRecords(getWriterFactory().writer(LongValue.class), 0, 450,
                 new RecordGenerator<LongValue>() {
                     @Override
                     public void assertRecord(Record value, int i) {
@@ -111,7 +111,7 @@ public class RecordListTest extends AbstractTest {
     @Test
     public void testCopyBinToAddress() throws JournalException, IOException, ParserException {
         final int pageLen = 1024 * 1024;
-        writeAndReadRecords(factory.writer(Binary.class), 1, pageLen,
+        writeAndReadRecords(getWriterFactory().writer(Binary.class), 1, pageLen,
                 new RecordGenerator<Binary>() {
 
                     @Override
@@ -138,7 +138,7 @@ public class RecordListTest extends AbstractTest {
     @Test
     public void testSaveBinOverPageEdge() throws JournalException, IOException, ParserException {
         final int pageLen = 100;
-        writeAndReadRecords(factory.writer(Binary.class), 1, pageLen,
+        writeAndReadRecords(getWriterFactory().writer(Binary.class), 1, pageLen,
                 new RecordGenerator<Binary>() {
 
                     @Override
@@ -167,7 +167,7 @@ public class RecordListTest extends AbstractTest {
 
     @Test
     public void testSaveLongField() throws JournalException, IOException, ParserException {
-        writeAndReadRecords(factory.writer(LongValue.class), 100, 450,
+        writeAndReadRecords(getWriterFactory().writer(LongValue.class), 100, 450,
                 new RecordGenerator<LongValue>() {
 
                     @Override
@@ -185,7 +185,7 @@ public class RecordListTest extends AbstractTest {
     @Test
     public void testSaveNullBinAndStrings() throws JournalException, IOException, ParserException {
         final int pageLen = 100;
-        writeAndReadRecords(factory.writer(StringLongBinary.class), 3, pageLen,
+        writeAndReadRecords(getWriterFactory().writer(StringLongBinary.class), 3, pageLen,
                 new RecordGenerator<StringLongBinary>() {
 
                     @Override
@@ -232,27 +232,31 @@ public class RecordListTest extends AbstractTest {
     }
 
     private <T> void writeAndReadRecords(JournalWriter<T> journal, int count, int pageSize, RecordGenerator<T> generator) throws IOException, JournalException, ParserException {
-        for (int i = 0; i < count; i++) {
-            journal.append(generator.generate(i));
-        }
-        journal.commit();
+        try {
+            for (int i = 0; i < count; i++) {
+                journal.append(generator.generate(i));
+            }
+            journal.commit();
 
-        try (RecordList records = new RecordList(journal.getMetadata(), pageSize)) {
-            LongList offsets = new LongList();
+            try (RecordList records = new RecordList(journal.getMetadata(), pageSize)) {
+                LongList offsets = new LongList();
 
-            try (RecordSource rs = compiler.compile(factory, journal.getLocation().getName())) {
-                long o = -1;
-                for (Record rec : rs.prepareCursor(factory)) {
-                    offsets.add(o = records.append(rec, o));
+                try (RecordSource rs = compiler.compile(getReaderFactory(), journal.getLocation().getName())) {
+                    long o = -1;
+                    for (Record rec : rs.prepareCursor(getReaderFactory())) {
+                        offsets.add(o = records.append(rec, o));
+                    }
+                }
+
+                int i = 0;
+                records.toTop();
+
+                while (records.hasNext()) {
+                    generator.assertRecord(records.next(), i++);
                 }
             }
-
-            int i = 0;
-            records.toTop();
-
-            while (records.hasNext()) {
-                generator.assertRecord(records.next(), i++);
-            }
+        } finally {
+            journal.close();
         }
     }
 

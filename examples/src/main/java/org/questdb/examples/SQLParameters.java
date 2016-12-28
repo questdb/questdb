@@ -25,7 +25,10 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
+import com.questdb.factory.configuration.JournalConfiguration;
+import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.txt.ImportManager;
@@ -43,33 +46,35 @@ public class SQLParameters {
             System.exit(1);
         }
 
-        try (JournalFactory factory = new JournalFactory(args[0])) {
+        JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
+        ReaderFactory readerFactory = new ReaderFactory(configuration);
+        WriterFactory writerFactory = new WriterFactory(configuration);
 
-            // import movies data to query
-            ImportManager.importFile(factory, SQLParameters.class.getResource("/movies.csv").getFile(), ',', null);
 
-            // Create SQL engine instance.
-            QueryCompiler compiler = new QueryCompiler();
+        // import movies data to query
+        ImportManager.importFile(writerFactory, SQLParameters.class.getResource("/movies.csv").getFile(), ',', null);
 
-            // Query whole table (same as 'select * from movies')
-            // RecordSource is equivalent to prepared statement, which is compiled version of your query.
-            // Once compiled, query can be executed many times, returning up to date data on every execution.
-            // RecordSource instance may have allocated resources, so closing one is essential.
+        // Create SQL engine instance.
+        QueryCompiler compiler = new QueryCompiler();
 
-            try (RecordSource rs = compiler.compile(factory, "'movies.csv' where movieId = :id")) {
+        // Query whole table (same as 'select * from movies')
+        // RecordSource is equivalent to prepared statement, which is compiled version of your query.
+        // Once compiled, query can be executed many times, returning up to date data on every execution.
+        // RecordSource instance may have allocated resources, so closing one is essential.
 
-                RecordSourcePrinter printer = new RecordSourcePrinter(new StdoutSink());
+        try (RecordSource rs = compiler.compile(readerFactory, "'movies.csv' where movieId = :id")) {
 
-                // use of parameters avoids expensive query compilation
+            RecordSourcePrinter printer = new RecordSourcePrinter(new StdoutSink());
 
-                rs.getParam(":id").set(62198);
-                printer.print(rs, factory);
+            // use of parameters avoids expensive query compilation
 
-                System.out.println("----------------");
+            rs.getParam(":id").set(62198);
+            printer.print(rs, readerFactory);
 
-                rs.getParam(":id").set(125);
-                printer.print(rs, factory);
-            }
+            System.out.println("----------------");
+
+            rs.getParam(":id").set(125);
+            printer.print(rs, readerFactory);
         }
     }
 }

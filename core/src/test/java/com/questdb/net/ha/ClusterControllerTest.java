@@ -26,18 +26,18 @@ package com.questdb.net.ha;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.JournalWriterFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Files;
 import com.questdb.model.Quote;
 import com.questdb.model.configuration.ModelConfiguration;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.test.tools.AbstractTest;
-import com.questdb.test.tools.JournalTestFactory;
 import com.questdb.test.tools.TestUtils;
+import com.questdb.test.tools.TheFactory;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Rule;
@@ -52,133 +52,141 @@ import java.util.concurrent.atomic.AtomicLong;
 public class ClusterControllerTest extends AbstractTest {
 
     private final static Log LOG = LogFactory.getLog(ClusterController.class);
+    @Rule
+    public final TheFactory tf = new TheFactory(ModelConfiguration.MAIN);
 
     @Rule
-    public final JournalTestFactory factory2 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
+    public final TheFactory tf1 = new TheFactory(ModelConfiguration.MAIN);
+
     @Rule
-    public final JournalTestFactory fact1 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
+    public final TheFactory tf2 = new TheFactory(ModelConfiguration.MAIN);
+
     @Rule
-    public final JournalTestFactory fact2 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
+    public final TheFactory tf3 = new TheFactory(ModelConfiguration.MAIN);
+
     @Rule
-    public final JournalTestFactory fact3 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
+    public final TheFactory tf4 = new TheFactory(ModelConfiguration.MAIN);
+
     @Rule
-    public final JournalTestFactory fact4 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
-    @Rule
-    public final JournalTestFactory fact5 = new JournalTestFactory(ModelConfiguration.MAIN.build(Files.makeTempDir()));
+    public final TheFactory tf5 = new TheFactory(ModelConfiguration.MAIN);
 
     @Test
     @Ignore
     public void testBusyFailOver() throws Exception {
 
-        final JournalWriter<Quote> writer1 = factory.writer(Quote.class);
-        final JournalWriter<Quote> writer2 = factory2.writer(Quote.class);
+        try (JournalWriter<Quote> writer1 = getWriterFactory().writer(Quote.class)) {
+            try (final JournalWriter<Quote> writer2 = tf.getWriterFactory().writer(Quote.class)) {
 
-        final CountDownLatch active1 = new CountDownLatch(1);
-        final CountDownLatch active2 = new CountDownLatch(1);
-        final CountDownLatch standby2 = new CountDownLatch(1);
+                final CountDownLatch active1 = new CountDownLatch(1);
+                final CountDownLatch active2 = new CountDownLatch(1);
+                final CountDownLatch standby2 = new CountDownLatch(1);
 
-        final AtomicLong expected = new AtomicLong();
-        final AtomicLong actual = new AtomicLong();
+                final AtomicLong expected = new AtomicLong();
+                final AtomicLong actual = new AtomicLong();
 
 
-        ClusterController controller1 = new ClusterController(
-                new ServerConfig() {{
-                    addNode(new ServerNode(0, "localhost:7080"));
-                    addNode(new ServerNode(1, "localhost:7090"));
-                    setEnableMultiCast(false);
-                    setHeartbeatFrequency(50);
-                }},
-                new ClientConfig() {{
-                    setEnableMultiCast(false);
-                }},
-                factory,
-                0,
-                new ArrayList<JournalWriter>() {{
-                    add(writer1);
-                }},
-                new ClusterStatusListener() {
-                    @Override
-                    public void goActive() {
-                        try {
-                            TestUtils.generateQuoteData(writer1, 100000);
-                            TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
-                            writer1.commit();
-                            TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
-                            writer1.commit();
-                            TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
-                            writer1.commit();
-                            TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
-                            writer1.commit();
-                            expected.set(writer1.size());
-                            active1.countDown();
-                        } catch (JournalException | NumericException e) {
-                            e.printStackTrace();
+                ClusterController controller1 = new ClusterController(
+                        new ServerConfig() {{
+                            addNode(new ServerNode(0, "localhost:7080"));
+                            addNode(new ServerNode(1, "localhost:7090"));
+                            setEnableMultiCast(false);
+                            setHeartbeatFrequency(50);
+                        }},
+                        new ClientConfig() {{
+                            setEnableMultiCast(false);
+                        }},
+                        getWriterFactory(),
+                        getReaderFactory(),
+                        0,
+                        new ArrayList<JournalWriter>() {{
+                            add(writer1);
+                        }},
+                        new ClusterStatusListener() {
+                            @Override
+                            public void goActive() {
+                                try {
+                                    TestUtils.generateQuoteData(writer1, 100000);
+                                    TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
+                                    writer1.commit();
+                                    TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
+                                    writer1.commit();
+                                    TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
+                                    writer1.commit();
+                                    TestUtils.generateQuoteData(writer1, 100000, writer1.getMaxTimestamp());
+                                    writer1.commit();
+                                    expected.set(writer1.size());
+                                    active1.countDown();
+                                } catch (JournalException | NumericException e) {
+                                    e.printStackTrace();
+                                }
+                            }
+
+                            @Override
+                            public void goPassive(ServerNode activeNode) {
+                            }
+
+                            @Override
+                            public void onShutdown() {
+                            }
                         }
-                    }
+                );
 
-                    @Override
-                    public void goPassive(ServerNode activeNode) {
-                    }
+                ClusterController controller2 = new ClusterController(
+                        new ServerConfig() {{
+                            addNode(new ServerNode(0, "localhost:7080"));
+                            addNode(new ServerNode(1, "localhost:7090"));
+                            setEnableMultiCast(false);
+                            setHeartbeatFrequency(50);
+                        }},
+                        new ClientConfig() {{
+                            setEnableMultiCast(false);
+                        }},
+                        tf.getWriterFactory(),
+                        tf.getReaderFactory(),
+                        1,
+                        new ArrayList<JournalWriter>() {{
+                            add(writer2);
+                        }},
+                        new ClusterStatusListener() {
+                            @Override
+                            public void goActive() {
+                                try {
+                                    actual.set(writer2.size());
+                                    active2.countDown();
+                                } catch (JournalException e) {
+                                    e.printStackTrace();
+                                }
+                            }
 
-                    @Override
-                    public void onShutdown() {
-                    }
-                }
-        );
+                            @Override
+                            public void goPassive(ServerNode activeNode) {
+                                standby2.countDown();
+                            }
 
-        ClusterController controller2 = new ClusterController(
-                new ServerConfig() {{
-                    addNode(new ServerNode(0, "localhost:7080"));
-                    addNode(new ServerNode(1, "localhost:7090"));
-                    setEnableMultiCast(false);
-                    setHeartbeatFrequency(50);
-                }},
-                new ClientConfig() {{
-                    setEnableMultiCast(false);
-                }},
-                factory2,
-                1,
-                new ArrayList<JournalWriter>() {{
-                    add(writer2);
-                }},
-                new ClusterStatusListener() {
-                    @Override
-                    public void goActive() {
-                        try {
-                            actual.set(writer2.size());
-                            active2.countDown();
-                        } catch (JournalException e) {
-                            e.printStackTrace();
+                            @Override
+                            public void onShutdown() {
+                            }
                         }
-                    }
+                );
 
-                    @Override
-                    public void goPassive(ServerNode activeNode) {
-                        standby2.countDown();
-                    }
+                controller1.start();
+                Assert.assertTrue(active1.await(30, TimeUnit.SECONDS));
+                Assert.assertEquals(0, active1.getCount());
 
-                    @Override
-                    public void onShutdown() {
-                    }
-                }
-        );
+                controller2.start();
+                standby2.await(60, TimeUnit.SECONDS);
+                Assert.assertEquals(0, standby2.getCount());
 
-        controller1.start();
-        Assert.assertTrue(active1.await(30, TimeUnit.SECONDS));
-        Assert.assertEquals(0, active1.getCount());
+                controller1.halt();
 
-        controller2.start();
-        standby2.await(60, TimeUnit.SECONDS);
-        Assert.assertEquals(0, standby2.getCount());
+                active2.await(10, TimeUnit.SECONDS);
+                Assert.assertEquals(0, active2.getCount());
 
-        controller1.halt();
-
-        active2.await(10, TimeUnit.SECONDS);
-        Assert.assertEquals(0, active2.getCount());
-
-        controller2.halt();
-        Assert.assertTrue(expected.get() > 0);
-        Assert.assertEquals(expected.get(), actual.get());
+                controller2.halt();
+                Assert.assertTrue(expected.get() > 0);
+                Assert.assertEquals(expected.get(), actual.get());
+            }
+        }
     }
 
     @Test
@@ -190,81 +198,96 @@ public class ClusterControllerTest extends AbstractTest {
 
         LOG.info().$("======= VOTING TEST ==========").$();
 
-        ClusterController c1 = createController2(0, fact1, active, standby, shutdown);
-        ClusterController c2 = createController2(1, fact2, active, standby, shutdown);
-        ClusterController c3 = createController2(2, fact3, active, standby, shutdown);
-        ClusterController c4 = createController2(3, fact4, active, standby, shutdown);
-        ClusterController c5 = createController2(4, fact5, active, standby, shutdown);
+        try (JournalWriter writer1 = tf1.getWriterFactory().writer(Quote.class)) {
+
+            try (JournalWriter writer2 = tf2.getWriterFactory().writer(Quote.class)) {
+
+                try (JournalWriter writer3 = tf3.getWriterFactory().writer(Quote.class)) {
+
+                    try (JournalWriter writer4 = tf4.getWriterFactory().writer(Quote.class)) {
+
+                        try (JournalWriter writer5 = tf5.getWriterFactory().writer(Quote.class)) {
+
+                            ClusterController c1 = createController2(writer1, 0, tf1.getWriterFactory(), tf1.getReaderFactory(), active, standby, shutdown);
+                            ClusterController c2 = createController2(writer2, 1, tf2.getWriterFactory(), tf2.getReaderFactory(), active, standby, shutdown);
+                            ClusterController c3 = createController2(writer3, 2, tf3.getWriterFactory(), tf3.getReaderFactory(), active, standby, shutdown);
+                            ClusterController c4 = createController2(writer4, 3, tf4.getWriterFactory(), tf4.getReaderFactory(), active, standby, shutdown);
+                            ClusterController c5 = createController2(writer5, 4, tf5.getWriterFactory(), tf5.getReaderFactory(), active, standby, shutdown);
 
 
-        c1.start();
-        c2.start();
-        c3.start();
-        c4.start();
-        c5.start();
+                            c1.start();
+                            c2.start();
+                            c3.start();
+                            c4.start();
+                            c5.start();
 
-        long t;
+                            long t;
 
-        t = System.currentTimeMillis();
-        while (standby.get() < 4 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 600) {
-            Thread.yield();
-        }
-        Assert.assertEquals(4, standby.get());
+                            t = System.currentTimeMillis();
+                            while (standby.get() < 4 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 600) {
+                                Thread.yield();
+                            }
+                            Assert.assertEquals(4, standby.get());
 
 
-        t = System.currentTimeMillis();
-        while (active.get() < 1 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 600) {
-            Thread.yield();
-        }
-        Assert.assertEquals(1, active.get());
+                            t = System.currentTimeMillis();
+                            while (active.get() < 1 && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 600) {
+                                Thread.yield();
+                            }
+                            Assert.assertEquals(1, active.get());
 
-        // on slower system instances can be subject to staggered startup, which can create noise in message loop
-        // this noise should get cancelled out given some time.
-        // 1 second should be plenty of time for any ELECTION message to be suppressed.
-        Thread.sleep(1000);
+                            // on slower system instances can be subject to staggered startup, which can create noise in message loop
+                            // this noise should get cancelled out given some time.
+                            // 1 second should be plenty of time for any ELECTION message to be suppressed.
+                            Thread.sleep(1000);
 
-        standby.set(0);
-        active.set(0);
+                            standby.set(0);
+                            active.set(0);
 
-        LOG.info().$("Stage 1, halt leader").$();
+                            LOG.info().$("Stage 1, halt leader").$();
 
-        if (c5.isLeader()) {
-            c5.halt();
-            LOG.info().$("halted 4").$();
-        } else if (c4.isLeader()) {
-            c4.halt();
-            LOG.info().$("halted 3").$();
-        } else if (c3.isLeader()) {
-            c3.halt();
-            LOG.info().$("halted 2").$();
-        } else if (c2.isLeader()) {
-            c2.halt();
-            LOG.info().$("halted 1").$();
-        } else if (c1.isLeader()) {
-            c1.halt();
-            LOG.info().$("halted 0").$();
-        } else {
-            Assert.fail("No leader");
-        }
+                            if (c5.isLeader()) {
+                                c5.halt();
+                                LOG.info().$("halted 4").$();
+                            } else if (c4.isLeader()) {
+                                c4.halt();
+                                LOG.info().$("halted 3").$();
+                            } else if (c3.isLeader()) {
+                                c3.halt();
+                                LOG.info().$("halted 2").$();
+                            } else if (c2.isLeader()) {
+                                c2.halt();
+                                LOG.info().$("halted 1").$();
+                            } else if (c1.isLeader()) {
+                                c1.halt();
+                                LOG.info().$("halted 0").$();
+                            } else {
+                                Assert.fail("No leader");
+                            }
 
-        LOG.info().$("Stage 2, waiting for election process to complete").$();
-        t = System.currentTimeMillis();
-        while ((active.get() < 1 || standby.get() < 3) && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 180) {
-            Thread.yield();
-        }
+                            LOG.info().$("Stage 2, waiting for election process to complete").$();
+                            t = System.currentTimeMillis();
+                            while ((active.get() < 1 || standby.get() < 3) && TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - t) < 180) {
+                                Thread.yield();
+                            }
 
-        LOG.info().$("Checking leader").$();
+                            LOG.info().$("Checking leader").$();
 
-        try {
-            Assert.assertEquals(3, standby.get());
-            Assert.assertEquals(1, active.get());
+                            try {
+                                Assert.assertEquals(3, standby.get());
+                                Assert.assertEquals(1, active.get());
 
-            LOG.info().$("Test complete").$();
-        } finally {
-            c1.halt();
-            c2.halt();
-            c3.halt();
-            c4.halt();
+                                LOG.info().$("Test complete").$();
+                            } finally {
+                                c1.halt();
+                                c2.halt();
+                                c3.halt();
+                                c4.halt();
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -277,32 +300,38 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        ClusterController controller1 = createControllerX(0, factory, active1Latch, standby1Latch, shutdown1);
-        controller1.start();
+        try (JournalWriter writer1 = getWriterFactory().writer(Quote.class)) {
 
-        Assert.assertTrue(active1Latch.await(5, TimeUnit.SECONDS));
-        Assert.assertEquals("Node 1 is expected to be active", 0, active1Latch.getCount());
-        standby1Latch.await(200, TimeUnit.MILLISECONDS);
-        Assert.assertEquals("Node 1 standby callback is not expected to be called", 1, standby1Latch.getCount());
+            try (JournalWriter writer2 = tf.getWriterFactory().writer(Quote.class)) {
 
-        ClusterController controller2 = createControllerX(1, factory2, active2Latch, standby2Latch, shutdown2);
-        controller2.start();
+                ClusterController controller1 = createControllerX(writer1, 0, getWriterFactory(), getReaderFactory(), active1Latch, standby1Latch, shutdown1);
+                controller1.start();
 
-        standby2Latch.await(5, TimeUnit.SECONDS);
-        Assert.assertEquals("Node 2 is expected to be standing by", 0, standby2Latch.getCount());
-        active2Latch.await(200, TimeUnit.MILLISECONDS);
-        Assert.assertEquals("Node 2 active() callback is not expected to be called", 1, active2Latch.getCount());
+                Assert.assertTrue(active1Latch.await(5, TimeUnit.SECONDS));
+                Assert.assertEquals("Node 1 is expected to be active", 0, active1Latch.getCount());
+                standby1Latch.await(200, TimeUnit.MILLISECONDS);
+                Assert.assertEquals("Node 1 standby callback is not expected to be called", 1, standby1Latch.getCount());
 
-        controller1.halt();
-        shutdown1.await(5, TimeUnit.SECONDS);
-        Assert.assertEquals(0, shutdown1.getCount());
+                ClusterController controller2 = createControllerX(writer2, 1, tf.getWriterFactory(), tf.getReaderFactory(), active2Latch, standby2Latch, shutdown2);
+                controller2.start();
 
-        active2Latch.await(5, TimeUnit.SECONDS);
-        Assert.assertEquals(0, active2Latch.getCount());
+                standby2Latch.await(5, TimeUnit.SECONDS);
+                Assert.assertEquals("Node 2 is expected to be standing by", 0, standby2Latch.getCount());
+                active2Latch.await(200, TimeUnit.MILLISECONDS);
+                Assert.assertEquals("Node 2 active() callback is not expected to be called", 1, active2Latch.getCount());
 
-        controller2.halt();
-        shutdown2.await(5, TimeUnit.SECONDS);
-        Assert.assertEquals(0, shutdown2.getCount());
+                controller1.halt();
+                shutdown1.await(5, TimeUnit.SECONDS);
+                Assert.assertEquals(0, shutdown1.getCount());
+
+                active2Latch.await(5, TimeUnit.SECONDS);
+                Assert.assertEquals(0, active2Latch.getCount());
+
+                controller2.halt();
+                shutdown2.await(5, TimeUnit.SECONDS);
+                Assert.assertEquals(0, shutdown2.getCount());
+            }
+        }
     }
 
     @Test
@@ -314,29 +343,35 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        ClusterController controller1 = createControllerX(0, factory, active1Latch, standby1Latch, shutdown1);
-        controller1.start();
+        try (JournalWriter writer1 = getWriterFactory().writer(Quote.class)) {
 
-        Assert.assertTrue(active1Latch.await(5, TimeUnit.SECONDS));
-        Assert.assertEquals("Node 1 is expected to be active", 0, active1Latch.getCount());
-        standby1Latch.await(200, TimeUnit.MILLISECONDS);
-        Assert.assertEquals("Node 1 standby callback is not expected to be called", 1, standby1Latch.getCount());
+            try (JournalWriter writer2 = tf.getWriterFactory().writer(Quote.class)) {
 
-        ClusterController controller2 = createControllerX(1, factory2, active2Latch, standby2Latch, shutdown2);
-        controller2.start();
+                ClusterController controller1 = createControllerX(writer1, 0, getWriterFactory(), getReaderFactory(), active1Latch, standby1Latch, shutdown1);
+                controller1.start();
 
-        standby2Latch.await(5, TimeUnit.SECONDS);
-        Assert.assertEquals("Node 2 is expected to be standing by", 0, standby2Latch.getCount());
-        active2Latch.await(200, TimeUnit.MILLISECONDS);
-        Assert.assertEquals("Node 2 active() callback is not expected to be called", 1, active2Latch.getCount());
+                Assert.assertTrue(active1Latch.await(5, TimeUnit.SECONDS));
+                Assert.assertEquals("Node 1 is expected to be active", 0, active1Latch.getCount());
+                standby1Latch.await(200, TimeUnit.MILLISECONDS);
+                Assert.assertEquals("Node 1 standby callback is not expected to be called", 1, standby1Latch.getCount());
 
-        controller2.halt();
-        shutdown2.await(5, TimeUnit.SECONDS);
-        Assert.assertEquals(0, shutdown2.getCount());
+                ClusterController controller2 = createControllerX(writer2, 1, tf.getWriterFactory(), tf.getReaderFactory(), active2Latch, standby2Latch, shutdown2);
+                controller2.start();
 
-        controller1.halt();
-        shutdown1.await(5, TimeUnit.SECONDS);
-        Assert.assertEquals(0, shutdown1.getCount());
+                standby2Latch.await(5, TimeUnit.SECONDS);
+                Assert.assertEquals("Node 2 is expected to be standing by", 0, standby2Latch.getCount());
+                active2Latch.await(200, TimeUnit.MILLISECONDS);
+                Assert.assertEquals("Node 2 active() callback is not expected to be called", 1, active2Latch.getCount());
+
+                controller2.halt();
+                shutdown2.await(5, TimeUnit.SECONDS);
+                Assert.assertEquals(0, shutdown2.getCount());
+
+                controller1.halt();
+                shutdown1.await(5, TimeUnit.SECONDS);
+                Assert.assertEquals(0, shutdown1.getCount());
+            }
+        }
     }
 
     @Test
@@ -345,18 +380,20 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch standby = new CountDownLatch(1);
         final CountDownLatch shutdown = new CountDownLatch(1);
 
-        ClusterController controller = createControllerX(1, factory, active, standby, shutdown);
+        try (JournalWriter writer = getWriterFactory().writer(Quote.class)) {
+            ClusterController controller = createControllerX(writer, 1, getWriterFactory(), getReaderFactory(), active, standby, shutdown);
 
-        controller.start();
-        Assert.assertTrue(active.await(5, TimeUnit.SECONDS));
-        Assert.assertEquals("goActive() did not fire", 0, active.getCount());
-        standby.await(200, TimeUnit.MILLISECONDS);
-        Assert.assertEquals("goPassive() not expected to fire", 1, standby.getCount());
+            controller.start();
+            Assert.assertTrue(active.await(5, TimeUnit.SECONDS));
+            Assert.assertEquals("goActive() did not fire", 0, active.getCount());
+            standby.await(200, TimeUnit.MILLISECONDS);
+            Assert.assertEquals("goPassive() not expected to fire", 1, standby.getCount());
 
-        controller.halt();
-        shutdown.await(5, TimeUnit.SECONDS);
-        Assert.assertEquals(0, shutdown.getCount());
-        controller.halt();
+            controller.halt();
+            shutdown.await(5, TimeUnit.SECONDS);
+            Assert.assertEquals(0, shutdown.getCount());
+            controller.halt();
+        }
     }
 
     @Test
@@ -369,54 +406,60 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        ClusterController controller1 = createControllerX(0, factory, active1Latch, standby1Latch, shutdown1);
-        ClusterController controller2 = createControllerX(1, factory2, active2Latch, standby2Latch, shutdown2);
+        try (JournalWriter writer1 = getWriterFactory().writer(Quote.class)) {
 
-        // start two controller without pause
-        controller2.start();
-        controller1.start();
+            try (JournalWriter writer2 = tf.getWriterFactory().writer(Quote.class)) {
+                ClusterController controller1 = createControllerX(writer1, 0, getWriterFactory(), getReaderFactory(), active1Latch, standby1Latch, shutdown1);
+                ClusterController controller2 = createControllerX(writer2, 1, tf.getWriterFactory(), tf.getReaderFactory(), active2Latch, standby2Latch, shutdown2);
 
-        factory.close();
+                // start two controller without pause
+                controller2.start();
+                controller1.start();
 
-        long t = System.currentTimeMillis();
-        do {
-            active1Latch.await(1, TimeUnit.MICROSECONDS);
-            active2Latch.await(1, TimeUnit.MICROSECONDS);
-        } while (active1Latch.getCount() > 0 && active2Latch.getCount() > 0 && (System.currentTimeMillis() - t) < 2000);
+                getReaderFactory().close();
 
-        Assert.assertFalse("Two nodes are active simultaneously", active1Latch.getCount() == 0 && active2Latch.getCount() == 0);
-        Assert.assertFalse("No leader", active1Latch.getCount() > 0 && active2Latch.getCount() > 0);
+                long t = System.currentTimeMillis();
+                do {
+                    active1Latch.await(1, TimeUnit.MICROSECONDS);
+                    active2Latch.await(1, TimeUnit.MICROSECONDS);
+                }
+                while (active1Latch.getCount() > 0 && active2Latch.getCount() > 0 && (System.currentTimeMillis() - t) < 2000);
+
+                Assert.assertFalse("Two nodes are active simultaneously", active1Latch.getCount() == 0 && active2Latch.getCount() == 0);
+                Assert.assertFalse("No leader", active1Latch.getCount() > 0 && active2Latch.getCount() > 0);
 
 
-        if (active1Latch.getCount() == 0) {
-            standby2Latch.await(2, TimeUnit.SECONDS);
-            Assert.assertEquals("Node 2 is expected to be on standby", 0, standby2Latch.getCount());
+                if (active1Latch.getCount() == 0) {
+                    standby2Latch.await(2, TimeUnit.SECONDS);
+                    Assert.assertEquals("Node 2 is expected to be on standby", 0, standby2Latch.getCount());
 
-            standby1Latch.await(200, TimeUnit.MILLISECONDS);
-            Assert.assertEquals("Node 1 is NOT expected to be on standby", 1, standby1Latch.getCount());
-        } else {
-            standby1Latch.await(2, TimeUnit.SECONDS);
-            Assert.assertEquals("Node 1 is expected to be on standby", 0, standby1Latch.getCount());
+                    standby1Latch.await(200, TimeUnit.MILLISECONDS);
+                    Assert.assertEquals("Node 1 is NOT expected to be on standby", 1, standby1Latch.getCount());
+                } else {
+                    standby1Latch.await(2, TimeUnit.SECONDS);
+                    Assert.assertEquals("Node 1 is expected to be on standby", 0, standby1Latch.getCount());
 
-            standby2Latch.await(200, TimeUnit.MILLISECONDS);
-            Assert.assertEquals("Node 2 is NOT expected to be on standby", 1, standby2Latch.getCount());
+                    standby2Latch.await(200, TimeUnit.MILLISECONDS);
+                    Assert.assertEquals("Node 2 is NOT expected to be on standby", 1, standby2Latch.getCount());
+                }
+
+                controller2.halt();
+
+
+                shutdown2.await(5, TimeUnit.SECONDS);
+                Assert.assertEquals("Controller 2 should have shut down", 0, shutdown2.getCount());
+
+                active1Latch.await(10, TimeUnit.SECONDS);
+                Assert.assertEquals("Node 1 is expected to become active", 0, active1Latch.getCount());
+
+                controller1.halt();
+                shutdown1.await(10, TimeUnit.SECONDS);
+                Assert.assertEquals("Controller 1 should have shut down", 0, shutdown1.getCount());
+            }
         }
-
-        controller2.halt();
-
-
-        shutdown2.await(5, TimeUnit.SECONDS);
-        Assert.assertEquals("Controller 2 should have shut down", 0, shutdown2.getCount());
-
-        active1Latch.await(10, TimeUnit.SECONDS);
-        Assert.assertEquals("Node 1 is expected to become active", 0, active1Latch.getCount());
-
-        controller1.halt();
-        shutdown1.await(10, TimeUnit.SECONDS);
-        Assert.assertEquals("Controller 1 should have shut down", 0, shutdown1.getCount());
     }
 
-    private ClusterController createController2(int instance, final JournalFactory fact, final AtomicInteger active, final AtomicInteger standby, final AtomicInteger shutdown) throws JournalException {
+    private ClusterController createController2(final JournalWriter writer, int instance, final JournalWriterFactory writerFactory, final JournalReaderFactory readerFactory, final AtomicInteger active, final AtomicInteger standby, final AtomicInteger shutdown) throws JournalException {
         return new ClusterController(
                 new ServerConfig() {{
                     addNode(new ServerNode(4, "localhost:7040"));
@@ -431,10 +474,11 @@ public class ClusterControllerTest extends AbstractTest {
                     setEnableMultiCast(false);
                     setConnectionTimeout(30000);
                 }},
-                fact,
+                writerFactory,
+                readerFactory,
                 instance,
                 new ArrayList<JournalWriter>() {{
-                    add(fact.writer(Quote.class));
+                    add(writer);
                 }},
                 new ClusterStatusListener() {
                     @Override
@@ -455,7 +499,7 @@ public class ClusterControllerTest extends AbstractTest {
         );
     }
 
-    private ClusterController createControllerX(int instance, final JournalFactory fact, final CountDownLatch active, final CountDownLatch standby, final CountDownLatch shutdown) throws JournalException {
+    private ClusterController createControllerX(final JournalWriter writer, int instance, final JournalWriterFactory writerFactory, JournalReaderFactory readerFactory, final CountDownLatch active, final CountDownLatch standby, final CountDownLatch shutdown) throws JournalException {
         return new ClusterController(
                 new ServerConfig() {{
                     addNode(new ServerNode(0, "localhost:7080"));
@@ -466,10 +510,11 @@ public class ClusterControllerTest extends AbstractTest {
                 new ClientConfig() {{
                     setEnableMultiCast(false);
                 }},
-                fact,
+                writerFactory,
+                readerFactory,
                 instance,
                 new ArrayList<JournalWriter>() {{
-                    add(fact.writer(Quote.class));
+                    add(writer);
                 }},
                 new ClusterStatusListener() {
                     @Override

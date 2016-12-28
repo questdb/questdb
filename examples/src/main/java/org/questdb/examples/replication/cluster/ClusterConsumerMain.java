@@ -27,7 +27,9 @@ import com.questdb.Journal;
 import com.questdb.JournalIterators;
 import com.questdb.JournalKey;
 import com.questdb.PartitionBy;
-import com.questdb.factory.JournalFactory;
+import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.WriterFactory;
+import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalClient;
 import com.questdb.net.ha.config.ClientConfig;
@@ -37,17 +39,20 @@ import org.questdb.examples.support.Price;
 public class ClusterConsumerMain {
     public static void main(String[] args) throws Exception {
 
-        final JournalFactory factory = new JournalFactory(new JournalConfigurationBuilder() {{
+        final JournalConfiguration configuration = new JournalConfigurationBuilder() {{
             $(Price.class).$ts();
-        }}.build(args[0]));
+        }}.build(args[0]);
+
+        final WriterFactory writerFactory = new WriterFactory(configuration);
+        final ReaderFactory readerFactory = new ReaderFactory(configuration);
 
         final JournalClient client = new JournalClient(new ClientConfig("127.0.0.1:7080,127.0.0.1:7090") {{
             getReconnectPolicy().setRetryCount(6);
             getReconnectPolicy().setSleepBetweenRetriesMillis(1);
             getReconnectPolicy().setLoginRetryCount(2);
-        }}, factory);
+        }}, writerFactory);
 
-        final Journal<Price> reader = factory.bulkReader(new JournalKey<>(Price.class, "price-copy", PartitionBy.NONE, 1000000000));
+        final Journal<Price> reader = readerFactory.bulkReader(new JournalKey<>(Price.class, "price-copy", PartitionBy.NONE, 1000000000));
 
         client.subscribe(Price.class, null, "price-copy", 1000000000, new JournalListener() {
             @Override

@@ -86,18 +86,19 @@ public class MulticastTest extends AbstractTest {
         JournalServer server = new JournalServer(new ServerConfig() {{
             addNode(new ServerNode(0, "[0:0:0:0:0:0:0:0]"));
             setHeartbeatFrequency(100);
-        }}, factory, null, 0);
-        JournalClient client = new JournalClient(new ClientConfig(), factory);
+        }}, getReaderFactory(), null, 0);
+        JournalClient client = new JournalClient(new ClientConfig(), getWriterFactory());
 
 
-        JournalWriter<Quote> remote = factory.writer(Quote.class, "remote");
-        server.start();
-        client.start();
+        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+            server.start();
+            client.start();
 
-        client.halt();
-        server.halt();
-        Journal<Quote> local = factory.reader(Quote.class, "local");
-        TestUtils.assertDataEquals(remote, local);
+            client.halt();
+            server.halt();
+            Journal<Quote> local = getReaderFactory().reader(Quote.class, "local");
+            TestUtils.assertDataEquals(remote, local);
+        }
     }
 
     @Test

@@ -43,80 +43,81 @@ public class DataLossTest extends AbstractTest {
     public void testDiscardFile() throws Exception {
 
         // create master journal
-        JournalWriter<Quote> master = factory.writer(Quote.class, "master");
-        TestUtils.generateQuoteData(master, 300, master.getMaxTimestamp());
-        master.commit();
+        try (JournalWriter<Quote> master = getWriterFactory().writer(Quote.class, "master")) {
+            TestUtils.generateQuoteData(master, 300, master.getMaxTimestamp());
+            master.commit();
 
-        // publish master out
-        JournalServer server = new JournalServer(
-                new ServerConfig() {{
-                    addNode(new ServerNode(0, "localhost"));
-                    setEnableMultiCast(false);
-                    setHeartbeatFrequency(50);
-                }}
-                , factory);
-        server.publish(master);
-        server.start();
+            // publish master out
+            JournalServer server = new JournalServer(
+                    new ServerConfig() {{
+                        addNode(new ServerNode(0, "localhost"));
+                        setEnableMultiCast(false);
+                        setHeartbeatFrequency(50);
+                    }}
+                    , getReaderFactory());
+            server.publish(master);
+            server.start();
 
-        final AtomicInteger counter = new AtomicInteger();
-        final AtomicInteger doNotExpect = new AtomicInteger();
+            final AtomicInteger counter = new AtomicInteger();
+            final AtomicInteger doNotExpect = new AtomicInteger();
 
-        // equalize slave
-        JournalClient client = new JournalClient(new ClientConfig("localhost") {{
-            setEnableMultiCast(false);
-        }}, factory);
-        client.subscribe(Quote.class, "master", "slave", new JournalListener() {
-            @Override
-            public void onCommit() {
-                counter.incrementAndGet();
+            // equalize slave
+            JournalClient client = new JournalClient(new ClientConfig("localhost") {{
+                setEnableMultiCast(false);
+            }}, getWriterFactory());
+            client.subscribe(Quote.class, "master", "slave", new JournalListener() {
+                @Override
+                public void onCommit() {
+                    counter.incrementAndGet();
+                }
+
+                @Override
+                public void onEvent(int event) {
+
+                }
+            });
+            client.start();
+
+            TestUtils.assertCounter(counter, 1, 10, TimeUnit.SECONDS);
+
+            // stop client to be able to add to slave manually
+            client.halt();
+
+            System.out.println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+
+            // add more data to slave
+            try (JournalWriter<Quote> slave = getWriterFactory().writer(Quote.class, "slave")) {
+                TestUtils.generateQuoteData(slave, 200, slave.getMaxTimestamp());
+                slave.commit();
             }
 
-            @Override
-            public void onEvent(int event) {
+            // synchronise slave again
+            client = new JournalClient(new ClientConfig("localhost"), getWriterFactory());
+            client.subscribe(Quote.class, "master", "slave", new JournalListener() {
+                @Override
+                public void onCommit() {
+                    doNotExpect.incrementAndGet();
+                }
 
-            }
-        });
-        client.start();
+                @Override
+                public void onEvent(int event) {
+                    counter.incrementAndGet();
+                }
+            });
+            client.start();
 
-        TestUtils.assertCounter(counter, 1, 10, TimeUnit.SECONDS);
+            TestUtils.assertCounter(counter, 2, 180, TimeUnit.SECONDS);
+            client.halt();
 
-        // stop client to be able to add to slave manually
-        client.halt();
+            Assert.assertEquals(0, doNotExpect.get());
 
-        System.out.println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+            // assert that slave journal is closed
 
-        // add more data to slave
-        JournalWriter<Quote> slave = factory.writer(Quote.class, "slave");
-        TestUtils.generateQuoteData(slave, 200, slave.getMaxTimestamp());
-        slave.commit();
-        slave.close();
-
-        // synchronise slave again
-        client = new JournalClient(new ClientConfig("localhost"), factory);
-        client.subscribe(Quote.class, "master", "slave", new JournalListener() {
-            @Override
-            public void onCommit() {
-                doNotExpect.incrementAndGet();
+            try (JournalWriter w = getWriterFactory().writer(Quote.class, "slave")) {
+                Assert.assertNotNull(w);
             }
 
-            @Override
-            public void onEvent(int event) {
-                counter.incrementAndGet();
-            }
-        });
-        client.start();
-
-        TestUtils.assertCounter(counter, 2, 180, TimeUnit.SECONDS);
-        client.halt();
-
-        Assert.assertEquals(0, doNotExpect.get());
-
-        // assert that slave journal is closed
-
-        JournalWriter w = factory.writer(Quote.class, "slave");
-        Assert.assertNotNull(w);
-        w.close();
-
-        server.halt();
+            server.halt();
+        }
     }
 }

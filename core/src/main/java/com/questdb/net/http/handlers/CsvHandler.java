@@ -26,7 +26,7 @@ package com.questdb.net.http.handlers;
 import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.ex.SlowWritableChannelException;
-import com.questdb.factory.JournalFactoryPool;
+import com.questdb.factory.ReaderFactoryPool;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
@@ -47,14 +47,14 @@ import java.util.concurrent.atomic.AtomicLong;
 import static com.questdb.net.http.handlers.AbstractQueryContext.*;
 
 public class CsvHandler implements ContextHandler {
-    private final JournalFactoryPool factoryPool;
+    private final ReaderFactoryPool factoryPool;
     private final LocalValue<ExportHandlerContext> localContext = new LocalValue<>();
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
     private final ServerConfiguration configuration;
 
 
-    public CsvHandler(JournalFactoryPool factoryPool, ServerConfiguration configuration) {
+    public CsvHandler(ReaderFactoryPool factoryPool, ServerConfiguration configuration) {
         this.factoryPool = factoryPool;
         this.configuration = configuration;
     }

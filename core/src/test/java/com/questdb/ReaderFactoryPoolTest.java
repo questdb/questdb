@@ -25,8 +25,8 @@ package com.questdb;
 
 
 import com.questdb.ex.JournalException;
-import com.questdb.factory.JournalFactoryPool;
 import com.questdb.factory.JournalReaderFactory;
+import com.questdb.factory.ReaderFactoryPool;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.misc.Files;
 import com.questdb.model.Quote;
@@ -39,13 +39,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 
-public class JournalFactoryPoolTest extends AbstractTest {
+public class ReaderFactoryPoolTest extends AbstractTest {
 
     @Test
     public void testFactoriesCanExceedCapacity() throws Exception {
-        JournalConfiguration configuration = factory.getConfiguration();
+        JournalConfiguration configuration = getReaderFactory().getConfiguration();
         try {
-            final JournalFactoryPool pool = new JournalFactoryPool(configuration, 1);
+            final ReaderFactoryPool pool = new ReaderFactoryPool(configuration, 1);
             JournalReaderFactory factory1 = pool.get();
             JournalReaderFactory factory2 = pool.get();
 
@@ -67,9 +67,9 @@ public class JournalFactoryPoolTest extends AbstractTest {
 
     @Test
     public void testFactoriesReused() throws Exception {
-        JournalConfiguration configuration = factory.getConfiguration();
+        JournalConfiguration configuration = getReaderFactory().getConfiguration();
         try {
-            final JournalFactoryPool pool = new JournalFactoryPool(configuration, 2);
+            final ReaderFactoryPool pool = new ReaderFactoryPool(configuration, 2);
             JournalReaderFactory factory = pool.get();
             factory.close();
             factory = pool.get();
@@ -85,50 +85,50 @@ public class JournalFactoryPoolTest extends AbstractTest {
 
     @Test
     public void testNonPartitionedReads() throws Exception {
-        JournalConfiguration configuration = factory.getConfiguration();
+        JournalConfiguration configuration = getReaderFactory().getConfiguration();
         try {
-            final JournalFactoryPool pool = new JournalFactoryPool(configuration, 10);
-            final int threadCount = 5;
-            final int recordCount = 1000;
+            try (final ReaderFactoryPool pool = new ReaderFactoryPool(configuration, 10)) {
+                final int threadCount = 5;
+                final int recordCount = 1000;
 
-            JournalWriter<Quote> w = factory.writer(Quote.class);
-            TestUtils.generateQuoteData(w, recordCount);
-            w.close();
+                try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+                    TestUtils.generateQuoteData(w, recordCount);
+                }
 
-            ExecutorService service = Executors.newCachedThreadPool();
+                ExecutorService service = Executors.newCachedThreadPool();
 
-            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-            final CountDownLatch latch = new CountDownLatch(threadCount);
+                final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                final CountDownLatch latch = new CountDownLatch(threadCount);
 
-            final List<Exception> exceptions = new ArrayList<>();
+                final List<Exception> exceptions = new ArrayList<>();
 
-            for (int i = 0; i < threadCount; i++) {
-                service.submit(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            barrier.await();
-                            for (int k = 0; k < 10; k++) {
-                                try (JournalReaderFactory rf = pool.get()) {
-                                    try (Journal<Quote> r = rf.reader(Quote.class)) {
-                                        Assert.assertEquals(recordCount, r.query().all().asResultSet().read().length);
+                for (int i = 0; i < threadCount; i++) {
+                    service.submit(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                barrier.await();
+                                for (int k = 0; k < 10; k++) {
+                                    try (JournalReaderFactory rf = pool.get()) {
+                                        try (Journal<Quote> r = rf.reader(Quote.class)) {
+                                            Assert.assertEquals(recordCount, r.query().all().asResultSet().read().length);
+                                        }
+                                    } catch (InterruptedException | JournalException e) {
+                                        exceptions.add(e);
+                                        break;
                                     }
-                                } catch (InterruptedException | JournalException e) {
-                                    exceptions.add(e);
-                                    break;
                                 }
+                                latch.countDown();
+                            } catch (InterruptedException | BrokenBarrierException e) {
+                                exceptions.add(e);
                             }
-                            latch.countDown();
-                        } catch (InterruptedException | BrokenBarrierException e) {
-                            exceptions.add(e);
                         }
-                    }
-                });
-            }
+                    });
+                }
 
-            latch.await();
-            Assert.assertEquals(0, exceptions.size());
-            pool.close();
+                latch.await();
+                Assert.assertEquals(0, exceptions.size());
+            }
         } finally {
             Files.delete(configuration.getJournalBase());
         }
@@ -136,9 +136,9 @@ public class JournalFactoryPoolTest extends AbstractTest {
 
     @Test
     public void testPoolReuseDoesNotCreateNew() throws Exception {
-        JournalConfiguration configuration = factory.getConfiguration();
+        JournalConfiguration configuration = getReaderFactory().getConfiguration();
         try {
-            final JournalFactoryPool pool = new JournalFactoryPool(configuration, 10);
+            final ReaderFactoryPool pool = new ReaderFactoryPool(configuration, 10);
             pool.get().close();
             pool.get().close();
             pool.get().close();
@@ -154,10 +154,10 @@ public class JournalFactoryPoolTest extends AbstractTest {
 
     @Test
     public void testPoolTumbleDry() throws Exception {
-        JournalConfiguration configuration = factory.getConfiguration();
+        JournalConfiguration configuration = getReaderFactory().getConfiguration();
         try {
             final int capacity = 10;
-            final JournalFactoryPool pool = new JournalFactoryPool(configuration, capacity);
+            final ReaderFactoryPool pool = new ReaderFactoryPool(configuration, capacity);
             final ExecutorService es = Executors.newCachedThreadPool();
 
             for (int k = 0; k < capacity; k++) {
@@ -192,9 +192,9 @@ public class JournalFactoryPoolTest extends AbstractTest {
 
     @Test(expected = InterruptedException.class)
     public void testThrowsAfterPoolClosed() throws Exception {
-        JournalConfiguration configuration = factory.getConfiguration();
+        JournalConfiguration configuration = getReaderFactory().getConfiguration();
         try {
-            final JournalFactoryPool pool = new JournalFactoryPool(configuration, 1);
+            final ReaderFactoryPool pool = new ReaderFactoryPool(configuration, 1);
             pool.close();
             pool.get();
         } finally {

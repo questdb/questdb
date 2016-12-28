@@ -23,10 +23,8 @@
 
 package com.questdb;
 
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
-import com.questdb.misc.Files;
 import com.questdb.model.SubQuote;
-import com.questdb.test.tools.JournalTestFactory;
+import com.questdb.test.tools.TheFactory;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -34,22 +32,23 @@ import org.junit.Test;
 public class SubclassTest {
 
     @Rule
-    public final JournalTestFactory factory = new JournalTestFactory(new JournalConfigurationBuilder().build(Files.makeTempDir()));
+    public final TheFactory theFactory = new TheFactory();
 
     @Test
     public void testSubclass() throws Exception {
 
-        JournalWriter<SubQuote> w = factory.writer(SubQuote.class);
+        try (JournalWriter<SubQuote> w = theFactory.getWriterFactory().writer(SubQuote.class)) {
 
-        SubQuote q = new SubQuote().setType((byte) 10);
-        q.setTimestamp(System.currentTimeMillis());
-        q.setSym("ABC");
+            SubQuote q = new SubQuote().setType((byte) 10);
+            q.setTimestamp(System.currentTimeMillis());
+            q.setSym("ABC");
 
-        w.append(q);
+            w.append(q);
 
-        SubQuote q2 = w.read(0);
-        Assert.assertEquals(q.getSym(), q2.getSym());
-        Assert.assertEquals(q.getTimestamp(), q2.getTimestamp());
-        Assert.assertEquals(q.getType(), q2.getType());
+            SubQuote q2 = w.read(0);
+            Assert.assertEquals(q.getSym(), q2.getSym());
+            Assert.assertEquals(q.getTimestamp(), q2.getTimestamp());
+            Assert.assertEquals(q.getType(), q2.getType());
+        }
     }
 }
