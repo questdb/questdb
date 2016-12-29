@@ -41,6 +41,7 @@ public class TheFactory implements TestRule {
     private ReaderFactoryImpl readerFactory;
     private ReaderFactoryPool readerFactoryPool;
     private CachingReaderFactory cachingReaderFactory;
+    private CachingWriterFactory cachingWriterFactory;
 
     public TheFactory(JournalConfigurationBuilder builder) {
         this.builder = builder;
@@ -57,9 +58,13 @@ public class TheFactory implements TestRule {
             public void evaluate() throws Throwable {
                 Throwable throwable = null;
                 File tmp = Files.makeTempDir();
+
                 writerFactory = null;
                 readerFactory = null;
                 cachingReaderFactory = null;
+                readerFactoryPool = null;
+                cachingWriterFactory = null;
+
                 try {
                     configuration = builder.build(tmp);
                     base.evaluate();
@@ -72,6 +77,10 @@ public class TheFactory implements TestRule {
 
                     if (readerFactoryPool != null) {
                         readerFactoryPool.close();
+                    }
+
+                    if (cachingWriterFactory != null) {
+                        cachingWriterFactory.close();
                     }
 
                     Files.deleteOrException(tmp);
@@ -89,6 +98,13 @@ public class TheFactory implements TestRule {
             cachingReaderFactory = new CachingReaderFactory(configuration);
         }
         return cachingReaderFactory;
+    }
+
+    public CachingWriterFactory getCachingWriterFactory() {
+        if (cachingWriterFactory == null) {
+            cachingWriterFactory = new CachingWriterFactory(configuration, 1000);
+        }
+        return cachingWriterFactory;
     }
 
     public ReaderFactory getReaderFactory() {
