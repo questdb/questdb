@@ -52,7 +52,8 @@ public class ClusterConsumerMain {
             getReconnectPolicy().setLoginRetryCount(2);
         }}, writerFactory);
 
-        final Journal<Price> reader = readerFactory.bulkReader(new JournalKey<>(Price.class, "price-copy", PartitionBy.NONE, 1000000000));
+        final Journal<Price> reader = readerFactory.reader(new JournalKey<>(Price.class, "price-copy", PartitionBy.NONE, 1000000000));
+        reader.setSequentialAccess(true);
 
         client.subscribe(Price.class, null, "price-copy", 1000000000, new JournalListener() {
             @Override

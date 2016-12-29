@@ -49,7 +49,7 @@ public class KvIndexTest extends AbstractTest {
     public void testAppendNullAfterTruncate() throws JournalException {
         int totalKeys = 2;
         int totalValues = 1;
-        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
             for (int i = -1; i < totalKeys; i++) {
                 index.add(i, i);
             }
@@ -70,7 +70,7 @@ public class KvIndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (KVIndex index = new KVIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0, false)) {
             putValues(expected, index);
 
             for (int i = 0; i < expected.length; i++) {
@@ -88,7 +88,7 @@ public class KvIndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (KVIndex index = new KVIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0, false)) {
             putValues(expected, index);
             assertValues(expected, index);
         }
@@ -100,7 +100,7 @@ public class KvIndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (KVIndex index = new KVIndex(indexFile, 10, 200, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, 10, 200, 1, JournalMode.APPEND, 0, false)) {
             putValues(expected, index);
             assertValues(expected, index);
         }
@@ -108,7 +108,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Test
     public void testIndexReadWrite() throws JournalException {
-        KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0);
+        KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false);
         index.add(0, 0);
         index.add(1, 1);
         index.add(1, 2);
@@ -136,7 +136,8 @@ public class KvIndexTest extends AbstractTest {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
-        try (KVIndex index = new KVIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0); KVIndex reader = new KVIndex(indexFile, 10, 60, 1, JournalMode.READ, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, 10, 60, 1, JournalMode.APPEND, 0, false);
+             KVIndex reader = new KVIndex(indexFile, 10, 60, 1, JournalMode.READ, 0, false)) {
             // populate writer
             putValues(expected, index);
 
@@ -174,7 +175,7 @@ public class KvIndexTest extends AbstractTest {
             Assert.assertEquals(11, reader.getValueCount(1));
 
             // open new reader and check if it can see only committed changes
-            try (KVIndex reader2 = new KVIndex(indexFile, 10, 60, 1, JournalMode.READ, reader.getTxAddress())) {
+            try (KVIndex reader2 = new KVIndex(indexFile, 10, 60, 1, JournalMode.READ, reader.getTxAddress(), false)) {
                 Assert.assertEquals(34, reader2.size());
                 Assert.assertTrue(reader2.contains(0));
                 Assert.assertTrue(reader2.contains(1));
@@ -185,7 +186,7 @@ public class KvIndexTest extends AbstractTest {
 
             index.commit();
 
-            try (KVIndex reader2 = new KVIndex(indexFile, 10, 60, 1, JournalMode.READ, index.getTxAddress())) {
+            try (KVIndex reader2 = new KVIndex(indexFile, 10, 60, 1, JournalMode.READ, index.getTxAddress(), false)) {
                 Assert.assertEquals(47, reader2.size());
                 Assert.assertTrue(reader2.contains(0));
                 Assert.assertTrue(reader2.contains(1));
@@ -198,7 +199,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Test
     public void testKeyOutOfBounds() throws JournalException {
-        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
             index.add(0, 0);
             index.add(1, 1);
             index.add(1, 2);
@@ -210,7 +211,7 @@ public class KvIndexTest extends AbstractTest {
     public void testSmallValueArray() throws JournalException {
         int totalKeys = 2;
         int totalValues = 1;
-        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
             for (int i = 0; i < totalKeys; i++) {
                 index.add(i, i);
             }
@@ -225,7 +226,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Test
     public void testTruncateAtTail() throws JournalException {
-        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
             index.add(0, 0);
             index.add(1, 1);
             index.add(1, 2);
@@ -251,7 +252,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Test
     public void testTruncateBeforeStart() throws JournalException {
-        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
             index.add(0, 0);
             index.add(1, 1);
             index.add(1, 2);
@@ -269,7 +270,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Test
     public void testTruncateBeyondTail() throws JournalException {
-        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
             index.add(0, 0);
             index.add(1, 1);
             index.add(1, 2);
@@ -297,7 +298,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Test
     public void testTruncateMiddle() throws JournalException {
-        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
             index.add(0, 0);
             index.add(1, 1);
             index.add(1, 2);
@@ -320,7 +321,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Test(expected = JournalRuntimeException.class)
     public void testValueOutOfBounds() throws JournalException {
-        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
             index.add(0, 0);
             index.add(1, 1);
             index.add(1, 2);

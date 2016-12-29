@@ -85,6 +85,12 @@ public class VariableColumn extends AbstractColumn {
     }
 
     @Override
+    public void setSequentialAccess(boolean sequentialAccess) {
+        super.setSequentialAccess(sequentialAccess);
+        indexColumn.setSequentialAccess(sequentialAccess);
+    }
+
+    @Override
     public long size() {
         return indexColumn.size();
     }

@@ -58,7 +58,7 @@ public class ClusteredProducerMain {
         final WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration);
         final ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(configuration);
 
-        final JournalWriter<Price> writer = writerFactory.bulkWriter(new JournalKey<>(Price.class, 1000000000));
+        final JournalWriter<Price> writer = writerFactory.writer(new JournalKey<>(Price.class, 1000000000));
 
         final WorkerController wc = new WorkerController(writer);
 

@@ -57,8 +57,9 @@ public class Partition<T> implements Closeable {
     private long lastAccessed = System.currentTimeMillis();
     private long txLimit;
     private FixedColumn timestampColumn;
+    private boolean sequentialAccess;
 
-    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses) {
+    Partition(Journal<T> journal, Interval interval, int partitionIndex, long txLimit, long[] indexTxAddresses, boolean sequentialAccess) {
         JournalMetadata<T> meta = journal.getMetadata();
         this.journal = journal;
         this.partitionIndex = partitionIndex;
@@ -70,6 +71,7 @@ public class Partition<T> implements Closeable {
         if (interval != null) {
             setPartitionDir(new File(this.journal.getLocation(), interval.getDirName(meta.getPartitionBy())), indexTxAddresses);
         }
+        this.sequentialAccess = sequentialAccess;
     }
 
     public void applyTx(long txLimit, long[] indexTxAddresses) {
@@ -341,6 +343,22 @@ public class Partition<T> implements Closeable {
         }
     }
 
+    public void setSequentialAccess(boolean sequentialAccess) {
+        this.sequentialAccess = sequentialAccess;
+        if (columns != null) {
+            for (int i = 0, n = columns.length; i < n; i++) {
+                AbstractColumn c = Unsafe.arrayGet(columns, i);
+                if (c != null) {
+                    c.setSequentialAccess(sequentialAccess);
+                }
+            }
+        }
+
+        for (int i = 0, n = indexProxies.size(); i < n; i++) {
+            indexProxies.getQuick(i).setSequentialAccess(sequentialAccess);
+        }
+    }
+
     public long size() {
         if (!isOpen()) {
             throw new JournalRuntimeException("Closed partition: %s", this);
@@ -561,12 +579,12 @@ public class Partition<T> implements Closeable {
                                 new VariableColumn(
                                         new MemoryFile(
                                                 new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".d"),
-                                                Unsafe.arrayGet(columnMetadata, i).bitHint, journal.getMode()
+                                                Unsafe.arrayGet(columnMetadata, i).bitHint, journal.getMode(), sequentialAccess
                                         ),
                                         new MemoryFile(
                                                 new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".i"),
                                                 Unsafe.arrayGet(columnMetadata, i).indexBitHint,
-                                                journal.getMode()
+                                                journal.getMode(), sequentialAccess
                                         )
                                 )
                         );
@@ -577,7 +595,7 @@ public class Partition<T> implements Closeable {
                                         new MemoryFile(
                                                 new File(partitionDir, Unsafe.arrayGet(columnMetadata, i).name + ".d"),
                                                 Unsafe.arrayGet(columnMetadata, i).bitHint,
-                                                journal.getMode()
+                                                journal.getMode(), sequentialAccess
                                         ),
                                         Unsafe.arrayGet(columnMetadata, i).size
                                 )
@@ -648,7 +666,7 @@ public class Partition<T> implements Closeable {
         File base = new File(partitionDir, columnMetadata[columnIndex].name);
         KVIndex.delete(base);
 
-        try (KVIndex index = new KVIndex(base, keyCountHint, recordCountHint, txCountHint, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(base, keyCountHint, recordCountHint, txCountHint, JournalMode.APPEND, 0, sequentialAccess)) {
             FixedColumn col = fixCol(columnIndex);
             for (long localRowID = 0, sz = size(); localRowID < sz; localRowID++) {
                 index.add(col.getInt(localRowID), localRowID);

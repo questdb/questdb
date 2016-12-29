@@ -1433,7 +1433,8 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testJournalRefresh() throws Exception {
         createTabWithNaNs();
         assertThat("10000\n", "select count() from tab");
-        try (JournalWriter w = getWriterFactory().bulkWriter("tab")) {
+        try (JournalWriter w = getWriterFactory().writer("tab")) {
+            w.setSequentialAccess(true);
             appendNaNs(w, Dates.parseDateTime("2015-10-12T00:00:00.000Z"));
         }
         assertThat("20000\n", "select count() from tab");

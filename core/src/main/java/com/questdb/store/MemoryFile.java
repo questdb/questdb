@@ -58,8 +58,9 @@ public class MemoryFile implements Closeable {
     private long cachedPointer;
     private long offsetDirectAddr;
     private boolean unlockedBuffers = true;
+    private boolean sequentialAccess;
 
-    public MemoryFile(File file, int bitHint, int journalMode) throws JournalException {
+    public MemoryFile(File file, int bitHint, int journalMode, boolean sequentialAccess) throws JournalException {
         this.file = file;
         this.journalMode = journalMode;
         if (bitHint < 2) {
@@ -69,6 +70,7 @@ public class MemoryFile implements Closeable {
         long size = open();
         this.buffers = new ObjList<>((int) (size >>> this.bitHint) + 1);
         this.stitches = new ObjList<>(buffers.size());
+        this.sequentialAccess = sequentialAccess;
     }
 
     public long addressOf(long offset, int size) {
@@ -128,7 +130,7 @@ public class MemoryFile implements Closeable {
     }
 
     public long getAppendOffset() {
-        if (cachedAppendOffset != -1 && (journalMode == JournalMode.APPEND || journalMode == JournalMode.BULK_APPEND)) {
+        if (cachedAppendOffset != -1 && journalMode == JournalMode.APPEND) {
             return cachedAppendOffset;
         } else {
             if (offsetBuffer != null) {
@@ -142,11 +144,11 @@ public class MemoryFile implements Closeable {
         Unsafe.getUnsafe().putLong(offsetDirectAddr, cachedAppendOffset = offset);
     }
 
-    public MappedByteBuffer getBuffer(long offset, int size) {
-        if (offset > cachedBufferLo && offset + size < cachedBufferHi) {
+    public MappedByteBuffer getBuffer(long offset) {
+        if (offset > cachedBufferLo && offset + 1 < cachedBufferHi) {
             cachedBuffer.position((int) (offset - cachedBufferLo - 1));
         } else {
-            cachedBuffer = getBufferInternal(offset, size);
+            cachedBuffer = getBufferInternal(offset, 1);
             cachedBufferLo = offset - cachedBuffer.position() - 1;
             cachedBufferHi = cachedBufferLo + cachedBuffer.limit() + 2;
             cachedAddress = ByteBuffers.getAddress(cachedBuffer);
@@ -157,6 +159,10 @@ public class MemoryFile implements Closeable {
 
     public void lockBuffers() {
         unlockedBuffers = false;
+    }
+
+    public void setSequentialAccess(boolean sequentialAccess) {
+        this.sequentialAccess = sequentialAccess;
     }
 
     @Override
@@ -183,25 +189,8 @@ public class MemoryFile implements Closeable {
         buffer = mapBufferInternal(bufferOffset, bufferSize);
         assert bufferSize > 0;
         buffers.extendAndSet(index, buffer);
-        if (unlockedBuffers) {
-            switch (journalMode) {
-                case JournalMode.BULK_READ:
-                case JournalMode.BULK_APPEND:
-                    // for bulk operations unmap all buffers except for current one
-                    // this is to prevent OS paging large files.
-                    cachedBuffer = null;
-                    cachedBufferLo = cachedBufferHi = -1;
-                    int ssz = stitches.size();
-                    for (int i = index - 1; i > -1; i--) {
-                        ByteBuffers.release(buffers.getAndSetQuick(i, null));
-                        if (i < ssz) {
-                            Misc.free(stitches.getAndSetQuick(i, null));
-                        }
-                    }
-                    break;
-                default:
-                    break;
-            }
+        if (unlockedBuffers && sequentialAccess) {
+            releasePrevBuffers(index);
         }
         return buffer;
     }
@@ -267,7 +256,6 @@ public class MemoryFile implements Closeable {
             MappedByteBuffer buf;
             switch (journalMode) {
                 case JournalMode.READ:
-                case JournalMode.BULK_READ:
                     // make sure size does not extend beyond actual file size, otherwise
                     // java would assume we want to write and throw an exception
                     long sz;
@@ -291,17 +279,7 @@ public class MemoryFile implements Closeable {
     }
 
     private long open() throws JournalException {
-        String m;
-        switch (journalMode) {
-            case JournalMode.READ:
-            case JournalMode.BULK_READ:
-                m = "r";
-                break;
-            default:
-                m = "rw";
-                break;
-        }
-        return openInternal(m);
+        return openInternal(journalMode == JournalMode.READ ? "r" : "rw");
     }
 
     private long openInternal(String mode) throws JournalException {
@@ -371,6 +349,25 @@ public class MemoryFile implements Closeable {
             return (int) (cachedBufferHi - offset - 1);
         } else {
             return 0;
+        }
+    }
+
+    private void releasePrevBuffers(int index) {
+        // for bulk operations unmap all buffers except for current one
+        // this is to prevent OS paging large files.
+        cachedBuffer = null;
+        cachedBufferLo = cachedBufferHi = -1;
+        int ssz = stitches.size();
+        for (int i = index - 1; i > -1; i--) {
+            MappedByteBuffer mb = buffers.getQuick(i);
+            if (mb == null) {
+                break;
+            }
+            buffers.setQuick(i, ByteBuffers.release(mb));
+
+            if (i < ssz) {
+                Misc.free(stitches.getAndSetQuick(i, null));
+            }
         }
     }
 

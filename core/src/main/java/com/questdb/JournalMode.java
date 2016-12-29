@@ -25,9 +25,7 @@ package com.questdb;
 
 public final class JournalMode {
     public static final int READ = 0;
-    public static final int BULK_READ = 1;
     public static final int APPEND = 2;
-    public static final int BULK_APPEND = 4;
 
     private JournalMode() {
     }

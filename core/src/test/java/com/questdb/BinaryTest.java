@@ -65,7 +65,7 @@ public class BinaryTest extends AbstractTest {
     @Test
     public void testBinaryPerformance() throws Exception {
 
-        try (JournalWriter<Band> writer = getWriterFactory().bulkWriter(Band.class)) {
+        try (JournalWriter<Band> writer = getWriterFactory().writer(Band.class)) {
             final int count = 20000;
             Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
 

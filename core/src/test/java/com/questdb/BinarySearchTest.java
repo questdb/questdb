@@ -38,7 +38,7 @@ public class BinarySearchTest {
 
     @Before
     public void setUp() throws Exception {
-        column = new FixedColumn(new MemoryFile(temp.newFile(), 16, JournalMode.APPEND), 8);
+        column = new FixedColumn(new MemoryFile(temp.newFile(), 16, JournalMode.APPEND, false), 8);
     }
 
     @After

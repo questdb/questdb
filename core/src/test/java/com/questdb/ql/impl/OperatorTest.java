@@ -46,7 +46,7 @@ public class OperatorTest extends AbstractOptimiserTest {
         // measuring query allocations and de-allocations
         getWriterFactory().getConfiguration().exists("");
 
-        try (JournalWriter w = getWriterFactory().bulkWriter(new JournalStructure("abc")
+        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("abc")
                 .$int("i")
                 .$double("d")
                 .$float("f")

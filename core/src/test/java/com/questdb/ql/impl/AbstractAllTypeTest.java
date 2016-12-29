@@ -41,7 +41,7 @@ public abstract class AbstractAllTypeTest extends AbstractOptimiserTest {
         // measuring query allocations and de-allocations
         getWriterFactory().getConfiguration().exists("");
 
-        try (JournalWriter w = getWriterFactory().bulkWriter(new JournalStructure("xyz")
+        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("xyz")
                 .$int("i")
                 .$str("str")
                 .$ts()
@@ -61,7 +61,7 @@ public abstract class AbstractAllTypeTest extends AbstractOptimiserTest {
         }
 
 
-        try (JournalWriter w = getWriterFactory().bulkWriter(new JournalStructure("abc")
+        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("abc")
                 .$int("i")
                 .$double("d")
                 .$float("f")

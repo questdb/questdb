@@ -23,7 +23,6 @@
 
 package com.questdb.factory;
 
-import com.questdb.JournalBulkWriter;
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
@@ -40,41 +39,6 @@ public class WriterFactoryImpl extends AbstractFactory implements WriterFactory 
 
     public WriterFactoryImpl(JournalConfiguration configuration) {
         super(configuration);
-    }
-
-    @Override
-    public <T> JournalWriter<T> bulkWriter(Class<T> clazz) throws JournalException {
-        return bulkWriter(new JournalKey<>(clazz));
-    }
-
-    @Override
-    public <T> JournalWriter<T> bulkWriter(Class<T> clazz, String location) throws JournalException {
-        return bulkWriter(new JournalKey<>(clazz, location));
-    }
-
-    @Override
-    public <T> JournalWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException {
-        return bulkWriter(new JournalKey<>(clazz, location, PartitionBy.DEFAULT, recordHint));
-    }
-
-    @Override
-    public <T> JournalWriter<T> bulkWriter(JournalKey<T> key) throws JournalException {
-        return bulkWriter(getConfiguration().createMetadata(key));
-    }
-
-    @Override
-    public <T> JournalWriter<T> bulkWriter(MetadataBuilder<T> builder) throws JournalException {
-        return bulkWriter(getConfiguration().buildWithRootLocation(builder));
-    }
-
-    @Override
-    public <T> JournalWriter<T> bulkWriter(JournalMetadata<T> metadata) throws JournalException {
-        return new JournalBulkWriter<>(metadata);
-    }
-
-    @Override
-    public JournalWriter bulkWriter(String location) throws JournalException {
-        return bulkWriter(new JournalKey<>(location));
     }
 
     @Override

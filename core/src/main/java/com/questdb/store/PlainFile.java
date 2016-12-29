@@ -51,6 +51,7 @@ public class PlainFile implements Closeable {
     private long cachedBufferLo = -1;
     private long cachedBufferHi = -1;
     private long cachedAddress;
+    private boolean sequentialAccess = true;
 
     public PlainFile(File file, int bitHint, int journalMode) throws IOException {
         this.file = file;
@@ -93,6 +94,14 @@ public class PlainFile implements Closeable {
         Files.delete(file);
     }
 
+    public boolean isSequentialAccess() {
+        return sequentialAccess;
+    }
+
+    public void setSequentialAccess(boolean sequentialAccess) {
+        this.sequentialAccess = sequentialAccess;
+    }
+
     public int pageRemaining(long offset) {
         if (offset > cachedBufferLo && offset < cachedBufferHi) {
             return (int) (cachedBufferHi - offset - 1);
@@ -127,18 +136,15 @@ public class PlainFile implements Closeable {
             buffer = mapBufferInternal(bufferOffset, bufferSize);
             assert bufferSize > 0;
             buffers.extendAndSet(index, buffer);
-            switch (journalMode) {
-                case JournalMode.BULK_READ:
-                case JournalMode.BULK_APPEND:
-                    // for bulk operations unmap all buffers except for current one
-                    // this is to prevent OS paging large files.
-                    cachedBufferLo = cachedBufferHi = -1;
-                    for (int i = index - 1; i > -1; i--) {
-                        ByteBuffers.release(buffers.getAndSetQuick(i, null));
+            if (sequentialAccess) {
+                cachedBufferLo = cachedBufferHi = -1;
+                for (int i = index - 1; i > -1; i--) {
+                    MappedByteBuffer mbb = buffers.getQuick(i);
+                    if (mbb == null) {
+                        break;
                     }
-                    break;
-                default:
-                    break;
+                    buffers.setQuick(i, ByteBuffers.release(mbb));
+                }
             }
         }
         buffer.position(bufferPos);
@@ -151,7 +157,6 @@ public class PlainFile implements Closeable {
             MappedByteBuffer buf;
             switch (journalMode) {
                 case JournalMode.READ:
-                case JournalMode.BULK_READ:
                     // make sure size does not extend beyond actual file size, otherwise
                     // java would assume we want to write and throw an exception
                     long sz;
@@ -175,17 +180,7 @@ public class PlainFile implements Closeable {
     }
 
     private void open() throws IOException {
-        String m;
-        switch (journalMode) {
-            case JournalMode.READ:
-            case JournalMode.BULK_READ:
-                m = "r";
-                break;
-            default:
-                m = "rw";
-                break;
-        }
-        openInternal(m);
+        openInternal(journalMode == JournalMode.READ ? "r" : "rw");
     }
 
     private void openInternal(String mode) throws IOException {

@@ -55,12 +55,12 @@ public class VariableColumnTest {
 
     @Before
     public void setUp() throws JournalException {
-        file = new MemoryFile(new File(temporaryFolder.getRoot(), "col.d"), 22, JournalMode.APPEND);
+        file = new MemoryFile(new File(temporaryFolder.getRoot(), "col.d"), 22, JournalMode.APPEND, false);
         // it is important to keep bit hint small, so that file2 has small buffers. This would made test go via both pathways.
         // large number will result in tests not covering all of execution path.
-        file2 = new MemoryFile(new File(temporaryFolder.getRoot(), "col2.d"), 18, JournalMode.APPEND);
-        indexFile = new MemoryFile(new File(temporaryFolder.getRoot(), "col.i"), 22, JournalMode.APPEND);
-        indexFile2 = new MemoryFile(new File(temporaryFolder.getRoot(), "col2.i"), 18, JournalMode.APPEND);
+        file2 = new MemoryFile(new File(temporaryFolder.getRoot(), "col2.d"), 18, JournalMode.APPEND, false);
+        indexFile = new MemoryFile(new File(temporaryFolder.getRoot(), "col.i"), 22, JournalMode.APPEND, false);
+        indexFile2 = new MemoryFile(new File(temporaryFolder.getRoot(), "col2.i"), 18, JournalMode.APPEND, false);
     }
 
     @Test
@@ -74,7 +74,7 @@ public class VariableColumnTest {
         try {
             Rnd rnd = new Rnd();
 
-            try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), 8, JournalMode.APPEND)) {
+            try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), 8, JournalMode.APPEND, false)) {
                 try (VariableColumn col = new VariableColumn(smallFile, indexFile)) {
 
                     for (int i = 0; i < N; i++) {
@@ -116,7 +116,7 @@ public class VariableColumnTest {
     @Test
     public void testCopyBinaryColumnData() throws Exception {
         int bitHint = 8;
-        try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
+        try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND, false)) {
             VariableColumn col1 = new VariableColumn(smallFile, indexFile);
 
             int max = (int) Math.pow(2, bitHint) * 10 + 1;
@@ -147,7 +147,7 @@ public class VariableColumnTest {
     @Test
     public void testReadBinaryColumnData() throws Exception {
         int bitHint = 8;
-        try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND)) {
+        try (MemoryFile smallFile = new MemoryFile(new File(temporaryFolder.getRoot(), "small.d"), bitHint, JournalMode.APPEND, false)) {
             VariableColumn col1 = new VariableColumn(smallFile, indexFile);
 
             int max = (int) Math.pow(2, bitHint) * 10 + 1;

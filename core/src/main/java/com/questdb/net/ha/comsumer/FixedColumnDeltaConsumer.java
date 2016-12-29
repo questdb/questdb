@@ -61,7 +61,7 @@ public class FixedColumnDeltaConsumer extends AbstractChannelConsumer {
         targetOffset = offset + Unsafe.getUnsafe().getInt(headerAddress);
 
         while (offset < targetOffset) {
-            int sz = ByteBuffers.copy(channel, column.getBuffer(offset, 1), targetOffset - offset);
+            int sz = ByteBuffers.copy(channel, column.getBuffer(offset), targetOffset - offset);
             // using non-blocking IO it should be possible not to read anything
             // we need to give up here and let the rest of execution continue
             if (sz == 0) {

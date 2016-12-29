@@ -119,7 +119,7 @@ public class PerformanceTest extends AbstractTest {
         File indexFile = new File(getReaderFactory().getConfiguration().getJournalBase(), "index-test");
         int totalKeys = 30000;
         int totalValues = 20000000;
-        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
             long valuesPerKey = totalValues / totalKeys;
 
             long t = System.nanoTime();

@@ -33,6 +33,6 @@ public class JournalBulkWriter<T> extends JournalWriter<T> {
 
     @Override
     public int getMode() {
-        return JournalMode.BULK_APPEND;
+        return JournalMode.APPEND;
     }
 }

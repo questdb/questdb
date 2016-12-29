@@ -50,7 +50,7 @@ public class IntLongPriorityQueueTest extends AbstractTest {
         final int nStreams = 16;
         Rnd rnd = new Rnd();
         int totalLen = 0;
-        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0)) {
+        try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
             for (int i = 0; i < nStreams; i++) {
                 long values[] = new long[rnd.nextPositiveInt() % 1000];
                 totalLen += values.length;

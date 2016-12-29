@@ -23,7 +23,10 @@
 
 package com.questdb.factory;
 
-import com.questdb.*;
+import com.questdb.Journal;
+import com.questdb.JournalKey;
+import com.questdb.JournalWriter;
+import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
@@ -38,26 +41,6 @@ public class ReaderFactoryImpl extends AbstractFactory implements ReaderFactory 
 
     public ReaderFactoryImpl(JournalConfiguration configuration) {
         super(configuration);
-    }
-
-    @Override
-    public <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException {
-        return bulkReader(new JournalKey<>(clazz, location));
-    }
-
-    @Override
-    public <T> JournalBulkReader<T> bulkReader(Class<T> clazz) throws JournalException {
-        return bulkReader(new JournalKey<>(clazz));
-    }
-
-    @Override
-    public JournalBulkReader bulkReader(String location) throws JournalException {
-        return bulkReader(new JournalKey<>(location));
-    }
-
-    @Override
-    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        return new JournalBulkReader<>(getOrCreateMetadata(key));
     }
 
     public <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {

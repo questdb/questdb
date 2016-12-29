@@ -33,7 +33,7 @@ public class UnstructuredFile extends MemoryFile {
     private long pos = 0;
 
     public UnstructuredFile(File file, int bitHint, int journalMode) throws JournalException {
-        super(file, bitHint, journalMode);
+        super(file, bitHint, journalMode, false);
     }
 
     public int[] get(int[] container) {

@@ -54,8 +54,8 @@ public abstract class AbstractColumn implements Closeable {
         mappedFile.force();
     }
 
-    public ByteBuffer getBuffer(long offset, int size) {
-        return mappedFile.getBuffer(offset, size);
+    public ByteBuffer getBuffer(long offset) {
+        return mappedFile.getBuffer(offset);
     }
 
     public long getOffset() {
@@ -66,6 +66,10 @@ public abstract class AbstractColumn implements Closeable {
 
     public void preCommit(long appendOffset) {
         txAppendOffset = appendOffset;
+    }
+
+    public void setSequentialAccess(boolean sequentialAccess) {
+        mappedFile.setSequentialAccess(sequentialAccess);
     }
 
     public abstract long size();

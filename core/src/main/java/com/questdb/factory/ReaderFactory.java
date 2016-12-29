@@ -24,7 +24,6 @@
 package com.questdb.factory;
 
 import com.questdb.Journal;
-import com.questdb.JournalBulkReader;
 import com.questdb.JournalKey;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
@@ -33,14 +32,6 @@ import com.questdb.factory.configuration.JournalMetadata;
 import java.io.Closeable;
 
 public interface ReaderFactory extends Closeable {
-
-    <T> JournalBulkReader<T> bulkReader(Class<T> clazz, String location) throws JournalException;
-
-    <T> JournalBulkReader<T> bulkReader(Class<T> clazz) throws JournalException;
-
-    JournalBulkReader bulkReader(String location) throws JournalException;
-
-    <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException;
 
     void close();
 

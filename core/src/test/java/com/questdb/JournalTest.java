@@ -81,7 +81,8 @@ public class JournalTest extends AbstractTest {
             Assert.assertEquals(0, r.size());
         }
 
-        try (Journal<Quote> r = getReaderFactory().bulkReader(Quote.class, "brand-new2")) {
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class, "brand-new2")) {
+            r.setSequentialAccess(true);
             Assert.assertEquals(0, r.size());
         }
     }

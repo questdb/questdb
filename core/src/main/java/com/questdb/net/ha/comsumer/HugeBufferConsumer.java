@@ -66,7 +66,7 @@ public class HugeBufferConsumer implements ChannelConsumer, Closeable {
 
             long pos = 0;
             while (pos < target) {
-                pos += ByteBuffers.copy(channel, hb.getBuffer(pos, 1), target - pos);
+                pos += ByteBuffers.copy(channel, hb.getBuffer(pos), target - pos);
             }
         } catch (IOException e) {
             throw new JournalNetworkException(e);

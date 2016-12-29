@@ -32,20 +32,6 @@ import com.questdb.factory.configuration.MetadataBuilder;
 
 public interface WriterFactory {
 
-    <T> JournalWriter<T> bulkWriter(Class<T> clazz) throws JournalException;
-
-    <T> JournalWriter<T> bulkWriter(Class<T> clazz, String location) throws JournalException;
-
-    <T> JournalWriter<T> bulkWriter(Class<T> clazz, String location, int recordHint) throws JournalException;
-
-    <T> JournalWriter<T> bulkWriter(JournalKey<T> key) throws JournalException;
-
-    <T> JournalWriter<T> bulkWriter(MetadataBuilder<T> builder) throws JournalException;
-
-    <T> JournalWriter<T> bulkWriter(JournalMetadata<T> metadata) throws JournalException;
-
-    JournalWriter bulkWriter(String location) throws JournalException;
-
     JournalConfiguration getConfiguration();
 
     <T> JournalWriter<T> writer(Class<T> clazz) throws JournalException;

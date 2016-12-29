@@ -23,7 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.JournalMode;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalInvalidSymbolValueException;
 import com.questdb.ex.JournalRuntimeException;
@@ -55,30 +54,27 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
     private int size;
     private boolean open = true;
 
-    public MMappedSymbolTable(int keyCount, int avgStringSize, int txCountHint, File directory, String column, int journalMode, int size, long indexTxAddress, boolean noCache) throws JournalException {
+    public MMappedSymbolTable(
+            int keyCount,
+            int avgStringSize,
+            int txCountHint,
+            File directory,
+            String column,
+            int journalMode,
+            int size,
+            long indexTxAddress,
+            boolean noCache,
+            boolean sequentialAccess) throws JournalException {
         // number of hash keys stored in index
         // assume it is 20% of stated capacity
         this.hashKeyCount = Numbers.ceilPow2(Math.max(2, (int) (keyCount * CACHE_LOAD_FACTOR))) - 1;
         this.column = column;
         this.noCache = noCache;
-        int m;
 
-        switch (journalMode) {
-            case JournalMode.BULK_APPEND:
-                m = JournalMode.APPEND;
-                break;
-            case JournalMode.BULK_READ:
-                m = JournalMode.READ;
-                break;
-            default:
-                m = journalMode;
-                break;
-        }
-
-        MemoryFile dataFile = new MemoryFile(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(avgStringSize * 2 + 4, keyCount), m);
+        MemoryFile dataFile = new MemoryFile(new File(directory, column + DATA_FILE_SUFFIX), ByteBuffers.getBitHint(avgStringSize * 2 + 4, keyCount), journalMode, sequentialAccess);
         MemoryFile indexFile;
         try {
-            indexFile = new MemoryFile(new File(directory, column + INDEX_FILE_SUFFIX), ByteBuffers.getBitHint(8, keyCount), m);
+            indexFile = new MemoryFile(new File(directory, column + INDEX_FILE_SUFFIX), ByteBuffers.getBitHint(8, keyCount), journalMode, sequentialAccess);
         } catch (JournalException e) {
             dataFile.close();
             throw e;
@@ -88,7 +84,7 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
         this.size = size;
 
         try {
-            this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, keyCount, txCountHint, journalMode, indexTxAddress);
+            this.index = new KVIndex(new File(directory, column + HASH_INDEX_FILE_SUFFIX), this.hashKeyCount, keyCount, txCountHint, journalMode, indexTxAddress, sequentialAccess);
         } catch (JournalException e) {
             this.data.close();
             throw e;
@@ -200,6 +196,11 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
             cache(key, value.toString());
         }
         return key;
+    }
+
+    public void setSequentialAccess(boolean sequentialAccess) {
+        this.data.setSequentialAccess(sequentialAccess);
+        this.index.setSequentialAccess(sequentialAccess);
     }
 
     public void truncate() {

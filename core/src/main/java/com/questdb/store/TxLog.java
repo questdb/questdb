@@ -159,6 +159,10 @@ public class TxLog implements Closeable {
         return address;
     }
 
+    public void setSequentialAccess(boolean sequentialAccess) {
+        this.hb.setSequentialAccess(sequentialAccess);
+    }
+
     public void write(Tx tx, boolean manualTxn) {
         currentAddress = Math.max(9, hb.getAppendOffset());
         hb.setPos(currentAddress);

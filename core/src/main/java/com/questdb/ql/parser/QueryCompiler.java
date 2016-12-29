@@ -241,8 +241,8 @@ public class QueryCompiler {
                 }
             }
 
-            JournalWriter w = writerFactory.bulkWriter(struct);
-
+            JournalWriter w = writerFactory.writer(struct);
+            w.setSequentialAccess(true);
             if (rs != null) {
                 try {
                     copy(readerFactory, rs, w);
@@ -324,8 +324,8 @@ public class QueryCompiler {
         struct.$ts(index);
     }
 
-    private static Signature lbs(int masterType, boolean indexed, int lambdaType) {
-        return new Signature().setName("").setParamCount(2).paramType(0, masterType, indexed).paramType(1, lambdaType, false);
+    private static Signature lbs(int masterType, int lambdaType) {
+        return new Signature().setName("").setParamCount(2).paramType(0, masterType, true).paramType(1, lambdaType, false);
     }
 
     private static IntHashSet toIntHashSet(IntrinsicModel im) throws ParserException {
@@ -676,7 +676,7 @@ public class QueryCompiler {
         for (int i = 0; i < pc; i++) {
             IntList indexes = intListPool.next();
             literalCollector.resetNullCount();
-            traversalAlgo.traverse(filterNodes.getQuick(i), literalCollector.to(indexes, null));
+            traversalAlgo.traverse(filterNodes.getQuick(i), literalCollector.to(indexes));
             postFilterJournalRefs.add(indexes);
             nullCounts.add(literalCollector.nullCount);
         }
@@ -2899,9 +2899,9 @@ public class QueryCompiler {
             return this;
         }
 
-        private PostOrderTreeTraversalAlgo.Visitor to(IntList indexes, ObjList<CharSequence> names) {
+        private PostOrderTreeTraversalAlgo.Visitor to(IntList indexes) {
             this.indexes = indexes;
-            this.names = names;
+            this.names = null;
             return this;
         }
 
@@ -2917,11 +2917,11 @@ public class QueryCompiler {
     }
 
     static {
-        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.SYMBOL, true, ColumnType.SYMBOL), KvIndexSymSymLambdaHeadRowSource.FACTORY);
-        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.SYMBOL, true, ColumnType.STRING), KvIndexSymStrLambdaHeadRowSource.FACTORY);
-        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.INT, true, ColumnType.INT), KvIndexIntLambdaHeadRowSource.FACTORY);
-        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.STRING, true, ColumnType.STRING), KvIndexStrStrLambdaHeadRowSource.FACTORY);
-        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.STRING, true, ColumnType.SYMBOL), KvIndexStrSymLambdaHeadRowSource.FACTORY);
+        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.SYMBOL, ColumnType.SYMBOL), KvIndexSymSymLambdaHeadRowSource.FACTORY);
+        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.SYMBOL, ColumnType.STRING), KvIndexSymStrLambdaHeadRowSource.FACTORY);
+        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.INT, ColumnType.INT), KvIndexIntLambdaHeadRowSource.FACTORY);
+        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.STRING, ColumnType.STRING), KvIndexStrStrLambdaHeadRowSource.FACTORY);
+        LAMBDA_ROW_SOURCE_FACTORIES.put(lbs(ColumnType.STRING, ColumnType.SYMBOL), KvIndexStrSymLambdaHeadRowSource.FACTORY);
     }
 
     static {

@@ -39,7 +39,7 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
 
     @BeforeClass
     public static void setUp() throws Exception {
-        try (JournalWriter w = getWriterFactory().bulkWriter(new JournalStructure("xyz")
+        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("xyz")
                 .$int("i")
                 .$str("str")
                 .$())) {
@@ -55,7 +55,7 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
             w.commit();
         }
 
-        try (JournalWriter w = getWriterFactory().bulkWriter(new JournalStructure("dupes")
+        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("dupes")
                 .$int("x")
                 .$()
         )) {
@@ -70,7 +70,7 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
             w.commit();
         }
 
-        try (JournalWriter w = getWriterFactory().bulkWriter(new JournalStructure("timeseries")
+        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("timeseries")
                 .$double("d")
                 .$ts()
                 .$()

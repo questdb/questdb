@@ -77,6 +77,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     protected JournalCloseInterceptor closeInterceptor;
     protected boolean open;
     protected TxLog txLog;
+    protected boolean sequentialAccess = false;
     private volatile Partition<T> irregularPartition;
     private TxIterator txIterator;
     private long lastExpireCheck = 0L;
@@ -356,6 +357,30 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return open;
     }
 
+    public final boolean isSequentialAccess() {
+        return sequentialAccess;
+    }
+
+    public final void setSequentialAccess(boolean sequentialAccess) {
+        this.sequentialAccess = sequentialAccess;
+        for (int i = 0, n = partitions.size(); i < n; i++) {
+            Partition partition = partitions.getQuick(i);
+            if (partition != null) {
+                partition.setSequentialAccess(sequentialAccess);
+            }
+        }
+
+        if (irregularPartition != null) {
+            irregularPartition.setSequentialAccess(sequentialAccess);
+        }
+
+        txLog.setSequentialAccess(sequentialAccess);
+
+        for (int i = 0, n = symbolTables.size(); i < n; i++) {
+            symbolTables.getQuick(i).setSequentialAccess(sequentialAccess);
+        }
+    }
+
     public <X> X iteratePartitions(AbstractResultSetBuilder<T, X> builder) throws JournalException {
         builder.setJournal(this);
         int count = getPartitionCount();
@@ -525,7 +550,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                     int tabIndex = symbolTables.size();
                     int tabSize = tx.symbolTableSizes.length > tabIndex ? tx.symbolTableSizes[tabIndex] : 0;
                     long indexTxAddress = tx.symbolTableIndexPointers.length > tabIndex ? tx.symbolTableIndexPointers[tabIndex] : 0;
-                    MMappedSymbolTable tab = new MMappedSymbolTable(meta.distinctCountHint, meta.avgSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress, meta.noCache);
+                    MMappedSymbolTable tab = new MMappedSymbolTable(meta.distinctCountHint, meta.avgSize, getMetadata().getTxCountHint(), location, meta.name, getMode(), tabSize, indexTxAddress, meta.noCache, sequentialAccess);
                     symbolTables.add(tab);
                     symbolTableMap.put(meta.name, tab);
                     meta.symbolTable = tab;
@@ -590,7 +615,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
                             partitions.remove(partitionIndex);
                         }
                     } else {
-                        partitions.add(new Partition<>(this, interval, partitionIndex++, txLimit, indexTxAddresses));
+                        partitions.add(new Partition<>(this, interval, partitionIndex++, txLimit, indexTxAddresses, sequentialAccess));
                     }
                 } catch (NumericException e) {
                     LOG.info().$("Foreign directory: ").$(f.getName()).$();

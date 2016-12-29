@@ -71,7 +71,7 @@ public class FixedColumnDeltaProducer implements ColumnDeltaProducer {
         if (hasContent()) {
             ByteBuffers.copy(header, channel);
             while (offset < targetOffset) {
-                offset += ByteBuffers.copy(column.getBuffer(offset, 1), channel, targetOffset - offset);
+                offset += ByteBuffers.copy(column.getBuffer(offset), channel, targetOffset - offset);
             }
             hasContent = false;
         }

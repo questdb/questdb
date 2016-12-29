@@ -72,7 +72,7 @@ public class HugeBufferProducer implements ChannelProducer, Closeable {
             channel.write(header);
             long pos = 0;
             while (pos < target) {
-                pos += ByteBuffers.copy(hb.getBuffer(pos, 1), channel, target - pos);
+                pos += ByteBuffers.copy(hb.getBuffer(pos), channel, target - pos);
             }
         } catch (IOException e) {
             throw new JournalNetworkException(e);

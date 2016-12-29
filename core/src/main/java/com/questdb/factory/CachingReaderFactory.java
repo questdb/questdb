@@ -24,8 +24,6 @@
 package com.questdb.factory;
 
 import com.questdb.Journal;
-import com.questdb.JournalBulkReader;
-import com.questdb.JournalKey;
 import com.questdb.ex.JournalDoesNotExistException;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
@@ -40,7 +38,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class CachingReaderFactory extends ReaderFactoryImpl implements JournalCloseInterceptor {
     private final static Log LOG = LogFactory.getLog(CachingReaderFactory.class);
     private final CharSequenceObjHashMap<Journal> readers = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<JournalBulkReader> bulkReaders = new CharSequenceObjHashMap<>();
     private final ObjList<Journal> journalList = new ObjList<>();
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private ReaderFactoryPool pool;
@@ -57,39 +54,6 @@ public class CachingReaderFactory extends ReaderFactoryImpl implements JournalCl
     CachingReaderFactory(JournalConfiguration configuration, ReaderFactoryPool pool) {
         super(configuration);
         this.pool = pool;
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> JournalBulkReader<T> bulkReader(JournalKey<T> key) throws JournalException {
-        String name = key.path();
-        checkBlocked(name);
-        JournalBulkReader<T> result = bulkReaders.get(name);
-        if (result == null) {
-            result = super.bulkReader(key);
-            result.setCloseInterceptor(this);
-            bulkReaders.put(name, result);
-            journalList.add(result);
-        }
-        return result;
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
-        String name = metadata.getKey().path();
-        Journal result = readers.get(name);
-        if (result == null) {
-            if (getConfiguration().exists(name) != JournalConfiguration.EXISTS) {
-                LOG.error().$("Journal does not exist: ").$(name).$();
-                throw JournalDoesNotExistException.INSTANCE;
-            }
-            result = super.reader(metadata);
-            result.setCloseInterceptor(this);
-            readers.put(name, result);
-            journalList.add(result);
-        }
-        return result;
     }
 
     @Override
@@ -119,13 +83,25 @@ public class CachingReaderFactory extends ReaderFactoryImpl implements JournalCl
             j.close();
             readers.remove(name);
         }
+    }
 
-        j = bulkReaders.get(name);
-        if (j != null) {
-            j.setCloseInterceptor(null);
-            j.close();
-            bulkReaders.remove(name);
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
+        String name = metadata.getKey().path();
+        checkBlocked(name);
+        Journal result = readers.get(name);
+        if (result == null) {
+            if (getConfiguration().exists(name) != JournalConfiguration.EXISTS) {
+                LOG.error().$("Journal does not exist: ").$(name).$();
+                throw JournalDoesNotExistException.INSTANCE;
+            }
+            result = super.reader(metadata);
+            result.setCloseInterceptor(this);
+            readers.put(name, result);
+            journalList.add(result);
         }
+        return result;
     }
 
     public void refresh() {
@@ -143,7 +119,6 @@ public class CachingReaderFactory extends ReaderFactoryImpl implements JournalCl
             }
         }
         readers.clear();
-        bulkReaders.clear();
     }
 
     private void checkBlocked(String name) throws JournalException {

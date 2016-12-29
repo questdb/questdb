@@ -38,6 +38,7 @@ class SymbolIndexProxy<T> implements Closeable {
     private final int columnIndex;
     private KVIndex index;
     private long txAddress;
+    private boolean sequentialAccess = false;
 
     SymbolIndexProxy(Partition<T> partition, int columnIndex, long txAddress) {
         this.partition = partition;
@@ -51,6 +52,13 @@ class SymbolIndexProxy<T> implements Closeable {
 
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    public void setSequentialAccess(boolean sequentialAccess) {
+        this.sequentialAccess = sequentialAccess;
+        if (index != null) {
+            index.setSequentialAccess(sequentialAccess);
+        }
     }
 
     public void setTxAddress(long txAddress) {
@@ -69,12 +77,13 @@ class SymbolIndexProxy<T> implements Closeable {
 
     KVIndex getIndex() throws JournalException {
         if (index == null) {
-            openIndex();
+            index = openIndex();
+            index.setSequentialAccess(sequentialAccess);
         }
         return index;
     }
 
-    private void openIndex() throws JournalException {
+    private KVIndex openIndex() throws JournalException {
         JournalMetadata<T> meta = partition.getJournal().getMetadata();
         ColumnMetadata columnMetadata = meta.getColumnQuick(columnIndex);
 
@@ -82,13 +91,14 @@ class SymbolIndexProxy<T> implements Closeable {
             throw new JournalException("There is no index for column: %s", columnMetadata.name);
         }
 
-        index = new KVIndex(
+        return new KVIndex(
                 new File(partition.getPartitionDir(), columnMetadata.name),
                 columnMetadata.distinctCountHint,
                 meta.getRecordHint(),
                 meta.getTxCountHint(),
                 partition.getJournal().getMode(),
-                txAddress
+                txAddress,
+                sequentialAccess
         );
     }
 }

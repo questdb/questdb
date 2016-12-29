@@ -211,13 +211,13 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                 switch (factory.getConfiguration().exists(location)) {
                     case DOES_NOT_EXIST:
                         this.metadata = metadata;
-                        writer = factory.bulkWriter(createStructure());
+                        writer = factory.writer(createStructure());
                         break;
                     case EXISTS:
                         this.metadata = metadata;
                         if (overwrite) {
                             factory.getConfiguration().delete(location);
-                            writer = factory.bulkWriter(createStructure());
+                            writer = factory.writer(createStructure());
                         } else {
                             writer = mapColumnsAndOpenWriter();
                         }
@@ -225,6 +225,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                     default:
                         throw ImportNameException.INSTANCE;
                 }
+                writer.setSequentialAccess(true);
                 _size = writer.size();
                 errors.seed(writer.getMetadata().getColumnCount(), 0);
             } catch (JournalException e) {
@@ -278,7 +279,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
             im.importedColumnType = toImportedType(cm.type, im.importedColumnType);
         }
 
-        return factory.bulkWriter(jm);
+        return factory.writer(jm);
     }
 
     private int toImportedType(int columnType, int importedColumnType) {

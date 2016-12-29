@@ -77,17 +77,6 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
     }
 
     @Override
-    public <T> JournalWriter<T> bulkWriter(JournalMetadata<T> metadata) throws JournalException {
-        return get(metadata, true);
-    }
-
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> JournalWriter<T> writer(JournalMetadata<T> metadata) throws JournalException {
-        return get(metadata, false);
-    }
-
-    @Override
     public boolean canClose(Journal journal) {
         String path = journal.getName();
         Entry e = entries.get(path);
@@ -151,8 +140,9 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         return entries.size();
     }
 
+    @Override
     @SuppressWarnings("unchecked")
-    private <T> JournalWriter<T> get(JournalMetadata<T> metadata, boolean bulk) {
+    public <T> JournalWriter<T> writer(JournalMetadata<T> metadata) throws JournalException {
         final String path = metadata.getKey().path();
 
         Entry e = entries.get(path);
@@ -167,7 +157,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                     return null;
                 }
                 try {
-                    e.writer = bulk ? super.bulkWriter(metadata) : super.writer(metadata);
+                    e.writer = super.writer(metadata);
 
                     if (!closed) {
                         e.writer.setCloseInterceptor(this);

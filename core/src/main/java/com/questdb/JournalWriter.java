@@ -92,6 +92,7 @@ public class JournalWriter<T> extends Journal<T> {
         this.checkOrder = metadata.getKey().isOrdered() && getTimestampOffset() != -1;
         this.journalEntryWriter = new JournalEntryWriterImpl(this);
         this.discardTxt = new File(metadata.getLocation(), "discard.txt");
+        this.setSequentialAccess(true);
     }
 
     /**
@@ -281,7 +282,7 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     public Partition<T> createPartition(Interval interval, int partitionIndex) throws JournalException {
-        Partition<T> result = new Partition<>(this, interval, partitionIndex, TX_LIMIT_EVAL, null).open();
+        Partition<T> result = new Partition<>(this, interval, partitionIndex, TX_LIMIT_EVAL, null, sequentialAccess).open();
         partitions.add(result);
         return result;
     }

@@ -56,7 +56,7 @@ public class ColumnTest {
     public void testFixedWidthColumns() throws JournalException {
 
 
-        MemoryFile mf = new MemoryFile(dataFile, 22, JournalMode.APPEND);
+        MemoryFile mf = new MemoryFile(dataFile, 22, JournalMode.APPEND, false);
 
         try (FixedColumn pcc = new FixedColumn(mf, 4)) {
             for (int i = 0; i < 10000; i++) {
@@ -65,7 +65,7 @@ public class ColumnTest {
             }
         }
 
-        MemoryFile mf2 = new MemoryFile(dataFile, 22, JournalMode.READ);
+        MemoryFile mf2 = new MemoryFile(dataFile, 22, JournalMode.READ, false);
 
         try (FixedColumn pcc2 = new FixedColumn(mf2, 4)) {
             Assert.assertEquals(66, pcc2.getInt(66));
@@ -74,7 +74,7 @@ public class ColumnTest {
             Assert.assertEquals(4599, pcc2.getInt(4599));
         }
 
-        MemoryFile mf3 = new MemoryFile(dataFile, 22, JournalMode.READ);
+        MemoryFile mf3 = new MemoryFile(dataFile, 22, JournalMode.READ, false);
         try (FixedColumn pcc3 = new FixedColumn(mf3, 4)) {
             Assert.assertEquals(4598, pcc3.getInt(4598));
         }
@@ -82,7 +82,7 @@ public class ColumnTest {
 
     @Test
     public void testFixedWidthFloat() throws Exception {
-        try (FixedColumn col = new FixedColumn(new MemoryFile(dataFile, 22, JournalMode.APPEND), 4)) {
+        try (FixedColumn col = new FixedColumn(new MemoryFile(dataFile, 22, JournalMode.APPEND, false), 4)) {
             int max = 150;
             for (int i = 0; i < max; i++) {
                 col.putFloat((max - i) + 0.33f);
@@ -98,8 +98,8 @@ public class ColumnTest {
     @Test
     public void testTruncate() throws JournalException {
 
-        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND);
-        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND);
+        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND, false);
+        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND, false);
 
         try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
             varchar1.putStr("string1");
@@ -126,8 +126,8 @@ public class ColumnTest {
 
         }
 
-        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.READ);
-        MemoryFile idxFile12 = new MemoryFile(indexFile, 22, JournalMode.READ);
+        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.READ, false);
+        MemoryFile idxFile12 = new MemoryFile(indexFile, 22, JournalMode.READ, false);
 
         try (VariableColumn varchar2 = new VariableColumn(df2, idxFile12)) {
             Assert.assertEquals("string1", varchar2.getStr(0));
@@ -143,8 +143,8 @@ public class ColumnTest {
         Rnd r = new Rnd();
         String s1 = r.nextString(65000);
         String s2 = r.nextString(65000);
-        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND);
-        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND);
+        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND, false);
+        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND, false);
 
         try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
 
@@ -154,8 +154,8 @@ public class ColumnTest {
             varchar1.commit();
         }
 
-        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.READ);
-        MemoryFile idxFile2 = new MemoryFile(indexFile, 22, JournalMode.READ);
+        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.READ, false);
+        MemoryFile idxFile2 = new MemoryFile(indexFile, 22, JournalMode.READ, false);
 
         try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
             Assert.assertEquals(s1, varchar2.getStr(0));
@@ -166,8 +166,8 @@ public class ColumnTest {
     @Test
     public void testVarByteBuffer() throws Exception {
         // bit hint 12 = 4k buffer, length of stored buffer must be larger than 4k for proper test.
-        MemoryFile df1 = new MemoryFile(dataFile, 12, JournalMode.APPEND);
-        MemoryFile idxFile1 = new MemoryFile(indexFile, 12, JournalMode.APPEND);
+        MemoryFile df1 = new MemoryFile(dataFile, 12, JournalMode.APPEND, false);
+        MemoryFile idxFile1 = new MemoryFile(indexFile, 12, JournalMode.APPEND, false);
 
         final Rnd random = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
         final int len = 5024;
@@ -195,8 +195,8 @@ public class ColumnTest {
     public void testVarcharColumn() throws JournalException {
         final int recordCount = 10000;
 
-        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND);
-        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND);
+        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND, false);
+        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND, false);
 
         try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
             for (int i = 0; i < recordCount; i++) {
@@ -205,8 +205,8 @@ public class ColumnTest {
             }
         }
 
-        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.APPEND);
-        MemoryFile idxFile2 = new MemoryFile(indexFile, 22, JournalMode.APPEND);
+        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.APPEND, false);
+        MemoryFile idxFile2 = new MemoryFile(indexFile, 22, JournalMode.APPEND, false);
 
         try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
             Assert.assertEquals(recordCount, varchar2.size());
@@ -219,8 +219,8 @@ public class ColumnTest {
 
     @Test
     public void testVarcharNulls() throws JournalException {
-        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND);
-        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND);
+        MemoryFile df1 = new MemoryFile(dataFile, 22, JournalMode.APPEND, false);
+        MemoryFile idxFile1 = new MemoryFile(indexFile, 22, JournalMode.APPEND, false);
 
         try (VariableColumn varchar1 = new VariableColumn(df1, idxFile1)) {
             varchar1.putStr("string1");
@@ -237,8 +237,8 @@ public class ColumnTest {
             varchar1.commit();
         }
 
-        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.READ);
-        MemoryFile idxFile2 = new MemoryFile(indexFile, 22, JournalMode.READ);
+        MemoryFile df2 = new MemoryFile(dataFile, 22, JournalMode.READ, false);
+        MemoryFile idxFile2 = new MemoryFile(indexFile, 22, JournalMode.READ, false);
 
         try (VariableColumn varchar2 = new VariableColumn(df2, idxFile2)) {
             Assert.assertEquals("string1", varchar2.getStr(0));

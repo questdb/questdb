@@ -54,7 +54,8 @@ public class AuthReplicationClientMain {
             }
         });
 
-        final Journal<Price> reader = readerFactory.bulkReader(Price.class, "price-copy");
+        final Journal<Price> reader = readerFactory.reader(Price.class, "price-copy");
+        reader.setSequentialAccess(true);
 
         client.subscribe(Price.class, null, "price-copy", new JournalListener() {
             @Override
