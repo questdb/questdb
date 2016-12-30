@@ -29,8 +29,11 @@ import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class CachingWriterFactoryTest extends AbstractTest {
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
+public class CachingWriterFactoryTest extends AbstractTest {
 
     @Test
     public void testOneThreadGetRelease() throws Exception {
@@ -63,5 +66,46 @@ public class CachingWriterFactoryTest extends AbstractTest {
         }
 
         Assert.assertEquals(1, wf.countFreeWriters());
+    }
+
+    @Test
+    public void testTwoThreadsRaceToAllocate() throws Exception {
+        final JournalStructure s = new JournalStructure("x").$date("ts").$();
+        final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
+
+        int n = 2;
+        final CyclicBarrier barrier = new CyclicBarrier(n);
+        final CountDownLatch halt = new CountDownLatch(n);
+        final AtomicInteger errors = new AtomicInteger();
+        final AtomicInteger writerCount = new AtomicInteger();
+
+        for (int i = 0; i < n; i++) {
+            new Thread() {
+                @Override
+                public void run() {
+                    try {
+                        barrier.await();
+
+                        try (JournalWriter w = wf.writer(s)) {
+                            if (w != null) {
+                                writerCount.incrementAndGet();
+                            }
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        errors.incrementAndGet();
+                    } finally {
+                        halt.countDown();
+                    }
+                }
+            }.start();
+        }
+
+        halt.await();
+
+        Assert.assertEquals(1, writerCount.get());
+        Assert.assertEquals(0, errors.get());
+        Assert.assertEquals(1, wf.countFreeWriters());
+
     }
 }
