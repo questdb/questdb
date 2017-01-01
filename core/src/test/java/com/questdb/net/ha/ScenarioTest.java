@@ -72,58 +72,59 @@ public class ScenarioTest extends AbstractTest {
                         getWriterFactory().writer(Quote.class, "local").close();
 
                         // setup local where data should be trickling from client
-                        final Journal<Quote> local = getReaderFactory().reader(Quote.class, "local");
-                        Assert.assertEquals(0, local.size());
+                        try (final Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
+                            Assert.assertEquals(0, local.size());
 
-                        JournalServer server = new JournalServer(serverConfig, getReaderFactory());
-                        JournalClient client = new JournalClient(clientConfig, getWriterFactory());
+                            JournalServer server = new JournalServer(serverConfig, getReaderFactory());
+                            JournalClient client = new JournalClient(clientConfig, getWriterFactory());
 
-                        server.publish(remote);
-                        server.start();
+                            server.publish(remote);
+                            server.start();
 
-                        final AtomicInteger errors = new AtomicInteger();
+                            final AtomicInteger errors = new AtomicInteger();
 
-                        final CountDownLatch ready = new CountDownLatch(1);
-                        client.subscribe(Quote.class, "remote", "local", new JournalListener() {
-                            @Override
-                            public void onCommit() {
-                                try {
-                                    if (local.refresh() && local.size() == 33) {
-                                        ready.countDown();
+                            final CountDownLatch ready = new CountDownLatch(1);
+                            client.subscribe(Quote.class, "remote", "local", new JournalListener() {
+                                @Override
+                                public void onCommit() {
+                                    try {
+                                        if (local.refresh() && local.size() == 33) {
+                                            ready.countDown();
+                                        }
+                                    } catch (JournalException e) {
+                                        errors.incrementAndGet();
+                                        e.printStackTrace();
                                     }
-                                } catch (JournalException e) {
-                                    errors.incrementAndGet();
-                                    e.printStackTrace();
                                 }
+
+                                @Override
+                                public void onEvent(int event) {
+                                    if (event != JournalEvents.EVT_JNL_SUBSCRIBED) {
+                                        errors.incrementAndGet();
+                                    }
+                                }
+                            });
+
+
+                            client.start();
+
+                            int n = 0;
+                            while (n < 400) {
+                                lagIteration(randomOrigin, remote, n, n + 10);
+                                n += 10;
                             }
 
-                            @Override
-                            public void onEvent(int event) {
-                                if (event != JournalEvents.EVT_JNL_SUBSCRIBED) {
-                                    errors.incrementAndGet();
-                                }
-                            }
-                        });
+                            Assert.assertTrue(ready.await(10, TimeUnit.SECONDS));
 
+                            server.halt();
+                            client.halt();
 
-                        client.start();
+                            local.refresh();
+                            remoteReader.refresh();
+                            TestUtils.assertEquals(remoteReader, local);
 
-                        int n = 0;
-                        while (n < 400) {
-                            lagIteration(randomOrigin, remote, n, n + 10);
-                            n += 10;
+                            Assert.assertEquals(0, errors.get());
                         }
-
-                        Assert.assertTrue(ready.await(10, TimeUnit.SECONDS));
-
-                        server.halt();
-                        client.halt();
-
-                        local.refresh();
-                        remoteReader.refresh();
-                        TestUtils.assertEquals(remoteReader, local);
-
-                        Assert.assertEquals(0, errors.get());
                     }
                 }
             }

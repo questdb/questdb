@@ -138,24 +138,25 @@ public class IteratorTest extends AbstractTest {
         try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
             TestUtils.generateQuoteData(w, 1000);
 
-            Journal<Quote> r = getReaderFactory().reader(Quote.class);
+            try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
 
-            List<Quote> posList = new ArrayList<>((int) r.size());
-            for (Quote q : r) {
-                posList.add(q);
-            }
+                List<Quote> posList = new ArrayList<>((int) r.size());
+                for (Quote q : r) {
+                    posList.add(q);
+                }
 
-            int i = 0;
-            for (Quote q : JournalIterators.bufferedIterator(r)) {
-                Assert.assertEquals(q, posList.get(i++));
-            }
-            i = 0;
-            for (Quote q : r.query().all().bufferedIterator()) {
-                Assert.assertEquals(q, posList.get(i++));
-            }
-            i = 0;
-            for (Quote q : r.getPartition(0, true).bufferedIterator()) {
-                Assert.assertEquals(q, posList.get(i++));
+                int i = 0;
+                for (Quote q : JournalIterators.bufferedIterator(r)) {
+                    Assert.assertEquals(q, posList.get(i++));
+                }
+                i = 0;
+                for (Quote q : r.query().all().bufferedIterator()) {
+                    Assert.assertEquals(q, posList.get(i++));
+                }
+                i = 0;
+                for (Quote q : r.getPartition(0, true).bufferedIterator()) {
+                    Assert.assertEquals(q, posList.get(i++));
+                }
             }
         }
     }
@@ -177,7 +178,7 @@ public class IteratorTest extends AbstractTest {
     @Test
     public void testMerge() throws Exception {
         populateQuotes();
-        List<Journal<Quote>> journals = new ArrayList<Journal<Quote>>() {{
+        ObjList<Journal<Quote>> journals = new ObjList<Journal<Quote>>() {{
             add(getReaderFactory().reader(Quote.class, "quote-0"));
             add(getReaderFactory().reader(Quote.class, "quote-1"));
             add(getReaderFactory().reader(Quote.class, "quote-2"));
@@ -185,15 +186,22 @@ public class IteratorTest extends AbstractTest {
             add(getReaderFactory().reader(Quote.class, "quote-4"));
         }};
 
-        List<JournalIterator<Quote>> list = new ArrayList<>();
-        for (int i = 0; i < journals.size(); i++) {
-            list.add(JournalIterators.bufferedIterator(journals.get(i)));
-        }
+        try {
 
-        long ts = 0;
-        for (Quote q : MergingIterator.merge(list, comparator)) {
-            Assert.assertTrue(ts <= q.getTimestamp());
-            ts = q.getTimestamp();
+            List<JournalIterator<Quote>> list = new ArrayList<>();
+            for (int i = 0; i < journals.size(); i++) {
+                list.add(JournalIterators.bufferedIterator(journals.get(i)));
+            }
+
+            long ts = 0;
+            for (Quote q : MergingIterator.merge(list, comparator)) {
+                Assert.assertTrue(ts <= q.getTimestamp());
+                ts = q.getTimestamp();
+            }
+        } finally {
+            for (int i = 0, n = journals.size(); i < n; i++) {
+                journals.getQuick(i).close();
+            }
         }
     }
 
@@ -234,7 +242,7 @@ public class IteratorTest extends AbstractTest {
     @Test
     public void testMergePeeking() throws Exception {
         populateQuotes();
-        List<Journal<Quote>> journals = new ArrayList<Journal<Quote>>() {{
+        ObjList<Journal<Quote>> journals = new ObjList<Journal<Quote>>() {{
             add(getReaderFactory().reader(Quote.class, "quote-0"));
             add(getReaderFactory().reader(Quote.class, "quote-1"));
             add(getReaderFactory().reader(Quote.class, "quote-2"));
@@ -242,16 +250,23 @@ public class IteratorTest extends AbstractTest {
             add(getReaderFactory().reader(Quote.class, "quote-4"));
         }};
 
-        List<JournalPeekingIterator<Quote>> list = new ArrayList<>();
-        for (int i = 0; i < journals.size(); i++) {
-            list.add(JournalIterators.bufferedIterator(journals.get(i)));
+        try {
+            List<JournalPeekingIterator<Quote>> list = new ArrayList<>();
+            for (int i = 0; i < journals.size(); i++) {
+                list.add(JournalIterators.bufferedIterator(journals.get(i)));
+            }
+
+            long ts = 0;
+            for (Quote q : MergingPeekingIterator.mergePeek(list, comparator)) {
+                Assert.assertTrue(ts <= q.getTimestamp());
+                ts = q.getTimestamp();
+            }
+        } finally {
+            for (int i = 0, n = journals.size(); i < n; i++) {
+                journals.getQuick(i).close();
+            }
         }
 
-        long ts = 0;
-        for (Quote q : MergingPeekingIterator.mergePeek(list, comparator)) {
-            Assert.assertTrue(ts <= q.getTimestamp());
-            ts = q.getTimestamp();
-        }
     }
 
     @Test

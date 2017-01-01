@@ -89,7 +89,7 @@ public class GenericTest extends AbstractTest {
             StringSink sink = new StringSink();
             RecordSourcePrinter p = new RecordSourcePrinter(sink);
             try (RecordSource rs = compile("abc")) {
-                p.print(rs, getReaderFactory());
+                p.print(rs, theFactory.getCachingReaderFactory());
 
                 final String expected = "2015-01-10T12:00:00.000Z\tAGK.L\t0.000001189157\t1.050231933594\t1326447242\t948263339\tFast trading\tLXE\n" +
                         "2015-01-10T12:00:00.000Z\tBP.L\t104.021850585938\t0.006688738358\t1575378703\t1436881714\tFast trading\tLXE\n" +
@@ -269,7 +269,7 @@ public class GenericTest extends AbstractTest {
             StringSink sink = new StringSink();
             RecordSourcePrinter p = new RecordSourcePrinter(sink);
             try (RecordSource rs = compile("abc")) {
-                p.print(rs, getReaderFactory());
+                p.print(rs, theFactory.getCachingReaderFactory());
 
                 final String expected = "VTJWCPSWHY\t-1191262516\t0.024494420737\t1970-01-01T00:00:00.000Z\n" +
                         "EHNRXGZSXU\t-1458132197\t768.000000000000\t1970-01-01T00:00:00.000Z\n" +

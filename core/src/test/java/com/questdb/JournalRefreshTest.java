@@ -80,49 +80,51 @@ public class JournalRefreshTest extends AbstractTest {
     @Test
     public void testLagDetach() throws Exception {
         try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
-            Journal<Quote> reader = getReaderFactory().reader(Quote.class);
+            try (Journal<Quote> reader = getReaderFactory().reader(Quote.class)) {
 
-            TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T02:00:00.000Z"));
-            TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
+                TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T02:00:00.000Z"));
+                TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
 
-            rw.append(origin.query().all().asResultSet().subset(0, 500));
-            rw.commit();
-            reader.refresh();
-            Assert.assertEquals(rw.size(), reader.size());
+                rw.append(origin.query().all().asResultSet().subset(0, 500));
+                rw.commit();
+                reader.refresh();
+                Assert.assertEquals(rw.size(), reader.size());
 
-            rw.append(origin.query().all().asResultSet().subset(500, 600));
-            rw.commit();
-            reader.refresh();
-            Assert.assertEquals(rw.size(), reader.size());
+                rw.append(origin.query().all().asResultSet().subset(500, 600));
+                rw.commit();
+                reader.refresh();
+                Assert.assertEquals(rw.size(), reader.size());
 
-            rw.mergeAppend(origin.query().all().asResultSet().subset(500, 600));
-            rw.commit();
-            reader.refresh();
-            Assert.assertEquals(rw.size(), reader.size());
+                rw.mergeAppend(origin.query().all().asResultSet().subset(500, 600));
+                rw.commit();
+                reader.refresh();
+                Assert.assertEquals(rw.size(), reader.size());
 
-            rw.removeIrregularPartition();
-            rw.commit();
-            reader.refresh();
-            Assert.assertEquals(rw.size(), reader.size());
+                rw.removeIrregularPartition();
+                rw.commit();
+                reader.refresh();
+                Assert.assertEquals(rw.size(), reader.size());
+            }
         }
     }
 
     @Test
     public void testPartitionRescan() throws Exception {
-        Journal<Quote> reader = getReaderFactory().reader(Quote.class);
+        try (Journal<Quote> reader = getReaderFactory().reader(Quote.class)) {
 
-        Assert.assertEquals(0, reader.size());
-        TestUtils.generateQuoteData(rw, 1001);
-        reader.refresh();
-        Assert.assertEquals(1001, reader.size());
+            Assert.assertEquals(0, reader.size());
+            TestUtils.generateQuoteData(rw, 1001);
+            reader.refresh();
+            Assert.assertEquals(1001, reader.size());
 
-        TestUtils.generateQuoteData(rw, 302, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
-        reader.refresh();
-        Assert.assertEquals(1001, reader.size());
+            TestUtils.generateQuoteData(rw, 302, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
+            reader.refresh();
+            Assert.assertEquals(1001, reader.size());
 
-        rw.commit();
-        reader.refresh();
-        Assert.assertEquals(1303, reader.size());
+            rw.commit();
+            reader.refresh();
+            Assert.assertEquals(1303, reader.size());
+        }
     }
 
     @Test
@@ -156,48 +158,49 @@ public class JournalRefreshTest extends AbstractTest {
         rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.toMillis(2013, 1, 10, 14, 0)));
         rw.commit();
 
-        Journal<Quote> r = getReaderFactory().reader(Quote.class);
-        Assert.assertEquals(2, r.size());
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+            Assert.assertEquals(2, r.size());
 
-        // append data to same partition
-        rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates.toMillis(2013, 1, 10, 15, 0)));
-        rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.toMillis(2013, 1, 10, 16, 0)));
-        rw.commit();
+            // append data to same partition
+            rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates.toMillis(2013, 1, 10, 15, 0)));
+            rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.toMillis(2013, 1, 10, 16, 0)));
+            rw.commit();
 
-        // check that size didn't change before we call refresh
-        Assert.assertEquals(2, r.size());
-        // check that we see two more rows after refresh
+            // check that size didn't change before we call refresh
+            Assert.assertEquals(2, r.size());
+            // check that we see two more rows after refresh
 
-        r.refresh();
-        Assert.assertEquals(4, r.size());
+            r.refresh();
+            Assert.assertEquals(4, r.size());
 
-        // append data to new partition
-        rw.append(new Quote().setSym("IMO-3").setTimestamp(Dates.toMillis(2013, 2, 10, 15, 0)));
-        rw.append(new Quote().setSym("IMO-4").setTimestamp(Dates.toMillis(2013, 2, 10, 16, 0)));
+            // append data to new partition
+            rw.append(new Quote().setSym("IMO-3").setTimestamp(Dates.toMillis(2013, 2, 10, 15, 0)));
+            rw.append(new Quote().setSym("IMO-4").setTimestamp(Dates.toMillis(2013, 2, 10, 16, 0)));
 
-        // check that size didn't change before we call refresh
-        Assert.assertEquals(4, r.size());
-        // check that we don't see rows even if we refresh
-        r.refresh();
-        Assert.assertEquals(4, r.size());
+            // check that size didn't change before we call refresh
+            Assert.assertEquals(4, r.size());
+            // check that we don't see rows even if we refresh
+            r.refresh();
+            Assert.assertEquals(4, r.size());
 
-        rw.commit();
-        // check that we see two more rows after refresh
-        r.refresh();
-        Assert.assertEquals(6, r.size());
+            rw.commit();
+            // check that we see two more rows after refresh
+            r.refresh();
+            Assert.assertEquals(6, r.size());
 
-        List<Quote> data = new ArrayList<>();
-        data.add(new Quote().setSym("IMO-5").setTimestamp(Dates.toMillis(2013, 3, 10, 15, 0)));
-        data.add(new Quote().setSym("IMO-6").setTimestamp(Dates.toMillis(2013, 3, 10, 16, 0)));
-        rw.mergeAppend(data);
+            List<Quote> data = new ArrayList<>();
+            data.add(new Quote().setSym("IMO-5").setTimestamp(Dates.toMillis(2013, 3, 10, 15, 0)));
+            data.add(new Quote().setSym("IMO-6").setTimestamp(Dates.toMillis(2013, 3, 10, 16, 0)));
+            rw.mergeAppend(data);
 
-        rw.commit();
+            rw.commit();
 
-        // check that size didn't change before we call refresh
-        Assert.assertEquals(6, r.size());
-        // check that we see two more rows after refresh
-        r.refresh();
-        Assert.assertEquals(8, r.size());
+            // check that size didn't change before we call refresh
+            Assert.assertEquals(6, r.size());
+            // check that we see two more rows after refresh
+            r.refresh();
+            Assert.assertEquals(8, r.size());
+        }
     }
 
     @Test
@@ -205,16 +208,17 @@ public class JournalRefreshTest extends AbstractTest {
         TestUtils.generateQuoteData(rw, 1000, Dates.parseDateTime("2013-09-04T10:00:00.000Z"));
         rw.commit();
 
-        Journal<Quote> r = getReaderFactory().reader(Quote.class);
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
 
-        Assert.assertEquals(10, r.getSymbolTable("sym").size());
-        r.getSymbolTable("sym").preLoad();
+            Assert.assertEquals(10, r.getSymbolTable("sym").size());
+            r.getSymbolTable("sym").preLoad();
 
-        rw.truncate();
+            rw.truncate();
 
-        Assert.assertTrue(r.refresh());
-        Assert.assertEquals(0, r.size());
-        Assert.assertEquals(0, r.getSymbolTable("sym").size());
+            Assert.assertTrue(r.refresh());
+            Assert.assertEquals(0, r.size());
+            Assert.assertEquals(0, r.getSymbolTable("sym").size());
+        }
     }
 
 }

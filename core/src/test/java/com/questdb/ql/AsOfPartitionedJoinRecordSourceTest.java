@@ -55,7 +55,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
 
         int xcount = 100;
         int ycount = 10;
-        JournalWriter xw = getWriterFactory().writer(new JournalStructure("x")
+        try (JournalWriter xw = getWriterFactory().writer(new JournalStructure("x")
                 .$ts()
                 .$sym("ccy")
                 .$double("rate")
@@ -68,148 +68,152 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 .$bool("b")
                 .recordCountHint(xcount)
                 .$()
-        );
+        )) {
 
-        JournalWriter yw = getWriterFactory().writer(new JournalStructure("y")
-                .$ts()
-                .$sym("ccy")
-                .$double("amount")
-                .$str("trader")
-                .recordCountHint(ycount)
-                .$()
-        );
+            try (JournalWriter yw = getWriterFactory().writer(new JournalStructure("y")
+                    .$ts()
+                    .$sym("ccy")
+                    .$double("amount")
+                    .$str("trader")
+                    .recordCountHint(ycount)
+                    .$()
+            )) {
 
-        Rnd rnd = new Rnd();
+                Rnd rnd = new Rnd();
 
-        String[] ccy = new String[3];
-        for (int i = 0; i < ccy.length; i++) {
-            ccy[i] = rnd.nextChars(6).toString();
+                String[] ccy = new String[3];
+                for (int i = 0; i < ccy.length; i++) {
+                    ccy[i] = rnd.nextChars(6).toString();
+                }
+
+                long ts = Dates.parseDateTime("2015-03-10T00:00:00.000Z");
+
+                for (int i = 0; i < xcount; i++) {
+                    JournalEntryWriter w = xw.entryWriter();
+                    w.putDate(0, ts += 10000);
+                    w.putSym(1, ccy[rnd.nextPositiveInt() % ccy.length]);
+                    w.putDouble(2, rnd.nextDouble());
+                    w.putDouble(3, rnd.nextDouble());
+                    w.putStr(4, rnd.nextChars(rnd.nextPositiveInt() % 128));
+                    w.putSym(5, ccy[rnd.nextPositiveInt() % ccy.length]);
+                    w.putFloat(6, rnd.nextFloat());
+                    w.putShort(7, (short) rnd.nextInt());
+                    w.putLong(8, rnd.nextLong());
+                    w.putBool(9, rnd.nextBoolean());
+                    w.append();
+                }
+                xw.commit();
+
+                ts = Dates.parseDateTime("2015-03-10T00:00:00.000Z");
+                for (int i = 0; i < ycount; i++) {
+                    JournalEntryWriter w = yw.entryWriter();
+                    w.putDate(0, ts += 60000);
+                    w.putSym(1, ccy[rnd.nextPositiveInt() % ccy.length]);
+                    w.putDouble(2, rnd.nextDouble());
+                    w.putStr(3, rnd.nextChars(rnd.nextPositiveInt() % 128));
+                    w.append();
+                }
+                yw.commit();
+
+                // records for adjacent join test
+
+                try (JournalWriter jwa = getWriterFactory().writer(new JournalStructure("a")
+                        .$ts()
+                        .$sym("ccy")
+                        .$double("rate")
+                        .$()
+                )) {
+
+                    try (JournalWriter jwb = getWriterFactory().writer(new JournalStructure("b")
+                            .$ts()
+                            .$sym("ccy")
+                            .$double("amount")
+                            .$()
+                    )) {
+
+                        JournalEntryWriter ewa;
+
+                        ewa = jwa.entryWriter();
+                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:30:00.000Z"));
+                        ewa.putSym(1, "X");
+                        ewa.putDouble(2, 0.538);
+                        ewa.append();
+
+                        ewa = jwa.entryWriter();
+                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:35:00.000Z"));
+                        ewa.putSym(1, "Y");
+                        ewa.putDouble(2, 1.35);
+                        ewa.append();
+
+                        ewa = jwa.entryWriter();
+                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:37:00.000Z"));
+                        ewa.putSym(1, "Y");
+                        ewa.putDouble(2, 1.41);
+                        ewa.append();
+
+                        ewa = jwa.entryWriter();
+                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:39:00.000Z"));
+                        ewa.putSym(1, "X");
+                        ewa.putDouble(2, 0.601);
+                        ewa.append();
+
+                        ewa = jwa.entryWriter();
+                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:40:00.000Z"));
+                        ewa.putSym(1, "Y");
+                        ewa.putDouble(2, 1.26);
+                        ewa.append();
+
+                        ewa = jwa.entryWriter();
+                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:43:00.000Z"));
+                        ewa.putSym(1, "Y");
+                        ewa.putDouble(2, 1.29);
+                        ewa.append();
+
+                        jwa.commit();
+
+                        JournalEntryWriter ewb;
+
+                        ewb = jwb.entryWriter();
+                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:27:00.000Z"));
+                        ewb.putSym(1, "X");
+                        ewb.putDouble(2, 1100);
+                        ewb.append();
+
+                        ewb = jwb.entryWriter();
+                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:28:00.000Z"));
+                        ewb.putSym(1, "X");
+                        ewb.putDouble(2, 1200);
+                        ewb.append();
+
+                        ewb = jwb.entryWriter();
+                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:29:00.000Z"));
+                        ewb.putSym(1, "X");
+                        ewb.putDouble(2, 1500);
+                        ewb.append();
+
+                        ewb = jwb.entryWriter();
+                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:34:50.000Z"));
+                        ewb.putSym(1, "Y");
+                        ewb.putDouble(2, 130);
+                        ewb.append();
+
+                        ewb = jwb.entryWriter();
+                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:36:00.000Z"));
+                        ewb.putSym(1, "Y");
+                        ewb.putDouble(2, 150);
+                        ewb.append();
+
+                        ewb = jwb.entryWriter();
+                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:41:00.000Z"));
+                        ewb.putSym(1, "Y");
+                        ewb.putDouble(2, 12000);
+                        ewb.append();
+
+                        jwb.commit();
+                    }
+                }
+            }
         }
-
-        long ts = Dates.parseDateTime("2015-03-10T00:00:00.000Z");
-
-        for (int i = 0; i < xcount; i++) {
-            JournalEntryWriter w = xw.entryWriter();
-            w.putDate(0, ts += 10000);
-            w.putSym(1, ccy[rnd.nextPositiveInt() % ccy.length]);
-            w.putDouble(2, rnd.nextDouble());
-            w.putDouble(3, rnd.nextDouble());
-            w.putStr(4, rnd.nextChars(rnd.nextPositiveInt() % 128));
-            w.putSym(5, ccy[rnd.nextPositiveInt() % ccy.length]);
-            w.putFloat(6, rnd.nextFloat());
-            w.putShort(7, (short) rnd.nextInt());
-            w.putLong(8, rnd.nextLong());
-            w.putBool(9, rnd.nextBoolean());
-            w.append();
-        }
-        xw.commit();
-
-        ts = Dates.parseDateTime("2015-03-10T00:00:00.000Z");
-        for (int i = 0; i < ycount; i++) {
-            JournalEntryWriter w = yw.entryWriter();
-            w.putDate(0, ts += 60000);
-            w.putSym(1, ccy[rnd.nextPositiveInt() % ccy.length]);
-            w.putDouble(2, rnd.nextDouble());
-            w.putStr(3, rnd.nextChars(rnd.nextPositiveInt() % 128));
-            w.append();
-        }
-        yw.commit();
-
-        // records for adjacent join test
-
-        JournalWriter jwa = getWriterFactory().writer(new JournalStructure("a")
-                .$ts()
-                .$sym("ccy")
-                .$double("rate")
-                .$()
-        );
-
-        JournalWriter jwb = getWriterFactory().writer(new JournalStructure("b")
-                .$ts()
-                .$sym("ccy")
-                .$double("amount")
-                .$()
-        );
-
-        JournalEntryWriter ewa;
-
-        ewa = jwa.entryWriter();
-        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:30:00.000Z"));
-        ewa.putSym(1, "X");
-        ewa.putDouble(2, 0.538);
-        ewa.append();
-
-        ewa = jwa.entryWriter();
-        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:35:00.000Z"));
-        ewa.putSym(1, "Y");
-        ewa.putDouble(2, 1.35);
-        ewa.append();
-
-        ewa = jwa.entryWriter();
-        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:37:00.000Z"));
-        ewa.putSym(1, "Y");
-        ewa.putDouble(2, 1.41);
-        ewa.append();
-
-        ewa = jwa.entryWriter();
-        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:39:00.000Z"));
-        ewa.putSym(1, "X");
-        ewa.putDouble(2, 0.601);
-        ewa.append();
-
-        ewa = jwa.entryWriter();
-        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:40:00.000Z"));
-        ewa.putSym(1, "Y");
-        ewa.putDouble(2, 1.26);
-        ewa.append();
-
-        ewa = jwa.entryWriter();
-        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:43:00.000Z"));
-        ewa.putSym(1, "Y");
-        ewa.putDouble(2, 1.29);
-        ewa.append();
-
-        jwa.commit();
-
-        JournalEntryWriter ewb;
-
-        ewb = jwb.entryWriter();
-        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:27:00.000Z"));
-        ewb.putSym(1, "X");
-        ewb.putDouble(2, 1100);
-        ewb.append();
-
-        ewb = jwb.entryWriter();
-        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:28:00.000Z"));
-        ewb.putSym(1, "X");
-        ewb.putDouble(2, 1200);
-        ewb.append();
-
-        ewb = jwb.entryWriter();
-        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:29:00.000Z"));
-        ewb.putSym(1, "X");
-        ewb.putDouble(2, 1500);
-        ewb.append();
-
-        ewb = jwb.entryWriter();
-        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:34:50.000Z"));
-        ewb.putSym(1, "Y");
-        ewb.putDouble(2, 130);
-        ewb.append();
-
-        ewb = jwb.entryWriter();
-        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:36:00.000Z"));
-        ewb.putSym(1, "Y");
-        ewb.putDouble(2, 150);
-        ewb.append();
-
-        ewb = jwb.entryWriter();
-        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:41:00.000Z"));
-        ewb.putSym(1, "Y");
-        ewb.putDouble(2, 12000);
-        ewb.append();
-
-        jwb.commit();
     }
 
     @Before

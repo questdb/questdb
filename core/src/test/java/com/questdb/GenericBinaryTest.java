@@ -68,7 +68,7 @@ public class GenericBinaryTest extends AbstractTest {
 
             List<byte[]> actual = new ArrayList<>();
             try (RecordSource rs = compile("bintest")) {
-                for (Record e : rs.prepareCursor(getReaderFactory())) {
+                for (Record e : rs.prepareCursor(theFactory.getCachingReaderFactory())) {
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
                     InputStream in = e.getBin(0);
 
@@ -146,7 +146,7 @@ public class GenericBinaryTest extends AbstractTest {
     private List<byte[]> readOutputStream() throws ParserException {
         List<byte[]> result = new ArrayList<>();
         try (RecordSource rs = compile("bintest")) {
-            for (Record e : rs.prepareCursor(getReaderFactory())) {
+            for (Record e : rs.prepareCursor(theFactory.getCachingReaderFactory())) {
                 ByteArrayOutputStream o = new ByteArrayOutputStream();
                 e.getBin(0, o);
                 result.add(o.toByteArray());

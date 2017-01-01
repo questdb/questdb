@@ -53,7 +53,7 @@ public class NullAggregationTest extends AbstractOptimiserTest {
     }
 
     private static void createTabWithNaNs2() throws JournalException, NumericException {
-        JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -63,45 +63,46 @@ public class NullAggregationTest extends AbstractOptimiserTest {
                         $str("a").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        int n = 128;
-        ObjHashSet<String> names = getNames(rnd, n);
+            Rnd rnd = new Rnd();
+            int n = 128;
+            ObjHashSet<String> names = getNames(rnd, n);
 
-        int mask = n - 1;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            int mask = n - 1;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(1, rnd.nextDouble());
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(2);
-            } else {
-                ew.putDouble(2, rnd.nextDouble());
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(1, rnd.nextDouble());
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(2);
+                } else {
+                    ew.putDouble(2, rnd.nextDouble());
+                }
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(3);
+                } else {
+                    ew.putLong(3, rnd.nextLong() % 500);
+                }
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(4);
+                } else {
+                    ew.putInt(4, rnd.nextInt() % 500);
+                }
+
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(5);
+                } else {
+                    ew.putStr(5, names.get(rnd.nextInt() & mask));
+                }
+
+                ew.putDate(6, t += (60 * 60 * 1000));
+                ew.append();
             }
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(3);
-            } else {
-                ew.putLong(3, rnd.nextLong() % 500);
-            }
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(4);
-            } else {
-                ew.putInt(4, rnd.nextInt() % 500);
-            }
-
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(5);
-            } else {
-                ew.putStr(5, names.get(rnd.nextInt() & mask));
-            }
-
-            ew.putDate(6, t += (60 * 60 * 1000));
-            ew.append();
+            w.commit();
         }
-        w.commit();
     }
 
     private static ObjHashSet<String> getNames(Rnd r, int n) {

@@ -632,9 +632,11 @@ public class QueryTest extends AbstractTest {
                 "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
 
 
-        Query<Quote> qq = getReaderFactory().reader(Quote.class).query();
-        UnorderedResultSet<Quote> rs = qq.head().withSymValues("ex").asResultSet();
-        TestUtils.assertEquals(expected, rs.sort());
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+            Query<Quote> qq = r.query();
+            UnorderedResultSet<Quote> rs = qq.head().withSymValues("ex").asResultSet();
+            TestUtils.assertEquals(expected, rs.sort());
+        }
     }
 
     @Test
@@ -701,10 +703,12 @@ public class QueryTest extends AbstractTest {
     @Test
     public void testParallelIteratorInterval() throws Exception {
         Interval interval = new Interval("2013-05-04T06:40:00.000Z", "2013-05-05T17:23:20.000Z");
-        Query<Quote> q2 = getReaderFactory().reader(Quote.class).query();
-        JournalIterator<Quote> expected = q.all().iterator(interval);
-        try (ConcurrentIterator<Quote> actual = q2.all().concurrentIterator(interval)) {
-            TestUtils.assertEquals(expected, actual);
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+            Query<Quote> q2 = r.query();
+            JournalIterator<Quote> expected = q.all().iterator(interval);
+            try (ConcurrentIterator<Quote> actual = q2.all().concurrentIterator(interval)) {
+                TestUtils.assertEquals(expected, actual);
+            }
         }
     }
 

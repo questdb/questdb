@@ -96,8 +96,9 @@ public class MulticastTest extends AbstractTest {
 
             client.halt();
             server.halt();
-            Journal<Quote> local = getReaderFactory().reader(Quote.class, "local");
-            TestUtils.assertDataEquals(remote, local);
+            try (Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
+                TestUtils.assertDataEquals(remote, local);
+            }
         }
     }
 

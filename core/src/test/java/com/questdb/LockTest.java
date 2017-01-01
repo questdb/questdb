@@ -67,8 +67,9 @@ public class LockTest extends AbstractTest {
     public static class TestAccessor {
         public TestAccessor(File journalBase) throws JournalException {
             try (ReaderFactoryImpl factory = new ReaderFactoryImpl(ModelConfiguration.MAIN.build(journalBase))) {
-                Journal<Quote> reader = factory.reader(Quote.class);
-                Assert.assertEquals(2, reader.size());
+                try (Journal<Quote> reader = factory.reader(Quote.class)) {
+                    Assert.assertEquals(2, reader.size());
+                }
             }
         }
     }

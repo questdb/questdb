@@ -159,9 +159,11 @@ public class JournalTest extends AbstractTest {
     @Test
     public void testMaxRowIDOnEmptyReader() throws Exception {
         getWriterFactory().writer(Quote.class).close();
-        Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym");
-        Assert.assertEquals(-1, r.getMaxRowID());
-        Assert.assertNull(r.getLastPartition());
+
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym")) {
+            Assert.assertEquals(-1, r.getMaxRowID());
+            Assert.assertNull(r.getLastPartition());
+        }
     }
 
     @Test
@@ -171,8 +173,9 @@ public class JournalTest extends AbstractTest {
             w.commit();
         }
 
-        Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym");
-        Assert.assertEquals(999, r.getMaxRowID());
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym")) {
+            Assert.assertEquals(999, r.getMaxRowID());
+        }
     }
 
     @Test
@@ -239,8 +242,9 @@ public class JournalTest extends AbstractTest {
                 "null\tAMD\t0.061826046796662926\t0.0\t0\t0\tnull\tnull\n" +
                 "null\tHSBA.L\t0.30903524429086027\t0.0\t0\t0\tnull\tnull";
 
-        Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym", "bid");
-        TestUtils.assertEquals(expected, r.query().all().asResultSet().subset(90, 100));
+        try (Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym", "bid")) {
+            TestUtils.assertEquals(expected, r.query().all().asResultSet().subset(90, 100));
+        }
     }
 
     @Test
@@ -254,17 +258,18 @@ public class JournalTest extends AbstractTest {
         Files.deleteOrException(new File(path, "2013-02/sym.r"));
         Files.deleteOrException(new File(path, "2013-02/sym.k"));
 
-        Journal<Quote> journal = getReaderFactory().reader(Quote.class);
-        try {
-            journal.query().head().withKeys().asResultSet().read();
-            Assert.fail("Expected exception here");
-        } catch (JournalException e) {
-            // do nothing
+        try (Journal<Quote> journal = getReaderFactory().reader(Quote.class)) {
+            try {
+                journal.query().head().withKeys().asResultSet().read();
+                Assert.fail("Expected exception here");
+            } catch (JournalException e) {
+                // do nothing
+            }
+            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+                w.rebuildIndexes();
+            }
+            Assert.assertEquals(3, journal.query().head().withKeys().asResultSet().read().length);
         }
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
-            w.rebuildIndexes();
-        }
-        Assert.assertEquals(3, journal.query().head().withKeys().asResultSet().read().length);
     }
 
     @Test
@@ -313,8 +318,12 @@ public class JournalTest extends AbstractTest {
             } catch (JournalException e) {
                 // ignore
             }
+
             // check if we can open a reader
-            Assert.assertTrue(getReaderFactory().reader(Quote.class) != null);
+            try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+                Assert.assertTrue(r != null);
+            }
+
             // check if we can open writer in alt location
             try (JournalWriter w = getWriterFactory().writer(Quote.class, "test-Quote")) {
                 Assert.assertTrue(w != null);

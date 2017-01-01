@@ -67,7 +67,7 @@ public class DelimitedTextParserTest extends AbstractTest {
         File expected = new File(this.getClass().getResource("/csv/test-export-expected.csv").getFile());
 
         try (RecordSource rs = compile("'" + location + "'")) {
-            ExportManager.export(rs, getReaderFactory(), actual, TextFileDelimiter.CSV);
+            ExportManager.export(rs, theFactory.getCachingReaderFactory(), actual, TextFileDelimiter.CSV);
             TestUtils.assertEquals(expected, actual);
         }
     }
@@ -101,7 +101,7 @@ public class DelimitedTextParserTest extends AbstractTest {
         File expected = new File(this.getClass().getResource("/csv/test-import-malformed-expected.csv").getFile());
 
         try (RecordSource rs = compile("'" + location + "'")) {
-            ExportManager.export(rs, getReaderFactory(), actual, TextFileDelimiter.CSV);
+            ExportManager.export(rs, theFactory.getCachingReaderFactory(), actual, TextFileDelimiter.CSV);
             TestUtils.assertEquals(expected, actual);
         }
     }
@@ -123,10 +123,11 @@ public class DelimitedTextParserTest extends AbstractTest {
 
         Assert.assertEquals(JournalConfiguration.EXISTS, getReaderFactory().getConfiguration().exists(location));
 
-        Journal r = getReaderFactory().reader(location);
-        JournalMetadata m = r.getMetadata();
-        Assert.assertEquals(ColumnType.INT, m.getColumn(1).type);
-        Assert.assertEquals(ColumnType.STRING, m.getColumn(6).type);
+        try (Journal r = getReaderFactory().reader(location)) {
+            JournalMetadata m = r.getMetadata();
+            Assert.assertEquals(ColumnType.INT, m.getColumn(1).type);
+            Assert.assertEquals(ColumnType.STRING, m.getColumn(6).type);
+        }
     }
 
 

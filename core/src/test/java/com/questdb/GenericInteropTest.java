@@ -84,7 +84,7 @@ public class GenericInteropTest extends AbstractTest {
         }
 
         try (RecordSource rs = compile("test")) {
-            RecordCursor src = rs.prepareCursor(getReaderFactory());
+            RecordCursor src = rs.prepareCursor(theFactory.getCachingReaderFactory());
 
             Record e;
 
@@ -313,16 +313,17 @@ public class GenericInteropTest extends AbstractTest {
         writer.append(d);
         writer.commit();
 
-        Journal<Data> reader = getReaderFactory().reader(Data.class, "test");
-        String expected = "Data{sym='GBPUSD', created=30000, bid=0.65, ask=0.66, bidSize=1000, askSize=1100, id=1, status='OK', user='system', rateId='GBPUSD:GLOBAL', active=true, nullable='null', ticks=12345678, modulo=425}\n" +
-                "Data{sym='EURUSD', created=19999, bid=1.24, ask=1.25, bidSize=10000, askSize=12000, id=2, status='OK', user='system', rateId='EURUSD:GLOBAL', active=true, nullable='null', ticks=1234567, modulo=11000}\n" +
-                "Data{sym='HKDUSD', created=40000, bid=2.88, ask=2.89, bidSize=1000, askSize=1100, id=3, status='OK', user='system', rateId='HKDUSD:GLOBAL', active=true, nullable='null', ticks=989931, modulo=398}\n";
+        try (Journal<Data> reader = getReaderFactory().reader(Data.class, "test")) {
+            String expected = "Data{sym='GBPUSD', created=30000, bid=0.65, ask=0.66, bidSize=1000, askSize=1100, id=1, status='OK', user='system', rateId='GBPUSD:GLOBAL', active=true, nullable='null', ticks=12345678, modulo=425}\n" +
+                    "Data{sym='EURUSD', created=19999, bid=1.24, ask=1.25, bidSize=10000, askSize=12000, id=2, status='OK', user='system', rateId='EURUSD:GLOBAL', active=true, nullable='null', ticks=1234567, modulo=11000}\n" +
+                    "Data{sym='HKDUSD', created=40000, bid=2.88, ask=2.89, bidSize=1000, askSize=1100, id=3, status='OK', user='system', rateId='HKDUSD:GLOBAL', active=true, nullable='null', ticks=989931, modulo=398}\n";
 
-        StringBuilder builder = new StringBuilder();
-        for (Data data : JournalIterators.bufferedIterator(reader)) {
-            builder.append(data).append('\n');
+            StringBuilder builder = new StringBuilder();
+            for (Data data : JournalIterators.bufferedIterator(reader)) {
+                builder.append(data).append('\n');
+            }
+            TestUtils.assertEquals(expected, builder);
         }
-        TestUtils.assertEquals(expected, builder);
 
         writer.close();
     }
@@ -357,7 +358,7 @@ public class GenericInteropTest extends AbstractTest {
         }
 
         try (RecordSource rs = compile("test")) {
-            RecordCursor src = rs.prepareCursor(getReaderFactory());
+            RecordCursor src = rs.prepareCursor(theFactory.getCachingReaderFactory());
             Record e;
 
             Assert.assertTrue(src.hasNext());

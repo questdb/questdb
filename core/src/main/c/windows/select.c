@@ -37,19 +37,19 @@
 #include <stddef.h>
 #include "select.h"
 
-JNIEXPORT jint JNICALL Java_com_questdb_net_http_Win32SelectDispatcher_select
+JNIEXPORT jint JNICALL Java_com_questdb_net_Win32SelectDispatcher_select
         (JNIEnv *e, jclass cl, jlong readfds, jlong writefds, jlong exceptfds) {
     struct timeval tv = {0, 0};
     int n = select(0, (fd_set *) readfds, (fd_set *) writefds, (fd_set *) exceptfds, &tv);
     return n;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_net_http_Win32SelectDispatcher_arrayOffset
+JNIEXPORT jint JNICALL Java_com_questdb_net_Win32SelectDispatcher_arrayOffset
         (JNIEnv *e, jclass cl) {
     return offsetof(struct fd_set, fd_array[0]);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_net_http_Win32SelectDispatcher_countOffset
+JNIEXPORT jint JNICALL Java_com_questdb_net_Win32SelectDispatcher_countOffset
         (JNIEnv *e, jclass cl) {
     return offsetof(struct fd_set, fd_count);
 }

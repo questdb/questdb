@@ -23,6 +23,7 @@
 
 package com.questdb.net.ha;
 
+import com.questdb.Journal;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
@@ -50,6 +51,7 @@ public abstract class AbstractJournalTest extends AbstractTest {
     private JournalDeltaConsumer journalDeltaConsumer;
     private JournalClientStateProducer journalClientStateProducer;
     private JournalClientStateConsumer journalClientStateConsumer;
+    private Journal<Quote> masterReader;
 
     @Before
     public void setUp() throws Exception {
@@ -60,7 +62,8 @@ public abstract class AbstractJournalTest extends AbstractTest {
         journalClientStateProducer = new JournalClientStateProducer();
         journalClientStateConsumer = new JournalClientStateConsumer();
 
-        journalDeltaProducer = new JournalDeltaProducer(getReaderFactory().reader(Quote.class, "master"));
+        this.masterReader = getReaderFactory().reader(Quote.class, "master");
+        journalDeltaProducer = new JournalDeltaProducer(masterReader);
         journalDeltaConsumer = new JournalDeltaConsumer(slave);
         channel = new MockByteChannel();
     }
@@ -70,6 +73,9 @@ public abstract class AbstractJournalTest extends AbstractTest {
         origin.close();
         slave.close();
         master.close();
+        masterReader.close();
+        journalDeltaProducer.free();
+        journalDeltaConsumer.free();
     }
 
     void executeSequence(boolean expectContent) throws JournalNetworkException, JournalException {

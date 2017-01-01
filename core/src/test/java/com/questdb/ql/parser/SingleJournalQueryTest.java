@@ -495,7 +495,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testConstants() throws Exception {
         createTabWithNaNs2();
         assertThat("FLOAT\tDOUBLE\tINT\tLONG\n", "select typeOf(123.34f), typeOf(123.34), typeOf(1234), typeOf(1234L) from tab limit 1");
-        assertSymbol("select typeOf(123.34f), typeOf(123.34), typeOf(1234), typeOf(1234L) from tab limit 1", 0);
+        assertSymbol("select typeOf(123.34f), typeOf(123.34), typeOf(1234), typeOf(1234L) from tab limit 1");
     }
 
     @Test
@@ -2541,7 +2541,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         sink.clear();
         try (RecordSource src = compile("select id, z from tab limit :xyz")) {
             src.getParam(":xyz").set(10L);
-            printer.print(src, getReaderFactory(), false);
+            printer.print(src, theFactory.getCachingReaderFactory(), false);
             TestUtils.assertEquals(expected, sink);
         }
 
@@ -2549,7 +2549,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         sink.clear();
         try (RecordSource src = compile("select id, z from tab limit :xyz")) {
             src.getParam(":xyz").set(10L);
-            printer.print(src, getReaderFactory(), false);
+            printer.print(src, theFactory.getCachingReaderFactory(), false);
             TestUtils.assertEquals(expected, sink);
         }
 
@@ -2557,7 +2557,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         sink.clear();
         try (RecordSource src = compile("select id, z from tab limit :xyz")) {
             src.getParam(":xyz").set(5L);
-            printer.print(src, getReaderFactory(), false);
+            printer.print(src, theFactory.getCachingReaderFactory(), false);
 
             final String expected2 = "YDVRVNGSTEQODRZ\t-99\n" +
                     "RIIYMHOWKCDNZNL\t-397\n" +
@@ -2587,14 +2587,14 @@ public class SingleJournalQueryTest extends AbstractTest {
         try (RecordSource src = compile("select id, z from tab where z > :min limit :lim")) {
             src.getParam(":min").set(450);
             src.getParam(":lim").set(10L);
-            printer.print(src, getReaderFactory(), false);
+            printer.print(src, theFactory.getCachingReaderFactory(), false);
         }
 
         sink.clear();
         try (RecordSource src = compile("select id, z from tab where :min < z limit :lim")) {
             src.getParam(":min").set(450);
             src.getParam(":lim").set(10L);
-            printer.print(src, getReaderFactory(), false);
+            printer.print(src, theFactory.getCachingReaderFactory(), false);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -2612,7 +2612,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         createTabWithNaNs2();
         sink.clear();
         try (RecordSource src = compile("select id, z from tab where z > :min limit :lim")) {
-            printer.print(src, getReaderFactory(), false);
+            printer.print(src, theFactory.getCachingReaderFactory(), false);
         }
     }
 
@@ -3947,7 +3947,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testSymbolInIntervalSource() throws Exception {
         createTabWithSymbol();
-        assertSymbol("(select sym, timestamp+1 ts, sum(y) from tab sample by 1d) timestamp(ts) where ts = '2015-03-13T00:01:39'", 0);
+        assertSymbol("(select sym, timestamp+1 ts, sum(y) from tab sample by 1d) timestamp(ts) where ts = '2015-03-13T00:01:39'");
     }
 
     @Test
@@ -4390,7 +4390,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabWithSymbol() throws JournalException, NumericException {
-        JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(16).
                         $sym("sym").
@@ -4398,29 +4398,30 @@ public class SingleJournalQueryTest extends AbstractTest {
                         $double("y").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
-        ObjHashSet<String> names = getNames(rnd, 1024);
+            Rnd rnd = new Rnd();
+            ObjHashSet<String> names = getNames(rnd, 1024);
 
-        ObjHashSet<String> syms = new ObjHashSet<>();
-        for (int i = 0; i < 64; i++) {
-            syms.add(rnd.nextString(10));
+            ObjHashSet<String> syms = new ObjHashSet<>();
+            for (int i = 0; i < 64; i++) {
+                syms.add(rnd.nextString(10));
+            }
+
+            int mask = 1023;
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, names.get(rnd.nextInt() & mask));
+                ew.putDouble(2, rnd.nextDouble());
+                ew.putDouble(3, rnd.nextDouble());
+                ew.putDate(4, t += 10);
+                ew.putSym(1, syms.get(rnd.nextInt() & 63));
+                ew.append();
+            }
+            w.commit();
         }
-
-        int mask = 1023;
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, names.get(rnd.nextInt() & mask));
-            ew.putDouble(2, rnd.nextDouble());
-            ew.putDouble(3, rnd.nextDouble());
-            ew.putDate(4, t += 10);
-            ew.putSym(1, syms.get(rnd.nextInt() & 63));
-            ew.append();
-        }
-        w.commit();
     }
 
     private ObjHashSet<String> getNames(Rnd r, int n) {

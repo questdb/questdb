@@ -241,9 +241,9 @@ public class RecordListTest extends AbstractTest {
             try (RecordList records = new RecordList(journal.getMetadata(), pageSize)) {
                 LongList offsets = new LongList();
 
-                try (RecordSource rs = compiler.compile(getReaderFactory(), journal.getLocation().getName())) {
+                try (RecordSource rs = compiler.compile(theFactory.getCachingReaderFactory(), journal.getLocation().getName())) {
                     long o = -1;
-                    for (Record rec : rs.prepareCursor(getReaderFactory())) {
+                    for (Record rec : rs.prepareCursor(theFactory.getCachingReaderFactory())) {
                         offsets.add(o = records.append(rec, o));
                     }
                 }

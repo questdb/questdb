@@ -310,8 +310,9 @@ public class AuthorizationTest extends AbstractTest {
 
                     latch.await();
 
-                    Journal<Quote> local = getReaderFactory().reader(Quote.class, "local");
-                    TestUtils.assertDataEquals(remote, local);
+                    try (Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
+                        TestUtils.assertDataEquals(remote, local);
+                    }
 
                 } finally {
                     client.halt();

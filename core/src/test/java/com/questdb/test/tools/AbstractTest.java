@@ -50,14 +50,13 @@ public abstract class AbstractTest {
     protected final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
     private final QueryCompiler compiler = new QueryCompiler();
 
-    public void assertSymbol(String query, int columnIndex) throws ParserException {
-        try (RecordSource src = compiler.compile(getReaderFactory(), query)) {
-            RecordCursor cursor = src.prepareCursor(getReaderFactory());
-            SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
-            Assert.assertNotNull(getReaderFactory());
+    public void assertSymbol(String query) throws ParserException {
+        try (RecordSource src = compiler.compile(theFactory.getCachingReaderFactory(), query)) {
+            RecordCursor cursor = src.prepareCursor(theFactory.getCachingReaderFactory());
+            SymbolTable tab = cursor.getStorageFacade().getSymbolTable(0);
             while (cursor.hasNext()) {
                 Record r = cursor.next();
-                TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));
+                TestUtils.assertEquals(r.getSym(0), tab.value(r.getInt(0)));
             }
         }
     }
@@ -76,8 +75,8 @@ public abstract class AbstractTest {
     }
 
     protected void assertEmpty(String query) throws ParserException {
-        try (RecordSource src = compiler.compile(getReaderFactory(), query)) {
-            Assert.assertFalse(src.prepareCursor(getReaderFactory()).hasNext());
+        try (RecordSource src = compiler.compile(theFactory.getCachingReaderFactory(), query)) {
+            Assert.assertFalse(src.prepareCursor(theFactory.getCachingReaderFactory()).hasNext());
         }
     }
 
@@ -93,8 +92,8 @@ public abstract class AbstractTest {
 
     protected void assertThat(String expected, String query, boolean header) throws ParserException, IOException {
         long memUsed = Unsafe.getMemUsed();
-        try (RecordSource src = compiler.compile(getReaderFactory(), query)) {
-            RecordCursor cursor = src.prepareCursor(getReaderFactory());
+        try (RecordSource src = compiler.compile(theFactory.getCachingReaderFactory(), query)) {
+            RecordCursor cursor = src.prepareCursor(theFactory.getCachingReaderFactory());
 
             sink.clear();
             printer.print(cursor, header, src.getMetadata());
@@ -106,7 +105,7 @@ public abstract class AbstractTest {
             printer.print(cursor, header, src.getMetadata());
             TestUtils.assertEquals(expected, sink);
 
-            TestUtils.assertStrings(src, getReaderFactory());
+            TestUtils.assertStrings(src, theFactory.getCachingReaderFactory());
         } catch (ParserException e) {
             System.out.println(QueryError.getMessage());
             System.out.println(QueryError.getPosition());
@@ -121,7 +120,7 @@ public abstract class AbstractTest {
     }
 
     protected RecordSource compile(CharSequence query) throws ParserException {
-        return compiler.compile(getReaderFactory(), query);
+        return compiler.compile(theFactory.getCachingReaderFactory(), query);
     }
 
     protected void expectFailure(CharSequence query) throws ParserException {

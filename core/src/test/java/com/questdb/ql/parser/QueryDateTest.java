@@ -40,7 +40,7 @@ public class QueryDateTest extends AbstractOptimiserTest {
     }
 
     private void createTab() throws JournalException, NumericException {
-        JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = getWriterFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -49,30 +49,31 @@ public class QueryDateTest extends AbstractOptimiserTest {
                         $date("w").
                         $ts()
 
-        );
+        )) {
 
-        Rnd rnd = new Rnd();
+            Rnd rnd = new Rnd();
 
-        long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-        long time1 = Dates.parseDateTime("2015-10-03T00:00:00.000Z");
+            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long time1 = Dates.parseDateTime("2015-10-03T00:00:00.000Z");
 
-        for (int i = 0; i < 10000; i++) {
-            JournalEntryWriter ew = w.entryWriter();
-            ew.putStr(0, rnd.nextChars(15));
-            ew.putDouble(1, rnd.nextDouble());
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(2);
-            } else {
-                ew.putDouble(2, rnd.nextDouble());
+            for (int i = 0; i < 10000; i++) {
+                JournalEntryWriter ew = w.entryWriter();
+                ew.putStr(0, rnd.nextChars(15));
+                ew.putDouble(1, rnd.nextDouble());
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(2);
+                } else {
+                    ew.putDouble(2, rnd.nextDouble());
+                }
+                if (rnd.nextPositiveInt() % 10 == 0) {
+                    ew.putNull(3);
+                } else {
+                    ew.putDate(3, time1 + rnd.nextLong() % 5000000);
+                }
+                ew.putDate(5, t += 10);
+                ew.append();
             }
-            if (rnd.nextPositiveInt() % 10 == 0) {
-                ew.putNull(3);
-            } else {
-                ew.putDate(3, time1 + rnd.nextLong() % 5000000);
-            }
-            ew.putDate(5, t += 10);
-            ew.append();
+            w.commit();
         }
-        w.commit();
     }
 }

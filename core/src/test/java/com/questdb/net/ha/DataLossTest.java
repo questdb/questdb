@@ -32,6 +32,7 @@ import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;
@@ -40,6 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class DataLossTest extends AbstractTest {
 
     @Test
+    @Ignore
     public void testDiscardFile() throws Exception {
 
         // create master journal

@@ -495,7 +495,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 QueryCompiler qc = new QueryCompiler(configuration);
                 RecordSource src1 = qc.compile(f, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'");
                 try {
-                    printer.print(src1, getReaderFactory());
+                    printer.print(src1, f);
                     TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
                 } finally {
                     Misc.free(src1);
@@ -530,7 +530,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 QueryCompiler qc = new QueryCompiler(configuration);
                 RecordSource src1 = qc.compile(f, "select count() from 'test-import.csv'");
                 try {
-                    printer.print(src1, getReaderFactory());
+                    printer.print(src1, f);
                     TestUtils.assertEquals("0\n", sink);
                 } finally {
                     Misc.free(src1);

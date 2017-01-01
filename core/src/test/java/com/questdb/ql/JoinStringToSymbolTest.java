@@ -37,6 +37,7 @@ import com.questdb.test.tools.TestUtils;
 import com.questdb.test.tools.TheFactory;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -75,6 +76,12 @@ public class JoinStringToSymbolTest {
         aw = getWriterFactory().writer(Album.class);
     }
 
+    @After
+    public void tearDown() throws Exception {
+        aw.close();
+        bw.close();
+    }
+
     @Test
     public void testCrossJoin() throws Exception {
         bw.append(new Band().setName("band1").setType("rock").setUrl("http://band1.com"));
@@ -95,7 +102,7 @@ public class JoinStringToSymbolTest {
         try (RecordSource rs = new CrossJoinRecordSource(new JournalRecordSource(
                 new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()), new JournalRecordSource(
                 new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()))) {
-            p.print(rs, getReaderFactory());
+            p.print(rs, theFactory.getCachingReaderFactory());
         }
 
         final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\n" +

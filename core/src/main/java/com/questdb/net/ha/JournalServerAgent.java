@@ -100,6 +100,12 @@ public class JournalServerAgent {
         commandProducer.free();
         stringResponseProducer.free();
         intResponseProducer.free();
+        for (int i = 0, n = readers.size(); i < n; i++) {
+            Journal r = readers.getQuick(i);
+            if (r != null) {
+                r.close();
+            }
+        }
         for (int i = 0, k = producers.size(); i < k; i++) {
             producers.getQuick(i).free();
         }
