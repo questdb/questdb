@@ -78,8 +78,8 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
 
     @Override
     public boolean canClose(Journal journal) {
-        String path = journal.getName();
-        Entry e = entries.get(path);
+        String name = journal.getName();
+        Entry e = entries.get(name);
         if (e != null) {
             long threadId = Thread.currentThread().getId();
             if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, threadId, -1L)) {
@@ -93,17 +93,19 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                     // if lock isn't successful it will mean that responsibility to close writer is
                     // with new owner
                     if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, threadId)) {
+                        LOG.info().$("Closing writer '").$(name).$('\'').$();
+                        e.writer = null;
                         return true;
                     }
                 }
 
-                LOG.info().$("Writer '").$(path).$(" is back in pool").$();
+                LOG.info().$("Writer '").$(name).$(" is back in pool").$();
                 e.lastReleaseTime = System.currentTimeMillis();
             } else {
-                LOG.error().$("Writer '").$(path).$("' is owned by thread ").$(e.owner).$();
+                LOG.error().$("Writer '").$(name).$("' is owned by thread ").$(e.owner).$();
             }
         } else {
-            LOG.error().$("Writer '").$(path).$("' is not managed by this pool").$();
+            LOG.error().$("Writer '").$(name).$("' is not managed by this pool").$();
             return true;
         }
 
@@ -143,6 +145,12 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
     @Override
     @SuppressWarnings("unchecked")
     public <T> JournalWriter<T> writer(JournalMetadata<T> metadata) throws JournalException {
+
+        if (closed) {
+            LOG.info().$("Pool is closed").$();
+            return null;
+        }
+
         final String path = metadata.getKey().path();
 
         Entry e = entries.get(path);
@@ -152,10 +160,6 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
             if (entries.putIfAbsent(path, e) == null) {
                 // race won
 
-                if (closed) {
-                    LOG.info().$("Pool is closed").$();
-                    return null;
-                }
                 try {
                     e.writer = super.writer(metadata);
 
@@ -166,7 +170,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                     LOG.info().$("Writer '").$(path).$("' is allocated by thread ").$(e.owner).$();
                     return e.writer;
                 } catch (JournalException ex) {
-                    LOG.error().$("Failed to allocate writer '").$(path).$("' in thread").$(e.owner).$(e).$();
+                    LOG.error().$("Failed to allocate writer '").$(path).$("' in thread ").$(e.owner).$(": ").$(ex).$();
                     e.allocationFailure = true;
                     return null;
                 }
@@ -205,6 +209,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                     }
 
                     if (closed) {
+                        LOG.info().$("Writer '").$(path).$("' is detached").$();
                         e.writer.setCloseInterceptor(null);
                     }
                     return e.writer;
@@ -220,6 +225,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         long threadId = Thread.currentThread().getId();
         boolean removed = false;
 
+        LOG.info().$("done?").$();
         Iterator<Map.Entry<String, Entry>> iterator = entries.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<String, Entry> me = iterator.next();
@@ -233,9 +239,14 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                     // lock successful
                     LOG.info().$("Closing writer '").$(me.getKey()).$('\'').$();
                     e.writer.setCloseInterceptor(null);
-                    e.writer.close();
+                    try {
+                        e.writer.close();
+                    } catch (Throwable e1) {
+                        LOG.error().$("Cannot close writer '").$(e.writer.getName()).$("': ").$(e1.getMessage()).$();
+                    }
                     iterator.remove();
                     removed = true;
+                    Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, -1L);
                 }
             } else if (e.allocationFailure) {
                 LOG.info().$("Removing entry for failed to allocate writer '").$(me.getKey()).$('\'').$();

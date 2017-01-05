@@ -81,6 +81,14 @@ public final class Unsafe {
         Unsafe.getUnsafe().putLong(array, LONG_OFFSET + (index << LONG_SCALE), value);
     }
 
+    public static void arrayPutOrdered(long[] array, long index, long value) {
+        Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + (index << LONG_SCALE), value);
+    }
+
+    public static boolean cas(long[] array, int index, long expected, long value) {
+        return Unsafe.getUnsafe().compareAndSwapLong(array, Unsafe.LONG_OFFSET + (index << Unsafe.LONG_SCALE), expected, value);
+    }
+
     public static void free(long ptr, long size) {
         getUnsafe().freeMemory(ptr);
         FREE_COUNT.incrementAndGet();

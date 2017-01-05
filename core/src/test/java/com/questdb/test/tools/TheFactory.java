@@ -102,7 +102,7 @@ public class TheFactory implements TestRule {
 
     public CachingWriterFactory getCachingWriterFactory() {
         if (cachingWriterFactory == null) {
-            cachingWriterFactory = new CachingWriterFactory(configuration, 1000);
+            cachingWriterFactory = new CachingWriterFactory(configuration, 1);
         }
         return cachingWriterFactory;
     }

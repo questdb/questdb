@@ -27,13 +27,61 @@ import com.questdb.JournalWriter;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 public class CachingWriterFactoryTest extends AbstractTest {
+
+    @Test
+    public void testAllocateAndClear() throws Exception {
+        final JournalStructure s = new JournalStructure("x").$date("ts").$();
+        final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
+
+        int n = 2;
+        final CyclicBarrier barrier = new CyclicBarrier(n);
+        final CountDownLatch halt = new CountDownLatch(n);
+        final AtomicInteger errors = new AtomicInteger();
+        final AtomicInteger writerCount = new AtomicInteger();
+
+        for (int i = 0; i < n; i++) {
+            new Thread() {
+                @Override
+                public void run() {
+                    try {
+                        barrier.await();
+
+
+                        try (JournalWriter w = wf.writer(s)) {
+                            if (w != null) {
+                                writerCount.incrementAndGet();
+                            }
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        errors.incrementAndGet();
+                    } finally {
+                        halt.countDown();
+                    }
+                }
+            }.start();
+        }
+
+        halt.await();
+
+        // this check is unreliable on slow build servers
+        // it is very often the case that there are limited number of cores
+        // available and threads execute sequentially rather than
+        // simultaneously. We should check that none of the threads
+        // receive error.
+//        Assert.assertEquals(1, writerCount.get());
+        Assert.assertEquals(0, errors.get());
+        Assert.assertEquals(1, wf.countFreeWriters());
+    }
 
     @Test
     public void testOneThreadGetRelease() throws Exception {
@@ -69,6 +117,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
     }
 
     @Test
+    @Ignore
     public void testTwoThreadsRaceToAllocate() throws Exception {
         final JournalStructure s = new JournalStructure("x").$date("ts").$();
         final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
@@ -79,27 +128,50 @@ public class CachingWriterFactoryTest extends AbstractTest {
         final AtomicInteger errors = new AtomicInteger();
         final AtomicInteger writerCount = new AtomicInteger();
 
-        for (int i = 0; i < n; i++) {
-            new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        barrier.await();
-
+        new Thread() {
+            @Override
+            public void run() {
+                try {
+                    for (int i = 0; i < 1000; i++) {
                         try (JournalWriter w = wf.writer(s)) {
                             if (w != null) {
                                 writerCount.incrementAndGet();
                             }
                         }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                        errors.incrementAndGet();
-                    } finally {
-                        halt.countDown();
+
+                        if (i == 3) {
+                            barrier.await();
+                        }
+                        LockSupport.parkNanos(100L);
                     }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    halt.countDown();
                 }
-            }.start();
-        }
+            }
+        }.start();
+
+        new Thread() {
+            @Override
+            public void run() {
+                try {
+                    barrier.await();
+
+                    for (int i = 0; i < 1000; i++) {
+                        wf.run();
+                        LockSupport.parkNanos(10L);
+                    }
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    halt.countDown();
+                }
+            }
+        }.start();
 
         halt.await();
 
@@ -111,6 +183,5 @@ public class CachingWriterFactoryTest extends AbstractTest {
 //        Assert.assertEquals(1, writerCount.get());
         Assert.assertEquals(0, errors.get());
         Assert.assertEquals(1, wf.countFreeWriters());
-
     }
 }
