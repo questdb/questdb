@@ -57,10 +57,10 @@ class JournalConfigurationImpl implements JournalConfiguration {
     }
 
     public <T> JournalMetadata<T> buildWithRootLocation(MetadataBuilder<T> builder) throws JournalException {
-        File journalLocation = new File(getJournalBase(), builder.getLocation());
+        File journalLocation = new File(getJournalBase(), builder.getName());
 
         JournalMetadata<T> mo = readMetadata(journalLocation);
-        JournalMetadata<T> mn = builder.location(journalLocation).build();
+        JournalMetadata<T> mn = builder.withPath(journalLocation.getAbsolutePath()).build();
 
         if (mo == null || mo.isCompatible(mn, false)) {
             return mn;
@@ -72,10 +72,12 @@ class JournalConfigurationImpl implements JournalConfiguration {
     @SuppressWarnings("unchecked")
     @Override
     public <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException {
-        File journalLocation = new File(getJournalBase(), getLocation(key));
+        File journalLocation = new File(getJournalBase(), key.getName());
+        String path = journalLocation.getAbsolutePath();
 
         JournalMetadata<T> mo = readMetadata(journalLocation);
-        JournalMetadata<T> mn = journalMetadata.get(key.getId());
+        String className = key.getModelClassName();
+        JournalMetadata<T> mn = className == null ? null : journalMetadata.get(className);
 
         if (mo == null) {
             // no existing journal
@@ -84,25 +86,25 @@ class JournalConfigurationImpl implements JournalConfiguration {
             // 2. key represents a class that can be introspected
 
             if (mn == null && key.getModelClass() == null) {
-                LOG.error().$("Journal does not exist: ").$(key.path()).$();
+                LOG.error().$("Journal does not exist: ").$(key.getName()).$();
                 throw JournalDoesNotExistException.INSTANCE;
             }
 
             MetadataBuilder<T> builder;
 
             if (mn == null) {
-                builder = new JournalMetadataBuilder<>(key.getModelClass());
+                builder = new JournalMetadataBuilder<>(key.getModelClass(), key.getName());
             } else {
                 if (key.getModelClass() == null) {
-                    builder = (MetadataBuilder<T>) new JournalStructure(mn);
+                    builder = (MetadataBuilder<T>) new JournalStructure(mn, key.getName());
                 } else {
-                    builder = new JournalMetadataBuilder<>(mn);
+                    builder = new JournalMetadataBuilder<>(mn, key.getName());
                 }
             }
             return builder.
                     partitionBy(key.getPartitionBy()).
                     recordCountHint(key.getRecordHint()).
-                    location(journalLocation).
+                    withPath(path).
                     ordered(key.isOrdered()).
                     build();
         } else {
@@ -112,20 +114,20 @@ class JournalConfigurationImpl implements JournalConfiguration {
                 if (key.getModelClass() == null) {
                     // if this is generic access request
                     // return metadata as is, nothing more to do
-                    return (JournalMetadata<T>) new JournalStructure(mo).location(journalLocation).recordCountHint(key.getRecordHint()).build();
+                    return (JournalMetadata<T>) new JournalStructure(mo, key.getName()).withPath(path).recordCountHint(key.getRecordHint()).build();
                 }
                 // if this is request to map class on existing journal
                 // check compatibility and map to class (calc offsets and constructor)
-                return new JournalStructure(mo).location(journalLocation).recordCountHint(key.getRecordHint()).map(key.getModelClass());
+                return new JournalStructure(mo, key.getName()).withPath(path).recordCountHint(key.getRecordHint()).map(key.getModelClass());
             }
 
             // we have both on-disk and in-app meta
             // check if in-app meta matches on-disk meta
             if (mn.isCompatible(mo, false)) {
                 if (mn.getModelClass() == null) {
-                    return (JournalMetadata<T>) new JournalStructure(mn).recordCountHint(key.getRecordHint()).location(journalLocation).build();
+                    return (JournalMetadata<T>) new JournalStructure(mn).recordCountHint(key.getRecordHint()).withPath(path).build();
                 }
-                return new JournalMetadataBuilder<>(mn).location(journalLocation).recordCountHint(key.getRecordHint()).build();
+                return new JournalMetadataBuilder<>(mn, key.getName()).withPath(path).recordCountHint(key.getRecordHint()).build();
             }
 
             throw new JournalMetadataException(mo, mn);
@@ -219,25 +221,6 @@ class JournalConfigurationImpl implements JournalConfiguration {
                 }
             }
         }
-    }
-
-
-    private String getLocation(JournalKey key) {
-        String loc = key.getLocation();
-        if (loc != null) {
-            return loc;
-        }
-
-        JournalMetadata m = journalMetadata.get(key.getId());
-        if (m == null) {
-            if (key.getModelClass() == null) {
-                return key.getId();
-            }
-
-            return key.getModelClass().getName();
-        }
-
-        return m.getLocation();
     }
 
     private <T> JournalMetadata<T> readMetadata(File location) throws JournalException {

@@ -298,7 +298,7 @@ public class JournalClient {
     private void resubscribe() {
         for (int i = 0, n = subscriptions.size(); i < n; i++) {
             SubscriptionHolder h = subscriptions.get(i);
-            subscribeOne(i, h, h.local.path(), false);
+            subscribeOne(i, h, h.local.getName(), false);
         }
     }
 
@@ -398,7 +398,7 @@ public class JournalClient {
             if (writer == null) {
                 if (holder.writer == null) {
                     try {
-                        writer = factory.writer(new JournalStructure(metadata).location(loc));
+                        writer = factory.writer(new JournalStructure(metadata, loc));
                     } catch (JournalException e) {
                         LOG.error().$("Failed to create writer: ").$(e).$();
                         unsubscribe(index, null, holder, JournalEvents.EVT_JNL_INCOMPATIBLE);
@@ -420,7 +420,7 @@ public class JournalClient {
             }
 
             if (validate && !metadata.isCompatible(writer.getMetadata(), false)) {
-                LOG.error().$("Journal ").$(holder.local.path()).$(" is not compatible with ").$(holder.remote.path()).$("(remote)").$();
+                LOG.error().$("Journal ").$(holder.local.getName()).$(" is not compatible with ").$(holder.remote.getName()).$("(remote)").$();
                 unsubscribe(index, writer, holder, JournalEvents.EVT_JNL_INCOMPATIBLE);
                 return;
             }
@@ -433,9 +433,9 @@ public class JournalClient {
             if (holder.listener != null) {
                 holder.listener.onEvent(JournalEvents.EVT_JNL_SUBSCRIBED);
             }
-            LOG.info().$("Subscribed ").$(loc).$(" to ").$(holder.remote.path()).$("(remote)").$();
+            LOG.info().$("Subscribed ").$(loc).$(" to ").$(holder.remote.getName()).$("(remote)").$();
         } catch (JournalNetworkException e) {
-            LOG.error().$("Failed to subscribe ").$(loc).$(" to ").$(holder.remote.path()).$("(remote)").$();
+            LOG.error().$("Failed to subscribe ").$(loc).$(" to ").$(holder.remote.getName()).$("(remote)").$();
             unsubscribe(index, writer, holder, JournalEvents.EVT_JNL_SERVER_ERROR);
         }
     }
@@ -459,18 +459,18 @@ public class JournalClient {
             setKeyRequestProducer.write(channel, new IndexedJournalKey(index, holder.remote));
             checkAck();
         } catch (JournalNetworkException e) {
-            LOG.error().$("Failed to unsubscribe journal ").$(holder.remote.path()).$(e).$();
+            LOG.error().$("Failed to unsubscribe journal ").$(holder.remote.getName()).$(e).$();
             notifyCallback(JournalClientEvents.EVT_UNSUB_REJECT);
         }
 
         if (reason == JournalEvents.EVT_JNL_INCOMPATIBLE) {
             // remove from duplicate check set
-            subscribedJournals.remove(holder.local.path());
+            subscribedJournals.remove(holder.local.getName());
 
             // remove from re-subscription list
             for (int i = 0, n = subscriptions.size(); i < n; i++) {
                 SubscriptionHolder h = subscriptions.getQuick(i);
-                if (h.local.path().equals(holder.local.path())) {
+                if (h.local.getName().equals(holder.local.getName())) {
                     subscriptions.remove(i);
                     break;
                 }
@@ -536,7 +536,7 @@ public class JournalClient {
 
                 switch (holder.type) {
                     case MSG_SUBSCRIBE:
-                        String loc = holder.local.path();
+                        String loc = holder.local.getName();
 
                         if (subscribedJournals.add(loc)) {
                             subscribeOne(i++, holder, loc, true);

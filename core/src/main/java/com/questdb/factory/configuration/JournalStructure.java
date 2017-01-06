@@ -28,14 +28,12 @@ import com.questdb.ex.JournalConfigurationException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
 
-import java.io.File;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -48,7 +46,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
     private static final Log LOG = LogFactory.getLog(JournalStructure.class);
     private final ObjList<ColumnMetadata> metadata = new ObjList<>();
     private final CharSequenceIntHashMap nameToIndexMap = new CharSequenceIntHashMap();
-    private String location;
+    private final String name;
     private int tsColumnIndex = -1;
     private int partitionBy = PartitionBy.NONE;
     private int recordCountHint = 100000;
@@ -60,13 +58,14 @@ public class JournalStructure implements MetadataBuilder<Object> {
     private Constructor<Object> constructor;
     private boolean partialMapping = false;
     private boolean ordered = true;
+    private String path;
 
-    public JournalStructure(String location) {
-        this.location = location;
+    public JournalStructure(String name) {
+        this.name = name;
     }
 
-    public JournalStructure(String location, ObjList<? extends ColumnMetadata> columnMetadata) {
-        this.location = location;
+    public JournalStructure(String name, ObjList<? extends ColumnMetadata> columnMetadata) {
+        this.name = name;
         for (int i = 0, sz = columnMetadata.size(); i < sz; i++) {
             ColumnMetadata to = new ColumnMetadata();
             metadata.add(to.copy(columnMetadata.getQuick(i)));
@@ -75,7 +74,11 @@ public class JournalStructure implements MetadataBuilder<Object> {
     }
 
     public JournalStructure(JournalMetadata model) {
-        this.location = model.getLocation();
+        this(model, model.getName());
+    }
+
+    public JournalStructure(JournalMetadata model, String name) {
+        this.name = name == null ? model.getName() : name;
         this.tsColumnIndex = model.getTimestampIndex();
         this.partitionBy = model.getPartitionBy();
         this.recordCountHint = model.getRecordHint();
@@ -175,7 +178,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
             }
 
             if (meta.size == 0 && meta.avgSize == 0) {
-                throw new JournalConfigurationException("Invalid size for column %s.%s", location, meta.name);
+                throw new JournalConfigurationException("Invalid size for column %s.%s", name, meta.name);
             }
 
             // distinctCount
@@ -203,11 +206,11 @@ public class JournalStructure implements MetadataBuilder<Object> {
         }
 
         return new JournalMetadata<>(
-                Chars.getFileName(location)
+                name
                 , modelClass
                 , constructor
                 , key
-                , location
+                , path
                 , partitionBy
                 , m
                 , tsColumnIndex
@@ -220,20 +223,8 @@ public class JournalStructure implements MetadataBuilder<Object> {
         );
     }
 
-    public String getLocation() {
-        return location;
-    }
-
-    @Override
-    public JournalStructure location(String location) {
-        this.location = location;
-        return this;
-    }
-
-    @Override
-    public JournalStructure location(File path) {
-        this.location = path.getAbsolutePath();
-        return this;
+    public String getName() {
+        return name;
     }
 
     @Override
@@ -253,6 +244,12 @@ public class JournalStructure implements MetadataBuilder<Object> {
         if (count > 0) {
             this.recordCountHint = count;
         }
+        return this;
+    }
+
+    @Override
+    public JournalStructure withPath(String path) {
+        this.path = path;
         return this;
     }
 

@@ -36,9 +36,9 @@ public interface WriterFactory {
 
     <T> JournalWriter<T> writer(Class<T> clazz) throws JournalException;
 
-    <T> JournalWriter<T> writer(Class<T> clazz, String location) throws JournalException;
+    <T> JournalWriter<T> writer(Class<T> clazz, String name) throws JournalException;
 
-    <T> JournalWriter<T> writer(Class<T> clazz, String location, int recordHint) throws JournalException;
+    <T> JournalWriter<T> writer(Class<T> clazz, String name, int recordHint) throws JournalException;
 
     JournalWriter writer(String location) throws JournalException;
 

@@ -220,7 +220,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                 long importedRows = ctx.importer.getImportedRowCount();
                 r.put('{')
                         .putQuoted("status").put(':').putQuoted("OK").put(',')
-                        .putQuoted("location").put(':').putUtf8EscapedAndQuoted(FileNameExtractorCharSequence.get(m.getLocation())).put(',')
+                        .putQuoted("location").put(':').putUtf8EscapedAndQuoted(FileNameExtractorCharSequence.get(m.getPath())).put(',')
                         .putQuoted("rowsRejected").put(':').put(totalRows - importedRows).put(',')
                         .putQuoted("rowsImported").put(':').put(importedRows).put(',')
                         .putQuoted("columns").put(':').put('[');
@@ -318,7 +318,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                 sep(r);
                 r.put('|');
                 pad(r, TO_STRING_COL1_PAD, "Location:");
-                pad(r, TO_STRING_COL2_PAD, m.getLocation());
+                pad(r, TO_STRING_COL2_PAD, m.getPath());
                 pad(r, TO_STRING_COL3_PAD, "Errors").put(Misc.EOL);
 
 

@@ -25,101 +25,51 @@ package com.questdb;
 
 import com.questdb.factory.configuration.Constants;
 import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Files;
 
 import java.nio.ByteBuffer;
 
 public class JournalKey<T> {
-    private final String id;
     private final Class<T> modelClass;
-    private String location;
-    private int partitionBy = PartitionBy.DEFAULT;
-    private int recordHint = Constants.NULL_RECORD_HINT;
-    private boolean ordered = true;
+    private final String name;
+    private final int partitionBy;
+    private final int recordHint;
+    private final boolean ordered;
 
-    public JournalKey(String id) {
-        this.id = id;
-        this.modelClass = null;
-    }
-
-    public JournalKey(String id, Class<T> modelClass, String location, int recordHint) {
-        this.id = id;
-        this.modelClass = modelClass;
-        this.location = location;
-        this.recordHint = recordHint;
+    public JournalKey(String name) {
+        this(null, name);
     }
 
     public JournalKey(Class<T> clazz) {
-        this.modelClass = clazz;
-        this.id = clazz.getName();
+        this(clazz, null);
     }
 
-    public JournalKey(Class<T> clazz, int recordHint) {
-        this.modelClass = clazz;
-        this.id = clazz.getName();
-        this.recordHint = recordHint;
+    public JournalKey(Class<T> clazz, String name) {
+        this(clazz, name, PartitionBy.DEFAULT);
     }
 
-    public JournalKey(Class<T> clazz, String location) {
-        this.modelClass = clazz;
-        this.id = clazz.getName();
-        this.location = location;
+    public JournalKey(Class<T> clazz, String name, int partitionBy) {
+        this(clazz, name, partitionBy, Constants.NULL_RECORD_HINT);
     }
 
-    public JournalKey(Class<T> clazz, String location, int partitionBy) {
-        this.modelClass = clazz;
-        this.id = clazz.getName();
-        this.location = location;
-        this.partitionBy = partitionBy;
+    public JournalKey(Class<T> clazz, String name, int partitionBy, int recordHint) {
+        this(clazz, name, partitionBy, recordHint, true);
     }
 
-    public JournalKey(Class<T> clazz, String location, int partitionBy, int recordHint) {
+    public JournalKey(Class<T> clazz, String name, int partitionBy, int recordHint, boolean ordered) {
         this.modelClass = clazz;
-        this.id = clazz.getName();
-        this.location = location;
-        this.partitionBy = partitionBy;
-        this.recordHint = recordHint;
-    }
-
-    public JournalKey(Class<T> clazz, String location, int partitionBy, int recordHint, boolean ordered) {
-        this.modelClass = clazz;
-        this.id = clazz.getName();
-        this.location = location;
-        this.partitionBy = partitionBy;
-        this.recordHint = recordHint;
-        this.ordered = ordered;
-    }
-
-    public JournalKey(Class<T> clazz, String location, int partitionBy, boolean ordered) {
-        this.modelClass = clazz;
-        this.id = clazz.getName();
-        this.location = location;
-        this.partitionBy = partitionBy;
-        this.ordered = ordered;
-    }
-
-    public JournalKey(String clazz, String location, int partitionBy, int recordHint, boolean ordered) {
-        this.modelClass = null;
-        this.id = clazz;
-        this.location = location;
+        this.name = name == null ? clazz.getName() : name;
         this.partitionBy = partitionBy;
         this.recordHint = recordHint;
         this.ordered = ordered;
     }
 
     public static <X> JournalKey<X> fromBuffer(ByteBuffer buffer) {
-        // id
-        int clazzLen = buffer.getInt();
-        byte[] clazz = new byte[clazzLen];
-        buffer.get(clazz);
-        // location
+        // name
         int locLen = buffer.getInt();
-        char[] location = null;
-        if (locLen > 0) {
-            location = new char[locLen];
-            for (int i = 0; i < location.length; i++) {
-                location[i] = buffer.getChar();
-            }
+        char[] name;
+        name = new char[locLen];
+        for (int i = 0; i < name.length; i++) {
+            name[i] = buffer.getChar();
         }
         // partitionBy
         int partitionBy = buffer.get();
@@ -128,23 +78,23 @@ public class JournalKey<T> {
         // ordered
         boolean ordered = buffer.get() == 1;
 
-        return new JournalKey<>(new String(clazz, Files.UTF_8), location == null ? null : new String(location), partitionBy, recordHint, ordered);
+        return new JournalKey<>(null, new String(name), partitionBy, recordHint, ordered);
     }
 
     public int getBufferSize() {
-        return 4 + id.getBytes(Files.UTF_8).length + 4 + 2 * (location == null ? 0 : location.length()) + 1 + 1 + 4;
-    }
-
-    public String getId() {
-        return id;
-    }
-
-    public String getLocation() {
-        return location;
+        return 4 + 2 * (name == null ? 0 : name.length()) + 1 + 1 + 4;
     }
 
     public Class<T> getModelClass() {
         return modelClass;
+    }
+
+    public String getModelClassName() {
+        return modelClass == null ? null : modelClass.getName();
+    }
+
+    public String getName() {
+        return name;
     }
 
     public int getPartitionBy() {
@@ -157,30 +107,25 @@ public class JournalKey<T> {
 
     @Override
     public int hashCode() {
-        int result = id != null ? id.hashCode() : 0;
-        result = 31 * result + (location != null ? location.hashCode() : 0);
-        result = 31 * result + partitionBy;
-        result = 31 * result + recordHint;
-        return 31 * result + (ordered ? 1 : 0);
+        return name.hashCode();
     }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof JournalKey)) return false;
-        JournalKey that = (JournalKey) o;
-        return ordered == that.ordered && recordHint == that.recordHint && !(id != null ? !id.equals(that.id) : that.id != null) && !(location != null ? !location.equals(that.location) : that.location != null) && partitionBy == that.partitionBy;
+        if (o == null || getClass() != o.getClass()) return false;
 
+        JournalKey<?> that = (JournalKey<?>) o;
+
+        return name.equals(that.name);
     }
-
-    //////////////////////// REPLICATION CODE //////////////////////
 
     @Override
     public String toString() {
         return "JournalKey{" +
-                "id=" + id +
-                ", location='" + location + '\'' +
-                ", partitionBy=" + PartitionBy.toString(partitionBy) +
+                "modelClass=" + modelClass +
+                ", name='" + name + '\'' +
+                ", partitionBy=" + partitionBy +
                 ", recordHint=" + recordHint +
                 ", ordered=" + ordered +
                 '}';
@@ -190,19 +135,9 @@ public class JournalKey<T> {
         return ordered;
     }
 
-    public String path() {
-        return location == null ? id : location;
-    }
-
     public void write(ByteBuffer buffer) {
-        // id
-        buffer.putInt(id.length());
-        byte[] bytes = id.getBytes(Files.UTF_8);
-        for (int i = 0; i < bytes.length; i++) {
-            buffer.put(bytes[i]);
-        }
         // location
-        ByteBuffers.putStringDW(buffer, location);
+        ByteBuffers.putStringDW(buffer, name);
         // partition type
         buffer.put((byte) partitionBy);
         // recordHint

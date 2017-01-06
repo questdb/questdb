@@ -25,6 +25,7 @@ package com.questdb.net.ha;
 
 import com.questdb.Journal;
 import com.questdb.JournalWriter;
+import com.questdb.misc.Chars;
 import com.questdb.model.Quote;
 import com.questdb.model.Trade;
 import com.questdb.net.ha.comsumer.HugeBufferConsumer;
@@ -207,6 +208,6 @@ public class JournalServerAgentTest extends AbstractTest {
         setKeyRequestProducer.write(channel, new IndexedJournalKey(0, tradeWriter.getMetadata().getKey()));
         agent.process(channel);
         charSequenceResponseConsumer.read(channel);
-        TestUtils.assertEquals("Requested key not exported: JournalKey{id=com.questdb.model.Trade, location='com.questdb.model.Trade', partitionBy=MONTH, recordHint=0, ordered=true}", charSequenceResponseConsumer.getValue());
+        Assert.assertTrue(Chars.startsWith(charSequenceResponseConsumer.getValue(), "Requested key not exported"));
     }
 }

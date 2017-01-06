@@ -41,9 +41,9 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
 
     private static final int TO_STRING_COL1_PAD = 20;
     private static final int TO_STRING_COL2_PAD = 55;
-    private final String id;
+    private final String name;
     private final Class<T> modelClass;
-    private final String location;
+    private final String path;
     private final int partitionBy;
     private final int columnCount;
     private final ColumnMetadata timestampMetadata;
@@ -61,11 +61,11 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     private final boolean ordered;
 
     public JournalMetadata(
-            String id
+            String name
             , Class<T> modelClass
             , Constructor<T> constructor
             , String keyColumn
-            , String location
+            , String path
             , int partitionBy
             , ColumnMetadata[] columnMetadata
             , int timestampColumnIndex
@@ -76,9 +76,9 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
             , boolean partialMapping
             , boolean ordered
     ) {
-        this.id = id;
+        this.name = name;
         this.modelClass = modelClass;
-        this.location = location;
+        this.path = path;
         this.partitionBy = partitionBy;
         this.columnMetadata = new ColumnMetadata[columnMetadata.length];
         System.arraycopy(columnMetadata, 0, this.columnMetadata, 0, columnMetadata.length);
@@ -96,19 +96,20 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         }
         this.lag = lag;
         this.partialMapping = partialMapping;
-        if (modelClass != null) {
-            this.key = new JournalKey<>(modelClass, Chars.getFileName(location), partitionBy, ordered);
-        } else {
-            this.key = new JournalKey<>(id, null, partitionBy, ioBlockRecordCount, ordered);
-        }
+        this.key = new JournalKey<>(modelClass, name, partitionBy, ioBlockRecordCount, ordered);
+//        if (modelClass != null) {
+//            this.key = new JournalKey<>(modelClass, Chars.getFileName(path), partitionBy, ordered);
+//        } else {
+//            this.key = new JournalKey<>(name, null, partitionBy, ioBlockRecordCount, ordered);
+//        }
         this.ordered = ordered;
     }
 
     public JournalMetadata(UnstructuredFile buf) {
         buf.setPos(0);
-        id = buf.getStr();
+        name = buf.getStr();
         modelClass = null;
-        location = buf.getStr();
+        path = buf.getStr();
         partitionBy = buf.getInt();
         columnCount = buf.getInt();
         timestampColumnIndex = buf.getInt();
@@ -132,7 +133,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         ordered = buf.getBool();
         constructor = null;
         partialMapping = false;
-        this.key = new JournalKey<>(id, Chars.getFileName(location), partitionBy, ioBlockRecordCount, ordered);
+        this.key = new JournalKey<>(null, name, partitionBy, ioBlockRecordCount, ordered);
     }
 
     public void copyColumnMetadata(ColumnMetadata[] meta) {
@@ -184,10 +185,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         return timestampColumnIndex;
     }
 
-    public String getId() {
-        return id;
-    }
-
     public JournalKey<T> getKey() {
         return key;
     }
@@ -207,12 +204,16 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         return this.lag;
     }
 
-    public String getLocation() {
-        return location;
-    }
-
     public Class<T> getModelClass() {
         return modelClass;
+    }
+
+    public String getModelClassName() {
+        return modelClass == null ? null : modelClass.getName();
+    }
+
+    public String getName() {
+        return name;
     }
 
     public long getOpenFileTTL() {
@@ -221,6 +222,10 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
 
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public String getPath() {
+        return path;
     }
 
     public int getRecordHint() {
@@ -288,7 +293,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         sep(b);
         b.append('|');
         pad(b, TO_STRING_COL1_PAD, "Location:");
-        pad(b, TO_STRING_COL2_PAD, location).append('\n');
+        pad(b, TO_STRING_COL2_PAD, path).append('\n');
 
 
         b.append('|');
@@ -311,8 +316,8 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
 
     public void write(UnstructuredFile buf) {
         buf.setPos(0);
-        buf.put(id);
-        buf.put(location);
+        buf.put(name);
+        buf.put(path);
         buf.put(partitionBy);
         buf.put(columnCount);
         buf.put(timestampColumnIndex);

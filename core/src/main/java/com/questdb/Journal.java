@@ -84,7 +84,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
     public Journal(JournalMetadata<T> metadata) throws JournalException {
         this.metadata = metadata;
-        this.location = new File(metadata.getLocation());
+        this.location = new File(metadata.getPath());
         this.txLog = new TxLog(location, getMode(), metadata.getTxCountHint());
         this.open = true;
         this.timestampOffset = getMetadata().getTimestampMetadata() == null ? -1 : getMetadata().getTimestampMetadata().offset;
@@ -269,7 +269,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     public String getName() {
-        return getMetadata().getKey().path();
+        return getMetadata().getKey().getName();
     }
 
     public Partition<T> getPartition(int partitionIndex, boolean open) throws JournalException {

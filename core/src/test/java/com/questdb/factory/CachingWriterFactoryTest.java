@@ -38,87 +38,8 @@ import java.util.concurrent.locks.LockSupport;
 public class CachingWriterFactoryTest extends AbstractTest {
 
     @Test
-    public void testAllocateAndClear() throws Exception {
-        final JournalStructure s = new JournalStructure("x").$date("ts").$();
-        final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
-
-        int n = 2;
-        final CyclicBarrier barrier = new CyclicBarrier(n);
-        final CountDownLatch halt = new CountDownLatch(n);
-        final AtomicInteger errors = new AtomicInteger();
-        final AtomicInteger writerCount = new AtomicInteger();
-
-        for (int i = 0; i < n; i++) {
-            new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        barrier.await();
-
-
-                        try (JournalWriter w = wf.writer(s)) {
-                            if (w != null) {
-                                writerCount.incrementAndGet();
-                            }
-                        }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                        errors.incrementAndGet();
-                    } finally {
-                        halt.countDown();
-                    }
-                }
-            }.start();
-        }
-
-        halt.await();
-
-        // this check is unreliable on slow build servers
-        // it is very often the case that there are limited number of cores
-        // available and threads execute sequentially rather than
-        // simultaneously. We should check that none of the threads
-        // receive error.
-//        Assert.assertEquals(1, writerCount.get());
-        Assert.assertEquals(0, errors.get());
-        Assert.assertEquals(1, wf.countFreeWriters());
-    }
-
-    @Test
-    public void testOneThreadGetRelease() throws Exception {
-
-        JournalStructure s = new JournalStructure("x").$date("ts").$();
-        CachingWriterFactory wf = theFactory.getCachingWriterFactory();
-
-        JournalWriter x;
-        JournalWriter y;
-
-        x = wf.writer(s);
-        try {
-            Assert.assertEquals(0, wf.countFreeWriters());
-            Assert.assertNotNull(x);
-            Assert.assertTrue(x.isOpen());
-            Assert.assertTrue(x == wf.writer(s));
-        } finally {
-            x.close();
-        }
-
-        Assert.assertEquals(1, wf.countFreeWriters());
-
-        y = wf.writer(s);
-        try {
-            Assert.assertNotNull(y);
-            Assert.assertTrue(y.isOpen());
-            Assert.assertTrue(y == x);
-        } finally {
-            y.close();
-        }
-
-        Assert.assertEquals(1, wf.countFreeWriters());
-    }
-
-    @Test
     @Ignore
-    public void testTwoThreadsRaceToAllocate() throws Exception {
+    public void testAllocateAndClear() throws Exception {
         final JournalStructure s = new JournalStructure("x").$date("ts").$();
         final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
@@ -172,6 +93,85 @@ public class CachingWriterFactoryTest extends AbstractTest {
                 }
             }
         }.start();
+
+        halt.await();
+
+        // this check is unreliable on slow build servers
+        // it is very often the case that there are limited number of cores
+        // available and threads execute sequentially rather than
+        // simultaneously. We should check that none of the threads
+        // receive error.
+//        Assert.assertEquals(1, writerCount.get());
+        Assert.assertEquals(0, errors.get());
+        Assert.assertEquals(1, wf.countFreeWriters());
+    }
+
+    @Test
+    public void testOneThreadGetRelease() throws Exception {
+
+        JournalStructure s = new JournalStructure("x").$date("ts").$();
+        CachingWriterFactory wf = theFactory.getCachingWriterFactory();
+
+        JournalWriter x;
+        JournalWriter y;
+
+        x = wf.writer(s);
+        try {
+            Assert.assertEquals(0, wf.countFreeWriters());
+            Assert.assertNotNull(x);
+            Assert.assertTrue(x.isOpen());
+            Assert.assertTrue(x == wf.writer(s));
+        } finally {
+            x.close();
+        }
+
+        Assert.assertEquals(1, wf.countFreeWriters());
+
+        y = wf.writer(s);
+        try {
+            Assert.assertNotNull(y);
+            Assert.assertTrue(y.isOpen());
+            Assert.assertTrue(y == x);
+        } finally {
+            y.close();
+        }
+
+        Assert.assertEquals(1, wf.countFreeWriters());
+    }
+
+    @Test
+    public void testTwoThreadsRaceToAllocate() throws Exception {
+        final JournalStructure s = new JournalStructure("x").$date("ts").$();
+        final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
+
+        int n = 2;
+        final CyclicBarrier barrier = new CyclicBarrier(n);
+        final CountDownLatch halt = new CountDownLatch(n);
+        final AtomicInteger errors = new AtomicInteger();
+        final AtomicInteger writerCount = new AtomicInteger();
+
+        for (int i = 0; i < n; i++) {
+            new Thread() {
+                @Override
+                public void run() {
+                    try {
+                        barrier.await();
+
+
+                        try (JournalWriter w = wf.writer(s)) {
+                            if (w != null) {
+                                writerCount.incrementAndGet();
+                            }
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        errors.incrementAndGet();
+                    } finally {
+                        halt.countDown();
+                    }
+                }
+            }.start();
+        }
 
         halt.await();
 

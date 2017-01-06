@@ -30,19 +30,21 @@ import com.questdb.ql.ops.constant.LongConstant;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
-import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 public class TopRecordSourceTest extends AbstractTest {
 
-    @Test
-    public void testBottomSource() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+    @Before
+    public void setUp() throws Exception {
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote")) {
             TestUtils.generateQuoteData(w, 100000);
         }
+    }
 
-        StringSink sink = new StringSink();
+    @Test
+    public void testBottomSource() throws Exception {
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         try (RecordSource rs = new TopRecordSource(compile("quote"), new LongConstant(99997, 0), new LongConstant(100000, 0))) {
             p.print(rs, theFactory.getCachingReaderFactory());
@@ -55,11 +57,6 @@ public class TopRecordSourceTest extends AbstractTest {
 
     @Test
     public void testMiddleSource() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
-            TestUtils.generateQuoteData(w, 100000);
-        }
-
-        StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         try (RecordSource rs = new TopRecordSource(compile("quote"), new LongConstant(102, 0), new LongConstant(112, 0))) {
             p.print(rs, theFactory.getCachingReaderFactory());
@@ -80,11 +77,6 @@ public class TopRecordSourceTest extends AbstractTest {
 
     @Test
     public void testNoRows() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
-            TestUtils.generateQuoteData(w, 100000);
-        }
-
-        StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         try (RecordSource rs = new TopRecordSource(compile("quote"), new LongConstant(99997, 0), new LongConstant(10, 0))) {
             p.print(rs, theFactory.getCachingReaderFactory());
@@ -94,11 +86,6 @@ public class TopRecordSourceTest extends AbstractTest {
 
     @Test
     public void testTopSource() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
-            TestUtils.generateQuoteData(w, 100000);
-        }
-
-        StringSink sink = new StringSink();
         RecordSourcePrinter p = new RecordSourcePrinter(sink);
         try (RecordSource rs = new TopRecordSource(compile("quote"), new LongConstant(0, 0), new LongConstant(10, 0))) {
             p.print(rs, theFactory.getCachingReaderFactory());

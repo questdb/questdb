@@ -47,13 +47,13 @@ public class WriterFactoryImpl extends AbstractFactory implements WriterFactory 
     }
 
     @Override
-    public <T> JournalWriter<T> writer(Class<T> clazz, String location) throws JournalException {
-        return writer(new JournalKey<>(clazz, location));
+    public <T> JournalWriter<T> writer(Class<T> clazz, String name) throws JournalException {
+        return writer(new JournalKey<>(clazz, name));
     }
 
     @Override
-    public <T> JournalWriter<T> writer(Class<T> clazz, String location, int recordHint) throws JournalException {
-        return writer(new JournalKey<>(clazz, location, PartitionBy.DEFAULT, recordHint));
+    public <T> JournalWriter<T> writer(Class<T> clazz, String name, int recordHint) throws JournalException {
+        return writer(new JournalKey<>(clazz, name, PartitionBy.DEFAULT, recordHint));
     }
 
     @Override

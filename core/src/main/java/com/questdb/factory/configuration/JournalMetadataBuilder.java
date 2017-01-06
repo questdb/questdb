@@ -32,7 +32,6 @@ import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjObjHashMap;
 import com.questdb.store.ColumnType;
 
-import java.io.File;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -44,9 +43,10 @@ import java.util.concurrent.TimeUnit;
 public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
     private final ObjObjHashMap<String, ColumnMetadata> columnMetadata = new ObjObjHashMap<>();
     private final Class<T> modelClass;
+    private final String name;
     private Constructor<T> constructor;
     private CharSequenceIntHashMap nameToIndexMap;
-    private String location;
+    private String path;
     private int tsColumnIndex = -1;
     private int partitionBy = PartitionBy.NONE;
     private int recordCountHint = 100000;
@@ -57,14 +57,18 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
     private boolean ordered = true;
 
     public JournalMetadataBuilder(Class<T> modelClass) {
+        this(modelClass, modelClass.getCanonicalName());
+    }
+
+    public JournalMetadataBuilder(Class<T> modelClass, String name) {
         this.modelClass = modelClass;
+        this.name = name;
         parseClass();
     }
 
-    public JournalMetadataBuilder(JournalMetadata<T> model) {
-        this.modelClass = model.getModelClass();
-        parseClass();
-        this.location = model.getLocation();
+    public JournalMetadataBuilder(JournalMetadata<T> model, String name) {
+        this(model.getModelClass(), name);
+        this.path = model.getPath();
         this.tsColumnIndex = model.getTimestampIndex();
         this.partitionBy = model.getPartitionBy();
         this.recordCountHint = model.getRecordHint();
@@ -77,6 +81,10 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
             columnMetadata.get(from.name).copy(from);
         }
         this.ordered = model.isOrdered();
+    }
+
+    public JournalMetadataBuilder(JournalMetadata<T> model) {
+        this(model, model.getName());
     }
 
     public BinaryBuilder<T> $bin(String name) {
@@ -161,11 +169,11 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         }
 
         return new JournalMetadata<>(
-                modelClass.getName()
+                name
                 , modelClass
                 , constructor
                 , keyColumn
-                , location
+                , path
                 , partitionBy
                 , metadata
                 , tsColumnIndex
@@ -178,18 +186,8 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         );
     }
 
-    public String getLocation() {
-        return location;
-    }
-
-    public JournalMetadataBuilder<T> location(String location) {
-        this.location = location;
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> location(File location) {
-        this.location = location.getAbsolutePath();
-        return this;
+    public String getName() {
+        return name;
     }
 
     @Override
@@ -211,6 +209,11 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         if (count > 0) {
             this.recordCountHint = count;
         }
+        return this;
+    }
+
+    public JournalMetadataBuilder<T> withPath(String path) {
+        this.path = path;
         return this;
     }
 
@@ -257,7 +260,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         List<Field> classFields = getAllFields(new ArrayList<Field>(), modelClass);
 
         this.nameToIndexMap = new CharSequenceIntHashMap(classFields.size());
-        this.location = modelClass.getCanonicalName();
 
         for (int i = 0; i < classFields.size(); i++) {
             Field f = classFields.get(i);

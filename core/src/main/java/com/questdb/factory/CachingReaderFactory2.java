@@ -45,7 +45,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
     private static final int ENTRY_SIZE = 32;
     private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
-    private volatile boolean closed = false;
+    private final boolean closed = false;
 
     public CachingReaderFactory2(String databaseHome, int maxEntries) {
         super(databaseHome);
@@ -101,7 +101,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
             return null;
         }
 
-        String name = metadata.getKey().path();
+        String name = metadata.getKey().getName();
         Entry e = entries.get(name);
 
         long thread = Thread.currentThread().getId();
@@ -195,10 +195,10 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
     }
 
     private static class Entry {
-        long[] allocations = new long[ENTRY_SIZE];
-        long[] releaseTimes = new long[ENTRY_SIZE];
-        R[] readers = new R[ENTRY_SIZE];
-        volatile long nextStatus = 0;
+        final long[] allocations = new long[ENTRY_SIZE];
+        final long[] releaseTimes = new long[ENTRY_SIZE];
+        final R[] readers = new R[ENTRY_SIZE];
+        final long nextStatus = 0;
         Entry next;
         int index = 0;
 

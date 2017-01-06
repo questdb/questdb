@@ -80,7 +80,7 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("NoOpJournalPartitionSource").put(',');
-        sink.putQuoted("journal").put(':').putQuoted(FileNameExtractorCharSequence.get(metadata.getLocation()));
+        sink.putQuoted("journal").put(':').putQuoted(FileNameExtractorCharSequence.get(metadata.getPath()));
         sink.put('}');
     }
 }

@@ -45,7 +45,7 @@ public class ReaderFactoryImpl extends AbstractFactory implements ReaderFactory 
 
     public <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
         JournalMetadata<T> metadata = getConfiguration().createMetadata(key);
-        File location = new File(metadata.getLocation());
+        File location = new File(metadata.getPath());
         if (!location.exists()) {
             // create blank journal
             new JournalWriter<>(metadata).close();
@@ -64,8 +64,8 @@ public class ReaderFactoryImpl extends AbstractFactory implements ReaderFactory 
     }
 
     @Override
-    public final <T> Journal<T> reader(Class<T> clazz, String location) throws JournalException {
-        return reader(new JournalKey<>(clazz, location));
+    public final <T> Journal<T> reader(Class<T> clazz, String name) throws JournalException {
+        return reader(new JournalKey<>(clazz, name));
     }
 
     @Override

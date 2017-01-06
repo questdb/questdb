@@ -91,7 +91,7 @@ public class JournalWriter<T> extends Journal<T> {
         this.lagSwellMillis = lagMillis * 3;
         this.checkOrder = metadata.getKey().isOrdered() && getTimestampOffset() != -1;
         this.journalEntryWriter = new JournalEntryWriterImpl(this);
-        this.discardTxt = new File(metadata.getLocation(), "discard.txt");
+        this.discardTxt = new File(metadata.getPath(), "discard.txt");
         this.setSequentialAccess(true);
     }
 
@@ -698,7 +698,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
 
         if (writeDiscard) {
-            LOG.info().$("Journal").$(metadata.getLocation()).$(" is rolling back to transaction ").$(tx.txn).$(", timestamp ").$ts(tx.timestamp).$();
+            LOG.info().$("Journal").$(metadata.getPath()).$(" is rolling back to transaction ").$(tx.txn).$(", timestamp ").$ts(tx.timestamp).$();
             writeDiscardFile(tx.journalMaxRowID);
         }
 

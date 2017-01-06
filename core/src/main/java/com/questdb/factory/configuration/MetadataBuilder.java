@@ -23,20 +23,16 @@
 
 package com.questdb.factory.configuration;
 
-import java.io.File;
-
 public interface MetadataBuilder<T> {
     JournalMetadata<T> build();
 
-    String getLocation();
-
-    MetadataBuilder<T> location(String location);
-
-    MetadataBuilder<T> location(File path);
+    String getName();
 
     MetadataBuilder<T> ordered(boolean flag);
 
     MetadataBuilder<T> partitionBy(int partitionBy);
 
     MetadataBuilder<T> recordCountHint(int count);
+
+    MetadataBuilder<T> withPath(String location);
 }

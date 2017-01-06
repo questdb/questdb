@@ -242,12 +242,11 @@ public class GenericInteropTest extends AbstractTest {
 
     @Test
     public void testObjectGenericObjectWriteSequence() throws Exception {
-        JournalWriter<Data> writer = getWriterFactory().writer(new JournalMetadataBuilder<Data>(Data.class) {{
+        JournalWriter<Data> writer = getWriterFactory().writer(new JournalMetadataBuilder<Data>(Data.class, "test") {{
             $date("created");
             $sym("sym").index();
             $int("id").index();
             $str("rateId").index();
-            location("test");
         }});
 
         Data d = new Data();
@@ -330,11 +329,10 @@ public class GenericInteropTest extends AbstractTest {
 
     @Test
     public void testObjectWriteGenericRead() throws Exception {
-        try (JournalWriter<Data> writer = getWriterFactory().writer(new JournalMetadataBuilder<Data>(Data.class) {{
+        try (JournalWriter<Data> writer = getWriterFactory().writer(new JournalMetadataBuilder<Data>(Data.class, "test") {{
             $sym("sym").index();
             $int("id").index();
             $str("rateId").index();
-            location("test");
         }})) {
 
             Data d = new Data();

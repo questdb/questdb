@@ -25,6 +25,7 @@ package org.questdb.examples.replication.cluster;
 
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
+import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.NumericException;
@@ -58,7 +59,7 @@ public class ClusteredProducerMain {
         final WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration);
         final ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(configuration);
 
-        final JournalWriter<Price> writer = writerFactory.writer(new JournalKey<>(Price.class, 1000000000));
+        final JournalWriter<Price> writer = writerFactory.writer(new JournalKey<>(Price.class, null, PartitionBy.DEFAULT, 1000000000));
 
         final WorkerController wc = new WorkerController(writer);
 

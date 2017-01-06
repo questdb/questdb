@@ -24,7 +24,6 @@
 package com.questdb;
 
 import com.questdb.factory.CachingReaderFactory;
-import com.questdb.misc.Files;
 import com.questdb.model.Quote;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
@@ -39,7 +38,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
         getWriterFactory().writer(Quote.class).close();
         getWriterFactory().writer(Quote.class, "loc").close();
 
-        CachingReaderFactory cachingFactory = new CachingReaderFactory(getReaderFactory().getConfiguration());
+        CachingReaderFactory cachingFactory = theFactory.getCachingReaderFactory();
 
         // create first reader
         Journal<Quote> reader = cachingFactory.reader(Quote.class);
@@ -59,8 +58,5 @@ public class CachingReaderFactoryTest extends AbstractTest {
 
         Journal<Quote> reader4 = cachingFactory.reader(Quote.class, "loc");
         Assert.assertSame(reader3, reader4);
-
-        cachingFactory.close();
-        Files.delete(cachingFactory.getConfiguration().getJournalBase());
     }
 }

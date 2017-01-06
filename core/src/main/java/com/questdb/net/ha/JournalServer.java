@@ -256,8 +256,8 @@ public class JournalServer {
     IndexedJournalKey getWriterIndex0(JournalKey key) {
         for (ObjIntHashMap.Entry<JournalWriter> e : writers.immutableIterator()) {
             JournalKey jk = e.key.getMetadata().getKey();
-            if (e.key.getName().equals(key.path())) {
-                return new IndexedJournalKey(e.value, new JournalKey(jk.getId(), jk.getModelClass(), jk.getLocation(), jk.getRecordHint()));
+            if (e.key.getName().equals(key.getName())) {
+                return new IndexedJournalKey(e.value, new JournalKey(jk.getModelClass(), jk.getName(), jk.getPartitionBy(), jk.getRecordHint()));
             }
         }
         return null;

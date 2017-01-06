@@ -151,7 +151,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
             return null;
         }
 
-        final String path = metadata.getKey().path();
+        final String path = metadata.getKey().getName();
 
         Entry e = entries.get(path);
         if (e == null) {
@@ -259,9 +259,9 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
     }
 
     private static class Entry {
-        private JournalWriter writer;
         // owner thread id or -1 if writer is available for hire
-        private long owner = Thread.currentThread().getId();
+        private final long owner = Thread.currentThread().getId();
+        private JournalWriter writer;
         // time writer was last released
         private volatile long lastReleaseTime = System.currentTimeMillis();
         private boolean allocationFailure = false;

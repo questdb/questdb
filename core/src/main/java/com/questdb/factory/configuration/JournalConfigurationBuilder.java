@@ -39,8 +39,14 @@ public class JournalConfigurationBuilder {
         return builder;
     }
 
-    public JournalStructure $(String location) {
-        JournalStructure builder = new JournalStructure(location);
+    public <T> JournalMetadataBuilder<T> $(Class<T> clazz, String name) {
+        JournalMetadataBuilder<T> builder = new JournalMetadataBuilder<>(clazz, name);
+        builders.add(builder);
+        return builder;
+    }
+
+    public JournalStructure $(String name) {
+        JournalStructure builder = new JournalStructure(name);
         builders.add(builder);
         return builder;
     }
@@ -62,7 +68,7 @@ public class JournalConfigurationBuilder {
         ObjObjHashMap<String, JournalMetadata> metadata = new ObjObjHashMap<>(builders.size());
         for (int i = 0, sz = builders.size(); i < sz; i++) {
             JournalMetadata meta = builders.get(i).build();
-            metadata.put(meta.getId(), meta);
+            metadata.put(meta.getModelClassName(), meta);
         }
         return new JournalConfigurationImpl(journalBase, metadata);
     }

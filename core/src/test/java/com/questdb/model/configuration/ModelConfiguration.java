@@ -32,11 +32,10 @@ import java.util.concurrent.TimeUnit;
 public class ModelConfiguration {
 
     public static final JournalConfigurationBuilder MAIN = new JournalConfigurationBuilder() {{
-        $(Quote.class).recordCountHint(10000)
+        $(Quote.class, "quote").recordCountHint(10000)
                 .partitionBy(PartitionBy.MONTH)
                 .openFileTTL(5000L, TimeUnit.MILLISECONDS)
                 .lag(12, TimeUnit.HOURS)
-                .location("quote")
                 .keyColumn("sym")
                 .$sym("sym").index().valueCountHint(15)
                 .$sym("ex").index().valueCountHint(5)

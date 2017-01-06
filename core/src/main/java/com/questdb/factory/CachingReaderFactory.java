@@ -88,7 +88,7 @@ public class CachingReaderFactory extends ReaderFactoryImpl implements JournalCl
     @Override
     @SuppressWarnings("unchecked")
     public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
-        String name = metadata.getKey().path();
+        String name = metadata.getKey().getName();
         checkBlocked(name);
         Journal result = readers.get(name);
         if (result == null) {
