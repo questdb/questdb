@@ -94,6 +94,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                     // with new owner
                     if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, threadId)) {
                         LOG.info().$("Closing writer '").$(name).$('\'').$();
+                        e.writer.setCloseInterceptor(null);
                         e.writer = null;
                         return true;
                     }
@@ -106,6 +107,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
             }
         } else {
             LOG.error().$("Writer '").$(name).$("' is not managed by this pool").$();
+            journal.setCloseInterceptor(null);
             return true;
         }
 
@@ -176,14 +178,8 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                 }
             } else {
                 LOG.info().$("Thread ").$(e.owner).$(" lost race to allocate writer '").$(path).$('\'').$();
-                // discard object
-                e = null;
+                e = entries.get(path);
             }
-        }
-
-        // race lost or was a non-starter
-        if (e == null) {
-            e = entries.get(path);
         }
 
         long threadId = Thread.currentThread().getId();
@@ -225,7 +221,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         long threadId = Thread.currentThread().getId();
         boolean removed = false;
 
-        LOG.info().$("done?").$();
+//        LOG.info().$("done?").$();
         Iterator<Map.Entry<String, Entry>> iterator = entries.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<String, Entry> me = iterator.next();

@@ -107,6 +107,10 @@ public class TheFactory implements TestRule {
         return cachingWriterFactory;
     }
 
+    public JournalConfiguration getConfiguration() {
+        return configuration;
+    }
+
     public ReaderFactory getReaderFactory() {
         if (readerFactory == null) {
             readerFactory = new ReaderFactoryImpl(configuration);

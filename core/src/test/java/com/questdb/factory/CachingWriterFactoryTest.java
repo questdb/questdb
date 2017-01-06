@@ -24,10 +24,10 @@
 package com.questdb.factory;
 
 import com.questdb.JournalWriter;
+import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -38,9 +38,8 @@ import java.util.concurrent.locks.LockSupport;
 public class CachingWriterFactoryTest extends AbstractTest {
 
     @Test
-    @Ignore
     public void testAllocateAndClear() throws Exception {
-        final JournalStructure s = new JournalStructure("x").$date("ts").$();
+        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
         final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         int n = 2;
@@ -54,16 +53,16 @@ public class CachingWriterFactoryTest extends AbstractTest {
             public void run() {
                 try {
                     for (int i = 0; i < 1000; i++) {
-                        try (JournalWriter w = wf.writer(s)) {
+                        try (JournalWriter w = wf.writer(m)) {
                             if (w != null) {
                                 writerCount.incrementAndGet();
                             }
                         }
 
-                        if (i == 3) {
+                        if (i == 1) {
                             barrier.await();
                         }
-                        LockSupport.parkNanos(100L);
+                        LockSupport.parkNanos(10L);
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -96,38 +95,56 @@ public class CachingWriterFactoryTest extends AbstractTest {
 
         halt.await();
 
-        // this check is unreliable on slow build servers
-        // it is very often the case that there are limited number of cores
-        // available and threads execute sequentially rather than
-        // simultaneously. We should check that none of the threads
-        // receive error.
-//        Assert.assertEquals(1, writerCount.get());
+        Assert.assertTrue(writerCount.get() > 0);
         Assert.assertEquals(0, errors.get());
         Assert.assertEquals(1, wf.countFreeWriters());
     }
 
     @Test
+    public void testFactoryCloseBeforeRelease() throws Exception {
+
+        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
+        CachingWriterFactory wf = theFactory.getCachingWriterFactory();
+
+        JournalWriter x;
+
+        x = wf.writer(m);
+        try {
+            Assert.assertEquals(0, wf.countFreeWriters());
+            Assert.assertNotNull(x);
+            Assert.assertTrue(x.isOpen());
+            Assert.assertTrue(x == wf.writer(m));
+            wf.close();
+        } finally {
+            x.close();
+        }
+
+        Assert.assertFalse(x.isOpen());
+        Assert.assertNull(wf.writer(m));
+    }
+
+    @Test
     public void testOneThreadGetRelease() throws Exception {
 
-        JournalStructure s = new JournalStructure("x").$date("ts").$();
+        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
         CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         JournalWriter x;
         JournalWriter y;
 
-        x = wf.writer(s);
+        x = wf.writer(m);
         try {
             Assert.assertEquals(0, wf.countFreeWriters());
             Assert.assertNotNull(x);
             Assert.assertTrue(x.isOpen());
-            Assert.assertTrue(x == wf.writer(s));
+            Assert.assertTrue(x == wf.writer(m));
         } finally {
             x.close();
         }
 
         Assert.assertEquals(1, wf.countFreeWriters());
 
-        y = wf.writer(s);
+        y = wf.writer(m);
         try {
             Assert.assertNotNull(y);
             Assert.assertTrue(y.isOpen());
@@ -141,7 +158,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
 
     @Test
     public void testTwoThreadsRaceToAllocate() throws Exception {
-        final JournalStructure s = new JournalStructure("x").$date("ts").$();
+        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
         final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         int n = 2;
@@ -158,7 +175,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
                         barrier.await();
 
 
-                        try (JournalWriter w = wf.writer(s)) {
+                        try (JournalWriter w = wf.writer(m)) {
                             if (w != null) {
                                 writerCount.incrementAndGet();
                             }
