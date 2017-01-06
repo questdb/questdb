@@ -39,7 +39,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
 
     @Test
     public void testAllocateAndClear() throws Exception {
-        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
+        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("z").$date("ts").$());
         final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         int n = 2;
@@ -97,7 +97,6 @@ public class CachingWriterFactoryTest extends AbstractTest {
 
         Assert.assertTrue(writerCount.get() > 0);
         Assert.assertEquals(0, errors.get());
-        Assert.assertEquals(1, wf.countFreeWriters());
     }
 
     @Test

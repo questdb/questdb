@@ -69,8 +69,8 @@ public class ReaderFactoryImpl extends AbstractFactory implements ReaderFactory 
     }
 
     @Override
-    public final Journal reader(String location) throws JournalException {
-        return reader(new JournalKey<>(location));
+    public final Journal reader(String name) throws JournalException {
+        return reader(new JournalKey<>(name));
     }
 
     @Override

@@ -41,11 +41,12 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
     private static final Log LOG = LogFactory.getLog(CachingReaderFactory2.class);
 
+    private static final long UNALLOCATED = -1L;
     private static final long NEXT_STATUS;
     private static final int ENTRY_SIZE = 32;
     private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
-    private final boolean closed = false;
+    private volatile boolean closed = false;
 
     public CachingReaderFactory2(String databaseHome, int maxEntries) {
         super(databaseHome);
@@ -80,7 +81,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
                 }
 
                 Unsafe.arrayPut(r.entry.releaseTimes, r.index, System.currentTimeMillis());
-                Unsafe.arrayPutOrdered(r.entry.allocations, r.index, -1L);
+                Unsafe.arrayPutOrdered(r.entry.allocations, r.index, UNALLOCATED);
 
                 LOG.info().$("Thread ").$(thread).$(" released reader '").$(name).$('\'').$();
                 return false;
@@ -119,19 +120,24 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
         }
 
         do {
-            for (int i = 0, n = e.allocations.length; i < n; i++) {
-                if (Unsafe.cas(e.allocations, i, -1L, thread)) {
+            for (int i = 0; i < ENTRY_SIZE; i++) {
+                if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                     LOG.info().$("Thread ").$(thread).$(" allocated reader '").$(name).$("' at pos: ").$(e.index).$(',').$(i).$();
                     // got lock, allocate if needed
                     R r = Unsafe.arrayGet(e.readers, i);
                     if (r == null) {
-                        Unsafe.arrayPut(e.readers, i, r = new R<>(e, i, metadata));
-                        if (!closed) {
-                            r.setCloseInterceptor(this);
+                        r = new R(e, i, metadata);
+                        if (closed) {
+                            // don't assign interceptor or keep reference
+                            return r;
                         }
+
+                        Unsafe.arrayPut(e.readers, i, r);
+                        r.setCloseInterceptor(this);
                     }
 
                     if (closed) {
+                        Unsafe.arrayPut(e.readers, i, null);
                         r.setCloseInterceptor(null);
                     }
 
@@ -157,11 +163,17 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
             }
 
             e = e.next;
-        } while (e.index < maxEntries);
+        } while (e != null && e.index < maxEntries);
 
         // max entries exceeded
         LOG.info().$("Thread ").$(thread).$(" cannot allocate reader. Max entries exceeded (").$(this.maxEntries).$(')').$();
         return null;
+    }
+
+    @Override
+    public void close() {
+        closed = true;
+        releaseAll(Long.MAX_VALUE);
     }
 
     private void releaseAll(long deadline) {
@@ -174,8 +186,9 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
+                    // todo: no memory barrier
                     if (deadline > Unsafe.arrayGet(e.releaseTimes, i) && (r = Unsafe.arrayGet(e.readers, i)) != null) {
-                        if (Unsafe.cas(e.allocations, i, -1L, thread)) {
+                        if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                             // check if deadline violation still holds
                             if (deadline > Unsafe.arrayGet(e.releaseTimes, i)) {
                                 r.setCloseInterceptor(null);
@@ -186,6 +199,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
                                 }
                                 Unsafe.arrayPut(e.readers, i, null);
                             }
+                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                         }
                     }
                 }

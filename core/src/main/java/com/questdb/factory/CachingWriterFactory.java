@@ -120,11 +120,14 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         releaseAll(Long.MAX_VALUE);
     }
 
-    public int countFreeWriters() {
+    int countFreeWriters() {
         int count = 0;
         for (Map.Entry<String, Entry> me : entries.entrySet()) {
-            if (me.getValue().owner == -1L) {
+            Entry e = me.getValue();
+            if (e.owner == -1L) {
                 count++;
+            } else {
+                LOG.info().$("Writer '").$(me.getKey()).$("' is still owned by ").$(me.getValue().owner).$();
             }
         }
 
@@ -163,14 +166,14 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                 // race won
 
                 try {
-                    e.writer = super.writer(metadata);
-
-                    if (!closed) {
-                        e.writer.setCloseInterceptor(this);
+                    JournalWriter w = super.writer(metadata);
+                    if (closed) {
+                        return w;
                     }
 
+                    w.setCloseInterceptor(this);
                     LOG.info().$("Writer '").$(path).$("' is allocated by thread ").$(e.owner).$();
-                    return e.writer;
+                    return e.writer = w;
                 } catch (JournalException ex) {
                     LOG.error().$("Failed to allocate writer '").$(path).$("' in thread ").$(e.owner).$(": ").$(ex).$();
                     e.allocationFailure = true;
@@ -229,16 +232,19 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
             // lastReleaseTime is volatile, which makes
             // order of conditions important
             if ((deadline > e.lastReleaseTime && e.owner == -1)) {
-                // looks like this one can be expired
+                // looks like this one can be released
                 // try to lock it
                 if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, threadId)) {
                     // lock successful
                     LOG.info().$("Closing writer '").$(me.getKey()).$('\'').$();
-                    e.writer.setCloseInterceptor(null);
-                    try {
-                        e.writer.close();
-                    } catch (Throwable e1) {
-                        LOG.error().$("Cannot close writer '").$(e.writer.getName()).$("': ").$(e1.getMessage()).$();
+                    JournalWriter w = e.writer;
+                    if (w != null) {
+                        w.setCloseInterceptor(null);
+                        try {
+                            w.close();
+                        } catch (Throwable e1) {
+                            LOG.error().$("Cannot close writer '").$(w.getName()).$("': ").$(e1.getMessage()).$();
+                        }
                     }
                     iterator.remove();
                     removed = true;
