@@ -39,23 +39,43 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalCloseInterceptor {
 
-    private static final Log LOG = LogFactory.getLog(CachingReaderFactory2.class);
+    public static final long CLOSED;
+    public static final int E_POOL_CLOSED = 1;
+    public static final int E_NAME_LOCKED = 2;
+    public static final int E_POOL_FULL = 3;
+    public static final int E_NOT_AN_OWNER = 4;
+    public static final int E_AGAIN = 5;
+    public static final int E_OK = 0;
 
+    private static final Log LOG = LogFactory.getLog(CachingReaderFactory2.class);
     private static final long UNALLOCATED = -1L;
+    private static final long UNLOCKED = -1L;
     private static final long NEXT_STATUS;
     private static final int ENTRY_SIZE = 32;
+    private static final int TRUE = 1;
+    private static final int FALSE = 0;
+    private static final long LOCK_OWNER;
+    private static final ThreadLocal<Error> error = new ThreadLocal<Error>() {
+        @Override
+        protected Error initialValue() {
+            return new Error();
+        }
+    };
     private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
+    private final int maxSegments;
     private final int maxEntries;
-    private volatile boolean closed = false;
+    private volatile int closed = FALSE;
 
-    public CachingReaderFactory2(String databaseHome, int maxEntries) {
+    public CachingReaderFactory2(String databaseHome, int maxSegments) {
         super(databaseHome);
-        this.maxEntries = maxEntries;
+        this.maxSegments = maxSegments;
+        this.maxEntries = maxSegments * ENTRY_SIZE;
     }
 
-    public CachingReaderFactory2(JournalConfiguration configuration, int maxEntries) {
+    public CachingReaderFactory2(JournalConfiguration configuration, int maxSegments) {
         super(configuration);
-        this.maxEntries = maxEntries;
+        this.maxSegments = maxSegments;
+        this.maxEntries = maxSegments * ENTRY_SIZE;
     }
 
     @Override
@@ -74,7 +94,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
             if (Unsafe.arrayGet(r.entry.allocations, r.index) == thread) {
 
-                if (closed) {
+                if (closed == TRUE) {
                     // keep locked and close
                     Unsafe.arrayPut(r.entry.readers, r.index, null);
                     return true;
@@ -95,10 +115,67 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
     }
 
     @Override
+    public void close() {
+        if (Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, FALSE, TRUE)) {
+            releaseAll(Long.MAX_VALUE);
+        }
+    }
+
+    public int getError() {
+        return error.get().code;
+    }
+
+    public int getMaxEntries() {
+        return maxEntries;
+    }
+
+    public boolean lock(String name) {
+
+        error(E_OK);
+
+        Entry e = entries.get(name);
+        if (e == null) {
+            return true;
+        }
+
+        boolean result = true;
+
+        long thread = Thread.currentThread().getId();
+
+        if (Unsafe.getUnsafe().compareAndSwapLong(e, LOCK_OWNER, UNLOCKED, thread) ||
+                Unsafe.getUnsafe().compareAndSwapLong(e, LOCK_OWNER, thread, thread)) {
+            do {
+                for (int i = 0; i < ENTRY_SIZE; i++) {
+                    if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
+                        R r = Unsafe.arrayGet(e.readers, i);
+                        if (r != null) {
+                            r.setCloseInterceptor(null);
+                            r.close();
+                            Unsafe.arrayPut(e.readers, i, null);
+                        }
+                    } else if (Unsafe.arrayGet(e.readers, i) != null) {
+                        result = false;
+                        error(E_AGAIN);
+                    }
+                }
+                e = e.next;
+            } while (e != null);
+
+            return result;
+
+        } else {
+            LOG.error().$("Reader '").$(name).$("' is already locked by ").$(e.lockOwner).$();
+            error(E_NOT_AN_OWNER);
+            return false;
+        }
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
     public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
-        if (closed) {
+        if (closed == TRUE) {
             LOG.info().$("Pool is closed");
+            error(E_POOL_CLOSED);
             return null;
         }
 
@@ -119,15 +196,24 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
             }
         }
 
+        long lockOwner = e.lockOwner;
+
+        if (lockOwner != UNLOCKED) {
+            LOG.info().$("Reader '").$(name).$("' is locked by ").$(lockOwner).$();
+            error(E_NAME_LOCKED);
+            return null;
+        }
+
         do {
             for (int i = 0; i < ENTRY_SIZE; i++) {
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
+                    error(E_OK);
                     LOG.info().$("Thread ").$(thread).$(" allocated reader '").$(name).$("' at pos: ").$(e.index).$(',').$(i).$();
                     // got lock, allocate if needed
                     R r = Unsafe.arrayGet(e.readers, i);
                     if (r == null) {
                         r = new R(e, i, metadata);
-                        if (closed) {
+                        if (closed == TRUE) {
                             // don't assign interceptor or keep reference
                             return r;
                         }
@@ -136,7 +222,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
                         r.setCloseInterceptor(this);
                     }
 
-                    if (closed) {
+                    if (closed == TRUE) {
                         Unsafe.arrayPut(e.readers, i, null);
                         r.setCloseInterceptor(null);
                     }
@@ -149,31 +235,43 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
             // all allocated, create next entry if possible
 
-            if (e.nextStatus == 0) {
-                if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, 0, 1)) {
-                    LOG.info().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
-                    e.next = new Entry(e.index + 1);
-                }
-            }
-
-            // cannot allocate, disallowed
-            if (e.nextStatus == 2) {
-                LOG.info().$("Thread ").$(thread).$(" is not allowed to allocate ").$(e.index + 1).$();
-                return null;
+            if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, 0, 1)) {
+                LOG.info().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
+                e.next = new Entry(e.index + 1);
             }
 
             e = e.next;
-        } while (e != null && e.index < maxEntries);
+
+        } while (e != null && e.index < maxSegments);
 
         // max entries exceeded
-        LOG.info().$("Thread ").$(thread).$(" cannot allocate reader. Max entries exceeded (").$(this.maxEntries).$(')').$();
+        LOG.info().$("Thread ").$(thread).$(" cannot allocate reader. Max entries exceeded (").$(this.maxSegments).$(')').$();
+        error(E_POOL_FULL);
         return null;
     }
 
-    @Override
-    public void close() {
-        closed = true;
-        releaseAll(Long.MAX_VALUE);
+    public void unlock(String name) {
+        error(E_OK);
+
+        Entry e = entries.get(name);
+        if (e == null) {
+            return;
+        }
+
+        long thread = Thread.currentThread().getId();
+
+        if (Unsafe.getUnsafe().compareAndSwapLong(e, LOCK_OWNER, thread, UNLOCKED)) {
+            do {
+                for (int i = 0; i < ENTRY_SIZE; i++) {
+                    Unsafe.cas(e.allocations, i, thread, UNALLOCATED);
+                }
+                e = e.next;
+            } while (e != null);
+        }
+    }
+
+    private static void error(int code) {
+        error.get().code = code;
     }
 
     private void releaseAll(long deadline) {
@@ -186,8 +284,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
-                    // todo: no memory barrier
-                    if (deadline > Unsafe.arrayGet(e.releaseTimes, i) && (r = Unsafe.arrayGet(e.readers, i)) != null) {
+                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && (r = Unsafe.arrayGet(e.readers, i)) != null) {
                         if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                             // check if deadline violation still holds
                             if (deadline > Unsafe.arrayGet(e.releaseTimes, i)) {
@@ -212,12 +309,14 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
         final long[] allocations = new long[ENTRY_SIZE];
         final long[] releaseTimes = new long[ENTRY_SIZE];
         final R[] readers = new R[ENTRY_SIZE];
-        final long nextStatus = 0;
-        Entry next;
+        long nextStatus = 0;
+        volatile Entry next;
+        volatile long lockOwner = -1L;
         int index = 0;
 
         public Entry(int index) {
             this.index = index;
+            Arrays.fill(allocations, UNALLOCATED);
             Arrays.fill(releaseTimes, System.currentTimeMillis());
         }
     }
@@ -233,10 +332,21 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
         }
     }
 
+    private static class Error {
+        int code = E_OK;
+    }
+
     static {
         try {
             Field f = Entry.class.getDeclaredField("nextStatus");
             NEXT_STATUS = Unsafe.getUnsafe().objectFieldOffset(f);
+
+            Field f2 = CachingReaderFactory2.class.getDeclaredField("closed");
+            CLOSED = Unsafe.getUnsafe().objectFieldOffset(f2);
+
+            Field f3 = Entry.class.getDeclaredField("lockOwner");
+            LOCK_OWNER = Unsafe.getUnsafe().objectFieldOffset(f3);
+
         } catch (NoSuchFieldException e) {
             throw new JournalRuntimeException("Cannot initialize class", e);
         }

@@ -65,6 +65,10 @@ public final class Unsafe {
         return Unsafe.getUnsafe().getLong(array, LONG_OFFSET + (index << LONG_SCALE));
     }
 
+    public static long arrayGetVolatile(long[] array, int index) {
+        return Unsafe.getUnsafe().getLongVolatile(array, LONG_OFFSET + (index << LONG_SCALE));
+    }
+
     public static <T> void arrayPut(T[] array, int index, T obj) {
         Unsafe.getUnsafe().putObject(array, OBJ_OFFSET + (index << OBJ_SCALE), obj);
     }

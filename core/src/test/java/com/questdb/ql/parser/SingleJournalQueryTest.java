@@ -38,7 +38,6 @@ import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -458,16 +457,6 @@ public class SingleJournalQueryTest extends AbstractTest {
                         "1008.553894042969\tNaN\n" +
                         "1017.000000000000\tNaN\n",
                 "select x a, y b from tab where y = NaN and x > 1000", true);
-    }
-
-    @Test
-    @Ignore
-    public void testConstantColumnDetection() throws Exception {
-        createTabWithNaNs2();
-        assertThat("2015-03-18T01:00:00.000Z\t0.000001096262\n" +
-                        "2015-03-18T02:00:00.000Z\t0.000001078617\n",
-                "(select timestamp+1 ts, sum(y), 4 x from tab sample by 1d) timestamp(ts) where x < 3");
-
     }
 
     @Test
