@@ -32,6 +32,7 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
 
+import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Map;
@@ -212,7 +213,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
                     // got lock, allocate if needed
                     R r = Unsafe.arrayGet(e.readers, i);
                     if (r == null) {
-                        r = new R(e, i, metadata);
+                        r = new R(e, i, metadata, new File(getConfiguration().getJournalBase(), metadata.getName()));
                         if (closed == TRUE) {
                             // don't assign interceptor or keep reference
                             return r;
@@ -325,8 +326,8 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
         private Entry entry;
         private int index;
 
-        public R(Entry entry, int index, JournalMetadata<T> metadata) throws JournalException {
-            super(metadata);
+        public R(Entry entry, int index, JournalMetadata<T> metadata, File location) throws JournalException {
+            super(metadata, location);
             this.entry = entry;
             this.index = index;
         }

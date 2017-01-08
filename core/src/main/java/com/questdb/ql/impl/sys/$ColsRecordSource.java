@@ -155,8 +155,8 @@ public class $ColsRecordSource extends AbstractRecordSource {
                                     long readPtr = buf + 8;
                                     // skip over ID string
                                     readPtr += Unsafe.getUnsafe().getInt(readPtr) * 2 + 4;
-                                    // skip over location string
-                                    readPtr += Unsafe.getUnsafe().getInt(readPtr) * 2 + 4;
+//                                    // skip over location string
+//                                    readPtr += Unsafe.getUnsafe().getInt(readPtr) * 2 + 4;
 
                                     partitionBy = Unsafe.getUnsafe().getInt(readPtr);
                                     columnCount = Unsafe.getUnsafe().getInt(readPtr + 4);

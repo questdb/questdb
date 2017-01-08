@@ -31,6 +31,8 @@ import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.MetadataBuilder;
 
+import java.io.File;
+
 public class WriterFactoryImpl extends AbstractFactory implements WriterFactory {
 
     public WriterFactoryImpl(String databaseHome) {
@@ -73,6 +75,6 @@ public class WriterFactoryImpl extends AbstractFactory implements WriterFactory 
 
     @Override
     public <T> JournalWriter<T> writer(JournalMetadata<T> metadata) throws JournalException {
-        return new JournalWriter<>(metadata);
+        return new JournalWriter<>(metadata, new File(getConfiguration().getJournalBase(), metadata.getName()));
     }
 }

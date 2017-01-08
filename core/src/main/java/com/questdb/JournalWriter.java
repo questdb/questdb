@@ -81,8 +81,8 @@ public class JournalWriter<T> extends Journal<T> {
     private RandomAccessFile discardTxtRaf;
     private FlexBufferSink discardSink;
 
-    public JournalWriter(JournalMetadata<T> metadata) throws JournalException {
-        super(metadata);
+    public JournalWriter(JournalMetadata<T> metadata, File location) throws JournalException {
+        super(metadata, location);
         if (metadata.isPartialMapped()) {
             close();
             throw new JournalException("Metadata is unusable for writer. Partially mapped?");
@@ -91,7 +91,7 @@ public class JournalWriter<T> extends Journal<T> {
         this.lagSwellMillis = lagMillis * 3;
         this.checkOrder = metadata.getKey().isOrdered() && getTimestampOffset() != -1;
         this.journalEntryWriter = new JournalEntryWriterImpl(this);
-        this.discardTxt = new File(metadata.getPath(), "discard.txt");
+        this.discardTxt = new File(location, "discard.txt");
         this.setSequentialAccess(true);
     }
 
@@ -698,7 +698,7 @@ public class JournalWriter<T> extends Journal<T> {
         }
 
         if (writeDiscard) {
-            LOG.info().$("Journal").$(metadata.getPath()).$(" is rolling back to transaction ").$(tx.txn).$(", timestamp ").$ts(tx.timestamp).$();
+            LOG.info().$("Journal ").$(getName()).$(" is rolling back to transaction ").$(tx.txn).$(", timestamp ").$ts(tx.timestamp).$();
             writeDiscardFile(tx.journalMaxRowID);
         }
 

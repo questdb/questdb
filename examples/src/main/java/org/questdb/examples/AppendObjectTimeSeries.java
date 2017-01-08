@@ -48,8 +48,7 @@ public class AppendObjectTimeSeries {
 
         String journalLocation = args[0];
         JournalConfiguration configuration = new JournalConfigurationBuilder() {{
-            $(Quote.class)
-                    .withPath("quote")
+            $(Quote.class, "quote")
                     // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
                     // journal will enforce ascending order in that column
                     .$ts()

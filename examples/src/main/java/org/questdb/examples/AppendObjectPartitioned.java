@@ -52,8 +52,7 @@ public class AppendObjectPartitioned {
 
         String journalLocation = args[0];
         try (WriterFactoryImpl writerFactory = new WriterFactoryImpl(new JournalConfigurationBuilder() {{
-            $(Quote.class)
-                    .withPath("quote-by-day")
+            $(Quote.class, "quote-by-day")
                     // partition by day
                     .partitionBy(PartitionBy.DAY)
                     // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name

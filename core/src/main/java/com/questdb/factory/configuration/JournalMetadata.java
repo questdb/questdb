@@ -43,7 +43,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     private static final int TO_STRING_COL2_PAD = 55;
     private final String name;
     private final Class<T> modelClass;
-    private final String path;
     private final int partitionBy;
     private final int columnCount;
     private final ColumnMetadata timestampMetadata;
@@ -65,7 +64,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
             , Class<T> modelClass
             , Constructor<T> constructor
             , String keyColumn
-            , String path
             , int partitionBy
             , ColumnMetadata[] columnMetadata
             , int timestampColumnIndex
@@ -78,7 +76,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     ) {
         this.name = name;
         this.modelClass = modelClass;
-        this.path = path;
         this.partitionBy = partitionBy;
         this.columnMetadata = new ColumnMetadata[columnMetadata.length];
         System.arraycopy(columnMetadata, 0, this.columnMetadata, 0, columnMetadata.length);
@@ -109,7 +106,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         buf.setPos(0);
         name = buf.getStr();
         modelClass = null;
-        path = buf.getStr();
         partitionBy = buf.getInt();
         columnCount = buf.getInt();
         timestampColumnIndex = buf.getInt();
@@ -224,9 +220,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         return partitionBy;
     }
 
-    public String getPath() {
-        return path;
-    }
 
     public int getRecordHint() {
         return ioBlockRecordCount;
@@ -292,8 +285,8 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         StringBuilder b = Misc.getThreadLocalBuilder();
         sep(b);
         b.append('|');
-        pad(b, TO_STRING_COL1_PAD, "Location:");
-        pad(b, TO_STRING_COL2_PAD, path).append('\n');
+        pad(b, TO_STRING_COL1_PAD, "Name:");
+        pad(b, TO_STRING_COL2_PAD, name).append('\n');
 
 
         b.append('|');
@@ -317,7 +310,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     public void write(UnstructuredFile buf) {
         buf.setPos(0);
         buf.put(name);
-        buf.put(path);
         buf.put(partitionBy);
         buf.put(columnCount);
         buf.put(timestampColumnIndex);

@@ -53,8 +53,7 @@ public class AppendObjectSortMerge {
         String journalLocation = args[0];
 
         try (WriterFactoryImpl writerFactory = new WriterFactoryImpl(new JournalConfigurationBuilder() {{
-            $(Quote.class)
-                    .withPath("quote-lag")
+            $(Quote.class, "quote-lag")
                     .lag(24, TimeUnit.HOURS) // enable lag
                     .$ts() // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
             ;

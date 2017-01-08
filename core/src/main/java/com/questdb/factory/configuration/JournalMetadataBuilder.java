@@ -46,7 +46,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
     private final String name;
     private Constructor<T> constructor;
     private CharSequenceIntHashMap nameToIndexMap;
-    private String path;
     private int tsColumnIndex = -1;
     private int partitionBy = PartitionBy.NONE;
     private int recordCountHint = 100000;
@@ -68,7 +67,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
 
     public JournalMetadataBuilder(JournalMetadata<T> model, String name) {
         this(model.getModelClass(), name);
-        this.path = model.getPath();
         this.tsColumnIndex = model.getTimestampIndex();
         this.partitionBy = model.getPartitionBy();
         this.recordCountHint = model.getRecordHint();
@@ -81,10 +79,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
             columnMetadata.get(from.name).copy(from);
         }
         this.ordered = model.isOrdered();
-    }
-
-    public JournalMetadataBuilder(JournalMetadata<T> model) {
-        this(model, model.getName());
     }
 
     public BinaryBuilder<T> $bin(String name) {
@@ -173,7 +167,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
                 , modelClass
                 , constructor
                 , keyColumn
-                , path
                 , partitionBy
                 , metadata
                 , tsColumnIndex
@@ -209,11 +202,6 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         if (count > 0) {
             this.recordCountHint = count;
         }
-        return this;
-    }
-
-    public JournalMetadataBuilder<T> withPath(String path) {
-        this.path = path;
         return this;
     }
 

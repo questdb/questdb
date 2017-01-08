@@ -30,6 +30,8 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 
+import java.io.File;
+
 public class ReaderFactoryImpl extends AbstractFactory implements ReaderFactory {
 
     public ReaderFactoryImpl(String databaseHome) {
@@ -71,6 +73,6 @@ public class ReaderFactoryImpl extends AbstractFactory implements ReaderFactory 
 
     @Override
     public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
-        return new Journal<>(metadata);
+        return new Journal<>(metadata, new File(getConfiguration().getJournalBase(), metadata.getName()));
     }
 }

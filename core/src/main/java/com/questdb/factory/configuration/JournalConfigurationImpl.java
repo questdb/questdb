@@ -60,7 +60,7 @@ class JournalConfigurationImpl implements JournalConfiguration {
         File journalLocation = new File(getJournalBase(), builder.getName());
 
         JournalMetadata<T> mo = readMetadata(journalLocation);
-        JournalMetadata<T> mn = builder.withPath(journalLocation.getAbsolutePath()).build();
+        JournalMetadata<T> mn = builder.build();
 
         if (mo == null || mo.isCompatible(mn, false)) {
             return mn;
@@ -73,7 +73,6 @@ class JournalConfigurationImpl implements JournalConfiguration {
     @Override
     public <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException {
         File journalLocation = new File(getJournalBase(), key.getName());
-        String path = journalLocation.getAbsolutePath();
 
         JournalMetadata<T> mo = readMetadata(journalLocation);
         String className = key.getModelClassName();
@@ -90,46 +89,21 @@ class JournalConfigurationImpl implements JournalConfiguration {
                 throw JournalDoesNotExistException.INSTANCE;
             }
 
-            MetadataBuilder<T> builder;
-
             if (mn == null) {
-                builder = new JournalMetadataBuilder<>(key.getModelClass(), key.getName());
-            } else {
-                if (key.getModelClass() == null) {
-                    builder = (MetadataBuilder<T>) new JournalStructure(mn, key.getName());
-                } else {
-                    builder = new JournalMetadataBuilder<>(mn, key.getName());
-                }
+                return new JournalMetadataBuilder<>(key.getModelClass(), key.getName()).partitionBy(key.getPartitionBy()).
+                        recordCountHint(key.getRecordHint()).
+                        ordered(key.isOrdered()).
+                        build();
             }
-            return builder.
+            return (new JournalStructure(mn, key.getName()).
                     partitionBy(key.getPartitionBy()).
                     recordCountHint(key.getRecordHint()).
-                    withPath(path).
                     ordered(key.isOrdered()).
-                    build();
+                    map(key.getModelClass()));
         } else {
-            // journal exists on disk
-            if (mn == null) {
-                // we have on-disk metadata and no in-app meta
-                if (key.getModelClass() == null) {
-                    // if this is generic access request
-                    // return metadata as is, nothing more to do
-                    return (JournalMetadata<T>) new JournalStructure(mo, key.getName()).withPath(path).recordCountHint(key.getRecordHint()).build();
-                }
-                // if this is request to map class on existing journal
-                // check compatibility and map to class (calc offsets and constructor)
-                return new JournalStructure(mo, key.getName()).withPath(path).recordCountHint(key.getRecordHint()).map(key.getModelClass());
+            if (mn == null || mn.isCompatible(mo, false)) {
+                return new JournalStructure(mo, key.getName()).recordCountHint(key.getRecordHint()).map(key.getModelClass());
             }
-
-            // we have both on-disk and in-app meta
-            // check if in-app meta matches on-disk meta
-            if (mn.isCompatible(mo, false)) {
-                if (mn.getModelClass() == null) {
-                    return (JournalMetadata<T>) new JournalStructure(mn).recordCountHint(key.getRecordHint()).withPath(path).build();
-                }
-                return new JournalMetadataBuilder<>(mn, key.getName()).withPath(path).recordCountHint(key.getRecordHint()).build();
-            }
-
             throw new JournalMetadataException(mo, mn);
         }
     }

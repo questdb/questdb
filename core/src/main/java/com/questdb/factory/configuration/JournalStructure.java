@@ -58,7 +58,6 @@ public class JournalStructure implements MetadataBuilder<Object> {
     private Constructor<Object> constructor;
     private boolean partialMapping = false;
     private boolean ordered = true;
-    private String path;
 
     public JournalStructure(String name) {
         this.name = name;
@@ -210,7 +209,6 @@ public class JournalStructure implements MetadataBuilder<Object> {
                 , modelClass
                 , constructor
                 , key
-                , path
                 , partitionBy
                 , m
                 , tsColumnIndex
@@ -228,7 +226,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
     }
 
     @Override
-    public MetadataBuilder<Object> ordered(boolean flag) {
+    public JournalStructure ordered(boolean flag) {
         this.ordered = flag;
         return this;
     }
@@ -244,12 +242,6 @@ public class JournalStructure implements MetadataBuilder<Object> {
         if (count > 0) {
             this.recordCountHint = count;
         }
-        return this;
-    }
-
-    @Override
-    public JournalStructure withPath(String path) {
-        this.path = path;
         return this;
     }
 
@@ -281,33 +273,35 @@ public class JournalStructure implements MetadataBuilder<Object> {
 
     @SuppressWarnings("unchecked")
     public JournalMetadata map(Class clazz) {
-        List<Field> classFields = getAllFields(new ArrayList<Field>(), clazz);
+        if (clazz != null) {
+            List<Field> classFields = getAllFields(new ArrayList<Field>(), clazz);
 
-        for (int i = 0; i < classFields.size(); i++) {
-            Field f = classFields.get(i);
+            for (int i = 0; i < classFields.size(); i++) {
+                Field f = classFields.get(i);
 
-            if (Modifier.isStatic(f.getModifiers())) {
-                continue;
+                if (Modifier.isStatic(f.getModifiers())) {
+                    continue;
+                }
+
+                int index = nameToIndexMap.get(f.getName());
+                if (index == -1) {
+                    LOG.info().$("Unusable member field: ").$(clazz.getName()).$('.').$(f.getName()).$();
+                    continue;
+                }
+
+                ColumnMetadata meta = metadata.getQuick(index);
+                checkTypes(meta.type, ColumnType.columnTypeOf(f.getType()));
+                meta.offset = Unsafe.getUnsafe().objectFieldOffset(f);
             }
 
-            int index = nameToIndexMap.get(f.getName());
-            if (index == -1) {
-                LOG.info().$("Unusable member field: ").$(clazz.getName()).$('.').$(f.getName()).$();
-                continue;
+            this.partialMapping = missingMappings();
+
+            this.modelClass = clazz;
+            try {
+                this.constructor = modelClass.getDeclaredConstructor();
+            } catch (NoSuchMethodException e) {
+                throw new JournalConfigurationException("No default constructor declared on %s", modelClass.getName());
             }
-
-            ColumnMetadata meta = metadata.getQuick(index);
-            checkTypes(meta.type, ColumnType.columnTypeOf(f.getType()));
-            meta.offset = Unsafe.getUnsafe().objectFieldOffset(f);
-        }
-
-        this.partialMapping = missingMappings();
-
-        this.modelClass = clazz;
-        try {
-            this.constructor = modelClass.getDeclaredConstructor();
-        } catch (NoSuchMethodException e) {
-            throw new JournalConfigurationException("No default constructor declared on %s", modelClass.getName());
         }
 
         return this.build();

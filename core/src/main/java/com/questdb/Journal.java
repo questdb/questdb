@@ -82,9 +82,9 @@ public class Journal<T> implements Iterable<T>, Closeable {
     private TxIterator txIterator;
     private long lastExpireCheck = 0L;
 
-    public Journal(JournalMetadata<T> metadata) throws JournalException {
+    public Journal(JournalMetadata<T> metadata, File location) throws JournalException {
         this.metadata = metadata;
-        this.location = new File(metadata.getPath());
+        this.location = location;
         this.txLog = new TxLog(location, getMode(), metadata.getTxCountHint());
         this.open = true;
         this.timestampOffset = getMetadata().getTimestampMetadata() == null ? -1 : getMetadata().getTimestampMetadata().offset;

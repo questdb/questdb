@@ -33,6 +33,4 @@ public interface MetadataBuilder<T> {
     MetadataBuilder<T> partitionBy(int partitionBy);
 
     MetadataBuilder<T> recordCountHint(int count);
-
-    MetadataBuilder<T> withPath(String location);
 }
