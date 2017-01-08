@@ -39,7 +39,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
 
     @Test
     public void testAllocateAndClear() throws Exception {
-        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("z").$date("ts").$());
+        final JournalMetadata<?> m = new JournalStructure("z").$date("ts").$().build();
         final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         int n = 2;
@@ -102,7 +102,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
     @Test
     public void testFactoryCloseBeforeRelease() throws Exception {
 
-        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
+        final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
         CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         JournalWriter x;
@@ -125,7 +125,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
     @Test
     public void testOneThreadGetRelease() throws Exception {
 
-        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
+        final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
         CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         JournalWriter x;
@@ -157,7 +157,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
 
     @Test
     public void testTwoThreadsRaceToAllocate() throws Exception {
-        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
+        final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
         final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         int n = 2;

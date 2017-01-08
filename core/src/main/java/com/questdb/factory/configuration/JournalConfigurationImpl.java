@@ -56,25 +56,10 @@ class JournalConfigurationImpl implements JournalConfiguration {
         this.journalMetadata = journalMetadata;
     }
 
-    public <T> JournalMetadata<T> buildWithRootLocation(MetadataBuilder<T> builder) throws JournalException {
-        File journalLocation = new File(getJournalBase(), builder.getName());
-
-        JournalMetadata<T> mo = readMetadata(journalLocation);
-        JournalMetadata<T> mn = builder.build();
-
-        if (mo == null || mo.isCompatible(mn, false)) {
-            return mn;
-        }
-
-        throw new JournalMetadataException(mo, mn);
-    }
-
     @SuppressWarnings("unchecked")
     @Override
     public <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException {
-        File journalLocation = new File(getJournalBase(), key.getName());
-
-        JournalMetadata<T> mo = readMetadata(journalLocation);
+        JournalMetadata<T> mo = readMetadata(key.getName());
         String className = key.getModelClassName();
         JournalMetadata<T> mn = className == null ? null : journalMetadata.get(className);
 
@@ -144,6 +129,21 @@ class JournalConfigurationImpl implements JournalConfiguration {
         return journalBase;
     }
 
+    public <T> JournalMetadata<T> readMetadata(String name) throws JournalException {
+        File dir = new File(getJournalBase(), name);
+        if (dir.exists()) {
+            File metaFile = new File(dir, FILE_NAME);
+            if (!metaFile.exists()) {
+                throw new JournalException(dir + " is not a recognised journal");
+            }
+
+            try (UnstructuredFile hb = new UnstructuredFile(metaFile, 12, JournalMode.READ)) {
+                return new JournalMetadata<>(hb, name);
+            }
+        }
+        return null;
+    }
+
     @Override
     public void rename(CharSequence location, CharSequence to) throws JournalException {
         try (CompositePath oldName = new CompositePath()) {
@@ -195,19 +195,5 @@ class JournalConfigurationImpl implements JournalConfiguration {
                 }
             }
         }
-    }
-
-    private <T> JournalMetadata<T> readMetadata(File location) throws JournalException {
-        if (location.exists()) {
-            File metaFile = new File(location, FILE_NAME);
-            if (!metaFile.exists()) {
-                throw new JournalException(location + " is not a recognised journal");
-            }
-
-            try (UnstructuredFile hb = new UnstructuredFile(metaFile, 12, JournalMode.READ)) {
-                return new JournalMetadata<>(hb);
-            }
-        }
-        return null;
     }
 }

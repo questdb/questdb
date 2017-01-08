@@ -27,6 +27,7 @@ import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
+import com.questdb.ex.JournalMetadataException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.MetadataBuilder;
@@ -60,7 +61,7 @@ public class WriterFactoryImpl extends AbstractFactory implements WriterFactory 
 
     @Override
     public JournalWriter writer(String location) throws JournalException {
-        return writer(new JournalKey<>(location));
+        return writer(getConfiguration().readMetadata(location));
     }
 
     @Override
@@ -70,11 +71,15 @@ public class WriterFactoryImpl extends AbstractFactory implements WriterFactory 
 
     @Override
     public <T> JournalWriter<T> writer(MetadataBuilder<T> metadataBuilder) throws JournalException {
-        return writer(getConfiguration().buildWithRootLocation(metadataBuilder));
+        return writer(metadataBuilder.build());
     }
 
     @Override
     public <T> JournalWriter<T> writer(JournalMetadata<T> metadata) throws JournalException {
+        JournalMetadata<T> mo = getConfiguration().readMetadata(metadata.getName());
+        if (mo != null && !mo.isCompatible(metadata, false)) {
+            throw new JournalMetadataException(mo, metadata);
+        }
         return new JournalWriter<>(metadata, new File(getConfiguration().getJournalBase(), metadata.getName()));
     }
 }

@@ -44,7 +44,7 @@ public class JournalMetadataTest {
         UnstructuredFile hb = new UnstructuredFile(temp.newFile(), 10, JournalMode.APPEND);
         JournalMetadata m = b.build();
         m.write(hb);
-        JournalMetadata metadata = new JournalMetadata(hb);
+        JournalMetadata metadata = new JournalMetadata(hb, null);
         hb.close();
         Assert.assertTrue(m.isCompatible(metadata, false));
     }

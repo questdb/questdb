@@ -24,7 +24,6 @@
 package com.questdb.txt.parser.listener;
 
 import com.questdb.JournalEntryWriter;
-import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
 import com.questdb.ex.*;
 import com.questdb.factory.WriterFactory;
@@ -258,7 +257,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     @SuppressWarnings("unchecked")
     private JournalWriter mapColumnsAndOpenWriter() throws JournalException {
 
-        JournalMetadata<Object> jm = factory.getConfiguration().createMetadata(new JournalKey<>(location));
+        JournalMetadata<Object> jm = factory.getConfiguration().readMetadata(location);
 
         // now, compare column count.
         // Cannot continue if different

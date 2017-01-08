@@ -102,9 +102,10 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         this.ordered = ordered;
     }
 
-    public JournalMetadata(UnstructuredFile buf) {
+    public JournalMetadata(UnstructuredFile buf, String name) {
         buf.setPos(0);
-        name = buf.getStr();
+        String oldName = buf.getStr();
+        this.name = name == null ? oldName : name;
         modelClass = null;
         partitionBy = buf.getInt();
         columnCount = buf.getInt();
@@ -129,7 +130,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         ordered = buf.getBool();
         constructor = null;
         partialMapping = false;
-        this.key = new JournalKey<>(null, name, partitionBy, ioBlockRecordCount, ordered);
+        this.key = new JournalKey<>(null, this.name, partitionBy, ioBlockRecordCount, ordered);
     }
 
     public void copyColumnMetadata(ColumnMetadata[] meta) {

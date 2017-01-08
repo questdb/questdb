@@ -26,7 +26,6 @@ package com.questdb.net.ha;
 import com.questdb.JournalWriter;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.comsumer.HugeBufferConsumer;
 import com.questdb.net.ha.producer.HugeBufferProducer;
@@ -49,7 +48,7 @@ public class MetadataReplicationTest extends AbstractTest {
             c.read(channel);
 
             try (JournalWriter w2 = getWriterFactory().writer(
-                    new JournalStructure(new JournalMetadata(c.getHb()), "xyz")
+                    new JournalMetadata<>(c.getHb(), "xyz")
             )) {
 
                 Assert.assertTrue(w.getMetadata().isCompatible(w2.getMetadata(), false));

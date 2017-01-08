@@ -36,8 +36,6 @@ public interface JournalConfiguration {
     int DOES_NOT_EXIST = 2;
     int EXISTS_FOREIGN = 4;
 
-    <T> JournalMetadata<T> buildWithRootLocation(MetadataBuilder<T> builder) throws JournalException;
-
     <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
 
     void delete(CharSequence location) throws JournalException;
@@ -46,6 +44,7 @@ public interface JournalConfiguration {
 
     File getJournalBase();
 
-    void rename(CharSequence location, CharSequence to) throws JournalException;
+    <T> JournalMetadata<T> readMetadata(String name) throws JournalException;
 
+    void rename(CharSequence location, CharSequence to) throws JournalException;
 }

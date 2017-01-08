@@ -23,7 +23,6 @@
 
 package com.questdb.ql.model;
 
-import com.questdb.JournalKey;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.ParserException;
@@ -213,7 +212,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator {
         }
 
         try {
-            return journalMetadata = factory.getOrCreateMetadata(new JournalKey<>(reader));
+            return journalMetadata = configuration.readMetadata(reader);
         } catch (JournalException e) {
             throw QueryError.$(readerNode.position, e.getMessage());
         }

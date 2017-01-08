@@ -32,7 +32,6 @@ import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Chars;
@@ -362,7 +361,7 @@ public class JournalClient {
         subscribe(new JournalKey<>(clazz, location), new JournalKey<>(clazz, location), journalListener);
     }
 
-    private void subscribeOne(int index, SubscriptionHolder holder, String loc, boolean newSubscription) {
+    private void subscribeOne(int index, SubscriptionHolder holder, String name, boolean newSubscription) {
 
         if (newSubscription) {
             SubscriptionHolder sub = new SubscriptionHolder();
@@ -386,7 +385,7 @@ public class JournalClient {
             try {
                 try (HugeBufferConsumer h = new HugeBufferConsumer(file)) {
                     h.read(channel);
-                    metadata = new JournalMetadata(h.getHb());
+                    metadata = new JournalMetadata(h.getHb(), name);
                 } catch (JournalException e) {
                     throw new JournalNetworkException(e);
                 }
@@ -398,7 +397,7 @@ public class JournalClient {
             if (writer == null) {
                 if (holder.writer == null) {
                     try {
-                        writer = factory.writer(new JournalStructure(metadata, loc));
+                        writer = factory.writer(metadata);
                     } catch (JournalException e) {
                         LOG.error().$("Failed to create writer: ").$(e).$();
                         unsubscribe(index, null, holder, JournalEvents.EVT_JNL_INCOMPATIBLE);
@@ -433,9 +432,9 @@ public class JournalClient {
             if (holder.listener != null) {
                 holder.listener.onEvent(JournalEvents.EVT_JNL_SUBSCRIBED);
             }
-            LOG.info().$("Subscribed ").$(loc).$(" to ").$(holder.remote.getName()).$("(remote)").$();
+            LOG.info().$("Subscribed ").$(name).$(" to ").$(holder.remote.getName()).$("(remote)").$();
         } catch (JournalNetworkException e) {
-            LOG.error().$("Failed to subscribe ").$(loc).$(" to ").$(holder.remote.getName()).$("(remote)").$();
+            LOG.error().$("Failed to subscribe ").$(name).$(" to ").$(holder.remote.getName()).$("(remote)").$();
             unsubscribe(index, writer, holder, JournalEvents.EVT_JNL_SERVER_ERROR);
         }
     }
@@ -536,15 +535,15 @@ public class JournalClient {
 
                 switch (holder.type) {
                     case MSG_SUBSCRIBE:
-                        String loc = holder.local.getName();
+                        String name = holder.local.getName();
 
-                        if (subscribedJournals.add(loc)) {
-                            subscribeOne(i++, holder, loc, true);
+                        if (subscribedJournals.add(name)) {
+                            subscribeOne(i++, holder, name, true);
                         } else {
                             if (holder.listener != null) {
                                 holder.listener.onEvent(JournalEvents.EVT_JNL_ALREADY_SUBSCRIBED);
                             }
-                            LOG.error().$("Already subscribed ").$(loc).$();
+                            LOG.error().$("Already subscribed ").$(name).$();
                         }
                         break;
                     case MSG_UNSUBSCRIBE:

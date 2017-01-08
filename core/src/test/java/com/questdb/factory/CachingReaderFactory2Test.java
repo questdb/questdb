@@ -43,7 +43,7 @@ public class CachingReaderFactory2Test extends AbstractTest {
     @Test
     public void testCloseWithActiveReader() throws Exception {
         // create journal
-        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
+        final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
         getWriterFactory().writer(m).close();
 
         try (final CachingReaderFactory2 rf = new CachingReaderFactory2(theFactory.getConfiguration(), 2)) {
@@ -59,7 +59,7 @@ public class CachingReaderFactory2Test extends AbstractTest {
     @Test
     public void testCloseWithInactiveReader() throws Exception {
         // create journal
-        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
+        final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
         getWriterFactory().writer(m).close();
 
         try (final CachingReaderFactory2 rf = new CachingReaderFactory2(theFactory.getConfiguration(), 2)) {
@@ -82,7 +82,7 @@ public class CachingReaderFactory2Test extends AbstractTest {
         // create journals to read
         final JournalMetadata<?>[] meta = new JournalMetadata[readerCount];
         for (int i = 0; i < readerCount; i++) {
-            final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x" + i).$date("ts").$());
+            final JournalMetadata<?> m = new JournalStructure("x" + i).$date("ts").$().build();
             getWriterFactory().writer(m).close();
             meta[i] = m;
         }
@@ -128,7 +128,7 @@ public class CachingReaderFactory2Test extends AbstractTest {
     @Test
     public void testGetReadersBeforeFailure() throws Exception {
         // create journal
-        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
+        final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
         getWriterFactory().writer(m).close();
 
         try (final CachingReaderFactory2 rf = new CachingReaderFactory2(theFactory.getConfiguration(), 2)) {
@@ -163,7 +163,7 @@ public class CachingReaderFactory2Test extends AbstractTest {
         // create journals to read
         final JournalMetadata<?>[] meta = new JournalMetadata[readerCount];
         for (int i = 0; i < readerCount; i++) {
-            final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x" + i).$date("ts").$());
+            final JournalMetadata<?> m = new JournalStructure("x" + i).$date("ts").$().build();
             getWriterFactory().writer(m).close();
             meta[i] = m;
         }
@@ -257,10 +257,10 @@ public class CachingReaderFactory2Test extends AbstractTest {
     @Test
     public void testLockUnlock() throws Exception {
         // create journals
-        final JournalMetadata<?> m1 = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
+        final JournalMetadata<?> m1 = new JournalStructure("x").$date("ts").$().build();
         getWriterFactory().writer(m1).close();
 
-        final JournalMetadata<?> m2 = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("y").$date("ts").$());
+        final JournalMetadata<?> m2 = new JournalStructure("y").$date("ts").$().build();
         getWriterFactory().writer(m2).close();
 
 
@@ -309,7 +309,7 @@ public class CachingReaderFactory2Test extends AbstractTest {
     @Test
     public void testSerialOpenClose() throws Exception {
         // create journal
-        final JournalMetadata<?> m = theFactory.getConfiguration().buildWithRootLocation(new JournalStructure("x").$date("ts").$());
+        final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
         getWriterFactory().writer(m).close();
 
         try (final CachingReaderFactory2 rf = new CachingReaderFactory2(theFactory.getConfiguration(), 2)) {

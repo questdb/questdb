@@ -42,13 +42,9 @@ public class ReaderFactoryImpl extends AbstractFactory implements ReaderFactory 
         super(configuration);
     }
 
-    public <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
-        return getConfiguration().createMetadata(key);
-    }
-
     @Override
     public final <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return reader(getOrCreateMetadata(key));
+        return reader(getConfiguration().createMetadata(key));
     }
 
     @Override
@@ -63,7 +59,7 @@ public class ReaderFactoryImpl extends AbstractFactory implements ReaderFactory 
 
     @Override
     public final Journal reader(String name) throws JournalException {
-        return reader(new JournalKey<>(name));
+        return reader(getConfiguration().readMetadata(name));
     }
 
     @Override

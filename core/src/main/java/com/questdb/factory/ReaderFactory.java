@@ -37,8 +37,6 @@ public interface ReaderFactory extends Closeable {
 
     JournalConfiguration getConfiguration();
 
-    <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException;
-
     <T> Journal<T> reader(JournalKey<T> key) throws JournalException;
 
     <T> Journal<T> reader(Class<T> clazz) throws JournalException;
