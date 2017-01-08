@@ -71,6 +71,8 @@ public class ReconnectTest extends AbstractTest {
             // subscribe client, waiting for complete set of data
             // when data arrives client triggers latch
             final CountDownLatch latch = new CountDownLatch(1);
+            // create empty "local"
+            getWriterFactory().writer(Quote.class, "local").close();
             try (final Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
                 client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
                     @Override

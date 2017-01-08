@@ -25,13 +25,10 @@ package com.questdb.factory;
 
 import com.questdb.Journal;
 import com.questdb.JournalKey;
-import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
-
-import java.io.File;
 
 public class ReaderFactoryImpl extends AbstractFactory implements ReaderFactory {
 
@@ -44,13 +41,7 @@ public class ReaderFactoryImpl extends AbstractFactory implements ReaderFactory 
     }
 
     public <T> JournalMetadata<T> getOrCreateMetadata(JournalKey<T> key) throws JournalException {
-        JournalMetadata<T> metadata = getConfiguration().createMetadata(key);
-        File location = new File(metadata.getPath());
-        if (!location.exists()) {
-            // create blank journal
-            new JournalWriter<>(metadata).close();
-        }
-        return metadata;
+        return getConfiguration().createMetadata(key);
     }
 
     @Override

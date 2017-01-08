@@ -76,18 +76,6 @@ public class JournalTest extends AbstractTest {
     }
 
     @Test
-    public void testCreateNewReader() throws Exception {
-        try (Journal<Quote> r = getReaderFactory().reader(Quote.class, "brand-new")) {
-            Assert.assertEquals(0, r.size());
-        }
-
-        try (Journal<Quote> r = getReaderFactory().reader(Quote.class, "brand-new2")) {
-            r.setSequentialAccess(true);
-            Assert.assertEquals(0, r.size());
-        }
-    }
-
-    @Test
     public void testDecrementRowID() throws Exception {
         try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
             TestUtils.generateQuoteData(w, 1000);

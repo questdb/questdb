@@ -23,10 +23,7 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.Journal;
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalNetworkException;
-import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
@@ -34,7 +31,6 @@ import com.questdb.net.ha.mcast.AbstractOnDemandSender;
 import com.questdb.net.ha.mcast.OnDemandAddressPoller;
 import com.questdb.net.ha.mcast.OnDemandAddressSender;
 import com.questdb.test.tools.AbstractTest;
-import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -42,6 +38,7 @@ import java.net.Inet6Address;
 import java.net.InterfaceAddress;
 import java.net.SocketException;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 public class MulticastTest extends AbstractTest {
@@ -87,19 +84,25 @@ public class MulticastTest extends AbstractTest {
             addNode(new ServerNode(0, "[0:0:0:0:0:0:0:0]"));
             setHeartbeatFrequency(100);
         }}, getReaderFactory(), null, 0);
-        JournalClient client = new JournalClient(new ClientConfig(), getWriterFactory());
 
-
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
-            server.start();
-            client.start();
-
-            client.halt();
-            server.halt();
-            try (Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
-                TestUtils.assertDataEquals(remote, local);
+        final CountDownLatch connected = new CountDownLatch(1);
+        JournalClient client = new JournalClient(new ClientConfig(), getWriterFactory(), null, new JournalClient.Callback() {
+            @Override
+            public void onEvent(int evt) {
+                if (evt == JournalClientEvents.EVT_CONNECTED) {
+                    connected.countDown();
+                }
             }
-        }
+        });
+
+
+        server.start();
+        client.start();
+
+        connected.await(3, TimeUnit.SECONDS);
+
+        client.halt();
+        server.halt();
     }
 
     @Test

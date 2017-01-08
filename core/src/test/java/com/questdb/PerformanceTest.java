@@ -65,7 +65,7 @@ public class PerformanceTest extends AbstractTest {
     @Test
     public void testAllBySymbolValueOverInterval() throws JournalException, NumericException {
 
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
             TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
@@ -240,7 +240,7 @@ public class PerformanceTest extends AbstractTest {
     @Test
     public void testLatestBySymbol() throws JournalException, NumericException {
 
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
             TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
