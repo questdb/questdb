@@ -40,7 +40,7 @@ public class JournalMetadataException extends JournalException {
         super("Checksum mismatch. Check log for details");
         LogRecord b = LOG.error();
         b.$("Metadata mismatch for journal:\n");
-        b.$("Location: ").$(mo.getPath()).$('\n');
+        b.$("Name: ").$(mo.getName()).$('\n');
         sep(b);
         b(b);
         pad(b, FIRST_COL_PAD, "column#");

@@ -43,8 +43,8 @@ public class MetadataReplicationTest extends AbstractTest {
         try (JournalWriter w = getWriterFactory().writer(Quote.class)) {
 
             MockByteChannel channel = new MockByteChannel();
-            HugeBufferProducer p = new HugeBufferProducer(new File(w.getMetadata().getPath(), JournalConfiguration.FILE_NAME));
-            HugeBufferConsumer c = new HugeBufferConsumer(new File(w.getMetadata().getPath(), "_remote"));
+            HugeBufferProducer p = new HugeBufferProducer(new File(w.getLocation(), JournalConfiguration.FILE_NAME));
+            HugeBufferConsumer c = new HugeBufferConsumer(new File(w.getLocation(), "_remote"));
             p.write(channel);
             c.read(channel);
 

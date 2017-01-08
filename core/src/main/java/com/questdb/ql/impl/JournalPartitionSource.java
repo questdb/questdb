@@ -112,7 +112,7 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     public void toSink(CharSink sink) {
         sink.put('{');
         sink.putQuoted("op").put(':').putQuoted("JournalPartitionSource").put(',');
-        sink.putQuoted("journal").put(':').putQuoted(FileNameExtractorCharSequence.get(metadata.getPath()));
+        sink.putQuoted("journal").put(':').putQuoted(FileNameExtractorCharSequence.get(metadata.getName()));
         sink.put('}');
     }
 }
