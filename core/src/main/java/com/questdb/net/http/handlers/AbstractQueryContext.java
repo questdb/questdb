@@ -24,15 +24,12 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.ex.*;
-import com.questdb.factory.CachingReaderFactory;
-import com.questdb.factory.ReaderFactoryPool;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.MegaFactory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.log.LogRecord;
 import com.questdb.misc.Chars;
-import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.Request;
@@ -73,7 +70,6 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     long skip;
     long stop;
     Record record;
-    CachingReaderFactory factory;
     int queryState = QUERY_PREFIX;
     int columnIndex;
 
@@ -86,12 +82,11 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     public void clear() {
         debug().$("Cleaning context").$();
         metadata = null;
-        cursor = null;
-        record = null;
-        if (factory != null) {
-            debug().$("Closing journal factory ").$();
+        if (cursor != null) {
+            cursor.releaseCursor();
+            cursor = null;
         }
-        factory = Misc.free(factory);
+        record = null;
         if (recordSource != null) {
             CACHE.get().put(query.toString(), recordSource);
             recordSource = null;
@@ -109,17 +104,15 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
 
     public void compileQuery(
             ChunkedResponse r,
-            ReaderFactoryPool pool,
-            WriterFactory writerFactory,
+            MegaFactory factory,
             AtomicLong misses,
             AtomicLong hits) throws IOException {
         try {
-            factory = pool.get();
             recordSource = CACHE.get().poll(query);
             int retryCount = 0;
             do {
                 if (recordSource == null) {
-                    recordSource = executeQuery(r, writerFactory, pool);
+                    recordSource = executeQuery(r, factory);
                     misses.incrementAndGet();
                 } else {
                     hits.incrementAndGet();
@@ -152,9 +145,6 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
             syntaxError(r);
         } catch (JournalRuntimeException e) {
             internalError(r, e);
-        } catch (InterruptedException e) {
-            error().$("Error executing query. Server is shutting down. Query: ").$(query).$(e).$();
-            sendException(r, 0, "Server is shutting down.", 500);
         }
     }
 
@@ -224,23 +214,18 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
         return LOG.error().$('[').$(fd).$("] ");
     }
 
-    private RecordSource executeQuery(ChunkedResponse r, WriterFactory writerFactory, ReaderFactoryPool pool) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
+    private RecordSource executeQuery(ChunkedResponse r, MegaFactory factory) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
         QueryCompiler compiler = COMPILER.get();
         ParsedModel model = compiler.parse(query);
         switch (model.getModelType()) {
             case ParsedModel.QUERY:
                 return compiler.compile(factory, model);
             default:
-                if (writerFactory != null) {
-                    try {
-                        compiler.execute(writerFactory, factory, pool, model);
-                    } catch (JournalException e) {
-                        error().$("Server error executing statement ").$(query).$(e).$();
-                        sendException(r, 0, e.getMessage(), 500);
-                    }
-                } else {
-                    error().$("Statement execution is not supported: ").$(query).$();
-                    sendException(r, 0, "Statement execution is not supported", 400);
+                try {
+                    compiler.execute(factory, model);
+                } catch (JournalException e) {
+                    error().$("Server error executing statement ").$(query).$(e).$();
+                    sendException(r, 0, e.getMessage(), 500);
                 }
                 return null;
         }

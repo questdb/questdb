@@ -24,6 +24,10 @@
 package com.questdb.factory;
 
 import com.questdb.Journal;
+import com.questdb.ex.FactoryFullException;
+import com.questdb.ex.JournalException;
+import com.questdb.ex.JournalLockedException;
+import com.questdb.ex.RetryLockException;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Rnd;
@@ -125,6 +129,7 @@ public class CachingReaderFactory2Test extends AbstractTest {
         }
     }
 
+    @SuppressWarnings("InfiniteLoopStatement")
     @Test
     public void testGetReadersBeforeFailure() throws Exception {
         // create journal
@@ -134,18 +139,12 @@ public class CachingReaderFactory2Test extends AbstractTest {
         try (final CachingReaderFactory2 rf = new CachingReaderFactory2(theFactory.getConfiguration(), 2)) {
 
             ObjList<Journal> readers = new ObjList<>();
-            Journal reader;
-            do {
-                reader = rf.reader(m);
-                if (reader == null) {
-                    break;
-                }
-                readers.add(reader);
-            } while (true);
-
             try {
+                do {
+                    readers.add(rf.reader(m));
+                } while (true);
+            } catch (FactoryFullException e) {
                 Assert.assertEquals(rf.getMaxEntries(), readers.size());
-                Assert.assertEquals(LastError.E_POOL_FULL, LastError.getError());
             } finally {
                 for (int i = 0, n = readers.size(); i < n; i++) {
                     readers.getQuick(i).close();
@@ -185,15 +184,18 @@ public class CachingReaderFactory2Test extends AbstractTest {
                         for (int i = 0; i < iterations; i++) {
                             String name = meta[rnd.nextPositiveInt() % readerCount].getName();
                             while (true) {
-                                if (rf.lock(name)) {
+                                try {
+                                    rf.lock(name);
                                     lockTimes.add(System.currentTimeMillis());
                                     LockSupport.parkNanos(1000L);
                                     rf.unlock(name);
                                     break;
-                                } else if (LastError.getError() != LastError.E_AGAIN) {
-                                    System.out.println("Error: " + LastError.getError());
-                                    errors.incrementAndGet();
-                                    break;
+                                } catch (JournalException e) {
+                                    if (!(e instanceof RetryLockException)) {
+                                        e.printStackTrace();
+                                        errors.incrementAndGet();
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -218,6 +220,7 @@ public class CachingReaderFactory2Test extends AbstractTest {
                                 barrier.await();
                             }
                             LockSupport.parkNanos(100L);
+                        } catch (JournalLockedException ignored) {
                         } catch (Exception e) {
                             e.printStackTrace();
                             errors.incrementAndGet();
@@ -273,20 +276,25 @@ public class CachingReaderFactory2Test extends AbstractTest {
             Assert.assertNotNull(y);
 
             // expect lock to fail because we have "x" open
-            Assert.assertFalse(rf.lock(m1.getName()));
-            Assert.assertEquals(LastError.E_AGAIN, LastError.getError());
+            try {
+                rf.lock(m1.getName());
+                Assert.fail();
+            } catch (RetryLockException ignore) {
+            }
+
             x.close();
 
             // expect lock to succeed after we closed "x"
-            Assert.assertTrue(rf.lock(m1.getName()));
-            Assert.assertEquals(LastError.E_OK, LastError.getError());
+            rf.lock(m1.getName());
 
             // expect "x" to be physically closed
             Assert.assertFalse(x.isOpen());
 
             // "x" is locked, expect this to fail
-            Assert.assertNull(rf.reader(m1));
-            Assert.assertEquals(LastError.E_NAME_LOCKED, LastError.getError());
+            try {
+                Assert.assertNull(rf.reader(m1));
+            } catch (JournalLockedException ignored) {
+            }
 
             rf.unlock(m1.getName());
 

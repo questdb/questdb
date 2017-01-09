@@ -165,17 +165,20 @@ public abstract class AbstractOptimiserTest {
     }
 
     protected void assertThat(String expected, RecordSource rs, boolean header) throws IOException {
-        RecordCursor cursor = rs.prepareCursor(getCachingFactory());
+        RecordCursor cursor = rs.prepareCursor(theFactory.getMegaFactory());
+        try {
+            sink.clear();
+            printer.print(cursor, header, rs.getMetadata());
+            TestUtils.assertEquals(expected, sink);
 
-        sink.clear();
-        printer.print(cursor, header, rs.getMetadata());
-        TestUtils.assertEquals(expected, sink);
+            cursor.toTop();
 
-        cursor.toTop();
-
-        sink.clear();
-        printer.print(cursor, header, rs.getMetadata());
-        TestUtils.assertEquals(expected, sink);
+            sink.clear();
+            printer.print(cursor, header, rs.getMetadata());
+            TestUtils.assertEquals(expected, sink);
+        } finally {
+            cursor.releaseCursor();
+        }
 
         TestUtils.assertStrings(rs, getCachingFactory());
     }
@@ -183,7 +186,7 @@ public abstract class AbstractOptimiserTest {
     private void assertThat0(String expected, String query, boolean header) throws ParserException, IOException {
         RecordSource rs = cache.peek(query);
         if (rs == null) {
-            cache.put(query, rs = compiler.compile(getCachingFactory(), query));
+            cache.put(query, rs = compiler.compile(theFactory.getMegaFactory(), query));
         }
         assertThat(expected, rs, header);
     }

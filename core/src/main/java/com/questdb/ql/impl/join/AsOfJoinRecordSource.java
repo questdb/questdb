@@ -131,6 +131,14 @@ public class AsOfJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
+    public void releaseCursor() {
+        this.recordHolder.clear();
+        this.delayedHolder.clear();
+        this.masterCursor.releaseCursor();
+        this.slaveCursor.releaseCursor();
+    }
+
+    @Override
     public Record getRecord() {
         return record;
     }

@@ -212,6 +212,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
     private static long rightOf(long blockAddress) {
         return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_RIGHT);
     }
+
     private static long leftOf(long blockAddress) {
         return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_LEFT);
     }
@@ -423,6 +424,12 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             } else {
                 recordList.recordAt(record, atRowId);
             }
+        }
+
+        @Override
+        public void releaseCursor() {
+            sourceCursor.releaseCursor();
+            recordList.releaseCursor();
         }
 
         @Override

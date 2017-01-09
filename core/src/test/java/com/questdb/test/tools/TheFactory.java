@@ -42,6 +42,7 @@ public class TheFactory implements TestRule {
     private ReaderFactoryPool readerFactoryPool;
     private CachingReaderFactory cachingReaderFactory;
     private CachingWriterFactory cachingWriterFactory;
+    private MegaFactory megaFactory;
 
     public TheFactory(JournalConfigurationBuilder builder) {
         this.builder = builder;
@@ -64,6 +65,7 @@ public class TheFactory implements TestRule {
                 cachingReaderFactory = null;
                 readerFactoryPool = null;
                 cachingWriterFactory = null;
+                megaFactory = null;
 
                 try {
                     configuration = builder.build(tmp);
@@ -81,6 +83,10 @@ public class TheFactory implements TestRule {
 
                     if (cachingWriterFactory != null) {
                         cachingWriterFactory.close();
+                    }
+
+                    if (megaFactory != null) {
+                        megaFactory.close();
                     }
 
                     Files.deleteOrException(tmp);
@@ -130,5 +136,12 @@ public class TheFactory implements TestRule {
             writerFactory = new WriterFactoryImpl(configuration);
         }
         return writerFactory;
+    }
+
+    public MegaFactory getMegaFactory() {
+        if (megaFactory == null) {
+            megaFactory = new MegaFactory(configuration, 0, 2);
+        }
+        return megaFactory;
     }
 }

@@ -72,6 +72,10 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
+    public void releaseCursor() {
+    }
+
+    @Override
     public PartitionSlice next() {
         return null;
     }

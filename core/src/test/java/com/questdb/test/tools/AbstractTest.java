@@ -94,16 +94,20 @@ public abstract class AbstractTest {
         long memUsed = Unsafe.getMemUsed();
         try (RecordSource src = compiler.compile(theFactory.getCachingReaderFactory(), query)) {
             RecordCursor cursor = src.prepareCursor(theFactory.getCachingReaderFactory());
+            try {
 
-            sink.clear();
-            printer.print(cursor, header, src.getMetadata());
-            TestUtils.assertEquals(expected, sink);
+                sink.clear();
+                printer.print(cursor, header, src.getMetadata());
+                TestUtils.assertEquals(expected, sink);
 
-            cursor.toTop();
+                cursor.toTop();
 
-            sink.clear();
-            printer.print(cursor, header, src.getMetadata());
-            TestUtils.assertEquals(expected, sink);
+                sink.clear();
+                printer.print(cursor, header, src.getMetadata());
+                TestUtils.assertEquals(expected, sink);
+            } finally {
+                cursor.releaseCursor();
+            }
 
             TestUtils.assertStrings(src, theFactory.getCachingReaderFactory());
         } catch (ParserException e) {

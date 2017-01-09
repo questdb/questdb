@@ -279,31 +279,34 @@ public final class TestUtils {
 
     public static void assertStrings(RecordSource src, ReaderFactory factory) {
         RecordCursor cursor = src.prepareCursor(factory);
-        RecordMetadata metadata = src.getMetadata();
-        final int len = metadata.getColumnCount();
+        try {
+            RecordMetadata metadata = src.getMetadata();
+            final int len = metadata.getColumnCount();
 
-        Assert.assertTrue(cursor.hasNext());
+            Assert.assertTrue(cursor.hasNext());
 
-        do {
-            Record r = cursor.next();
+            do {
+                Record r = cursor.next();
 
-            for (int i = 0; i < len; i++) {
-                switch (metadata.getColumnQuick(i).getType()) {
-                    case ColumnType.STRING:
-                        CharSequence s = r.getFlyweightStr(i);
-                        assertEquals(s, r.getFlyweightStrB(i));
-                        if (s != null) {
-                            Assert.assertEquals(s.length(), r.getStrLen(i));
-                        } else {
-                            Assert.assertEquals(-1, r.getStrLen(i));
-                        }
-                        break;
-                    default:
-                        break;
+                for (int i = 0; i < len; i++) {
+                    switch (metadata.getColumnQuick(i).getType()) {
+                        case ColumnType.STRING:
+                            CharSequence s = r.getFlyweightStr(i);
+                            assertEquals(s, r.getFlyweightStrB(i));
+                            if (s != null) {
+                                Assert.assertEquals(s.length(), r.getStrLen(i));
+                            } else {
+                                Assert.assertEquals(-1, r.getStrLen(i));
+                            }
+                            break;
+                        default:
+                            break;
+                    }
                 }
-            }
-        } while (cursor.hasNext());
-
+            } while (cursor.hasNext());
+        } finally {
+            cursor.releaseCursor();
+        }
     }
 
     public static void compareSymbolTables(Journal a, Journal b) {

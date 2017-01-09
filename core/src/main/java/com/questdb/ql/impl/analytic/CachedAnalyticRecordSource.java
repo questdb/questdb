@@ -129,58 +129,67 @@ public class CachedAnalyticRecordSource extends AbstractCombinedRecordSource {
         }
 
         final RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
-        this.storageFacade.prepare(cursor.getStorageFacade());
-        // step #1: store source cursor in record list
-        // - add record list' row ids to all trees, which will put these row ids in necessary order
-        // for this we will be using out comparator, which helps tree compare long values
-        // based on record these values are addressing
-        long rowid = -1;
-        while (cursor.hasNext()) {
-            cancellationHandler.check();
-            Record record = cursor.next();
-            rowid = recordList.append(record, rowid);
-            if (orderGroupCount > 0) {
-                for (int i = 0; i < orderGroupCount; i++) {
-                    RedBlackTree tree = orderedSources.getQuick(i);
-                    if (tree != null) {
-                        tree.add(rowid);
-                    }
-                }
-            }
-        }
-
-        for (int i = 0; i < orderGroupCount; i++) {
-            RedBlackTree tree = orderedSources.getQuick(i);
-            ObjList<AnalyticFunction> functions = functionGroups.getQuick(i);
-            if (tree != null) {
-                // step #2: populate all analytic functions with records in order of respective tree
-                RedBlackTree.LongIterator iterator = tree.iterator();
-                while (iterator.hasNext()) {
-
-                    cancellationHandler.check();
-
-                    Record record = recordList.recordAt(iterator.next());
-                    for (int j = 0, n = functions.size(); j < n; j++) {
-                        functions.getQuick(j).add(record);
-                    }
-                }
-            } else {
-                // step #2: alternatively run record list through two-pass functions
-                for (int j = 0, n = functions.size(); j < n; j++) {
-                    AnalyticFunction f = functions.getQuick(j);
-                    if (f.getType() != AnalyticFunction.STREAM) {
-                        recordList.toTop();
-                        while (recordList.hasNext()) {
-                            f.add(recordList.next());
+        try {
+            this.storageFacade.prepare(cursor.getStorageFacade());
+            // step #1: store source cursor in record list
+            // - add record list' row ids to all trees, which will put these row ids in necessary order
+            // for this we will be using out comparator, which helps tree compare long values
+            // based on record these values are addressing
+            long rowid = -1;
+            while (cursor.hasNext()) {
+                cancellationHandler.check();
+                Record record = cursor.next();
+                rowid = recordList.append(record, rowid);
+                if (orderGroupCount > 0) {
+                    for (int i = 0; i < orderGroupCount; i++) {
+                        RedBlackTree tree = orderedSources.getQuick(i);
+                        if (tree != null) {
+                            tree.add(rowid);
                         }
                     }
                 }
             }
+
+            for (int i = 0; i < orderGroupCount; i++) {
+                RedBlackTree tree = orderedSources.getQuick(i);
+                ObjList<AnalyticFunction> functions = functionGroups.getQuick(i);
+                if (tree != null) {
+                    // step #2: populate all analytic functions with records in order of respective tree
+                    RedBlackTree.LongIterator iterator = tree.iterator();
+                    while (iterator.hasNext()) {
+
+                        cancellationHandler.check();
+
+                        Record record = recordList.recordAt(iterator.next());
+                        for (int j = 0, n = functions.size(); j < n; j++) {
+                            functions.getQuick(j).add(record);
+                        }
+                    }
+                } else {
+                    // step #2: alternatively run record list through two-pass functions
+                    for (int j = 0, n = functions.size(); j < n; j++) {
+                        AnalyticFunction f = functions.getQuick(j);
+                        if (f.getType() != AnalyticFunction.STREAM) {
+                            recordList.toTop();
+                            while (recordList.hasNext()) {
+                                f.add(recordList.next());
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            cursor.releaseCursor();
         }
 
         recordList.toTop();
         setCursorAndPrepareFunctions();
         return this;
+    }
+
+    @Override
+    public void releaseCursor() {
+        cursor.releaseCursor();
     }
 
     @Override

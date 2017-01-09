@@ -33,7 +33,7 @@ import org.junit.Test;
 public class $TabsRecordSourceTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUp() throws Exception {
-        try (JournalWriter w = compiler.createWriter(getWriterFactory(), getCachingFactory(), "create table xyz(x int, y string, timestamp date) timestamp(timestamp) partition by MONTH")) {
+        try (JournalWriter w = compiler.createWriter(theFactory.getMegaFactory(), "create table xyz(x int, y string, timestamp date) timestamp(timestamp) partition by MONTH")) {
             JournalEntryWriter ew;
 
             ew = w.entryWriter(Dates.parseDateTime("2016-01-02T00:00:00.000Z"));

@@ -127,6 +127,12 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
     }
 
     @Override
+    public void releaseCursor() {
+        this.map.clear();
+        this.cursor.releaseCursor();
+    }
+
+    @Override
     public Record getRecord() {
         return record;
     }

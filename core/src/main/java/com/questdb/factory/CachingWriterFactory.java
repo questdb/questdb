@@ -25,7 +25,7 @@ package com.questdb.factory;
 
 import com.questdb.Journal;
 import com.questdb.JournalWriter;
-import com.questdb.ex.JournalException;
+import com.questdb.ex.*;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.log.Log;
@@ -114,14 +114,11 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         return false;
     }
 
-    public boolean lock(String name) {
+    public void lock(String name) throws JournalException {
         if (closed) {
             LOG.info().$("Pool is closed").$();
-            LastError.error(LastError.E_POOL_CLOSED);
-            return false;
+            throw FactoryClosedException.INSTANCE;
         }
-
-        LastError.error(LastError.E_OK);
 
         Entry e = entries.get(name);
         if (e == null) {
@@ -129,7 +126,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
             e = new Entry();
             if (entries.putIfAbsent(name, e) == null) {
                 e.locked = true;
-                return true;
+                return;
             } else {
                 e = entries.get(name);
             }
@@ -146,14 +143,14 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                 e.writer.close();
                 e.writer = null;
             }
-            return e.locked = true;
+            e.locked = true;
+            return;
         }
-        LastError.error(LastError.E_NOT_AN_OWNER);
-        return false;
+
+        throw WriterBusyException.INSTANCE;
     }
 
     public void unlock(String name) {
-        LastError.error(LastError.E_OK);
         Entry e = entries.get(name);
         if (e == null) {
             return;
@@ -215,11 +212,8 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
 
         if (closed) {
             LOG.info().$("Pool is closed").$();
-            LastError.error(LastError.E_POOL_CLOSED);
-            return null;
+            throw FactoryClosedException.INSTANCE;
         }
-
-        LastError.error(LastError.E_OK);
 
         final String path = metadata.getKey().getName();
 
@@ -241,9 +235,8 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                     return e.writer = w;
                 } catch (JournalException ex) {
                     LOG.error().$("Failed to allocate writer '").$(path).$("' in thread ").$(e.owner).$(": ").$(ex).$();
-                    e.allocationFailure = true;
-                    LastError.error(LastError.E_JOURNAL_ERROR);
-                    return null;
+                    e.ex = ex;
+                    throw ex;
                 }
             } else {
                 LOG.info().$("Thread ").$(e.owner).$(" lost race to allocate writer '").$(path).$('\'').$();
@@ -264,20 +257,19 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         } else {
             if (e == null) {
                 LOG.error().$("Writer '").$(path).$("' is not managed by this pool. Internal error?").$();
-                LastError.error(LastError.E_INTERNAL);
+                throw FactoryInternalException.INSTANCE;
             } else {
-                if (e.owner == threadId) {
+                long owner = e.owner;
+                if (owner == threadId) {
 
                     if (e.locked) {
-                        LastError.error(LastError.E_NAME_LOCKED);
-                        return null;
+                        throw JournalLockedException.INSTANCE;
                     }
 
-                    if (e.allocationFailure) {
+                    if (e.ex != null) {
                         // this writer failed to allocate by this very thread
                         // ensure consistent response
-                        LastError.error(LastError.E_JOURNAL_ERROR);
-                        return null;
+                        throw e.ex;
                     }
 
                     if (closed) {
@@ -286,12 +278,10 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                     }
                     return e.writer;
                 }
-                LOG.error().$("Writer '").$(path).$("' is already owned by thread ").$(e.owner).$();
-                LastError.error(LastError.E_NOT_AN_OWNER);
+                LOG.error().$("Writer '").$(path).$("' is already owned by thread ").$(owner).$();
+                throw WriterBusyException.INSTANCE;
             }
         }
-
-        return null;
     }
 
     private boolean releaseAll(long deadline) {
@@ -323,7 +313,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                     removed = true;
                     Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, -1L);
                 }
-            } else if (e.allocationFailure) {
+            } else if (e.ex != null) {
                 LOG.info().$("Removing entry for failed to allocate writer '").$(me.getKey()).$('\'').$();
                 iterator.remove();
                 removed = true;
@@ -339,7 +329,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         private JournalWriter writer;
         // time writer was last released
         private volatile long lastReleaseTime = System.currentTimeMillis();
-        private boolean allocationFailure = false;
+        private JournalException ex = null;
         private volatile boolean locked = false;
     }
 

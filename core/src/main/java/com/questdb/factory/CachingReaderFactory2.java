@@ -24,8 +24,7 @@
 package com.questdb.factory;
 
 import com.questdb.Journal;
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.ex.*;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.log.Log;
@@ -114,16 +113,12 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
         return maxEntries;
     }
 
-    public boolean lock(String name) {
-
-        LastError.error(LastError.E_OK);
+    public void lock(String name) throws JournalException {
 
         Entry e = entries.get(name);
         if (e == null) {
-            return true;
+            return;
         }
-
-        boolean result = true;
 
         long thread = Thread.currentThread().getId();
 
@@ -139,19 +134,14 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
                             Unsafe.arrayPut(e.readers, i, null);
                         }
                     } else if (Unsafe.arrayGet(e.readers, i) != null) {
-                        result = false;
-                        LastError.error(LastError.E_AGAIN);
+                        throw RetryLockException.INSTANCE;
                     }
                 }
                 e = e.next;
             } while (e != null);
-
-            return result;
-
         } else {
             LOG.error().$("Reader '").$(name).$("' is already locked by ").$(e.lockOwner).$();
-            LastError.error(LastError.E_NOT_AN_OWNER);
-            return false;
+            throw JournalLockedException.INSTANCE;
         }
     }
 
@@ -160,11 +150,10 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
     public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
         if (closed == TRUE) {
             LOG.info().$("Pool is closed");
-            LastError.error(LastError.E_POOL_CLOSED);
-            return null;
+            throw FactoryClosedException.INSTANCE;
         }
 
-        String name = metadata.getKey().getName();
+        String name = metadata.getName();
         Entry e = entries.get(name);
 
         long thread = Thread.currentThread().getId();
@@ -177,6 +166,11 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
                 e = other;
                 LOG.info().$("Thread ").$(thread).$(" LOST the race to create first entry for '").$(name).$('\'').$();
             } else {
+                // existence check
+                if (getConfiguration().exists(name) != JournalConfiguration.EXISTS) {
+                    LOG.info().$("Reader ").$(name).$(" does not exist '").$();
+                    throw JournalDoesNotExistException.INSTANCE;
+                }
                 LOG.info().$("Thread ").$(thread).$(" WON the race to create first entry for '").$(name).$('\'').$();
             }
         }
@@ -185,14 +179,12 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
         if (lockOwner != UNLOCKED) {
             LOG.info().$("Reader '").$(name).$("' is locked by ").$(lockOwner).$();
-            LastError.error(LastError.E_NAME_LOCKED);
-            return null;
+            throw JournalLockedException.INSTANCE;
         }
 
         do {
             for (int i = 0; i < ENTRY_SIZE; i++) {
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                    LastError.error(LastError.E_OK);
                     LOG.info().$("Thread ").$(thread).$(" allocated reader '").$(name).$("' at pos: ").$(e.index).$(',').$(i).$();
                     // got lock, allocate if needed
                     R r = Unsafe.arrayGet(e.readers, i);
@@ -231,13 +223,10 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
         // max entries exceeded
         LOG.info().$("Thread ").$(thread).$(" cannot allocate reader. Max entries exceeded (").$(this.maxSegments).$(')').$();
-        LastError.error(LastError.E_POOL_FULL);
-        return null;
+        throw FactoryFullException.INSTANCE;
     }
 
     public void unlock(String name) {
-        LastError.error(LastError.E_OK);
-
         Entry e = entries.get(name);
         if (e == null) {
             return;
@@ -245,13 +234,8 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
         long thread = Thread.currentThread().getId();
 
-        if (Unsafe.getUnsafe().compareAndSwapLong(e, LOCK_OWNER, thread, UNLOCKED)) {
-            do {
-                for (int i = 0; i < ENTRY_SIZE; i++) {
-                    Unsafe.cas(e.allocations, i, thread, UNALLOCATED);
-                }
-                e = e.next;
-            } while (e != null);
+        if (e.lockOwner == thread) {
+            entries.remove(name);
         }
     }
 

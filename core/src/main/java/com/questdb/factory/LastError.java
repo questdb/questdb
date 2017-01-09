@@ -8,7 +8,10 @@ public class LastError {
     public static final int E_AGAIN = 5;
     public static final int E_JOURNAL_ERROR = 6;
     public static final int E_INTERNAL = 7;
+    public static final int E_EXISTS = 8;
+    public static final int E_NOT_FOUND = 9;
     public static final int E_OK = 0;
+    public static final int E_SYSTEM = 10;
 
     static final ThreadLocal<Error> error = new ThreadLocal<Error>() {
         @Override

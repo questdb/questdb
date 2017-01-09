@@ -112,6 +112,11 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
     }
 
     @Override
+    public void releaseCursor() {
+        clear();
+    }
+
+    @Override
     public void close() {
         Misc.free(mem);
     }

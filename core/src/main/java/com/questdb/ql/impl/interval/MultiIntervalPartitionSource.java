@@ -69,6 +69,13 @@ public class MultiIntervalPartitionSource extends AbstractImmutableIterator<Part
     }
 
     @Override
+    public void releaseCursor() {
+        if (partitionCursor != null) {
+            partitionCursor.releaseCursor();
+        }
+    }
+
+    @Override
     public Partition getPartition(int index) {
         return partitionCursor.getPartition(index);
     }

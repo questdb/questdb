@@ -28,7 +28,6 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.ReaderFactoryPool;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Files;
@@ -52,7 +51,6 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
 
-    private static ReaderFactoryPool factoryPool;
     private static HttpServer server;
     private static QueryHandler handler;
 
@@ -60,13 +58,12 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public static void setUp() throws Exception {
         final ServerConfiguration serverConfiguration = new ServerConfiguration();
         serverConfiguration.setHttpThreads(1);
-        factoryPool = new ReaderFactoryPool(getWriterFactory().getConfiguration(), 1);
-        handler = new QueryHandler(factoryPool, serverConfiguration, getWriterFactory());
+        handler = new QueryHandler(theFactory.getMegaFactory(), serverConfiguration);
 
         server = new HttpServer(serverConfiguration, new SimpleUrlMatcher() {{
             put("/js", handler);
             put("/chk", new ExistenceCheckHandler(getCachingFactory()));
-            put("/csv", new CsvHandler(factoryPool, serverConfiguration));
+            put("/csv", new CsvHandler(theFactory.getMegaFactory(), serverConfiguration));
         }});
 
         server.start();
@@ -76,16 +73,15 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     @AfterClass
     public static void tearDown() throws Exception {
         server.halt();
-        factoryPool.close();
     }
 
     @Test
     public void testDDLCsv() throws Exception {
         File f = temp.newFile();
-        String url = "http://localhost:9000/csv?query=" + URLEncoder.encode("create table x(a INT)", "UTF-8");
+        String url = "http://localhost:9000/csv?query=" + URLEncoder.encode("create table y(a INT)", "UTF-8");
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
         String response = Files.readStringFromFile(f);
-        Assert.assertTrue(response.contains("Statement execution is not supported"));
+        Assert.assertTrue(response.contains("\"ddl\":\"OK\"}"));
     }
 
     @Test

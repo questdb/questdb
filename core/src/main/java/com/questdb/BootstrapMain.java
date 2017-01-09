@@ -23,9 +23,7 @@
 
 package com.questdb;
 
-import com.questdb.factory.ReaderFactoryImpl;
-import com.questdb.factory.ReaderFactoryPool;
-import com.questdb.factory.WriterFactoryImpl;
+import com.questdb.factory.MegaFactory;
 import com.questdb.log.*;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
@@ -91,14 +89,12 @@ class BootstrapMain {
         configureLoggers(configuration);
 
         final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
-        ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(configuration.getDbPath().getAbsolutePath());
-        WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration.getDbPath().getAbsolutePath());
+        MegaFactory factory = new MegaFactory(configuration.getDbPath().getAbsolutePath(), 60000, 4);
 
-        ReaderFactoryPool pool = new ReaderFactoryPool(readerFactory.getConfiguration(), configuration.getJournalPoolSize());
-        matcher.put("/imp", new ImportHandler(configuration, writerFactory));
-        matcher.put("/exec", new QueryHandler(pool, configuration, writerFactory));
-        matcher.put("/exp", new CsvHandler(pool, configuration));
-        matcher.put("/chk", new ExistenceCheckHandler(readerFactory));
+        matcher.put("/imp", new ImportHandler(configuration, factory));
+        matcher.put("/exec", new QueryHandler(factory, configuration));
+        matcher.put("/exp", new CsvHandler(factory, configuration));
+        matcher.put("/chk", new ExistenceCheckHandler(factory));
         matcher.setDefaultHandler(new StaticContentHandler(configuration));
 
         StringBuilder welcome = Misc.getThreadLocalBuilder();

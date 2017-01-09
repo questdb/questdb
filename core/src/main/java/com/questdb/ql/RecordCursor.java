@@ -34,4 +34,6 @@ public interface RecordCursor extends ImmutableIterator<Record>, RecordFactory {
     void recordAt(Record record, long atRowId);
 
     void toTop();
+
+    void releaseCursor();
 }

@@ -26,7 +26,7 @@ package com.questdb.net.http.handlers;
 import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.ex.SlowWritableChannelException;
-import com.questdb.factory.ReaderFactoryPool;
+import com.questdb.factory.MegaFactory;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
@@ -47,15 +47,15 @@ import java.util.concurrent.atomic.AtomicLong;
 import static com.questdb.net.http.handlers.AbstractQueryContext.*;
 
 public class CsvHandler implements ContextHandler {
-    private final ReaderFactoryPool factoryPool;
+    private final MegaFactory factory;
     private final LocalValue<ExportHandlerContext> localContext = new LocalValue<>();
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
     private final ServerConfiguration configuration;
 
 
-    public CsvHandler(ReaderFactoryPool factoryPool, ServerConfiguration configuration) {
-        this.factoryPool = factoryPool;
+    public CsvHandler(MegaFactory factory, ServerConfiguration configuration) {
+        this.factory = factory;
         this.configuration = configuration;
     }
 
@@ -67,7 +67,7 @@ public class CsvHandler implements ContextHandler {
         }
         ChunkedResponse r = context.chunkedResponse();
         if (ctx.parseUrl(r, context.request)) {
-            ctx.compileQuery(r, factoryPool, null, cacheMisses, cacheHits);
+            ctx.compileQuery(r, factory, cacheMisses, cacheHits);
             resume(context);
         }
     }
@@ -113,6 +113,8 @@ public class CsvHandler implements ContextHandler {
                                         break;
                                     }
                                 } else {
+                                    ctx.cursor.releaseCursor();
+                                    ctx.cursor = null;
                                     ctx.queryState = QUERY_DATA_SUFFIX;
                                     break SWITCH;
                                 }

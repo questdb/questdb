@@ -3,12 +3,21 @@ package com.questdb.factory;
 import com.questdb.Journal;
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
-import com.questdb.ex.JournalException;
+import com.questdb.ex.*;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.MetadataBuilder;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
+import com.questdb.misc.Files;
+import com.questdb.misc.Os;
+import com.questdb.std.str.CompositePath;
+import com.questdb.store.Lock;
+import com.questdb.store.LockManager;
 
 public class MegaFactory implements ReaderFactory, WriterFactory {
+    private static final Log LOG = LogFactory.getLog(MegaFactory.class);
+
     private final CachingWriterFactory writerFactory;
     private final CachingReaderFactory2 readerFactory;
 
@@ -17,11 +26,86 @@ public class MegaFactory implements ReaderFactory, WriterFactory {
         this.readerFactory = new CachingReaderFactory2(configuration, readerCacheSegments);
     }
 
+    public MegaFactory(String databaseHome, long writerInactiveTTL, int readerCacheSegments) {
+        this.writerFactory = new CachingWriterFactory(databaseHome, writerInactiveTTL);
+        this.readerFactory = new CachingReaderFactory2(databaseHome, readerCacheSegments);
+    }
+
     @Override
     public void close() {
         writerFactory.close();
         readerFactory.close();
     }
+
+    public void rename(String from, String to) throws JournalException {
+
+        writerFactory.lock(from);
+        try {
+            readerFactory.lock(from);
+            try {
+                rename0(from, to);
+            } finally {
+                readerFactory.unlock(from);
+            }
+        } finally {
+            writerFactory.unlock(from);
+        }
+    }
+
+    private void rename0(CharSequence from, CharSequence to) throws JournalException {
+        try (CompositePath oldName = new CompositePath()) {
+            try (CompositePath newName = new CompositePath()) {
+                String path = getConfiguration().getJournalBase().getAbsolutePath();
+
+                oldName.of(path).concat(from).$();
+                newName.of(path).concat(to).$();
+
+                if (!Files.exists(oldName)) {
+                    LOG.error().$("Journal does not exist: ").$(oldName).$();
+                    throw JournalDoesNotExistException.INSTANCE;
+                }
+
+                if (Os.type == Os.WINDOWS) {
+                    oldName.of("\\\\?\\").concat(path).concat(from).$();
+                    newName.of("\\\\?\\").concat(path).concat(to).$();
+                }
+
+
+                Lock lock = LockManager.lockExclusive(oldName.toString());
+                try {
+                    if (lock == null || !lock.isValid()) {
+                        LOG.error().$("Cannot obtain lock on ").$(oldName).$();
+                        throw JournalWriterAlreadyOpenException.INSTANCE;
+                    }
+
+                    if (Files.exists(newName)) {
+                        throw JournalExistsException.INSTANCE;
+                    }
+
+
+                    Lock writeLock = LockManager.lockExclusive(newName.toString());
+                    try {
+
+                        // this should not happen because we checked for existence before
+                        if (writeLock == null || !writeLock.isValid()) {
+                            LOG.error().$("Cannot obtain lock on ").$(newName).$();
+                            throw FactoryInternalException.INSTANCE;
+                        }
+
+                        if (!Files.rename(oldName, newName)) {
+                            LOG.error().$("Cannot rename ").$(oldName).$(" to ").$(newName).$(": ").$(Os.errno()).$();
+                            throw SystemException.INSTANCE;
+                        }
+                    } finally {
+                        LockManager.release(writeLock);
+                    }
+                } finally {
+                    LockManager.release(lock);
+                }
+            }
+        }
+    }
+
 
     @Override
     public JournalConfiguration getConfiguration() {

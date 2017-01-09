@@ -28,8 +28,8 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
+import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
-import com.questdb.std.ImmutableIterator;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 
@@ -50,20 +50,25 @@ public class RecordSourcePrinter {
     }
 
     public void print(RecordSource src, ReaderFactory factory) throws IOException {
-        print(src.prepareCursor(factory), false, src.getMetadata());
+        print(src, factory, false);
     }
 
     public void print(RecordSource src, ReaderFactory factory, boolean header) throws IOException {
-        print(src.prepareCursor(factory), header, src.getMetadata());
+        RecordCursor cursor = src.prepareCursor(factory);
+        try {
+            print(cursor, header, src.getMetadata());
+        } finally {
+            cursor.releaseCursor();
+        }
     }
 
-    public void print(ImmutableIterator<Record> src, boolean header, RecordMetadata metadata) throws IOException {
+    public void print(RecordCursor cursor, boolean header, RecordMetadata metadata) throws IOException {
         if (header) {
             printHeader(metadata);
         }
 
-        while (src.hasNext()) {
-            print(src.next(), metadata);
+        while (cursor.hasNext()) {
+            print(cursor.next(), metadata);
         }
     }
 

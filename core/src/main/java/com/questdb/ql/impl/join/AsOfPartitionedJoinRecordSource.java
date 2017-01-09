@@ -134,6 +134,14 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
     }
 
     @Override
+    public void releaseCursor() {
+        this.map.reset();
+        this.holder.clear();
+        this.masterCursor.releaseCursor();
+        this.slaveCursor.releaseCursor();
+    }
+
+    @Override
     public Record getRecord() {
         return record;
     }

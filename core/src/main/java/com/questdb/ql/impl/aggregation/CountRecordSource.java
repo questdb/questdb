@@ -39,7 +39,6 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
     private final CountRecord record;
     private final PartitionSource partitionSource;
     private final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
-    private PartitionCursor partitionCursor;
     private boolean done = false;
 
     public CountRecordSource(String columnName, PartitionSource partitionSource) {
@@ -60,9 +59,17 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
     @Override
     public RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler) {
         done = false;
-        partitionCursor = partitionSource.prepareCursor(factory);
-        computeCount();
+        PartitionCursor partitionCursor = partitionSource.prepareCursor(factory);
+        try {
+            computeCount(partitionCursor);
+        } finally {
+            partitionCursor.releaseCursor();
+        }
         return this;
+    }
+
+    @Override
+    public void releaseCursor() {
     }
 
     @Override
@@ -104,10 +111,10 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
         sink.put('}');
     }
 
-    private void computeCount() {
+    private void computeCount(PartitionCursor cursor) {
         long count = 0;
-        while (partitionCursor.hasNext()) {
-            PartitionSlice slice = partitionCursor.next();
+        while (cursor.hasNext()) {
+            PartitionSlice slice = cursor.next();
             long hi;
             if (slice.calcHi) {
                 hi = slice.partition.size();

@@ -38,7 +38,7 @@ import org.junit.Test;
 public class RecordKeyCopierCompilerTest extends AbstractOptimiserTest {
     @Test
     public void testCompiler() throws Exception {
-        try (JournalWriter w = compiler.createWriter(getWriterFactory(), getCachingFactory(), "create table x (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING, y BOOLEAN) timestamp(t) partition by MONTH record hint 100")) {
+        try (JournalWriter w = compiler.createWriter(theFactory.getMegaFactory(), "create table x (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING, y BOOLEAN) timestamp(t) partition by MONTH record hint 100")) {
             JournalEntryWriter ew = w.entryWriter();
             IntList keyColumns = new IntList();
             ew.putInt(0, 12345);

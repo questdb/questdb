@@ -49,6 +49,7 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public void close() {
+        //todo: ensure rowsource resources are released
     }
 
     @Override
@@ -63,6 +64,11 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
         this.partitionCursor = partitionSource.prepareCursor(factory);
         this.rowSource.prepare(factory, partitionCursor.getStorageFacade(), cancellationHandler);
         return this;
+    }
+
+    @Override
+    public void releaseCursor() {
+        this.partitionCursor.releaseCursor();
     }
 
     @Override

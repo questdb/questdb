@@ -112,6 +112,13 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     }
 
     @Override
+    public void releaseCursor() {
+        this.recordMap.clear();
+        this.slaveCursor.releaseCursor();
+        this.masterCursor.releaseCursor();
+    }
+
+    @Override
     public Record getRecord() {
         return record;
     }

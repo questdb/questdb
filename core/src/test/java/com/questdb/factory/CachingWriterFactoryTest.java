@@ -24,7 +24,10 @@
 package com.questdb.factory;
 
 import com.questdb.JournalWriter;
+import com.questdb.ex.FactoryClosedException;
 import com.questdb.ex.JournalException;
+import com.questdb.ex.JournalLockedException;
+import com.questdb.ex.WriterBusyException;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.test.tools.AbstractTest;
@@ -57,9 +60,8 @@ public class CachingWriterFactoryTest extends AbstractTest {
                 try {
                     for (int i = 0; i < 1000; i++) {
                         try (JournalWriter w = wf.writer(m)) {
-                            if (w != null) {
-                                writerCount.incrementAndGet();
-                            }
+                            writerCount.incrementAndGet();
+                        } catch (WriterBusyException ignored) {
                         }
 
                         if (i == 1) {
@@ -122,7 +124,10 @@ public class CachingWriterFactoryTest extends AbstractTest {
         }
 
         Assert.assertFalse(x.isOpen());
-        Assert.assertNull(wf.writer(m));
+        try {
+            wf.writer(m);
+        } catch (FactoryClosedException ignored) {
+        }
     }
 
     @Test
@@ -144,15 +149,18 @@ public class CachingWriterFactoryTest extends AbstractTest {
         try {
 
             // check that lock is successful
-            Assert.assertTrue(wf.lock(x.getName()));
+            wf.lock(x.getName());
 
             // check that writer x is closed and writer y is open (lock must not spill out to other writers)
             Assert.assertFalse(wx.isOpen());
             Assert.assertTrue(wy.isOpen());
 
             // check that when name is locked writers are not created
-            Assert.assertNull(wf.writer(x));
-            Assert.assertEquals(LastError.E_NAME_LOCKED, LastError.getError());
+            try {
+                wf.writer(x);
+            } catch (JournalLockedException ignored) {
+
+            }
 
             final CountDownLatch done = new CountDownLatch(1);
             final AtomicBoolean result = new AtomicBoolean();
@@ -162,7 +170,9 @@ public class CachingWriterFactoryTest extends AbstractTest {
                 @Override
                 public void run() {
                     try (JournalWriter w = wf.writer(x)) {
-                        result.set(w == null);
+                        result.set(false);
+                    } catch (WriterBusyException ignored) {
+                        result.set(true);
                     } catch (JournalException e) {
                         e.printStackTrace();
                         result.set(false);
@@ -204,8 +214,11 @@ public class CachingWriterFactoryTest extends AbstractTest {
 
         wf.lock(x.getName());
 
-        Assert.assertNull(wf.writer(x));
-        Assert.assertEquals(LastError.E_NAME_LOCKED, LastError.getError());
+        try {
+            wf.writer(x);
+            Assert.fail();
+        } catch (JournalLockedException ignored) {
+        }
 
         wf.unlock(x.getName());
 
@@ -267,9 +280,8 @@ public class CachingWriterFactoryTest extends AbstractTest {
 
 
                         try (JournalWriter w = wf.writer(m)) {
-                            if (w != null) {
-                                writerCount.incrementAndGet();
-                            }
+                            writerCount.incrementAndGet();
+                        } catch (WriterBusyException ignored) {
                         }
                     } catch (Exception e) {
                         e.printStackTrace();
