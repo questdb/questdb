@@ -145,12 +145,12 @@ class JournalConfigurationImpl implements JournalConfiguration {
     }
 
     @Override
-    public void rename(CharSequence location, CharSequence to) throws JournalException {
+    public void rename(CharSequence from, CharSequence to) throws JournalException {
         try (CompositePath oldName = new CompositePath()) {
             try (CompositePath newName = new CompositePath()) {
                 String path = journalBase.getAbsolutePath();
 
-                oldName.of(path).concat(location).$();
+                oldName.of(path).concat(from).$();
                 newName.of(path).concat(to).$();
 
                 if (!Files.exists(oldName)) {
@@ -159,7 +159,7 @@ class JournalConfigurationImpl implements JournalConfiguration {
                 }
 
                 if (Os.type == Os.WINDOWS) {
-                    oldName.of("\\\\?\\").concat(path).concat(location).$();
+                    oldName.of("\\\\?\\").concat(path).concat(from).$();
                     newName.of("\\\\?\\").concat(path).concat(to).$();
                 }
 

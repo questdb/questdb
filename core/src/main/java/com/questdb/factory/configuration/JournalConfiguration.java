@@ -46,5 +46,5 @@ public interface JournalConfiguration {
 
     <T> JournalMetadata<T> readMetadata(String name) throws JournalException;
 
-    void rename(CharSequence location, CharSequence to) throws JournalException;
+    void rename(CharSequence from, CharSequence to) throws JournalException;
 }

@@ -24,6 +24,7 @@
 package com.questdb.factory;
 
 import com.questdb.JournalWriter;
+import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.test.tools.AbstractTest;
@@ -32,6 +33,8 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
@@ -120,6 +123,95 @@ public class CachingWriterFactoryTest extends AbstractTest {
 
         Assert.assertFalse(x.isOpen());
         Assert.assertNull(wf.writer(m));
+    }
+
+    @Test
+    public void testLockUnlock() throws Exception {
+
+        final JournalMetadata<?> x = new JournalStructure("x").$date("ts").$().build();
+        final JournalMetadata<?> y = new JournalStructure("y").$date("ts").$().build();
+
+        final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
+
+        JournalWriter wx = wf.writer(x);
+        Assert.assertNotNull(wx);
+        Assert.assertTrue(wx.isOpen());
+
+        JournalWriter wy = wf.writer(y);
+        Assert.assertNotNull(wy);
+        Assert.assertTrue(wy.isOpen());
+
+        try {
+
+            // check that lock is successful
+            Assert.assertTrue(wf.lock(x.getName()));
+
+            // check that writer x is closed and writer y is open (lock must not spill out to other writers)
+            Assert.assertFalse(wx.isOpen());
+            Assert.assertTrue(wy.isOpen());
+
+            // check that when name is locked writers are not created
+            Assert.assertNull(wf.writer(x));
+            Assert.assertEquals(LastError.E_NAME_LOCKED, LastError.getError());
+
+            final CountDownLatch done = new CountDownLatch(1);
+            final AtomicBoolean result = new AtomicBoolean();
+
+            // have new thread try to allocated this writers
+            new Thread() {
+                @Override
+                public void run() {
+                    try (JournalWriter w = wf.writer(x)) {
+                        result.set(w == null);
+                    } catch (JournalException e) {
+                        e.printStackTrace();
+                        result.set(false);
+                    }
+                    done.countDown();
+                }
+            }.start();
+
+            Assert.assertTrue(done.await(1, TimeUnit.SECONDS));
+            Assert.assertTrue(result.get());
+
+            wf.unlock(x.getName());
+
+            wx = wf.writer(x);
+            Assert.assertNotNull(wx);
+            Assert.assertTrue(wx.isOpen());
+
+            try {
+                // unlocking writer that has not been locked must produce exception
+                // and not affect open writer
+                wf.unlock(wx.getName());
+                Assert.fail();
+            } catch (IllegalStateException ignored) {
+            }
+
+            Assert.assertTrue(wx.isOpen());
+
+        } finally {
+            wx.close();
+            wy.close();
+        }
+    }
+
+    @Test
+    public void testLockNonExisting() throws Exception {
+        final JournalMetadata<?> x = new JournalStructure("x").$date("ts").$().build();
+
+        final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
+
+        wf.lock(x.getName());
+
+        Assert.assertNull(wf.writer(x));
+        Assert.assertEquals(LastError.E_NAME_LOCKED, LastError.getError());
+
+        wf.unlock(x.getName());
+
+        try (JournalWriter wx = wf.writer(x)) {
+            Assert.assertNotNull(wx);
+        }
     }
 
     @Test

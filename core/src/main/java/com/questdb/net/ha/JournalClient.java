@@ -372,7 +372,7 @@ public class JournalClient {
             subscriptions.add(sub);
         }
 
-        JournalWriter writer = writers.getQuiet(index);
+        JournalWriter<?> writer = writers.getQuiet(index);
         try {
 
             commandProducer.write(channel, Command.ADD_KEY_CMD);
@@ -380,7 +380,7 @@ public class JournalClient {
             checkAck();
 
             //todo: do we really have to use file here?
-            JournalMetadata metadata;
+            JournalMetadata<?> metadata;
             File file = Files.makeTempFile();
             try {
                 try (HugeBufferConsumer h = new HugeBufferConsumer(file)) {

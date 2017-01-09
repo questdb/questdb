@@ -145,7 +145,7 @@ public class CachingReaderFactory2Test extends AbstractTest {
 
             try {
                 Assert.assertEquals(rf.getMaxEntries(), readers.size());
-                Assert.assertEquals(CachingReaderFactory2.E_POOL_FULL, rf.getError());
+                Assert.assertEquals(LastError.E_POOL_FULL, LastError.getError());
             } finally {
                 for (int i = 0, n = readers.size(); i < n; i++) {
                     readers.getQuick(i).close();
@@ -190,8 +190,8 @@ public class CachingReaderFactory2Test extends AbstractTest {
                                     LockSupport.parkNanos(1000L);
                                     rf.unlock(name);
                                     break;
-                                } else if (rf.getError() != CachingReaderFactory2.E_AGAIN) {
-                                    System.out.println("Error: " + rf.getError());
+                                } else if (LastError.getError() != LastError.E_AGAIN) {
+                                    System.out.println("Error: " + LastError.getError());
                                     errors.incrementAndGet();
                                     break;
                                 }
@@ -274,19 +274,19 @@ public class CachingReaderFactory2Test extends AbstractTest {
 
             // expect lock to fail because we have "x" open
             Assert.assertFalse(rf.lock(m1.getName()));
-            Assert.assertEquals(CachingReaderFactory2.E_AGAIN, rf.getError());
+            Assert.assertEquals(LastError.E_AGAIN, LastError.getError());
             x.close();
 
             // expect lock to succeed after we closed "x"
             Assert.assertTrue(rf.lock(m1.getName()));
-            Assert.assertEquals(CachingReaderFactory2.E_OK, rf.getError());
+            Assert.assertEquals(LastError.E_OK, LastError.getError());
 
             // expect "x" to be physically closed
             Assert.assertFalse(x.isOpen());
 
             // "x" is locked, expect this to fail
             Assert.assertNull(rf.reader(m1));
-            Assert.assertEquals(CachingReaderFactory2.E_NAME_LOCKED, rf.getError());
+            Assert.assertEquals(LastError.E_NAME_LOCKED, LastError.getError());
 
             rf.unlock(m1.getName());
 

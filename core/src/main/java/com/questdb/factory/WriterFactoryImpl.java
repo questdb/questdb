@@ -60,8 +60,8 @@ public class WriterFactoryImpl extends AbstractFactory implements WriterFactory 
     }
 
     @Override
-    public JournalWriter writer(String location) throws JournalException {
-        return writer(getConfiguration().readMetadata(location));
+    public JournalWriter writer(String name) throws JournalException {
+        return writer(getConfiguration().readMetadata(name));
     }
 
     @Override

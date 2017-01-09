@@ -41,11 +41,11 @@ public interface ReaderFactory extends Closeable {
 
     <T> Journal<T> reader(Class<T> clazz) throws JournalException;
 
-    <T> Journal<T> reader(Class<T> clazz, String location) throws JournalException;
+    <T> Journal<T> reader(Class<T> clazz, String name) throws JournalException;
 
-    Journal reader(String location) throws JournalException;
+    Journal reader(String name) throws JournalException;
 
-    <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException;
+    <T> Journal<T> reader(Class<T> clazz, String name, int recordHint) throws JournalException;
 
     <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException;
 }

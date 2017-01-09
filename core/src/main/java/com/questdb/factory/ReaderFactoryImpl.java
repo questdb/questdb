@@ -63,8 +63,8 @@ public class ReaderFactoryImpl extends AbstractFactory implements ReaderFactory 
     }
 
     @Override
-    public final <T> Journal<T> reader(Class<T> clazz, String location, int recordHint) throws JournalException {
-        return reader(new JournalKey<>(clazz, location, PartitionBy.DEFAULT, recordHint));
+    public final <T> Journal<T> reader(Class<T> clazz, String name, int recordHint) throws JournalException {
+        return reader(new JournalKey<>(clazz, name, PartitionBy.DEFAULT, recordHint));
     }
 
     @Override

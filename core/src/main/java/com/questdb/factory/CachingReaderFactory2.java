@@ -41,12 +41,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalCloseInterceptor {
 
     public static final long CLOSED;
-    public static final int E_POOL_CLOSED = 1;
-    public static final int E_NAME_LOCKED = 2;
-    public static final int E_POOL_FULL = 3;
-    public static final int E_NOT_AN_OWNER = 4;
-    public static final int E_AGAIN = 5;
-    public static final int E_OK = 0;
 
     private static final Log LOG = LogFactory.getLog(CachingReaderFactory2.class);
     private static final long UNALLOCATED = -1L;
@@ -56,12 +50,6 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
     private static final int TRUE = 1;
     private static final int FALSE = 0;
     private static final long LOCK_OWNER;
-    private static final ThreadLocal<Error> error = new ThreadLocal<Error>() {
-        @Override
-        protected Error initialValue() {
-            return new Error();
-        }
-    };
     private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
     private final int maxEntries;
@@ -122,17 +110,13 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
         }
     }
 
-    public int getError() {
-        return error.get().code;
-    }
-
     public int getMaxEntries() {
         return maxEntries;
     }
 
     public boolean lock(String name) {
 
-        error(E_OK);
+        LastError.error(LastError.E_OK);
 
         Entry e = entries.get(name);
         if (e == null) {
@@ -156,7 +140,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
                         }
                     } else if (Unsafe.arrayGet(e.readers, i) != null) {
                         result = false;
-                        error(E_AGAIN);
+                        LastError.error(LastError.E_AGAIN);
                     }
                 }
                 e = e.next;
@@ -166,7 +150,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
         } else {
             LOG.error().$("Reader '").$(name).$("' is already locked by ").$(e.lockOwner).$();
-            error(E_NOT_AN_OWNER);
+            LastError.error(LastError.E_NOT_AN_OWNER);
             return false;
         }
     }
@@ -176,7 +160,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
     public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
         if (closed == TRUE) {
             LOG.info().$("Pool is closed");
-            error(E_POOL_CLOSED);
+            LastError.error(LastError.E_POOL_CLOSED);
             return null;
         }
 
@@ -201,14 +185,14 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
         if (lockOwner != UNLOCKED) {
             LOG.info().$("Reader '").$(name).$("' is locked by ").$(lockOwner).$();
-            error(E_NAME_LOCKED);
+            LastError.error(LastError.E_NAME_LOCKED);
             return null;
         }
 
         do {
             for (int i = 0; i < ENTRY_SIZE; i++) {
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                    error(E_OK);
+                    LastError.error(LastError.E_OK);
                     LOG.info().$("Thread ").$(thread).$(" allocated reader '").$(name).$("' at pos: ").$(e.index).$(',').$(i).$();
                     // got lock, allocate if needed
                     R r = Unsafe.arrayGet(e.readers, i);
@@ -247,12 +231,12 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
         // max entries exceeded
         LOG.info().$("Thread ").$(thread).$(" cannot allocate reader. Max entries exceeded (").$(this.maxSegments).$(')').$();
-        error(E_POOL_FULL);
+        LastError.error(LastError.E_POOL_FULL);
         return null;
     }
 
     public void unlock(String name) {
-        error(E_OK);
+        LastError.error(LastError.E_OK);
 
         Entry e = entries.get(name);
         if (e == null) {
@@ -269,10 +253,6 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
                 e = e.next;
             } while (e != null);
         }
-    }
-
-    private static void error(int code) {
-        error.get().code = code;
     }
 
     private void releaseAll(long deadline) {
@@ -331,10 +311,6 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
             this.entry = entry;
             this.index = index;
         }
-    }
-
-    private static class Error {
-        int code = E_OK;
     }
 
     static {

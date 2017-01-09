@@ -114,6 +114,68 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         return false;
     }
 
+    public boolean lock(String name) {
+        if (closed) {
+            LOG.info().$("Pool is closed").$();
+            LastError.error(LastError.E_POOL_CLOSED);
+            return false;
+        }
+
+        LastError.error(LastError.E_OK);
+
+        Entry e = entries.get(name);
+        if (e == null) {
+            // We are racing to create new writer!
+            e = new Entry();
+            if (entries.putIfAbsent(name, e) == null) {
+                e.locked = true;
+                return true;
+            } else {
+                e = entries.get(name);
+            }
+        }
+
+        long threadId = Thread.currentThread().getId();
+
+        // try to change owner
+
+        if (e != null && (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, threadId) || Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, threadId, threadId))) {
+            if (e.writer != null) {
+                LOG.info().$("Thread ").$(e.owner).$(" locked writer ").$(name).$();
+                e.writer.setCloseInterceptor(null);
+                e.writer.close();
+                e.writer = null;
+            }
+            return e.locked = true;
+        }
+        LastError.error(LastError.E_NOT_AN_OWNER);
+        return false;
+    }
+
+    public void unlock(String name) {
+        LastError.error(LastError.E_OK);
+        Entry e = entries.get(name);
+        if (e == null) {
+            return;
+        }
+
+        long threadId = Thread.currentThread().getId();
+
+        // When entry is locked, writer must be null,
+        // however if writer is not null, calling thread must be trying to unlock
+        // writer that hasn't been locked. This qualifies for "illegal state"
+        if (e.owner == threadId) {
+
+            if (e.writer != null) {
+                throw new IllegalStateException("Writer " + name + " is not locked");
+            }
+
+            // unlock must remove entry because pool does not deal with null writer
+            entries.remove(name);
+        }
+    }
+
+
     @Override
     public void close() {
         closed = true;
@@ -153,8 +215,11 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
 
         if (closed) {
             LOG.info().$("Pool is closed").$();
+            LastError.error(LastError.E_POOL_CLOSED);
             return null;
         }
+
+        LastError.error(LastError.E_OK);
 
         final String path = metadata.getKey().getName();
 
@@ -177,6 +242,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                 } catch (JournalException ex) {
                     LOG.error().$("Failed to allocate writer '").$(path).$("' in thread ").$(e.owner).$(": ").$(ex).$();
                     e.allocationFailure = true;
+                    LastError.error(LastError.E_JOURNAL_ERROR);
                     return null;
                 }
             } else {
@@ -189,7 +255,6 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
 
         // try to change owner
         if (e != null && Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, threadId)) {
-            LOG.debug().$("Thread ").$(e.owner).$(" allocated writer ").$(path).$();
             if (closed) {
                 // pool closed but we somehow managed to lock writer
                 // make sure that interceptor cleared to allow calling thread close writer normally
@@ -199,11 +264,19 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         } else {
             if (e == null) {
                 LOG.error().$("Writer '").$(path).$("' is not managed by this pool. Internal error?").$();
+                LastError.error(LastError.E_INTERNAL);
             } else {
                 if (e.owner == threadId) {
+
+                    if (e.locked) {
+                        LastError.error(LastError.E_NAME_LOCKED);
+                        return null;
+                    }
+
                     if (e.allocationFailure) {
                         // this writer failed to allocate by this very thread
                         // ensure consistent response
+                        LastError.error(LastError.E_JOURNAL_ERROR);
                         return null;
                     }
 
@@ -214,6 +287,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
                     return e.writer;
                 }
                 LOG.error().$("Writer '").$(path).$("' is already owned by thread ").$(e.owner).$();
+                LastError.error(LastError.E_NOT_AN_OWNER);
             }
         }
 
@@ -224,7 +298,6 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         long threadId = Thread.currentThread().getId();
         boolean removed = false;
 
-//        LOG.info().$("done?").$();
         Iterator<Map.Entry<String, Entry>> iterator = entries.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<String, Entry> me = iterator.next();
@@ -267,6 +340,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         // time writer was last released
         private volatile long lastReleaseTime = System.currentTimeMillis();
         private boolean allocationFailure = false;
+        private volatile boolean locked = false;
     }
 
     static {
