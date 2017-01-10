@@ -26,8 +26,7 @@ package com.questdb.net.ha;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.MegaFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.model.Quote;
@@ -95,8 +94,7 @@ public class ClusterControllerTest extends AbstractTest {
                         new ClientConfig() {{
                             setEnableMultiCast(false);
                         }},
-                        getWriterFactory(),
-                        getReaderFactory(),
+                        theFactory.getMegaFactory(),
                         0,
                         new ArrayList<JournalWriter>() {{
                             add(writer1);
@@ -141,8 +139,7 @@ public class ClusterControllerTest extends AbstractTest {
                         new ClientConfig() {{
                             setEnableMultiCast(false);
                         }},
-                        tf.getWriterFactory(),
-                        tf.getReaderFactory(),
+                        tf.getMegaFactory(),
                         1,
                         new ArrayList<JournalWriter>() {{
                             add(writer2);
@@ -198,21 +195,21 @@ public class ClusterControllerTest extends AbstractTest {
 
         LOG.info().$("======= VOTING TEST ==========").$();
 
-        try (JournalWriter writer1 = tf1.getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter writer1 = tf1.getMegaFactory().writer(Quote.class)) {
 
-            try (JournalWriter writer2 = tf2.getWriterFactory().writer(Quote.class)) {
+            try (JournalWriter writer2 = tf2.getMegaFactory().writer(Quote.class)) {
 
-                try (JournalWriter writer3 = tf3.getWriterFactory().writer(Quote.class)) {
+                try (JournalWriter writer3 = tf3.getMegaFactory().writer(Quote.class)) {
 
-                    try (JournalWriter writer4 = tf4.getWriterFactory().writer(Quote.class)) {
+                    try (JournalWriter writer4 = tf4.getMegaFactory().writer(Quote.class)) {
 
-                        try (JournalWriter writer5 = tf5.getWriterFactory().writer(Quote.class)) {
+                        try (JournalWriter writer5 = tf5.getMegaFactory().writer(Quote.class)) {
 
-                            ClusterController c1 = createController2(writer1, 0, tf1.getWriterFactory(), tf1.getReaderFactory(), active, standby, shutdown);
-                            ClusterController c2 = createController2(writer2, 1, tf2.getWriterFactory(), tf2.getReaderFactory(), active, standby, shutdown);
-                            ClusterController c3 = createController2(writer3, 2, tf3.getWriterFactory(), tf3.getReaderFactory(), active, standby, shutdown);
-                            ClusterController c4 = createController2(writer4, 3, tf4.getWriterFactory(), tf4.getReaderFactory(), active, standby, shutdown);
-                            ClusterController c5 = createController2(writer5, 4, tf5.getWriterFactory(), tf5.getReaderFactory(), active, standby, shutdown);
+                            ClusterController c1 = createController2(writer1, 0, tf1.getMegaFactory(), active, standby, shutdown);
+                            ClusterController c2 = createController2(writer2, 1, tf2.getMegaFactory(), active, standby, shutdown);
+                            ClusterController c3 = createController2(writer3, 2, tf3.getMegaFactory(), active, standby, shutdown);
+                            ClusterController c4 = createController2(writer4, 3, tf4.getMegaFactory(), active, standby, shutdown);
+                            ClusterController c5 = createController2(writer5, 4, tf5.getMegaFactory(), active, standby, shutdown);
 
 
                             c1.start();
@@ -304,7 +301,7 @@ public class ClusterControllerTest extends AbstractTest {
 
             try (JournalWriter writer2 = tf.getWriterFactory().writer(Quote.class)) {
 
-                ClusterController controller1 = createControllerX(writer1, 0, getWriterFactory(), getReaderFactory(), active1Latch, standby1Latch, shutdown1);
+                ClusterController controller1 = createControllerX(writer1, 0, theFactory.getMegaFactory(), active1Latch, standby1Latch, shutdown1);
                 controller1.start();
 
                 Assert.assertTrue(active1Latch.await(5, TimeUnit.SECONDS));
@@ -312,7 +309,7 @@ public class ClusterControllerTest extends AbstractTest {
                 standby1Latch.await(200, TimeUnit.MILLISECONDS);
                 Assert.assertEquals("Node 1 standby callback is not expected to be called", 1, standby1Latch.getCount());
 
-                ClusterController controller2 = createControllerX(writer2, 1, tf.getWriterFactory(), tf.getReaderFactory(), active2Latch, standby2Latch, shutdown2);
+                ClusterController controller2 = createControllerX(writer2, 1, tf.getMegaFactory(), active2Latch, standby2Latch, shutdown2);
                 controller2.start();
 
                 standby2Latch.await(5, TimeUnit.SECONDS);
@@ -347,7 +344,7 @@ public class ClusterControllerTest extends AbstractTest {
 
             try (JournalWriter writer2 = tf.getWriterFactory().writer(Quote.class)) {
 
-                ClusterController controller1 = createControllerX(writer1, 0, getWriterFactory(), getReaderFactory(), active1Latch, standby1Latch, shutdown1);
+                ClusterController controller1 = createControllerX(writer1, 0, theFactory.getMegaFactory(), active1Latch, standby1Latch, shutdown1);
                 controller1.start();
 
                 Assert.assertTrue(active1Latch.await(5, TimeUnit.SECONDS));
@@ -355,7 +352,7 @@ public class ClusterControllerTest extends AbstractTest {
                 standby1Latch.await(200, TimeUnit.MILLISECONDS);
                 Assert.assertEquals("Node 1 standby callback is not expected to be called", 1, standby1Latch.getCount());
 
-                ClusterController controller2 = createControllerX(writer2, 1, tf.getWriterFactory(), tf.getReaderFactory(), active2Latch, standby2Latch, shutdown2);
+                ClusterController controller2 = createControllerX(writer2, 1, tf.getMegaFactory(), active2Latch, standby2Latch, shutdown2);
                 controller2.start();
 
                 standby2Latch.await(5, TimeUnit.SECONDS);
@@ -381,7 +378,7 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown = new CountDownLatch(1);
 
         try (JournalWriter writer = getWriterFactory().writer(Quote.class)) {
-            ClusterController controller = createControllerX(writer, 1, getWriterFactory(), getReaderFactory(), active, standby, shutdown);
+            ClusterController controller = createControllerX(writer, 1, theFactory.getMegaFactory(), active, standby, shutdown);
 
             controller.start();
             Assert.assertTrue(active.await(5, TimeUnit.SECONDS));
@@ -409,8 +406,8 @@ public class ClusterControllerTest extends AbstractTest {
         try (JournalWriter writer1 = getWriterFactory().writer(Quote.class)) {
 
             try (JournalWriter writer2 = tf.getWriterFactory().writer(Quote.class)) {
-                ClusterController controller1 = createControllerX(writer1, 0, getWriterFactory(), getReaderFactory(), active1Latch, standby1Latch, shutdown1);
-                ClusterController controller2 = createControllerX(writer2, 1, tf.getWriterFactory(), tf.getReaderFactory(), active2Latch, standby2Latch, shutdown2);
+                ClusterController controller1 = createControllerX(writer1, 0, theFactory.getMegaFactory(), active1Latch, standby1Latch, shutdown1);
+                ClusterController controller2 = createControllerX(writer2, 1, tf.getMegaFactory(), active2Latch, standby2Latch, shutdown2);
 
                 // start two controller without pause
                 controller2.start();
@@ -459,7 +456,7 @@ public class ClusterControllerTest extends AbstractTest {
         }
     }
 
-    private ClusterController createController2(final JournalWriter writer, int instance, final WriterFactory writerFactory, final ReaderFactory readerFactory, final AtomicInteger active, final AtomicInteger standby, final AtomicInteger shutdown) {
+    private ClusterController createController2(final JournalWriter writer, int instance, final MegaFactory factory, final AtomicInteger active, final AtomicInteger standby, final AtomicInteger shutdown) {
         return new ClusterController(
                 new ServerConfig() {{
                     addNode(new ServerNode(4, "localhost:7040"));
@@ -474,8 +471,7 @@ public class ClusterControllerTest extends AbstractTest {
                     setEnableMultiCast(false);
                     setConnectionTimeout(30000);
                 }},
-                writerFactory,
-                readerFactory,
+                factory,
                 instance,
                 new ArrayList<JournalWriter>() {{
                     add(writer);
@@ -499,7 +495,7 @@ public class ClusterControllerTest extends AbstractTest {
         );
     }
 
-    private ClusterController createControllerX(final JournalWriter writer, int instance, final WriterFactory writerFactory, ReaderFactory readerFactory, final CountDownLatch active, final CountDownLatch standby, final CountDownLatch shutdown) {
+    private ClusterController createControllerX(final JournalWriter writer, int instance, final MegaFactory factory, final CountDownLatch active, final CountDownLatch standby, final CountDownLatch shutdown) {
         return new ClusterController(
                 new ServerConfig() {{
                     addNode(new ServerNode(0, "localhost:7080"));
@@ -510,8 +506,7 @@ public class ClusterControllerTest extends AbstractTest {
                 new ClientConfig() {{
                     setEnableMultiCast(false);
                 }},
-                writerFactory,
-                readerFactory,
+                factory,
                 instance,
                 new ArrayList<JournalWriter>() {{
                     add(writer);

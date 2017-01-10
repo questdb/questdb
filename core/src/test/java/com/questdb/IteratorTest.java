@@ -59,7 +59,7 @@ public class IteratorTest extends AbstractTest {
     @SuppressWarnings("unused")
     public void testBufferedIncrementIterator() throws Exception {
         getWriterFactory().writer(Quote.class).close();
-        try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+        try (Journal<Quote> r = theFactory.getMegaFactory().reader(Quote.class)) {
             try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
                 try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
                     TestUtils.generateQuoteData(origin, 10000);

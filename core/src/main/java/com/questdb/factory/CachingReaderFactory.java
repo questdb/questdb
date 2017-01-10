@@ -37,11 +37,11 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalCloseInterceptor {
+public class CachingReaderFactory extends ReaderFactoryImpl implements JournalCloseInterceptor {
 
     public static final long CLOSED;
 
-    private static final Log LOG = LogFactory.getLog(CachingReaderFactory2.class);
+    private static final Log LOG = LogFactory.getLog(CachingReaderFactory.class);
     private static final long UNALLOCATED = -1L;
     private static final long UNLOCKED = -1L;
     private static final long NEXT_STATUS;
@@ -54,13 +54,13 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
     private final int maxEntries;
     private volatile int closed = FALSE;
 
-    public CachingReaderFactory2(String databaseHome, int maxSegments) {
+    public CachingReaderFactory(String databaseHome, int maxSegments) {
         super(databaseHome);
         this.maxSegments = maxSegments;
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
 
-    public CachingReaderFactory2(JournalConfiguration configuration, int maxSegments) {
+    public CachingReaderFactory(JournalConfiguration configuration, int maxSegments) {
         super(configuration);
         this.maxSegments = maxSegments;
         this.maxEntries = maxSegments * ENTRY_SIZE;
@@ -304,7 +304,7 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
             Field f = Entry.class.getDeclaredField("nextStatus");
             NEXT_STATUS = Unsafe.getUnsafe().objectFieldOffset(f);
 
-            Field f2 = CachingReaderFactory2.class.getDeclaredField("closed");
+            Field f2 = CachingReaderFactory.class.getDeclaredField("closed");
             CLOSED = Unsafe.getUnsafe().objectFieldOffset(f2);
 
             Field f3 = Entry.class.getDeclaredField("lockOwner");
