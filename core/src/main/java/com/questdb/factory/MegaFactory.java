@@ -19,16 +19,16 @@ public class MegaFactory implements ReaderFactory, WriterFactory {
     private static final Log LOG = LogFactory.getLog(MegaFactory.class);
 
     private final CachingWriterFactory writerFactory;
-    private final CachingReaderFactory2 readerFactory;
+    private final CachingReaderFactory readerFactory;
 
     public MegaFactory(JournalConfiguration configuration, long writerInactiveTTL, int readerCacheSegments) {
         this.writerFactory = new CachingWriterFactory(configuration, writerInactiveTTL);
-        this.readerFactory = new CachingReaderFactory2(configuration, readerCacheSegments);
+        this.readerFactory = new CachingReaderFactory(configuration, readerCacheSegments);
     }
 
     public MegaFactory(String databaseHome, long writerInactiveTTL, int readerCacheSegments) {
         this.writerFactory = new CachingWriterFactory(databaseHome, writerInactiveTTL);
-        this.readerFactory = new CachingReaderFactory2(databaseHome, readerCacheSegments);
+        this.readerFactory = new CachingReaderFactory(databaseHome, readerCacheSegments);
     }
 
     @Override
