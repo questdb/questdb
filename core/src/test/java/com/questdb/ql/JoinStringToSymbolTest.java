@@ -24,8 +24,6 @@
 package com.questdb.ql;
 
 import com.questdb.JournalWriter;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.model.Album;
 import com.questdb.model.Band;
@@ -62,18 +60,11 @@ public class JoinStringToSymbolTest {
     private JournalWriter<Band> bw;
     private JournalWriter<Album> aw;
 
-    public ReaderFactory getReaderFactory() {
-        return theFactory.getReaderFactory();
-    }
-
-    public WriterFactory getWriterFactory() {
-        return theFactory.getWriterFactory();
-    }
 
     @Before
     public void setUp() throws Exception {
-        bw = getWriterFactory().writer(Band.class);
-        aw = getWriterFactory().writer(Album.class);
+        bw = theFactory.getMegaFactory().writer(Band.class);
+        aw = theFactory.getMegaFactory().writer(Album.class);
     }
 
     @After
@@ -102,7 +93,7 @@ public class JoinStringToSymbolTest {
         try (RecordSource rs = new CrossJoinRecordSource(new JournalRecordSource(
                 new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()), new JournalRecordSource(
                 new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()))) {
-            p.print(rs, theFactory.getCachingReaderFactory());
+            p.print(rs, theFactory.getMegaFactory());
         }
 
         final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\n" +

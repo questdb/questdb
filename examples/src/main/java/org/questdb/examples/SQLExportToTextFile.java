@@ -25,8 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.ReaderFactoryImpl;
-import com.questdb.factory.WriterFactoryImpl;
+import com.questdb.factory.MegaFactory;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.txt.ExportManager;
@@ -43,22 +42,22 @@ public class SQLExportToTextFile {
             System.exit(1);
         }
 
-        WriterFactoryImpl writerFactory = new WriterFactoryImpl(args[0]);
-        ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(args[0]);
+        try (MegaFactory factory = new MegaFactory(args[0], 1000, 1)) {
 
-        // import movies data to query
-        ImportManager.importFile(writerFactory, SQLExamples.class.getResource("/movies.csv").getFile(), ',', null);
+            // import movies data to query
+            ImportManager.importFile(factory, SQLExamples.class.getResource("/movies.csv").getFile(), ',', null);
 
-        // Create SQL engine instance.
-        QueryCompiler compiler = new QueryCompiler();
+            // Create SQL engine instance.
+            QueryCompiler compiler = new QueryCompiler();
 
-        // Query whole table (same as 'select * from movies')
-        // RecordSource is equivalent to prepared statement, which is compiled version of your query.
-        // Once compiled, query can be executed many times, returning up to date data on every execution.
-        // RecordSource instance may have allocated resources, so closing one is essential.
+            // Query whole table (same as 'select * from movies')
+            // RecordSource is equivalent to prepared statement, which is compiled version of your query.
+            // Once compiled, query can be executed many times, returning up to date data on every execution.
+            // RecordSource instance may have allocated resources, so closing one is essential.
 
-        try (RecordSource rs = compiler.compile(readerFactory, "select year, count() count from (select title, match('\\(([0-9]*?)\\)', title) year from 'movies.csv' order by year desc)")) {
-            ExportManager.export(rs, readerFactory, new File(args[0], "export.csv"), ',');
+            try (RecordSource rs = compiler.compile(factory, "select year, count() count from (select title, match('\\(([0-9]*?)\\)', title) year from 'movies.csv' order by year desc)")) {
+                ExportManager.export(rs, factory, new File(args[0], "export.csv"), ',');
+            }
         }
     }
 }

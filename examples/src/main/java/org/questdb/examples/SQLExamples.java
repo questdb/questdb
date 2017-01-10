@@ -25,9 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.CachingReaderFactory;
-import com.questdb.factory.ReaderFactoryImpl;
-import com.questdb.factory.WriterFactoryImpl;
+import com.questdb.factory.MegaFactory;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
@@ -47,8 +45,7 @@ public class SQLExamples {
             System.exit(1);
         }
 
-        try (WriterFactoryImpl factory = new WriterFactoryImpl(args[0]);
-             ReaderFactoryImpl readerFactory = new CachingReaderFactory(args[0])) {
+        try (MegaFactory factory = new MegaFactory(args[0], 1000, 1)) {
 
             // import movies data to query
             ImportManager.importFile(factory, SQLExamples.class.getResource("/movies.csv").getFile(), ',', null);
@@ -61,37 +58,41 @@ public class SQLExamples {
             // Once compiled, query can be executed many times, returning up to date data on every execution.
             // RecordSource instance may have allocated resources, so closing one is essential.
 
-            try (RecordSource rs = compiler.compile(readerFactory, "'movies.csv'")) {
+            try (RecordSource rs = compiler.compile(factory, "'movies.csv'")) {
                 // Execute query and fetch results
-                RecordCursor cursor = rs.prepareCursor(readerFactory);
-                while (cursor.hasNext()) {
-                    Record record = cursor.next();
+                RecordCursor cursor = rs.prepareCursor(factory);
+                try {
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                    }
+                } finally {
+                    cursor.releaseCursor();
                 }
             }
 
             // to simplify query demonstration we have generic record source printer
             RecordSourcePrinter printer = new RecordSourcePrinter(new StdoutSink());
-            printer.print(compiler.compile(readerFactory, "'movies.csv'"), readerFactory);
+            printer.print(compiler.compile(factory, "'movies.csv'"), factory);
 
             System.out.println("---------");
 
             // find movie by ID
-            printer.print(compiler.compile(readerFactory, "'movies.csv' where movieId = 62198"), readerFactory);
+            printer.print(compiler.compile(factory, "'movies.csv' where movieId = 62198"), factory);
 
             System.out.println("---------");
 
             // extract year from movie title
-            printer.print(compiler.compile(readerFactory, "select title, match('\\(([0-9]*?)\\)', title) year from 'movies.csv' where movieId = 62198"), readerFactory);
+            printer.print(compiler.compile(factory, "select title, match('\\(([0-9]*?)\\)', title) year from 'movies.csv' where movieId = 62198"), factory);
 
             System.out.println("---------");
 
             // order by movie year descending
-            printer.print(compiler.compile(readerFactory, "select title, match('\\(([0-9]*?)\\)', title) year from 'movies.csv' order by year desc"), readerFactory);
+            printer.print(compiler.compile(factory, "select title, match('\\(([0-9]*?)\\)', title) year from 'movies.csv' order by year desc"), factory);
 
             System.out.println("---------");
 
             // count titles by year
-            printer.print(compiler.compile(readerFactory, "select year, count() from (select title, match('\\(([0-9]*?)\\)', title) year from 'movies.csv' order by year desc)"), readerFactory);
+            printer.print(compiler.compile(factory, "select year, count() from (select title, match('\\(([0-9]*?)\\)', title) year from 'movies.csv' order by year desc)"), factory);
         }
     }
 }

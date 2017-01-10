@@ -197,6 +197,8 @@ public class CachingReaderFactory2 extends ReaderFactoryImpl implements JournalC
 
                         Unsafe.arrayPut(e.readers, i, r);
                         r.setCloseInterceptor(this);
+                    } else {
+                        r.refresh();
                     }
 
                     if (closed == TRUE) {

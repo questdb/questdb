@@ -87,21 +87,25 @@ public class RecordKeyCopierCompilerTest extends AbstractOptimiserTest {
 
                 try (DirectMap map = new DirectMap(1024, metadataTypeResolver.of(src.getMetadata(), keyColumns), typeListResolver.of(valueTypes))) {
 
-                    RecordCursor cursor = src.prepareCursor(getCachingFactory());
-                    while (cursor.hasNext()) {
-                        Record r = cursor.next();
-                        DirectMap.KeyWriter kw = map.keyWriter();
-                        copier.copy(r, kw);
-                        DirectMapValues val = map.getOrCreateValues(kw);
-                        val.putDouble(0, 5000.01);
-                    }
+                    RecordCursor cursor = src.prepareCursor(theFactory.getMegaFactory());
+                    try {
+                        while (cursor.hasNext()) {
+                            Record r = cursor.next();
+                            DirectMap.KeyWriter kw = map.keyWriter();
+                            copier.copy(r, kw);
+                            DirectMapValues val = map.getOrCreateValues(kw);
+                            val.putDouble(0, 5000.01);
+                        }
 
-                    cursor.toTop();
-                    while (cursor.hasNext()) {
-                        Record r = cursor.next();
-                        DirectMap.KeyWriter kw = map.keyWriter();
-                        copier.copy(r, kw);
-                        Assert.assertEquals(map.getValues(kw).getDouble(0), 5000.01, 0.00000001);
+                        cursor.toTop();
+                        while (cursor.hasNext()) {
+                            Record r = cursor.next();
+                            DirectMap.KeyWriter kw = map.keyWriter();
+                            copier.copy(r, kw);
+                            Assert.assertEquals(map.getValues(kw).getDouble(0), 5000.01, 0.00000001);
+                        }
+                    } finally {
+                        cursor.releaseCursor();
                     }
                 }
             }

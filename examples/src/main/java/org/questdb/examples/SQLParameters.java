@@ -25,8 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.ReaderFactoryImpl;
-import com.questdb.factory.WriterFactoryImpl;
+import com.questdb.factory.MegaFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.ql.RecordSource;
@@ -47,34 +46,34 @@ public class SQLParameters {
         }
 
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(configuration);
-        WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration);
+        try (MegaFactory factory = new MegaFactory(configuration, 1000, 1)) {
 
 
-        // import movies data to query
-        ImportManager.importFile(writerFactory, SQLParameters.class.getResource("/movies.csv").getFile(), ',', null);
+            // import movies data to query
+            ImportManager.importFile(factory, SQLParameters.class.getResource("/movies.csv").getFile(), ',', null);
 
-        // Create SQL engine instance.
-        QueryCompiler compiler = new QueryCompiler();
+            // Create SQL engine instance.
+            QueryCompiler compiler = new QueryCompiler();
 
-        // Query whole table (same as 'select * from movies')
-        // RecordSource is equivalent to prepared statement, which is compiled version of your query.
-        // Once compiled, query can be executed many times, returning up to date data on every execution.
-        // RecordSource instance may have allocated resources, so closing one is essential.
+            // Query whole table (same as 'select * from movies')
+            // RecordSource is equivalent to prepared statement, which is compiled version of your query.
+            // Once compiled, query can be executed many times, returning up to date data on every execution.
+            // RecordSource instance may have allocated resources, so closing one is essential.
 
-        try (RecordSource rs = compiler.compile(readerFactory, "'movies.csv' where movieId = :id")) {
+            try (RecordSource rs = compiler.compile(factory, "'movies.csv' where movieId = :id")) {
 
-            RecordSourcePrinter printer = new RecordSourcePrinter(new StdoutSink());
+                RecordSourcePrinter printer = new RecordSourcePrinter(new StdoutSink());
 
-            // use of parameters avoids expensive query compilation
+                // use of parameters avoids expensive query compilation
 
-            rs.getParam(":id").set(62198);
-            printer.print(rs, readerFactory);
+                rs.getParam(":id").set(62198);
+                printer.print(rs, factory);
 
-            System.out.println("----------------");
+                System.out.println("----------------");
 
-            rs.getParam(":id").set(125);
-            printer.print(rs, readerFactory);
+                rs.getParam(":id").set(125);
+                printer.print(rs, factory);
+            }
         }
     }
 }

@@ -24,8 +24,6 @@
 package com.questdb.ql;
 
 import com.questdb.JournalWriter;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.model.Album;
@@ -55,18 +53,10 @@ public class HashJoinRecordSourceTest {
     private JournalWriter<Album> aw;
 
 
-    public ReaderFactory getReaderFactory() {
-        return theFactory.getReaderFactory();
-    }
-
-    public WriterFactory getWriterFactory() {
-        return theFactory.getWriterFactory();
-    }
-
     @Before
     public void setUp() throws Exception {
-        bw = getWriterFactory().writer(Band.class);
-        aw = getWriterFactory().writer(Album.class);
+        bw = theFactory.getMegaFactory().writer(Band.class);
+        aw = theFactory.getMegaFactory().writer(Album.class);
     }
 
     @After
@@ -112,7 +102,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.print(joinResult, theFactory.getCachingReaderFactory());
+        p.print(joinResult, theFactory.getMegaFactory());
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -157,7 +147,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.print(joinResult, theFactory.getCachingReaderFactory());
+        p.print(joinResult, theFactory.getMegaFactory());
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -204,7 +194,7 @@ public class HashJoinRecordSourceTest {
                     add("url");
                 }}
         );
-        p.print(joinResult, theFactory.getCachingReaderFactory());
+        p.print(joinResult, theFactory.getMegaFactory());
         Assert.assertEquals("pop\thttp://band1.com\n" +
                 "rock\thttp://band1.com\n" +
                 "\thttp://band2.com\n" +

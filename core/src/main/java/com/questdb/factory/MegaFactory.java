@@ -38,7 +38,6 @@ public class MegaFactory implements ReaderFactory, WriterFactory {
     }
 
     public void rename(String from, String to) throws JournalException {
-
         writerFactory.lock(from);
         try {
             readerFactory.lock(from);
@@ -49,6 +48,20 @@ public class MegaFactory implements ReaderFactory, WriterFactory {
             }
         } finally {
             writerFactory.unlock(from);
+        }
+    }
+
+    public void delete(String name) throws JournalException {
+        writerFactory.lock(name);
+        try {
+            readerFactory.lock(name);
+            try {
+                getConfiguration().delete(name);
+            } finally {
+                readerFactory.unlock(name);
+            }
+        } finally {
+            writerFactory.unlock(name);
         }
     }
 

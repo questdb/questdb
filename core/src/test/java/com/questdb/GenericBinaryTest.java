@@ -28,6 +28,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.Record;
+import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
@@ -68,18 +69,23 @@ public class GenericBinaryTest extends AbstractTest {
 
             List<byte[]> actual = new ArrayList<>();
             try (RecordSource rs = compile("bintest")) {
-                for (Record e : rs.prepareCursor(theFactory.getCachingReaderFactory())) {
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    InputStream in = e.getBin(0);
+                RecordCursor cursor = rs.prepareCursor(theFactory.getMegaFactory());
+                try {
+                    for (Record e : cursor) {
+                        ByteArrayOutputStream out = new ByteArrayOutputStream();
+                        InputStream in = e.getBin(0);
 
-                    int b;
-                    while ((b = in.read()) != -1) {
-                        out.write(b);
+                        int b;
+                        while ((b = in.read()) != -1) {
+                            out.write(b);
+                        }
+                        actual.add(out.toByteArray());
                     }
-                    actual.add(out.toByteArray());
-                }
 
-                assertEquals(expected, actual);
+                    assertEquals(expected, actual);
+                } finally {
+                    cursor.releaseCursor();
+                }
             }
         }
     }
@@ -146,10 +152,15 @@ public class GenericBinaryTest extends AbstractTest {
     private List<byte[]> readOutputStream() throws ParserException {
         List<byte[]> result = new ArrayList<>();
         try (RecordSource rs = compile("bintest")) {
-            for (Record e : rs.prepareCursor(theFactory.getCachingReaderFactory())) {
-                ByteArrayOutputStream o = new ByteArrayOutputStream();
-                e.getBin(0, o);
-                result.add(o.toByteArray());
+            RecordCursor cursor = rs.prepareCursor(theFactory.getMegaFactory());
+            try {
+                for (Record e : cursor) {
+                    ByteArrayOutputStream o = new ByteArrayOutputStream();
+                    e.getBin(0, o);
+                    result.add(o.toByteArray());
+                }
+            } finally {
+                cursor.releaseCursor();
             }
             return result;
         }

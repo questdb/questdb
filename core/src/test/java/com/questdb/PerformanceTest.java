@@ -26,7 +26,7 @@ package com.questdb;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.CachingReaderFactory;
+import com.questdb.factory.MegaFactory;
 import com.questdb.factory.ReaderFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -94,24 +94,27 @@ public class PerformanceTest extends AbstractTest {
             w.commit();
         }
 
-        CachingReaderFactory cf = new CachingReaderFactory(getReaderFactory().getConfiguration());
         QueryCompiler compiler = new QueryCompiler();
 
-        try (RecordSource src = compiler.compile(cf, "quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
+        MegaFactory factory = theFactory.getMegaFactory();
+        try (RecordSource src = compiler.compile(factory, "quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
             int count = 1000;
             long t = 0;
             for (int i = -count; i < count; i++) {
                 if (i == 0) {
                     t = System.nanoTime();
                 }
-                RecordCursor c = src.prepareCursor(cf);
-                for (; c.hasNext(); ) {
-                    c.next();
+                RecordCursor c = src.prepareCursor(factory);
+                try {
+                    for (; c.hasNext(); ) {
+                        c.next();
+                    }
+                } finally {
+                    c.releaseCursor();
                 }
             }
             LOG.info().$("NEW journal.query().all().withKeys(\"LLOY.L\").slice(interval) (query only) latency: ").$((System.nanoTime() - t) / count / 1000).$("μs").$();
         }
-        cf.close();
     }
 
     @Test
@@ -208,26 +211,30 @@ public class PerformanceTest extends AbstractTest {
             }
         }
 
-        ReaderFactory readerFactory = theFactory.getCachingReaderFactory();
+        ReaderFactory readerFactory = theFactory.getMegaFactory();
         try (RecordSource rs = compile("quote")) {
             for (int i = -count; i < count; i++) {
                 if (i == 0) {
                     t = System.nanoTime();
                 }
                 RecordCursor s = rs.prepareCursor(readerFactory);
-                int cnt = 0;
-                for (Record r : s) {
-                    r.getLong(0);
-                    r.getSym(1);
-                    r.getDouble(2);
-                    r.getDouble(3);
-                    r.getInt(4);
-                    r.getInt(5);
-                    r.getSym(6);
-                    r.getSym(7);
-                    cnt++;
+                try {
+                    int cnt = 0;
+                    for (Record r : s) {
+                        r.getLong(0);
+                        r.getSym(1);
+                        r.getDouble(2);
+                        r.getDouble(3);
+                        r.getInt(4);
+                        r.getInt(5);
+                        r.getSym(6);
+                        r.getSym(7);
+                        cnt++;
+                    }
+                    Assert.assertEquals(TEST_DATA_SIZE, cnt);
+                } finally {
+                    s.releaseCursor();
                 }
-                Assert.assertEquals(TEST_DATA_SIZE, cnt);
             }
         }
         result = System.nanoTime() - t;

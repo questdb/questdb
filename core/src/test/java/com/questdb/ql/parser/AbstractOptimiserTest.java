@@ -27,7 +27,6 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParser;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.CachingReaderFactory;
 import com.questdb.factory.WriterFactory;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
@@ -40,7 +39,6 @@ import com.questdb.test.tools.TestUtils;
 import com.questdb.test.tools.TheFactory;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
-import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.ClassRule;
 
@@ -60,51 +58,49 @@ public abstract class AbstractOptimiserTest {
     private static final JsonParser jp = new JsonParser();
 
     public static void assertSymbol(String query, int columnIndex) throws ParserException {
-        try (RecordSource src = compiler.compile(getCachingFactory(), query)) {
-            RecordCursor cursor = src.prepareCursor(getCachingFactory());
-            SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
-            Assert.assertNotNull(getCachingFactory());
-            while (cursor.hasNext()) {
-                Record r = cursor.next();
-                TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));
+        try (RecordSource src = compiler.compile(theFactory.getMegaFactory(), query)) {
+            RecordCursor cursor = src.prepareCursor(theFactory.getMegaFactory());
+            try {
+                SymbolTable tab = cursor.getStorageFacade().getSymbolTable(columnIndex);
+                while (cursor.hasNext()) {
+                    Record r = cursor.next();
+                    TestUtils.assertEquals(r.getSym(columnIndex), tab.value(r.getInt(columnIndex)));
+                }
+            } finally {
+                cursor.releaseCursor();
             }
         }
-    }
-
-    public static CachingReaderFactory getCachingFactory() {
-        return theFactory.getCachingReaderFactory();
     }
 
     public static WriterFactory getWriterFactory() {
         return theFactory.getWriterFactory();
     }
 
-    @AfterClass
-    public static void tearDown() throws Exception {
-        getCachingFactory().reset();
-    }
-
     protected static void assertRowId(String query, String longColumn) throws ParserException {
-        RecordSource src = compiler.compile(getCachingFactory(), query);
+        RecordSource src = compiler.compile(theFactory.getMegaFactory(), query);
         try {
-            RecordCursor cursor = src.prepareCursor(getCachingFactory());
+            RecordCursor cursor = src.prepareCursor(theFactory.getMegaFactory());
 
-            int dateIndex = src.getMetadata().getColumnIndex(longColumn);
-            HashMap<Long, Long> map = new HashMap<>();
+            try {
+                int dateIndex = src.getMetadata().getColumnIndex(longColumn);
+                HashMap<Long, Long> map = new HashMap<>();
 
-            long count = 0;
-            while (cursor.hasNext()) {
-                Record record = cursor.next();
-                map.put(record.getRowId(), record.getLong(dateIndex));
-                count++;
-            }
+                long count = 0;
+                while (cursor.hasNext()) {
+                    Record record = cursor.next();
+                    map.put(record.getRowId(), record.getLong(dateIndex));
+                    count++;
+                }
 
-            Assert.assertTrue(count > 0);
-            Record record = cursor.newRecord();
-            for (Map.Entry<Long, Long> e : map.entrySet()) {
-                Assert.assertEquals((long) e.getValue(), cursor.recordAt(e.getKey()).getLong(dateIndex));
-                cursor.recordAt(record, e.getKey());
-                Assert.assertEquals((long) e.getValue(), record.getLong(dateIndex));
+                Assert.assertTrue(count > 0);
+                Record record = cursor.newRecord();
+                for (Map.Entry<Long, Long> e : map.entrySet()) {
+                    Assert.assertEquals((long) e.getValue(), cursor.recordAt(e.getKey()).getLong(dateIndex));
+                    cursor.recordAt(record, e.getKey());
+                    Assert.assertEquals((long) e.getValue(), record.getLong(dateIndex));
+                }
+            } finally {
+                cursor.releaseCursor();
             }
 
         } finally {
@@ -113,18 +109,23 @@ public abstract class AbstractOptimiserTest {
     }
 
     protected void assertEmpty(String query) throws ParserException {
-        try (RecordSource src = compiler.compile(getCachingFactory(), query)) {
-            Assert.assertFalse(src.prepareCursor(getCachingFactory()).hasNext());
+        try (RecordSource src = compiler.compile(theFactory.getMegaFactory(), query)) {
+            RecordCursor cursor = src.prepareCursor(theFactory.getMegaFactory());
+            try {
+                Assert.assertFalse(cursor.hasNext());
+            } finally {
+                cursor.releaseCursor();
+            }
         }
     }
 
     protected void assertPlan(String expected, String query) throws ParserException {
-        TestUtils.assertEquals(expected, compiler.plan(getCachingFactory(), query));
+        TestUtils.assertEquals(expected, compiler.plan(theFactory.getMegaFactory(), query));
     }
 
     protected void assertPlan2(CharSequence expected, CharSequence query) throws ParserException {
         sink.clear();
-        try (RecordSource recordSource = compiler.compile(getCachingFactory(), query)) {
+        try (RecordSource recordSource = compiler.compile(theFactory.getMegaFactory(), query)) {
             recordSource.toSink(sink);
             String s = gson.toJson(jp.parse(sink.toString()));
             TestUtils.assertEquals(expected, s);
@@ -132,22 +133,26 @@ public abstract class AbstractOptimiserTest {
     }
 
     protected void assertString(String query, int columnIndex) throws ParserException {
-        try (RecordSource rs = compiler.compile(getCachingFactory(), query)) {
-            RecordCursor cursor = rs.prepareCursor(getCachingFactory());
-            while (cursor.hasNext()) {
-                Record r = cursor.next();
-                int len = r.getStrLen(columnIndex);
-                CharSequence s = r.getFlyweightStr(columnIndex);
-                if (s != null) {
-                    CharSequence csB = r.getFlyweightStrB(columnIndex);
-                    TestUtils.assertEquals(s, csB);
-                    Assert.assertEquals(len, s.length());
-                    Assert.assertFalse(s == csB);
-                } else {
-                    Assert.assertEquals(-1, len);
-                    Assert.assertNull(r.getFlyweightStr(columnIndex));
-                    Assert.assertNull(r.getFlyweightStrB(columnIndex));
+        try (RecordSource rs = compiler.compile(theFactory.getMegaFactory(), query)) {
+            RecordCursor cursor = rs.prepareCursor(theFactory.getMegaFactory());
+            try {
+                while (cursor.hasNext()) {
+                    Record r = cursor.next();
+                    int len = r.getStrLen(columnIndex);
+                    CharSequence s = r.getFlyweightStr(columnIndex);
+                    if (s != null) {
+                        CharSequence csB = r.getFlyweightStrB(columnIndex);
+                        TestUtils.assertEquals(s, csB);
+                        Assert.assertEquals(len, s.length());
+                        Assert.assertFalse(s == csB);
+                    } else {
+                        Assert.assertEquals(-1, len);
+                        Assert.assertNull(r.getFlyweightStr(columnIndex));
+                        Assert.assertNull(r.getFlyweightStrB(columnIndex));
+                    }
                 }
+            } finally {
+                cursor.releaseCursor();
             }
         }
     }
@@ -180,7 +185,7 @@ public abstract class AbstractOptimiserTest {
             cursor.releaseCursor();
         }
 
-        TestUtils.assertStrings(rs, getCachingFactory());
+        TestUtils.assertStrings(rs, theFactory.getMegaFactory());
     }
 
     private void assertThat0(String expected, String query, boolean header) throws ParserException, IOException {
@@ -192,13 +197,13 @@ public abstract class AbstractOptimiserTest {
     }
 
     protected RecordSource compileSource(CharSequence query) throws ParserException {
-        return compiler.compile(getCachingFactory(), query);
+        return compiler.compile(theFactory.getMegaFactory(), query);
     }
 
     protected void expectFailure(CharSequence query) throws ParserException {
         long memUsed = Unsafe.getMemUsed();
         try {
-            compiler.compile(getCachingFactory(), query);
+            compiler.compile(theFactory.getMegaFactory(), query);
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(memUsed, Unsafe.getMemUsed());

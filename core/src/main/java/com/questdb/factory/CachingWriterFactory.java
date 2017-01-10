@@ -82,26 +82,28 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         Entry e = entries.get(name);
         if (e != null) {
             long threadId = Thread.currentThread().getId();
-            if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, threadId, -1L)) {
 
-                if (closed) {
-                    // pool is closed and one of two things could have happened:
-                    // 1. writer was picked up by thread that called close() method
-                    // 2. writer was missed by close() thread because it had this thread as the owner
-                    // to ensure desired outcome, which is closing of writer, this thread
-                    // will attempt to lock writer again and if successful - close it by returning 'true'
-                    // if lock isn't successful it will mean that responsibility to close writer is
-                    // with new owner
-                    if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, threadId)) {
-                        LOG.info().$("Closing writer '").$(name).$('\'').$();
-                        e.writer.setCloseInterceptor(null);
-                        e.writer = null;
-                        return true;
+            if (e.owner == threadId) {
+
+                if (e.writer.isCommitOnClose()) {
+                    try {
+                        e.writer.commit();
+                    } catch (JournalException ex) {
+                        throw new JournalRuntimeException(ex);
                     }
                 }
 
                 LOG.info().$("Writer '").$(name).$(" is back in pool").$();
                 e.lastReleaseTime = System.currentTimeMillis();
+
+                if (closed) {
+                    LOG.info().$("Closing writer '").$(name).$('\'').$();
+                    e.writer.setCloseInterceptor(null);
+                    e.writer = null;
+                    return true;
+                }
+
+                e.owner = -1L;
             } else {
                 LOG.error().$("Writer '").$(name).$("' is owned by thread ").$(e.owner).$();
             }
@@ -325,7 +327,7 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
 
     private static class Entry {
         // owner thread id or -1 if writer is available for hire
-        private final long owner = Thread.currentThread().getId();
+        private long owner = Thread.currentThread().getId();
         private JournalWriter writer;
         // time writer was last released
         private volatile long lastReleaseTime = System.currentTimeMillis();

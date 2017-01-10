@@ -782,7 +782,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 new RecordKeyCopierCompiler(new BytecodeAssembler())
         );
         sink.clear();
-        printer.print(r, getCachingFactory());
+        printer.print(r, theFactory.getMegaFactory());
         TestUtils.assertEquals(expected, sink);
         assertThat(expected, "customers c join orders o on c.customerId = o.customerId where customerName ~ 'PJFSREKEUNMKWOF'");
     }

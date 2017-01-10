@@ -25,8 +25,6 @@ package com.questdb.net.ha;
 
 import com.questdb.Journal;
 import com.questdb.JournalWriter;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
@@ -51,22 +49,12 @@ public class SSLTest {
                 .$sym("mode")
                 .$sym("ex")
         ;
-
-
     }});
-
-    public ReaderFactory getReaderFactory() {
-        return theFactory.getReaderFactory();
-    }
-
-    public WriterFactory getWriterFactory() {
-        return theFactory.getWriterFactory();
-    }
 
     @Test
     public void testAuthBothCertsMissing() throws Exception {
 
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+        try (JournalWriter<Quote> remote = theFactory.getMegaFactory().writer(Quote.class, "remote")) {
             JournalServer server = new JournalServer(new ServerConfig() {{
                 setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                 getSslConfig().setSecure(true);
@@ -76,7 +64,7 @@ public class SSLTest {
                 }
                 setEnableMultiCast(false);
                 setHeartbeatFrequency(50);
-            }}, getReaderFactory());
+            }}, theFactory.getMegaFactory());
 
             try {
                 final AtomicInteger serverErrorCount = new AtomicInteger();
@@ -87,7 +75,7 @@ public class SSLTest {
                     try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                         getSslConfig().setTrustStore(is, "changeit");
                     }
-                }}, getWriterFactory(), null, new JournalClient.Callback() {
+                }}, theFactory.getMegaFactory(), null, new JournalClient.Callback() {
                     @Override
                     public void onEvent(int evt) {
                         switch (evt) {
@@ -122,7 +110,7 @@ public class SSLTest {
     public void testClientAuth() throws Exception {
         int size = 2000;
 
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+        try (JournalWriter<Quote> remote = theFactory.getMegaFactory().writer(Quote.class, "remote")) {
 
             JournalServer server = new JournalServer(new ServerConfig() {{
                 setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
@@ -136,7 +124,7 @@ public class SSLTest {
                 }
                 setEnableMultiCast(false);
                 setHeartbeatFrequency(50);
-            }}, getReaderFactory());
+            }}, theFactory.getMegaFactory());
 
             try {
 
@@ -148,7 +136,7 @@ public class SSLTest {
                     try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                         getSslConfig().setTrustStore(is, "changeit");
                     }
-                }}, getWriterFactory());
+                }}, theFactory.getMegaFactory());
 
                 server.publish(remote);
                 server.start();
@@ -160,7 +148,7 @@ public class SSLTest {
                 Thread.sleep(1000);
 
                 client.halt();
-                try (Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
+                try (Journal<Quote> local = theFactory.getMegaFactory().reader(Quote.class, "local")) {
                     TestUtils.assertDataEquals(remote, local);
                 }
             } finally {
@@ -173,7 +161,7 @@ public class SSLTest {
     public void testNoCertTrustAllSSL() throws Exception {
         int size = 2000;
 
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+        try (JournalWriter<Quote> remote = theFactory.getMegaFactory().writer(Quote.class, "remote")) {
             JournalServer server = new JournalServer(new ServerConfig() {{
                 setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                 getSslConfig().setSecure(true);
@@ -182,14 +170,14 @@ public class SSLTest {
                 }
                 setEnableMultiCast(false);
                 setHeartbeatFrequency(50);
-            }}, getReaderFactory());
+            }}, theFactory.getMegaFactory());
 
             try {
 
                 JournalClient client = new JournalClient(new ClientConfig("localhost") {{
                     getSslConfig().setSecure(true);
                     getSslConfig().setTrustAll(true);
-                }}, getWriterFactory());
+                }}, theFactory.getMegaFactory());
 
                 server.publish(remote);
                 server.start();
@@ -205,7 +193,7 @@ public class SSLTest {
                 server.halt();
             }
 
-            try (Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
+            try (Journal<Quote> local = theFactory.getMegaFactory().reader(Quote.class, "local")) {
                 TestUtils.assertDataEquals(remote, local);
             }
         }
@@ -213,7 +201,7 @@ public class SSLTest {
 
     @Test
     public void testNonAuthClientTrustMissing() throws Exception {
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+        try (JournalWriter<Quote> remote = theFactory.getMegaFactory().writer(Quote.class, "remote")) {
             JournalServer server = new JournalServer(new ServerConfig() {{
                 setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                 getSslConfig().setSecure(true);
@@ -222,7 +210,7 @@ public class SSLTest {
                 }
                 setEnableMultiCast(false);
                 setHeartbeatFrequency(50);
-            }}, getReaderFactory());
+            }}, theFactory.getMegaFactory());
 
             try {
 
@@ -232,7 +220,7 @@ public class SSLTest {
 
                 JournalClient client = new JournalClient(new ClientConfig("localhost") {{
                     getSslConfig().setSecure(true);
-                }}, getWriterFactory(), null, new JournalClient.Callback() {
+                }}, theFactory.getMegaFactory(), null, new JournalClient.Callback() {
                     @Override
                     public void onEvent(int evt) {
                         switch (evt) {
@@ -269,7 +257,7 @@ public class SSLTest {
     @Test
     public void testServerTrustMissing() throws Exception {
 
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+        try (JournalWriter<Quote> remote = theFactory.getMegaFactory().writer(Quote.class, "remote")) {
             JournalServer server = new JournalServer(new ServerConfig() {{
                 setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                 getSslConfig().setSecure(true);
@@ -279,7 +267,7 @@ public class SSLTest {
                 }
                 setEnableMultiCast(false);
                 setHeartbeatFrequency(50);
-            }}, getReaderFactory());
+            }}, theFactory.getMegaFactory());
 
             try {
                 final AtomicInteger serverErrorCount = new AtomicInteger();
@@ -293,7 +281,7 @@ public class SSLTest {
                     try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                         getSslConfig().setKeyStore(is, "changeit");
                     }
-                }}, getWriterFactory(), null, new JournalClient.Callback() {
+                }}, theFactory.getMegaFactory(), null, new JournalClient.Callback() {
                     @Override
                     public void onEvent(int evt) {
                         switch (evt) {
@@ -326,7 +314,7 @@ public class SSLTest {
     @Test
     public void testSingleKeySSL() throws Exception {
         int size = 1000;
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+        try (JournalWriter<Quote> remote = theFactory.getMegaFactory().writer(Quote.class, "remote")) {
             JournalServer server = new JournalServer(new ServerConfig() {{
                 setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                 getSslConfig().setSecure(true);
@@ -335,7 +323,7 @@ public class SSLTest {
                 }
                 setEnableMultiCast(false);
                 setHeartbeatFrequency(50);
-            }}, getReaderFactory());
+            }}, theFactory.getMegaFactory());
 
             try {
 
@@ -345,7 +333,7 @@ public class SSLTest {
                         getSslConfig().setTrustStore(is, "changeit");
                     }
                     getSslConfig().setSecure(true);
-                }}, getWriterFactory());
+                }}, theFactory.getMegaFactory());
 
                 server.publish(remote);
                 server.start();
@@ -357,7 +345,7 @@ public class SSLTest {
                 Thread.sleep(500);
 
                 client.halt();
-                try (Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
+                try (Journal<Quote> local = theFactory.getMegaFactory().reader(Quote.class, "local")) {
                     TestUtils.assertDataEquals(remote, local);
                 }
             } finally {

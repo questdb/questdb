@@ -62,7 +62,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
 
         server = new HttpServer(serverConfiguration, new SimpleUrlMatcher() {{
             put("/js", handler);
-            put("/chk", new ExistenceCheckHandler(getCachingFactory()));
+            put("/chk", new ExistenceCheckHandler(theFactory.getMegaFactory()));
             put("/csv", new CsvHandler(theFactory.getMegaFactory(), serverConfiguration));
         }});
 

@@ -51,12 +51,16 @@ public abstract class AbstractTest {
     private final QueryCompiler compiler = new QueryCompiler();
 
     public void assertSymbol(String query) throws ParserException {
-        try (RecordSource src = compiler.compile(theFactory.getCachingReaderFactory(), query)) {
-            RecordCursor cursor = src.prepareCursor(theFactory.getCachingReaderFactory());
-            SymbolTable tab = cursor.getStorageFacade().getSymbolTable(0);
-            while (cursor.hasNext()) {
-                Record r = cursor.next();
-                TestUtils.assertEquals(r.getSym(0), tab.value(r.getInt(0)));
+        try (RecordSource src = compiler.compile(theFactory.getMegaFactory(), query)) {
+            RecordCursor cursor = src.prepareCursor(theFactory.getMegaFactory());
+            try {
+                SymbolTable tab = cursor.getStorageFacade().getSymbolTable(0);
+                while (cursor.hasNext()) {
+                    Record r = cursor.next();
+                    TestUtils.assertEquals(r.getSym(0), tab.value(r.getInt(0)));
+                }
+            } finally {
+                cursor.releaseCursor();
             }
         }
     }
@@ -75,8 +79,13 @@ public abstract class AbstractTest {
     }
 
     protected void assertEmpty(String query) throws ParserException {
-        try (RecordSource src = compiler.compile(theFactory.getCachingReaderFactory(), query)) {
-            Assert.assertFalse(src.prepareCursor(theFactory.getCachingReaderFactory()).hasNext());
+        try (RecordSource src = compiler.compile(theFactory.getMegaFactory(), query)) {
+            RecordCursor cursor = src.prepareCursor(theFactory.getMegaFactory());
+            try {
+                Assert.assertFalse(cursor.hasNext());
+            } finally {
+                cursor.releaseCursor();
+            }
         }
     }
 
@@ -92,8 +101,8 @@ public abstract class AbstractTest {
 
     protected void assertThat(String expected, String query, boolean header) throws ParserException, IOException {
         long memUsed = Unsafe.getMemUsed();
-        try (RecordSource src = compiler.compile(theFactory.getCachingReaderFactory(), query)) {
-            RecordCursor cursor = src.prepareCursor(theFactory.getCachingReaderFactory());
+        try (RecordSource src = compiler.compile(theFactory.getMegaFactory(), query)) {
+            RecordCursor cursor = src.prepareCursor(theFactory.getMegaFactory());
             try {
 
                 sink.clear();
@@ -109,7 +118,7 @@ public abstract class AbstractTest {
                 cursor.releaseCursor();
             }
 
-            TestUtils.assertStrings(src, theFactory.getCachingReaderFactory());
+            TestUtils.assertStrings(src, theFactory.getMegaFactory());
         } catch (ParserException e) {
             System.out.println(QueryError.getMessage());
             System.out.println(QueryError.getPosition());
@@ -124,7 +133,7 @@ public abstract class AbstractTest {
     }
 
     protected RecordSource compile(CharSequence query) throws ParserException {
-        return compiler.compile(theFactory.getCachingReaderFactory(), query);
+        return compiler.compile(theFactory.getMegaFactory(), query);
     }
 
     protected void expectFailure(CharSequence query) throws ParserException {

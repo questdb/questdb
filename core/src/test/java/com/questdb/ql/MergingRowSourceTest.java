@@ -50,12 +50,16 @@ public class MergingRowSourceTest extends AbstractTest {
             RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new HeapMergingRowSource(srcA, srcB));
 
             long last = 0;
-            RecordCursor c = rs.prepareCursor(theFactory.getCachingReaderFactory());
-            int ts = rs.getMetadata().getColumnIndex("timestamp");
-            while (c.hasNext()) {
-                long r = c.next().getDate(ts);
-                Assert.assertTrue(r > last);
-                last = r;
+            RecordCursor c = rs.prepareCursor(theFactory.getMegaFactory());
+            try {
+                int ts = rs.getMetadata().getColumnIndex("timestamp");
+                while (c.hasNext()) {
+                    long r = c.next().getDate(ts);
+                    Assert.assertTrue(r > last);
+                    last = r;
+                }
+            } finally {
+                c.releaseCursor();
             }
         }
     }
@@ -71,12 +75,16 @@ public class MergingRowSourceTest extends AbstractTest {
             try (RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new MergingRowSource(srcA, srcB))) {
 
                 long last = 0;
-                RecordCursor c = rs.prepareCursor(theFactory.getCachingReaderFactory());
-                int ts = rs.getMetadata().getColumnIndex("timestamp");
-                while (c.hasNext()) {
-                    long r = c.next().getDate(ts);
-                    Assert.assertTrue(r > last);
-                    last = r;
+                RecordCursor c = rs.prepareCursor(theFactory.getMegaFactory());
+                try {
+                    int ts = rs.getMetadata().getColumnIndex("timestamp");
+                    while (c.hasNext()) {
+                        long r = c.next().getDate(ts);
+                        Assert.assertTrue(r > last);
+                        last = r;
+                    }
+                } finally {
+                    c.releaseCursor();
                 }
             }
         }

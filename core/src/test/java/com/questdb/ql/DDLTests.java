@@ -101,198 +101,202 @@ public class DDLTests extends AbstractTest {
 
         exec("create table x as (y), cast(a as " + ColumnType.nameOf(to) + ") record hint 100");
 
-        try (RecordSource rs = compiler.compile(theFactory.getCachingReaderFactory(), "x")) {
+        try (RecordSource rs = compiler.compile(theFactory.getMegaFactory(), "x")) {
             Rnd rnd = new Rnd();
             Assert.assertEquals(to, rs.getMetadata().getColumn(0).getType());
-            RecordCursor cursor = rs.prepareCursor(theFactory.getCachingReaderFactory());
-            while (cursor.hasNext()) {
-                switch (from) {
-                    case ColumnType.INT:
-                        switch (to) {
-                            case ColumnType.SHORT:
-                                Assert.assertEquals((short) rnd.nextInt(), cursor.next().getShort(0));
-                                break;
-                            case ColumnType.LONG:
-                                Assert.assertEquals((long) rnd.nextInt(), cursor.next().getLong(0));
-                                break;
-                            case ColumnType.BYTE:
-                                Assert.assertEquals((byte) rnd.nextInt(), cursor.next().get(0));
-                                break;
-                            case ColumnType.FLOAT:
-                                Assert.assertEquals((float) rnd.nextInt(), cursor.next().getFloat(0), 0.000000001f);
-                                break;
-                            case ColumnType.DOUBLE:
-                                Assert.assertEquals((double) rnd.nextInt(), cursor.next().getDouble(0), 0.000000001);
-                                break;
-                            case ColumnType.DATE:
-                                Assert.assertEquals((long) rnd.nextInt(), cursor.next().getDate(0));
-                                break;
-                            case ColumnType.INT:
-                                Assert.assertEquals(rnd.nextInt(), cursor.next().getInt(0));
-                                break;
-                            default:
-                                break;
-                        }
-                        break;
-                    case ColumnType.LONG:
-                    case ColumnType.DATE:
-                        switch (to) {
-                            case ColumnType.SHORT:
-                                Assert.assertEquals((short) rnd.nextLong(), cursor.next().getShort(0));
-                                break;
-                            case ColumnType.LONG:
-                                Assert.assertEquals(rnd.nextLong(), cursor.next().getLong(0));
-                                break;
-                            case ColumnType.BYTE:
-                                Assert.assertEquals((byte) rnd.nextLong(), cursor.next().get(0));
-                                break;
-                            case ColumnType.FLOAT:
-                                Assert.assertEquals((float) rnd.nextLong(), cursor.next().getFloat(0), 0.000000001f);
-                                break;
-                            case ColumnType.DOUBLE:
-                                Assert.assertEquals((double) rnd.nextLong(), cursor.next().getDouble(0), 0.000000001);
-                                break;
-                            case ColumnType.DATE:
-                                Assert.assertEquals(rnd.nextLong(), cursor.next().getDate(0));
-                                break;
-                            case ColumnType.INT:
-                                Assert.assertEquals((int) rnd.nextLong(), cursor.next().getInt(0));
-                                break;
-                            default:
-                                break;
-                        }
-                        break;
-                    case ColumnType.BYTE:
-                        switch (to) {
-                            case ColumnType.SHORT:
-                                Assert.assertEquals((short) rnd.nextByte(), cursor.next().getShort(0));
-                                break;
-                            case ColumnType.LONG:
-                                Assert.assertEquals((long) rnd.nextByte(), cursor.next().getLong(0));
-                                break;
-                            case ColumnType.BYTE:
-                                Assert.assertEquals(rnd.nextByte(), cursor.next().get(0));
-                                break;
-                            case ColumnType.FLOAT:
-                                Assert.assertEquals((float) rnd.nextByte(), cursor.next().getFloat(0), 0.000000001f);
-                                break;
-                            case ColumnType.DOUBLE:
-                                Assert.assertEquals((double) rnd.nextByte(), cursor.next().getDouble(0), 0.000000001);
-                                break;
-                            case ColumnType.DATE:
-                                Assert.assertEquals((long) rnd.nextByte(), cursor.next().getDate(0));
-                                break;
-                            case ColumnType.INT:
-                                Assert.assertEquals((int) rnd.nextByte(), cursor.next().getInt(0));
-                                break;
-                            default:
-                                break;
-                        }
-                        break;
-                    case ColumnType.SHORT:
-                        switch (to) {
-                            case ColumnType.SHORT:
-                                Assert.assertEquals(rnd.nextShort(), cursor.next().getShort(0));
-                                break;
-                            case ColumnType.LONG:
-                                Assert.assertEquals((long) rnd.nextShort(), cursor.next().getLong(0));
-                                break;
-                            case ColumnType.BYTE:
-                                Assert.assertEquals((byte) rnd.nextShort(), cursor.next().get(0));
-                                break;
-                            case ColumnType.FLOAT:
-                                Assert.assertEquals((float) rnd.nextShort(), cursor.next().getFloat(0), 0.000000001f);
-                                break;
-                            case ColumnType.DOUBLE:
-                                Assert.assertEquals((double) rnd.nextShort(), cursor.next().getDouble(0), 0.000000001);
-                                break;
-                            case ColumnType.DATE:
-                                Assert.assertEquals((long) rnd.nextShort(), cursor.next().getDate(0));
-                                break;
-                            case ColumnType.INT:
-                                Assert.assertEquals((int) rnd.nextShort(), cursor.next().getInt(0));
-                                break;
-                            default:
-                                break;
-                        }
-                        break;
-                    case ColumnType.FLOAT:
-                        switch (to) {
-                            case ColumnType.SHORT:
-                                Assert.assertEquals((short) rnd.nextFloat(), cursor.next().getShort(0));
-                                break;
-                            case ColumnType.LONG:
-                                Assert.assertEquals((long) rnd.nextFloat(), cursor.next().getLong(0));
-                                break;
-                            case ColumnType.BYTE:
-                                Assert.assertEquals((byte) rnd.nextFloat(), cursor.next().get(0));
-                                break;
-                            case ColumnType.FLOAT:
-                                Assert.assertEquals(rnd.nextFloat(), cursor.next().getFloat(0), 0.000000001f);
-                                break;
-                            case ColumnType.DOUBLE:
-                                Assert.assertEquals((double) rnd.nextFloat(), cursor.next().getDouble(0), 0.000000001);
-                                break;
-                            case ColumnType.DATE:
-                                Assert.assertEquals((long) rnd.nextFloat(), cursor.next().getDate(0));
-                                break;
-                            case ColumnType.INT:
-                                Assert.assertEquals((int) rnd.nextFloat(), cursor.next().getInt(0));
-                                break;
-                            default:
-                                break;
-                        }
-                        break;
-                    case ColumnType.DOUBLE:
-                        switch (to) {
-                            case ColumnType.SHORT:
-                                Assert.assertEquals((short) rnd.nextDouble(), cursor.next().getShort(0));
-                                break;
-                            case ColumnType.LONG:
-                                Assert.assertEquals((long) rnd.nextDouble(), cursor.next().getLong(0));
-                                break;
-                            case ColumnType.BYTE:
-                                Assert.assertEquals((byte) rnd.nextDouble(), cursor.next().get(0));
-                                break;
-                            case ColumnType.FLOAT:
-                                Assert.assertEquals((float) rnd.nextDouble(), cursor.next().getFloat(0), 0.000000001f);
-                                break;
-                            case ColumnType.DOUBLE:
-                                Assert.assertEquals(rnd.nextDouble(), cursor.next().getDouble(0), 0.000000001);
-                                break;
-                            case ColumnType.DATE:
-                                Assert.assertEquals((long) rnd.nextDouble(), cursor.next().getDate(0));
-                                break;
-                            case ColumnType.INT:
-                                Assert.assertEquals((int) rnd.nextDouble(), cursor.next().getInt(0));
-                                break;
-                            default:
-                                break;
-                        }
-                        break;
-                    case ColumnType.STRING:
-                        switch (to) {
-                            case ColumnType.SYMBOL:
-                                TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getSym(0));
-                                break;
-                            default:
-                                TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getFlyweightStr(0));
-                                break;
-                        }
-                        break;
-                    case ColumnType.SYMBOL:
-                        switch (to) {
-                            case ColumnType.STRING:
-                                TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getFlyweightStr(0));
-                                break;
-                            default:
-                                TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getSym(0));
-                                break;
-                        }
-                        break;
-                    default:
-                        break;
+            RecordCursor cursor = rs.prepareCursor(theFactory.getMegaFactory());
+            try {
+                while (cursor.hasNext()) {
+                    switch (from) {
+                        case ColumnType.INT:
+                            switch (to) {
+                                case ColumnType.SHORT:
+                                    Assert.assertEquals((short) rnd.nextInt(), cursor.next().getShort(0));
+                                    break;
+                                case ColumnType.LONG:
+                                    Assert.assertEquals((long) rnd.nextInt(), cursor.next().getLong(0));
+                                    break;
+                                case ColumnType.BYTE:
+                                    Assert.assertEquals((byte) rnd.nextInt(), cursor.next().get(0));
+                                    break;
+                                case ColumnType.FLOAT:
+                                    Assert.assertEquals((float) rnd.nextInt(), cursor.next().getFloat(0), 0.000000001f);
+                                    break;
+                                case ColumnType.DOUBLE:
+                                    Assert.assertEquals((double) rnd.nextInt(), cursor.next().getDouble(0), 0.000000001);
+                                    break;
+                                case ColumnType.DATE:
+                                    Assert.assertEquals((long) rnd.nextInt(), cursor.next().getDate(0));
+                                    break;
+                                case ColumnType.INT:
+                                    Assert.assertEquals(rnd.nextInt(), cursor.next().getInt(0));
+                                    break;
+                                default:
+                                    break;
+                            }
+                            break;
+                        case ColumnType.LONG:
+                        case ColumnType.DATE:
+                            switch (to) {
+                                case ColumnType.SHORT:
+                                    Assert.assertEquals((short) rnd.nextLong(), cursor.next().getShort(0));
+                                    break;
+                                case ColumnType.LONG:
+                                    Assert.assertEquals(rnd.nextLong(), cursor.next().getLong(0));
+                                    break;
+                                case ColumnType.BYTE:
+                                    Assert.assertEquals((byte) rnd.nextLong(), cursor.next().get(0));
+                                    break;
+                                case ColumnType.FLOAT:
+                                    Assert.assertEquals((float) rnd.nextLong(), cursor.next().getFloat(0), 0.000000001f);
+                                    break;
+                                case ColumnType.DOUBLE:
+                                    Assert.assertEquals((double) rnd.nextLong(), cursor.next().getDouble(0), 0.000000001);
+                                    break;
+                                case ColumnType.DATE:
+                                    Assert.assertEquals(rnd.nextLong(), cursor.next().getDate(0));
+                                    break;
+                                case ColumnType.INT:
+                                    Assert.assertEquals((int) rnd.nextLong(), cursor.next().getInt(0));
+                                    break;
+                                default:
+                                    break;
+                            }
+                            break;
+                        case ColumnType.BYTE:
+                            switch (to) {
+                                case ColumnType.SHORT:
+                                    Assert.assertEquals((short) rnd.nextByte(), cursor.next().getShort(0));
+                                    break;
+                                case ColumnType.LONG:
+                                    Assert.assertEquals((long) rnd.nextByte(), cursor.next().getLong(0));
+                                    break;
+                                case ColumnType.BYTE:
+                                    Assert.assertEquals(rnd.nextByte(), cursor.next().get(0));
+                                    break;
+                                case ColumnType.FLOAT:
+                                    Assert.assertEquals((float) rnd.nextByte(), cursor.next().getFloat(0), 0.000000001f);
+                                    break;
+                                case ColumnType.DOUBLE:
+                                    Assert.assertEquals((double) rnd.nextByte(), cursor.next().getDouble(0), 0.000000001);
+                                    break;
+                                case ColumnType.DATE:
+                                    Assert.assertEquals((long) rnd.nextByte(), cursor.next().getDate(0));
+                                    break;
+                                case ColumnType.INT:
+                                    Assert.assertEquals((int) rnd.nextByte(), cursor.next().getInt(0));
+                                    break;
+                                default:
+                                    break;
+                            }
+                            break;
+                        case ColumnType.SHORT:
+                            switch (to) {
+                                case ColumnType.SHORT:
+                                    Assert.assertEquals(rnd.nextShort(), cursor.next().getShort(0));
+                                    break;
+                                case ColumnType.LONG:
+                                    Assert.assertEquals((long) rnd.nextShort(), cursor.next().getLong(0));
+                                    break;
+                                case ColumnType.BYTE:
+                                    Assert.assertEquals((byte) rnd.nextShort(), cursor.next().get(0));
+                                    break;
+                                case ColumnType.FLOAT:
+                                    Assert.assertEquals((float) rnd.nextShort(), cursor.next().getFloat(0), 0.000000001f);
+                                    break;
+                                case ColumnType.DOUBLE:
+                                    Assert.assertEquals((double) rnd.nextShort(), cursor.next().getDouble(0), 0.000000001);
+                                    break;
+                                case ColumnType.DATE:
+                                    Assert.assertEquals((long) rnd.nextShort(), cursor.next().getDate(0));
+                                    break;
+                                case ColumnType.INT:
+                                    Assert.assertEquals((int) rnd.nextShort(), cursor.next().getInt(0));
+                                    break;
+                                default:
+                                    break;
+                            }
+                            break;
+                        case ColumnType.FLOAT:
+                            switch (to) {
+                                case ColumnType.SHORT:
+                                    Assert.assertEquals((short) rnd.nextFloat(), cursor.next().getShort(0));
+                                    break;
+                                case ColumnType.LONG:
+                                    Assert.assertEquals((long) rnd.nextFloat(), cursor.next().getLong(0));
+                                    break;
+                                case ColumnType.BYTE:
+                                    Assert.assertEquals((byte) rnd.nextFloat(), cursor.next().get(0));
+                                    break;
+                                case ColumnType.FLOAT:
+                                    Assert.assertEquals(rnd.nextFloat(), cursor.next().getFloat(0), 0.000000001f);
+                                    break;
+                                case ColumnType.DOUBLE:
+                                    Assert.assertEquals((double) rnd.nextFloat(), cursor.next().getDouble(0), 0.000000001);
+                                    break;
+                                case ColumnType.DATE:
+                                    Assert.assertEquals((long) rnd.nextFloat(), cursor.next().getDate(0));
+                                    break;
+                                case ColumnType.INT:
+                                    Assert.assertEquals((int) rnd.nextFloat(), cursor.next().getInt(0));
+                                    break;
+                                default:
+                                    break;
+                            }
+                            break;
+                        case ColumnType.DOUBLE:
+                            switch (to) {
+                                case ColumnType.SHORT:
+                                    Assert.assertEquals((short) rnd.nextDouble(), cursor.next().getShort(0));
+                                    break;
+                                case ColumnType.LONG:
+                                    Assert.assertEquals((long) rnd.nextDouble(), cursor.next().getLong(0));
+                                    break;
+                                case ColumnType.BYTE:
+                                    Assert.assertEquals((byte) rnd.nextDouble(), cursor.next().get(0));
+                                    break;
+                                case ColumnType.FLOAT:
+                                    Assert.assertEquals((float) rnd.nextDouble(), cursor.next().getFloat(0), 0.000000001f);
+                                    break;
+                                case ColumnType.DOUBLE:
+                                    Assert.assertEquals(rnd.nextDouble(), cursor.next().getDouble(0), 0.000000001);
+                                    break;
+                                case ColumnType.DATE:
+                                    Assert.assertEquals((long) rnd.nextDouble(), cursor.next().getDate(0));
+                                    break;
+                                case ColumnType.INT:
+                                    Assert.assertEquals((int) rnd.nextDouble(), cursor.next().getInt(0));
+                                    break;
+                                default:
+                                    break;
+                            }
+                            break;
+                        case ColumnType.STRING:
+                            switch (to) {
+                                case ColumnType.SYMBOL:
+                                    TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getSym(0));
+                                    break;
+                                default:
+                                    TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getFlyweightStr(0));
+                                    break;
+                            }
+                            break;
+                        case ColumnType.SYMBOL:
+                            switch (to) {
+                                case ColumnType.STRING:
+                                    TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getFlyweightStr(0));
+                                    break;
+                                default:
+                                    TestUtils.assertEquals(rnd.nextChars(10), cursor.next().getSym(0));
+                                    break;
+                            }
+                            break;
+                        default:
+                            break;
+                    }
                 }
+            } finally {
+                cursor.releaseCursor();
             }
         }
     }
@@ -646,24 +650,28 @@ public class DDLTests extends AbstractTest {
         }
 
         int count = 0;
-        try (RecordSource rs = compiler.compile(theFactory.getCachingReaderFactory(), "y")) {
-            RecordCursor cursor = rs.prepareCursor(theFactory.getCachingReaderFactory());
+        try (RecordSource rs = compiler.compile(theFactory.getMegaFactory(), "y")) {
+            RecordCursor cursor = rs.prepareCursor(theFactory.getMegaFactory());
 
-            Rnd rnd = new Rnd();
-            while (cursor.hasNext()) {
-                Record rec = cursor.next();
-                Assert.assertEquals(count, rec.getInt(0));
-                Assert.assertTrue((byte) rnd.nextInt() == rec.get(1));
-                Assert.assertEquals((short) rnd.nextInt(), rec.getShort(2));
-                Assert.assertEquals(rnd.nextLong(), rec.getLong(3));
-                Assert.assertEquals(rnd.nextFloat(), rec.getFloat(4), 0.00001f);
-                Assert.assertEquals(rnd.nextDouble(), rec.getDouble(5), 0.00000000001);
-                Assert.assertEquals(rnd.nextLong(), rec.getDate(6));
-                Assert.assertNull(rec.getBin(7));
-                TestUtils.assertEquals(rnd.nextChars(1), rec.getSym(9));
-                TestUtils.assertEquals(rnd.nextChars(10), rec.getFlyweightStr(10));
-                Assert.assertEquals(rnd.nextBoolean(), rec.getBool(11));
-                count++;
+            try {
+                Rnd rnd = new Rnd();
+                while (cursor.hasNext()) {
+                    Record rec = cursor.next();
+                    Assert.assertEquals(count, rec.getInt(0));
+                    Assert.assertTrue((byte) rnd.nextInt() == rec.get(1));
+                    Assert.assertEquals((short) rnd.nextInt(), rec.getShort(2));
+                    Assert.assertEquals(rnd.nextLong(), rec.getLong(3));
+                    Assert.assertEquals(rnd.nextFloat(), rec.getFloat(4), 0.00001f);
+                    Assert.assertEquals(rnd.nextDouble(), rec.getDouble(5), 0.00000000001);
+                    Assert.assertEquals(rnd.nextLong(), rec.getDate(6));
+                    Assert.assertNull(rec.getBin(7));
+                    TestUtils.assertEquals(rnd.nextChars(1), rec.getSym(9));
+                    TestUtils.assertEquals(rnd.nextChars(10), rec.getFlyweightStr(10));
+                    Assert.assertEquals(rnd.nextBoolean(), rec.getBool(11));
+                    count++;
+                }
+            } finally {
+                cursor.releaseCursor();
             }
         }
     }
@@ -754,25 +762,29 @@ public class DDLTests extends AbstractTest {
             exec("create table y as (x)");
 
             int count = 0;
-            try (RecordSource rs = compiler.compile(theFactory.getCachingReaderFactory(), "y")) {
-                RecordCursor cursor = rs.prepareCursor(theFactory.getCachingReaderFactory());
+            try (RecordSource rs = compiler.compile(theFactory.getMegaFactory(), "y")) {
+                RecordCursor cursor = rs.prepareCursor(theFactory.getMegaFactory());
 
-                Rnd rnd = new Rnd();
-                while (cursor.hasNext()) {
-                    Record rec = cursor.next();
-                    Assert.assertEquals(count, rec.getInt(0));
+                try {
+                    Rnd rnd = new Rnd();
+                    while (cursor.hasNext()) {
+                        Record rec = cursor.next();
+                        Assert.assertEquals(count, rec.getInt(0));
 
-                    long len = rec.getBinLen(1);
-                    DirectInputStream is = rec.getBin(1);
-                    is.copyTo(addr, 0, len);
+                        long len = rec.getBinLen(1);
+                        DirectInputStream is = rec.getBin(1);
+                        is.copyTo(addr, 0, len);
 
-                    long p = addr;
-                    int n = (rnd.nextPositiveInt() % (SZ - 1)) / 8;
-                    for (int j = 0; j < n; j++) {
-                        Assert.assertEquals(rnd.nextLong(), Unsafe.getUnsafe().getLong(p));
-                        p += 8;
+                        long p = addr;
+                        int n = (rnd.nextPositiveInt() % (SZ - 1)) / 8;
+                        for (int j = 0; j < n; j++) {
+                            Assert.assertEquals(rnd.nextLong(), Unsafe.getUnsafe().getLong(p));
+                            p += 8;
+                        }
+                        count++;
                     }
-                    count++;
+                } finally {
+                    cursor.releaseCursor();
                 }
             }
             Assert.assertEquals(N, count);

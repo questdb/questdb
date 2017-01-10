@@ -28,6 +28,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
+import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.std.DirectInputStream;
@@ -241,10 +242,15 @@ public class RecordListTest extends AbstractTest {
             try (RecordList records = new RecordList(journal.getMetadata(), pageSize)) {
                 LongList offsets = new LongList();
 
-                try (RecordSource rs = compiler.compile(theFactory.getCachingReaderFactory(), journal.getLocation().getName())) {
+                try (RecordSource rs = compiler.compile(theFactory.getMegaFactory(), journal.getLocation().getName())) {
                     long o = -1;
-                    for (Record rec : rs.prepareCursor(theFactory.getCachingReaderFactory())) {
-                        offsets.add(o = records.append(rec, o));
+                    RecordCursor cursor = rs.prepareCursor(theFactory.getMegaFactory());
+                    try {
+                        for (Record rec : cursor) {
+                            offsets.add(o = records.append(rec, o));
+                        }
+                    } finally {
+                        cursor.releaseCursor();
                     }
                 }
 

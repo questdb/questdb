@@ -26,7 +26,7 @@ package com.questdb.txt.parser.listener;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.*;
-import com.questdb.factory.WriterFactory;
+import com.questdb.factory.MegaFactory;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
@@ -54,7 +54,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     public static final int ATOMICITY_RELAXED = 1;
 
     private static final Log LOG = LogFactory.getLog(JournalImportListener.class);
-    private final WriterFactory factory;
+    private final MegaFactory factory;
     private final LongList errors = new LongList();
     private String location;
     private ObjList<ImportedColumnMetadata> metadata;
@@ -64,7 +64,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     private boolean durable;
     private int atomicity;
 
-    public JournalImportListener(WriterFactory factory) {
+    public JournalImportListener(MegaFactory factory) {
         this.factory = factory;
     }
 
@@ -90,6 +90,8 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                 }
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);
+            } finally {
+                writer.close();
             }
         }
     }
@@ -215,7 +217,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                     case EXISTS:
                         this.metadata = metadata;
                         if (overwrite) {
-                            factory.getConfiguration().delete(location);
+                            factory.delete(location);
                             writer = factory.writer(createStructure());
                         } else {
                             writer = mapColumnsAndOpenWriter();

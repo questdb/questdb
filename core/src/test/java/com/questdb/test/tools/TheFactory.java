@@ -39,8 +39,6 @@ public class TheFactory implements TestRule {
     private JournalConfiguration configuration;
     private WriterFactoryImpl writerFactory;
     private ReaderFactoryImpl readerFactory;
-    private ReaderFactoryPool readerFactoryPool;
-    private CachingReaderFactory cachingReaderFactory;
     private CachingWriterFactory cachingWriterFactory;
     private MegaFactory megaFactory;
 
@@ -62,8 +60,6 @@ public class TheFactory implements TestRule {
 
                 writerFactory = null;
                 readerFactory = null;
-                cachingReaderFactory = null;
-                readerFactoryPool = null;
                 cachingWriterFactory = null;
                 megaFactory = null;
 
@@ -73,13 +69,6 @@ public class TheFactory implements TestRule {
                 } catch (Throwable e) {
                     throwable = e;
                 } finally {
-                    if (cachingReaderFactory != null) {
-                        cachingReaderFactory.close();
-                    }
-
-                    if (readerFactoryPool != null) {
-                        readerFactoryPool.close();
-                    }
 
                     if (cachingWriterFactory != null) {
                         cachingWriterFactory.close();
@@ -99,13 +88,6 @@ public class TheFactory implements TestRule {
         };
     }
 
-    public CachingReaderFactory getCachingReaderFactory() {
-        if (cachingReaderFactory == null) {
-            cachingReaderFactory = new CachingReaderFactory(configuration);
-        }
-        return cachingReaderFactory;
-    }
-
     public CachingWriterFactory getCachingWriterFactory() {
         if (cachingWriterFactory == null) {
             cachingWriterFactory = new CachingWriterFactory(configuration, 1);
@@ -122,13 +104,6 @@ public class TheFactory implements TestRule {
             readerFactory = new ReaderFactoryImpl(configuration);
         }
         return readerFactory;
-    }
-
-    public ReaderFactoryPool getReaderFactoryPool() {
-        if (readerFactoryPool == null) {
-            readerFactoryPool = new ReaderFactoryPool(configuration, 4);
-        }
-        return readerFactoryPool;
     }
 
     public WriterFactory getWriterFactory() {
