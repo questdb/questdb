@@ -72,10 +72,6 @@ public abstract class AbstractOptimiserTest {
         }
     }
 
-    public static WriterFactory getWriterFactory() {
-        return theFactory.getWriterFactory();
-    }
-
     protected static void assertRowId(String query, String longColumn) throws ParserException {
         RecordSource src = compiler.compile(theFactory.getMegaFactory(), query);
         try {

@@ -39,9 +39,9 @@ public abstract class AbstractAllTypeTest extends AbstractOptimiserTest {
         // this does thread local allocations that
         // should not be accounted for while
         // measuring query allocations and de-allocations
-        getWriterFactory().getConfiguration().exists("");
+        theFactory.getMegaFactory().getConfiguration().exists("");
 
-        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("xyz")
+        try (JournalWriter w = theFactory.getMegaFactory().writer(new JournalStructure("xyz")
                 .$int("i")
                 .$str("str")
                 .$ts()
@@ -61,7 +61,7 @@ public abstract class AbstractAllTypeTest extends AbstractOptimiserTest {
         }
 
 
-        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("abc")
+        try (JournalWriter w = theFactory.getMegaFactory().writer(new JournalStructure("abc")
                 .$int("i")
                 .$double("d")
                 .$float("f")

@@ -39,7 +39,7 @@ public class AggregationTest extends AbstractOptimiserTest {
     public static void setUp() throws Exception {
         int recordCount = 10000;
         int employeeCount = 10;
-        try (JournalWriter orders = getWriterFactory().writer(
+        try (JournalWriter orders = theFactory.getMegaFactory().writer(
                 new JournalStructure("orders").
                         $int("orderId").
                         $int("customerId").
@@ -80,7 +80,7 @@ public class AggregationTest extends AbstractOptimiserTest {
             orders.commit();
         }
 
-        try (JournalWriter stars = getWriterFactory().writer(
+        try (JournalWriter stars = theFactory.getMegaFactory().writer(
                 new JournalStructure("stars").
                         $int("galaxy").
                         $int("star").
@@ -101,7 +101,7 @@ public class AggregationTest extends AbstractOptimiserTest {
             stars.commit();
         }
 
-        try (JournalWriter stars = getWriterFactory().writer(
+        try (JournalWriter stars = theFactory.getMegaFactory().writer(
                 new JournalStructure("stars2").
                         $int("galaxy").
                         $int("star").

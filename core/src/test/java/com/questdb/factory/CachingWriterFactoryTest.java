@@ -31,7 +31,9 @@ import com.questdb.ex.WriterBusyException;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.test.tools.AbstractTest;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -43,10 +45,21 @@ import java.util.concurrent.locks.LockSupport;
 
 public class CachingWriterFactoryTest extends AbstractTest {
 
+    private CachingWriterFactory wf;
+
+    @Before
+    public void setUp() throws Exception {
+        this.wf = new CachingWriterFactory(theFactory.getConfiguration(), 1000);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        this.wf.close();
+    }
+
     @Test
     public void testAllocateAndClear() throws Exception {
         final JournalMetadata<?> m = new JournalStructure("z").$date("ts").$().build();
-        final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         int n = 2;
         final CyclicBarrier barrier = new CyclicBarrier(n);
@@ -108,7 +121,6 @@ public class CachingWriterFactoryTest extends AbstractTest {
     public void testFactoryCloseBeforeRelease() throws Exception {
 
         final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
-        CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         JournalWriter x;
 
@@ -135,8 +147,6 @@ public class CachingWriterFactoryTest extends AbstractTest {
 
         final JournalMetadata<?> x = new JournalStructure("x").$date("ts").$().build();
         final JournalMetadata<?> y = new JournalStructure("y").$date("ts").$().build();
-
-        final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         JournalWriter wx = wf.writer(x);
         Assert.assertNotNull(wx);
@@ -210,8 +220,6 @@ public class CachingWriterFactoryTest extends AbstractTest {
     public void testLockNonExisting() throws Exception {
         final JournalMetadata<?> x = new JournalStructure("x").$date("ts").$().build();
 
-        final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
-
         wf.lock(x.getName());
 
         try {
@@ -231,7 +239,6 @@ public class CachingWriterFactoryTest extends AbstractTest {
     public void testOneThreadGetRelease() throws Exception {
 
         final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
-        CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         JournalWriter x;
         JournalWriter y;
@@ -263,7 +270,6 @@ public class CachingWriterFactoryTest extends AbstractTest {
     @Test
     public void testTwoThreadsRaceToAllocate() throws Exception {
         final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
-        final CachingWriterFactory wf = theFactory.getCachingWriterFactory();
 
         int n = 2;
         final CyclicBarrier barrier = new CyclicBarrier(n);

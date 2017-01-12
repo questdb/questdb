@@ -80,12 +80,13 @@ public class JournalWriter<T> extends Journal<T> {
     private long appendTimestampHi = -1;
     private RandomAccessFile discardTxtRaf;
     private FlexBufferSink discardSink;
+    private boolean inError = false;
 
     public JournalWriter(JournalMetadata<T> metadata, File location) throws JournalException {
         super(metadata, location);
         if (metadata.isPartialMapped()) {
             close();
-            throw new JournalException("Metadata is unusable for writer. Partially mapped?");
+            throw JournalPartiallyMappedException.INSTANCE;
         }
         this.lagMillis = TimeUnit.HOURS.toMillis(getMetadata().getLag());
         this.lagSwellMillis = lagMillis * 3;
@@ -282,9 +283,18 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     public Partition<T> createPartition(Interval interval, int partitionIndex) throws JournalException {
-        Partition<T> result = new Partition<>(this, interval, partitionIndex, TX_LIMIT_EVAL, null, sequentialAccess).open();
-        partitions.add(result);
-        return result;
+        try {
+            Partition<T> result = new Partition<>(this, interval, partitionIndex, TX_LIMIT_EVAL, null, sequentialAccess).open();
+            partitions.add(result);
+            return result;
+        } catch (JournalException e) {
+            inError = true;
+            throw e;
+        }
+    }
+
+    public boolean isInError() {
+        return inError;
     }
 
     /**

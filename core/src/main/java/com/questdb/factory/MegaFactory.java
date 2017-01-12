@@ -65,6 +65,21 @@ public class MegaFactory implements ReaderFactory, WriterFactory {
         }
     }
 
+    public void lock(String name) throws JournalException {
+        writerFactory.lock(name);
+        try {
+            readerFactory.lock(name);
+        } catch (JournalException e) {
+            writerFactory.unlock(name);
+            throw e;
+        }
+    }
+
+    public void unlock(String name) {
+        readerFactory.unlock(name);
+        writerFactory.unlock(name);
+    }
+
     private void rename0(CharSequence from, CharSequence to) throws JournalException {
         try (CompositePath oldName = new CompositePath()) {
             try (CompositePath newName = new CompositePath()) {

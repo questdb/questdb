@@ -253,7 +253,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     }
 
     private static void generateJournal(String name, QueryResponse.Tab[] recs, int count) throws JournalException, NumericException {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = theFactory.getMegaFactory().writer(
                 new JournalStructure(name).
                         $sym("id").
                         $double("x").

@@ -23,7 +23,6 @@
 
 package com.questdb;
 
-import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -44,13 +43,9 @@ public class HugeTableTest {
         ;
     }});
 
-    public static WriterFactory getFactory() {
-        return theFactory.getWriterFactory();
-    }
-
     @Test
     public void testLargeSymbolTable() throws Exception {
-        try (JournalWriter<Name> w = getFactory().writer(Name.class, "name")) {
+        try (JournalWriter<Name> w = theFactory.getMegaFactory().writer(Name.class, "name")) {
             Name name = new Name();
             Rnd rnd = new Rnd();
 

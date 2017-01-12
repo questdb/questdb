@@ -37,7 +37,7 @@ public class JournalRecoveryTest extends AbstractTest {
         try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, 100000, new Interval("2013-01-01T00:00:00.000Z", "2013-05-30T12:55:00.000Z"));
 
-            try (Journal<Quote> r = getReaderFactory().reader(Quote.class, "origin")) {
+            try (Journal<Quote> r = theFactory.getMegaFactory().reader(Quote.class, "origin")) {
                 Assert.assertEquals(100000, r.size());
             }
 
@@ -55,7 +55,11 @@ public class JournalRecoveryTest extends AbstractTest {
                 Assert.assertEquals(37672, w.size());
             }
 
-            try (Journal<Quote> w = getReaderFactory().reader(Quote.class)) {
+            // make sure journal is closed in pool
+            theFactory.getMegaFactory().lock(Quote.class.getName());
+            theFactory.getMegaFactory().unlock(Quote.class.getName());
+
+            try (Journal<Quote> w = theFactory.getMegaFactory().reader(Quote.class)) {
                 Assert.assertEquals(ts, w.getMaxTimestamp());
                 Assert.assertEquals(17000, w.size());
             }
@@ -70,7 +74,7 @@ public class JournalRecoveryTest extends AbstractTest {
     @Test
     public void testRecovery() throws Exception {
         long ts;
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = theFactory.getMegaFactory().writer(Quote.class)) {
             w.disableCommitOnClose();
             Assert.assertFalse(w.isCommitOnClose());
             TestUtils.generateQuoteData(w, 10000, new Interval("2013-01-01T00:00:00.000Z", "2013-02-28T12:55:00.000Z"));
@@ -79,12 +83,16 @@ public class JournalRecoveryTest extends AbstractTest {
             Assert.assertTrue(w.getMaxTimestamp() > ts);
         }
 
-        try (Journal<Quote> w = getReaderFactory().reader(Quote.class)) {
+        // make sure journal is closed in pool
+        theFactory.getMegaFactory().lock(Quote.class.getName());
+        theFactory.getMegaFactory().unlock(Quote.class.getName());
+
+        try (Journal<Quote> w = theFactory.getMegaFactory().reader(Quote.class)) {
             Assert.assertEquals(ts, w.getMaxTimestamp());
             Assert.assertEquals(10000, w.size());
         }
 
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = theFactory.getMegaFactory().writer(Quote.class)) {
             w.disableCommitOnClose();
             Assert.assertEquals(ts, w.getMaxTimestamp());
             Assert.assertEquals(10000, w.size());

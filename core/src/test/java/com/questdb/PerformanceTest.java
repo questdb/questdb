@@ -70,7 +70,7 @@ public class PerformanceTest extends AbstractTest {
             w.commit();
         }
 
-        try (Journal<Quote> journal = getReaderFactory().reader(Quote.class)) {
+        try (Journal<Quote> journal = theFactory.getMegaFactory().reader(Quote.class)) {
             int count = 1000;
             Interval interval = new Interval(Dates.parseDateTime("2013-10-15T10:00:00.000Z"), Dates.parseDateTime("2013-10-05T10:00:00.000Z"));
             long t = 0;
@@ -119,7 +119,7 @@ public class PerformanceTest extends AbstractTest {
 
     @Test
     public void testIndexAppendAndReadSpeed() throws JournalException {
-        File indexFile = new File(getReaderFactory().getConfiguration().getJournalBase(), "index-test");
+        File indexFile = new File(theFactory.getMegaFactory().getConfiguration().getJournalBase(), "index-test");
         int totalKeys = 30000;
         int totalValues = 20000000;
         try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
@@ -252,7 +252,7 @@ public class PerformanceTest extends AbstractTest {
             w.commit();
         }
 
-        try (Journal<Quote> journal = getReaderFactory().reader(Quote.class)) {
+        try (Journal<Quote> journal = theFactory.getMegaFactory().reader(Quote.class)) {
             int count = 1000000;
             long t = 0;
             QueryHeadBuilder qhb = journal.query().head().withKeys();

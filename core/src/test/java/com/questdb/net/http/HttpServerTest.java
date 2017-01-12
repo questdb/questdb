@@ -169,11 +169,11 @@ public class HttpServerTest extends AbstractJournalTest {
 
             latch.await();
 
-            try (Journal r = getReaderFactory().reader("test-import.csv")) {
+            try (Journal r = theFactory.getMegaFactory().reader("test-import.csv")) {
                 Assert.assertEquals("First failed", 129, r.size());
             }
 
-            try (Journal r = getReaderFactory().reader("test-import-nan.csv")) {
+            try (Journal r = theFactory.getMegaFactory().reader("test-import-nan.csv")) {
                 Assert.assertEquals("Second failed", 129, r.size());
             }
         } finally {
@@ -375,7 +375,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportIntoBusyJournal2() throws Exception {
-        WriterFactory f = new WriterFactoryImpl(getReaderFactory().getConfiguration().getJournalBase().getAbsolutePath());
+        WriterFactory f = new WriterFactoryImpl(theFactory.getMegaFactory().getConfiguration().getJournalBase().getAbsolutePath());
 
         try (JournalWriter w = f.writer(new JournalStructure("small.csv").$int("X").$int("Y").$())) {
             JournalEntryWriter ew = w.entryWriter();
@@ -493,7 +493,7 @@ public class HttpServerTest extends AbstractJournalTest {
                 Misc.free(src1);
             }
 
-            RecordSource src2 = qc.compile(getReaderFactory(), "'test-import.csv'");
+            RecordSource src2 = qc.compile(theFactory.getMegaFactory(), "'test-import.csv'");
             try {
                 Assert.assertEquals(ColumnType.DOUBLE, src2.getMetadata().getColumn("IntCol").getType());
             } finally {

@@ -57,7 +57,7 @@ public class GenericTest extends AbstractTest {
                 addNode(new ServerNode(1, "localhost"));
                 setHeartbeatFrequency(100);
                 setEnableMultiCast(false);
-            }}, getReaderFactory());
+            }}, theFactory.getMegaFactory());
 
             server.publish(w);
             server.start();
@@ -232,7 +232,7 @@ public class GenericTest extends AbstractTest {
                 addNode(new ServerNode(1, "localhost"));
                 setHeartbeatFrequency(100);
                 setEnableMultiCast(false);
-            }}, getReaderFactory());
+            }}, theFactory.getMegaFactory());
             server.publish(w);
             server.start();
 

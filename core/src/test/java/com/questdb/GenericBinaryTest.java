@@ -47,6 +47,7 @@ public class GenericBinaryTest extends AbstractTest {
         try (JournalWriter generic = getGenericWriter()) {
             writeInputStream(generic, bytes);
         }
+
         try (JournalWriter<BinContainer> w = getWriter()) {
             assertEquals(bytes, readObject(w));
         }
@@ -129,14 +130,14 @@ public class GenericBinaryTest extends AbstractTest {
     }
 
     private JournalWriter getGenericWriter() throws JournalException {
-        return getWriterFactory().writer(new JournalStructure("bintest") {{
-                                             $bin("image");
-                                         }}
+        return theFactory.getMegaFactory().writer(new JournalStructure("bintest") {{
+                                                        $bin("image");
+                                                    }}
         );
     }
 
     private JournalWriter<BinContainer> getWriter() throws JournalException {
-        return getWriterFactory().writer(BinContainer.class, "bintest");
+        return theFactory.getMegaFactory().writer(BinContainer.class, "bintest");
     }
 
     private List<byte[]> readObject(Journal<BinContainer> reader) {

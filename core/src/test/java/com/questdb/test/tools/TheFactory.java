@@ -23,7 +23,7 @@
 
 package com.questdb.test.tools;
 
-import com.questdb.factory.*;
+import com.questdb.factory.MegaFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
@@ -37,9 +37,6 @@ public class TheFactory implements TestRule {
 
     private final JournalConfigurationBuilder builder;
     private JournalConfiguration configuration;
-    private WriterFactoryImpl writerFactory;
-    private ReaderFactoryImpl readerFactory;
-    private CachingWriterFactory cachingWriterFactory;
     private MegaFactory megaFactory;
 
     public TheFactory(JournalConfigurationBuilder builder) {
@@ -58,9 +55,6 @@ public class TheFactory implements TestRule {
                 Throwable throwable = null;
                 File tmp = Files.makeTempDir();
 
-                writerFactory = null;
-                readerFactory = null;
-                cachingWriterFactory = null;
                 megaFactory = null;
 
                 try {
@@ -69,10 +63,6 @@ public class TheFactory implements TestRule {
                 } catch (Throwable e) {
                     throwable = e;
                 } finally {
-
-                    if (cachingWriterFactory != null) {
-                        cachingWriterFactory.close();
-                    }
 
                     if (megaFactory != null) {
                         megaFactory.close();
@@ -88,29 +78,8 @@ public class TheFactory implements TestRule {
         };
     }
 
-    public CachingWriterFactory getCachingWriterFactory() {
-        if (cachingWriterFactory == null) {
-            cachingWriterFactory = new CachingWriterFactory(configuration, 1);
-        }
-        return cachingWriterFactory;
-    }
-
     public JournalConfiguration getConfiguration() {
         return configuration;
-    }
-
-    public ReaderFactory getReaderFactory() {
-        if (readerFactory == null) {
-            readerFactory = new ReaderFactoryImpl(configuration);
-        }
-        return readerFactory;
-    }
-
-    public WriterFactory getWriterFactory() {
-        if (writerFactory == null) {
-            writerFactory = new WriterFactoryImpl(configuration);
-        }
-        return writerFactory;
     }
 
     public MegaFactory getMegaFactory() {

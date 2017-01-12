@@ -39,7 +39,7 @@ public class MultiColumnJoinTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
 
-        getReaderFactory().getConfiguration().exists("");
+        theFactory.getMegaFactory().getConfiguration().exists("");
         try (JournalWriter a = getWriterFactory().writer(new JournalStructure("a").$int("x").$str("y").$double("amount").$())) {
             try (JournalWriter b = getWriterFactory().writer(new JournalStructure("b").$int("x").$str("y").$str("name").$())) {
 

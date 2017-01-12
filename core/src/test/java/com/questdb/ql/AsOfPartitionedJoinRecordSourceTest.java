@@ -53,7 +53,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUpClass() throws Exception {
 
-        getWriterFactory().getConfiguration().exists("");
+        theFactory.getMegaFactory().getConfiguration().exists("");
 
         int xcount = 100;
         int ycount = 10;

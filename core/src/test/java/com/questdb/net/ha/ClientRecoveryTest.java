@@ -40,7 +40,7 @@ public class ClientRecoveryTest extends AbstractTest {
         JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, new JournalClient.Callback() {
             @Override
             public void onEvent(int evt) {
-                if (evt == JournalClientEvents.EVT_SERVER_ERROR) {
+                if (evt == JournalClientEvents.EVT_TERMINATED) {
                     serverError.countDown();
                 }
             }

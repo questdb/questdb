@@ -85,7 +85,7 @@ public class MulticastTest extends AbstractTest {
         JournalServer server = new JournalServer(new ServerConfig() {{
             addNode(new ServerNode(0, "[0:0:0:0:0:0:0:0]"));
             setHeartbeatFrequency(100);
-        }}, getReaderFactory(), null, 0);
+        }}, theFactory.getMegaFactory(), null, 0);
 
         final CountDownLatch connected = new CountDownLatch(1);
         JournalClient client = new JournalClient(new ClientConfig(), getWriterFactory(), null, new JournalClient.Callback() {

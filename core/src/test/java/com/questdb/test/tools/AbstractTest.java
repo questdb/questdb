@@ -24,7 +24,6 @@
 package com.questdb.test.tools;
 
 import com.questdb.ex.ParserException;
-import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.WriterFactory;
 import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
@@ -65,17 +64,13 @@ public abstract class AbstractTest {
         }
     }
 
-    public ReaderFactory getReaderFactory() {
-        return theFactory.getReaderFactory();
-    }
-
     public WriterFactory getWriterFactory() {
-        return theFactory.getWriterFactory();
+        return theFactory.getMegaFactory();
     }
 
     @Before
     public void setUp2() throws Exception {
-        getReaderFactory().getConfiguration().exists("none");
+        theFactory.getMegaFactory().getConfiguration().exists("none");
     }
 
     protected void assertEmpty(String query) throws ParserException {

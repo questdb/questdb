@@ -44,11 +44,11 @@ public class LockTest extends AbstractTest {
     public void testLockAcrossClassLoaders() throws JournalException, ClassNotFoundException, IllegalAccessException, InstantiationException, NoSuchMethodException, InvocationTargetException {
         URLClassLoader classLoader = new URLClassLoader(((URLClassLoader) this.getClass().getClassLoader()).getURLs(), null);
 
-        JournalWriter<Quote> rw = getWriterFactory().writer(Quote.class);
+        JournalWriter<Quote> rw = theFactory.getMegaFactory().writer(Quote.class);
         rw.close();
-        rw.delete();
+        theFactory.getMegaFactory().delete(Quote.class.getName());
 
-        rw = getWriterFactory().writer(Quote.class);
+        rw = theFactory.getMegaFactory().writer(Quote.class);
 
         List<Quote> data = new ArrayList<>();
         data.add(new Quote().setSym("S1").setTimestamp(Dates.toMillis(2013, 3, 10, 15, 0)));
@@ -56,12 +56,12 @@ public class LockTest extends AbstractTest {
         rw.mergeAppend(data);
         rw.commit();
 
-        new TestAccessor(getReaderFactory().getConfiguration().getJournalBase());
+        new TestAccessor(theFactory.getConfiguration().getJournalBase());
         classLoader.loadClass("com.questdb.LockTest$TestAccessor").getConstructor(File.class)
-                .newInstance(getReaderFactory().getConfiguration().getJournalBase());
+                .newInstance(theFactory.getConfiguration().getJournalBase());
 
         rw.close();
-        rw.delete();
+        theFactory.getMegaFactory().delete(Quote.class.getName());
     }
 
     public static class TestAccessor {

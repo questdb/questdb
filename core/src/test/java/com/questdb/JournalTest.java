@@ -44,6 +44,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class JournalTest extends AbstractTest {
 
@@ -103,7 +106,7 @@ public class JournalTest extends AbstractTest {
 
     @Test
     public void testInvalidColumnName() throws Exception {
-        File base = getReaderFactory().getConfiguration().getJournalBase();
+        File base = theFactory.getMegaFactory().getConfiguration().getJournalBase();
         File dir = new File(base, "x");
         Assert.assertFalse(dir.exists());
         try {
@@ -148,7 +151,7 @@ public class JournalTest extends AbstractTest {
     public void testMaxRowIDOnEmptyReader() throws Exception {
         getWriterFactory().writer(Quote.class).close();
 
-        try (Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym")) {
+        try (Journal<Quote> r = theFactory.getMegaFactory().reader(Quote.class).select("sym")) {
             Assert.assertEquals(-1, r.getMaxRowID());
             Assert.assertNull(r.getLastPartition());
         }
@@ -161,7 +164,7 @@ public class JournalTest extends AbstractTest {
             w.commit();
         }
 
-        try (Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym")) {
+        try (Journal<Quote> r = theFactory.getMegaFactory().reader(Quote.class).select("sym")) {
             Assert.assertEquals(999, r.getMaxRowID());
         }
     }
@@ -170,15 +173,21 @@ public class JournalTest extends AbstractTest {
     public void testOfflinePartition() throws Exception {
         int SIZE = 50000;
         File location;
-        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin", SIZE)) {
+        final String name = "origin";
+        try (JournalWriter<Quote> origin = theFactory.getMegaFactory().writer(Quote.class, name, SIZE)) {
             TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
             origin.commit();
             location = new File(origin.getLocation(), "2014-03");
         }
 
-        Files.deleteOrException(location);
+        theFactory.getMegaFactory().lock(name);
+        try {
+            Files.deleteOrException(location);
+        } finally {
+            theFactory.getMegaFactory().unlock(name);
+        }
 
-        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = theFactory.getMegaFactory().writer(Quote.class, name)) {
             Assert.assertEquals(25914, origin.size());
             TestUtils.generateQuoteData(origin, 3000, Dates.parseDateTime("2014-03-30T00:11:00Z"), 10000);
             Assert.assertEquals(28914, origin.size());
@@ -203,7 +212,7 @@ public class JournalTest extends AbstractTest {
         WriterFactoryImpl f2 = new WriterFactoryImpl(new JournalConfigurationBuilder() {{
             $(Quote.class)
                     .$sym("mode");
-        }}.build(getReaderFactory().getConfiguration().getJournalBase()));
+        }}.build(theFactory.getMegaFactory().getConfiguration().getJournalBase()));
 
         try {
             f2.writer(new JournalKey<>(Quote.class, "quote"));
@@ -230,7 +239,7 @@ public class JournalTest extends AbstractTest {
                 "null\tAMD\t0.061826046796662926\t0.0\t0\t0\tnull\tnull\n" +
                 "null\tHSBA.L\t0.30903524429086027\t0.0\t0\t0\tnull\tnull";
 
-        try (Journal<Quote> r = getReaderFactory().reader(Quote.class).select("sym", "bid")) {
+        try (Journal<Quote> r = theFactory.getMegaFactory().reader(Quote.class).select("sym", "bid")) {
             TestUtils.assertEquals(expected, r.query().all().asResultSet().subset(90, 100));
         }
     }
@@ -246,7 +255,7 @@ public class JournalTest extends AbstractTest {
         Files.deleteOrException(new File(path, "2013-02/sym.r"));
         Files.deleteOrException(new File(path, "2013-02/sym.k"));
 
-        try (Journal<Quote> journal = getReaderFactory().reader(Quote.class)) {
+        try (Journal<Quote> journal = theFactory.getMegaFactory().reader(Quote.class)) {
             try {
                 journal.query().head().withKeys().asResultSet().read();
                 Assert.fail("Expected exception here");
@@ -297,23 +306,34 @@ public class JournalTest extends AbstractTest {
 
     @Test
     public void testSingleWriterModel() throws Exception {
-        try (JournalWriter<Quote> writer = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> writer = theFactory.getMegaFactory().writer(Quote.class)) {
             Assert.assertTrue(writer != null);
 
-            try {
-                getWriterFactory().writer(Quote.class);
-                Assert.fail("Able to open second writer - error");
-            } catch (JournalException e) {
-                // ignore
-            }
+            final CountDownLatch finished = new CountDownLatch(1);
+            final AtomicInteger errors = new AtomicInteger();
+            new Thread() {
+                @Override
+                public void run() {
+                    try {
+                        theFactory.getMegaFactory().writer(Quote.class);
+                        errors.incrementAndGet();
+                    } catch (JournalException e) {
+                        // ignore
+                    }
+                    finished.countDown();
+                }
+            }.start();
+
+            Assert.assertTrue(finished.await(1, TimeUnit.SECONDS));
+            Assert.assertEquals(0, errors.get());
 
             // check if we can open a reader
-            try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+            try (Journal<Quote> r = theFactory.getMegaFactory().reader(Quote.class)) {
                 Assert.assertTrue(r != null);
             }
 
             // check if we can open writer in alt location
-            try (JournalWriter w = getWriterFactory().writer(Quote.class, "test-Quote")) {
+            try (JournalWriter w = theFactory.getMegaFactory().writer(Quote.class, "test-Quote")) {
                 Assert.assertTrue(w != null);
             }
         }
@@ -334,7 +354,7 @@ public class JournalTest extends AbstractTest {
             Assert.assertTrue(sizeAfterCompaction < size);
         }
 
-        try (Journal<Quote> r = getReaderFactory().reader(Quote.class, "quote")) {
+        try (Journal<Quote> r = theFactory.getMegaFactory().reader(Quote.class, "quote")) {
             Assert.assertEquals(1000, r.query().all().size());
             File f = new File(r.getLocation(), "2013-03/sym.d");
             Assert.assertEquals(sizeAfterCompaction, f.length());
@@ -423,7 +443,7 @@ public class JournalTest extends AbstractTest {
                 w.mergeAppend(origin.query().all().asResultSet().subset(100000, 120000));
                 w.commit();
 
-                try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+                try (Journal<Quote> r = theFactory.getMegaFactory().reader(Quote.class)) {
                     TestUtils.assertEquals(w, r);
                     w.mergeAppend(origin.query().all().asResultSet().subset(120000, 150000));
                     w.rollback();

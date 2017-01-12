@@ -430,9 +430,8 @@ public class GenericInteropTest extends AbstractTest {
     @Test
     public void testPartialObjectWriter() throws Exception {
         makeGenericWriter().close();
-
         try {
-            getWriterFactory().writer(Partial.class, "test");
+            theFactory.getMegaFactory().writer(Partial.class, "test");
             Assert.fail("Expected exception");
         } catch (JournalException ignore) {
             // ignore exception
@@ -440,7 +439,7 @@ public class GenericInteropTest extends AbstractTest {
     }
 
     private JournalWriter makeGenericWriter() throws JournalException {
-        return getWriterFactory().writer(new JournalStructure("test") {{
+        return theFactory.getMegaFactory().writer(new JournalStructure("test") {{
             $sym("sym").index();
             $date("created");
             $double("bid");

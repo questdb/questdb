@@ -61,7 +61,7 @@ public class IntegrationTest extends AbstractTest {
         server = new JournalServer(new ServerConfig() {{
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
             setEnableMultiCast(false);
-        }}, getReaderFactory());
+        }}, theFactory.getMegaFactory());
         client = new JournalClient(new ClientConfig("localhost"), getWriterFactory());
     }
 
@@ -106,7 +106,7 @@ public class IntegrationTest extends AbstractTest {
                     // create empty journal
                     getWriterFactory().writer(Quote.class, "local").close();
 
-                    try (final Journal local = getReaderFactory().reader("local")) {
+                    try (final Journal local = theFactory.getMegaFactory().reader("local")) {
                         client.subscribe(Quote.class, "origin", "local", new JournalListener() {
                             @Override
                             public void onCommit() {
@@ -284,7 +284,7 @@ public class IntegrationTest extends AbstractTest {
 
                 client.halt();
 
-                try (Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
+                try (Journal<Quote> local = theFactory.getMegaFactory().reader(Quote.class, "local")) {
                     TestUtils.assertDataEquals(remote, local);
                 }
 
@@ -363,7 +363,7 @@ public class IntegrationTest extends AbstractTest {
 
                 client.halt();
 
-                try (Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
+                try (Journal<Quote> local = theFactory.getMegaFactory().reader(Quote.class, "local")) {
                     TestUtils.assertDataEquals(remote, local);
                 }
 
@@ -475,7 +475,7 @@ public class IntegrationTest extends AbstractTest {
                     Assert.assertTrue(incompatible.await(500, TimeUnit.SECONDS));
 
                     // delete incompatible journal
-                    getReaderFactory().getConfiguration().delete("local");
+                    theFactory.getMegaFactory().delete("local");
 
 
                     // subscribe again and have client create compatible journal from server's metadata
@@ -504,7 +504,7 @@ public class IntegrationTest extends AbstractTest {
                 Assert.assertTrue(terminated.await(5, TimeUnit.SECONDS));
                 Assert.assertEquals(0, serverDied.get());
 
-                try (Journal r = getReaderFactory().reader("local")) {
+                try (Journal r = theFactory.getMegaFactory().reader("local")) {
                     Assert.assertEquals(size, r.size());
                 }
             } finally {
@@ -571,7 +571,7 @@ public class IntegrationTest extends AbstractTest {
                 server.halt();
             }
 
-            try (Journal<Quote> local = getReaderFactory().reader(Quote.class, "local")) {
+            try (Journal<Quote> local = theFactory.getMegaFactory().reader(Quote.class, "local")) {
                 TestUtils.assertDataEquals(remote, local);
             }
         }
@@ -588,10 +588,10 @@ public class IntegrationTest extends AbstractTest {
     public void testSubscribeIncompatible() throws Exception {
         int size = 10000;
 
-        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = theFactory.getMegaFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, size);
 
-            try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+            try (JournalWriter<Quote> remote = theFactory.getMegaFactory().writer(Quote.class, "remote")) {
 
                 server.publish(remote);
 
@@ -603,7 +603,7 @@ public class IntegrationTest extends AbstractTest {
                     remote.commit();
 
 
-                    getWriterFactory().writer(new JournalConfigurationBuilder().$("local").$int("x").$()).close();
+                    theFactory.getMegaFactory().writer(new JournalConfigurationBuilder().$("local").$int("x").$()).close();
 
                     final CountDownLatch terminated = new CountDownLatch(1);
                     JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, new JournalClient.Callback() {
@@ -770,7 +770,7 @@ public class IntegrationTest extends AbstractTest {
 
                             TestUtils.assertCounter(counter, 1, 2, TimeUnit.SECONDS);
 
-                            try (Journal r = getReaderFactory().reader("local1")) {
+                            try (Journal r = theFactory.getMegaFactory().reader("local1")) {
                                 Assert.assertEquals(1000, r.size());
                             }
 
@@ -788,7 +788,7 @@ public class IntegrationTest extends AbstractTest {
 
                             TestUtils.assertCounter(counter, 2, 2, TimeUnit.SECONDS);
 
-                            try (Journal r = getReaderFactory().reader("local2")) {
+                            try (Journal r = theFactory.getMegaFactory().reader("local2")) {
                                 Assert.assertEquals(1000, r.size());
                             }
 
@@ -848,7 +848,7 @@ public class IntegrationTest extends AbstractTest {
 
                             TestUtils.assertCounter(counter, 1, 2, TimeUnit.SECONDS);
 
-                            try (Journal r = getReaderFactory().reader("local1")) {
+                            try (Journal r = theFactory.getMegaFactory().reader("local1")) {
                                 Assert.assertEquals(1000, r.size());
                             }
 
@@ -867,7 +867,7 @@ public class IntegrationTest extends AbstractTest {
                             TestUtils.assertCounter(counter, 1, 2, TimeUnit.SECONDS);
                             TestUtils.assertCounter(errors, 1, 2, TimeUnit.SECONDS);
 
-                            try (Journal r = getReaderFactory().reader("local1")) {
+                            try (Journal r = theFactory.getMegaFactory().reader("local1")) {
                                 Assert.assertEquals(1000, r.size());
                             }
 
@@ -963,11 +963,11 @@ public class IntegrationTest extends AbstractTest {
 
                 TestUtils.assertCounter(counter, 6, 2, TimeUnit.SECONDS);
 
-                try (Journal<Quote> local1r = getReaderFactory().reader(Quote.class, "local1")) {
+                try (Journal<Quote> local1r = theFactory.getMegaFactory().reader(Quote.class, "local1")) {
                     Assert.assertEquals(size, local1r.size());
                 }
 
-                try (Journal<Quote> local2r = getReaderFactory().reader(Quote.class, "local2")) {
+                try (Journal<Quote> local2r = theFactory.getMegaFactory().reader(Quote.class, "local2")) {
                     Assert.assertEquals(size, local2r.size());
                 }
 
@@ -1021,11 +1021,11 @@ public class IntegrationTest extends AbstractTest {
                 client.halt();
                 server.halt();
 
-                try (Journal<Quote> local1 = getReaderFactory().reader(Quote.class, "local1")) {
+                try (Journal<Quote> local1 = theFactory.getMegaFactory().reader(Quote.class, "local1")) {
                     Assert.assertEquals("Local1 has wrong size", size, local1.size());
                 }
 
-                try (Journal<TestEntity> local2 = getReaderFactory().reader(TestEntity.class, "local2")) {
+                try (Journal<TestEntity> local2 = theFactory.getMegaFactory().reader(TestEntity.class, "local2")) {
                     Assert.assertEquals("Remote2 has wrong size", size, remote2.size());
                     Assert.assertEquals("Local2 has wrong size", size, local2.size());
                 }

@@ -82,7 +82,7 @@ public class NullTest extends AbstractTest {
             w.commit();
 
 
-            try (Journal<Quote> r = getReaderFactory().reader(Quote.class, "quote")) {
+            try (Journal<Quote> r = theFactory.getMegaFactory().reader(Quote.class, "quote")) {
                 int i = 0;
                 for (Quote qr : JournalIterators.bufferedIterator(r)) {
                     if (i % 7 != 0) {

@@ -74,7 +74,7 @@ public class ClusterControllerTest extends AbstractTest {
     public void testBusyFailOver() throws Exception {
 
         try (JournalWriter<Quote> writer1 = getWriterFactory().writer(Quote.class)) {
-            try (final JournalWriter<Quote> writer2 = tf.getWriterFactory().writer(Quote.class)) {
+            try (final JournalWriter<Quote> writer2 = tf.getMegaFactory().writer(Quote.class)) {
 
                 final CountDownLatch active1 = new CountDownLatch(1);
                 final CountDownLatch active2 = new CountDownLatch(1);
@@ -297,9 +297,9 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        try (JournalWriter writer1 = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter writer1 = theFactory.getMegaFactory().writer(Quote.class)) {
 
-            try (JournalWriter writer2 = tf.getWriterFactory().writer(Quote.class)) {
+            try (JournalWriter writer2 = tf.getMegaFactory().writer(Quote.class)) {
 
                 ClusterController controller1 = createControllerX(writer1, 0, theFactory.getMegaFactory(), active1Latch, standby1Latch, shutdown1);
                 controller1.start();
@@ -340,9 +340,9 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        try (JournalWriter writer1 = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter writer1 = theFactory.getMegaFactory().writer(Quote.class)) {
 
-            try (JournalWriter writer2 = tf.getWriterFactory().writer(Quote.class)) {
+            try (JournalWriter writer2 = tf.getMegaFactory().writer(Quote.class)) {
 
                 ClusterController controller1 = createControllerX(writer1, 0, theFactory.getMegaFactory(), active1Latch, standby1Latch, shutdown1);
                 controller1.start();
@@ -405,7 +405,7 @@ public class ClusterControllerTest extends AbstractTest {
 
         try (JournalWriter writer1 = getWriterFactory().writer(Quote.class)) {
 
-            try (JournalWriter writer2 = tf.getWriterFactory().writer(Quote.class)) {
+            try (JournalWriter writer2 = tf.getMegaFactory().writer(Quote.class)) {
                 ClusterController controller1 = createControllerX(writer1, 0, theFactory.getMegaFactory(), active1Latch, standby1Latch, shutdown1);
                 ClusterController controller2 = createControllerX(writer2, 1, tf.getMegaFactory(), active2Latch, standby2Latch, shutdown2);
 
@@ -413,7 +413,7 @@ public class ClusterControllerTest extends AbstractTest {
                 controller2.start();
                 controller1.start();
 
-                getReaderFactory().close();
+                theFactory.getMegaFactory().close();
 
                 long t = System.currentTimeMillis();
                 do {

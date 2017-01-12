@@ -69,7 +69,7 @@ public class IntervalCompilerTest {
 
     @Test
     public void testIntersectMergeOverlap2() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000"));
         a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
 
         b.add(Dates.parseDateTime("2016-03-10T11:00:00.000Z"));

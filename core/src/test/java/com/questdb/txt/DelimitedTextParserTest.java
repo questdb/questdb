@@ -45,9 +45,9 @@ public class DelimitedTextParserTest extends AbstractTest {
         String location = "test-import.csv";
 
 
-        Assert.assertEquals(JournalConfiguration.EXISTS, getReaderFactory().getConfiguration().exists(location));
+        Assert.assertEquals(JournalConfiguration.EXISTS, theFactory.getMegaFactory().getConfiguration().exists(location));
 
-        try (Journal r = getReaderFactory().reader(location)) {
+        try (Journal r = theFactory.getMegaFactory().reader(location)) {
             JournalMetadata m = r.getMetadata();
             Assert.assertEquals(10, m.getColumnCount());
             Assert.assertEquals(ColumnType.STRING, m.getColumn(0).type);
@@ -62,7 +62,7 @@ public class DelimitedTextParserTest extends AbstractTest {
             Assert.assertEquals(ColumnType.LONG, m.getColumn(9).type);
         }
 
-        File actual = new File(getReaderFactory().getConfiguration().getJournalBase(), "exp.csv");
+        File actual = new File(theFactory.getMegaFactory().getConfiguration().getJournalBase(), "exp.csv");
         File expected = new File(this.getClass().getResource("/csv/test-export-expected.csv").getFile());
 
         try (RecordSource rs = compile("'" + location + "'")) {
@@ -120,9 +120,9 @@ public class DelimitedTextParserTest extends AbstractTest {
         ImportManager.importFile(theFactory.getMegaFactory(), file, TextFileDelimiter.CSV, "IntSym=INT&Fmt2Date=STRING");
         String location = "test-import.csv";
 
-        Assert.assertEquals(JournalConfiguration.EXISTS, getReaderFactory().getConfiguration().exists(location));
+        Assert.assertEquals(JournalConfiguration.EXISTS, theFactory.getMegaFactory().getConfiguration().exists(location));
 
-        try (Journal r = getReaderFactory().reader(location)) {
+        try (Journal r = theFactory.getMegaFactory().reader(location)) {
             JournalMetadata m = r.getMetadata();
             Assert.assertEquals(ColumnType.INT, m.getColumn(1).type);
             Assert.assertEquals(ColumnType.STRING, m.getColumn(6).type);

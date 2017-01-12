@@ -42,7 +42,7 @@ public class PartitionCloseTest extends AbstractTest {
             w.append(q);
         }
 
-        try (Journal<Quote> r = getReaderFactory().reader(Quote.class)) {
+        try (Journal<Quote> r = theFactory.getMegaFactory().reader(Quote.class)) {
             Assert.assertEquals(2, r.size());
         }
     }

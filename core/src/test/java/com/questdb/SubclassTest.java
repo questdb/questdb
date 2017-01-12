@@ -24,20 +24,16 @@
 package com.questdb;
 
 import com.questdb.model.SubQuote;
-import com.questdb.test.tools.TheFactory;
+import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
-import org.junit.Rule;
 import org.junit.Test;
 
-public class SubclassTest {
-
-    @Rule
-    public final TheFactory theFactory = new TheFactory();
+public class SubclassTest extends AbstractTest {
 
     @Test
     public void testSubclass() throws Exception {
 
-        try (JournalWriter<SubQuote> w = theFactory.getWriterFactory().writer(SubQuote.class)) {
+        try (JournalWriter<SubQuote> w = theFactory.getMegaFactory().writer(SubQuote.class)) {
 
             SubQuote q = new SubQuote().setType((byte) 10);
             q.setTimestamp(System.currentTimeMillis());

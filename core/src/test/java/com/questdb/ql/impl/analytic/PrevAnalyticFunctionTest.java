@@ -137,7 +137,7 @@ public class PrevAnalyticFunctionTest extends AbstractAllTypeTest {
     @BeforeClass
     public static void setup() {
         // this check will initialise thread local object outside of memory leak tests
-        getWriterFactory().getConfiguration().exists("");
+        theFactory.getMegaFactory().getConfiguration().exists("");
     }
 
     @Test
