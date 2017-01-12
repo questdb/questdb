@@ -25,8 +25,7 @@ package org.questdb.examples.replication.plain;
 
 import com.questdb.Journal;
 import com.questdb.JournalIterators;
-import com.questdb.factory.ReaderFactoryImpl;
-import com.questdb.factory.WriterFactoryImpl;
+import com.questdb.factory.MegaFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalClient;
@@ -41,12 +40,11 @@ import org.questdb.examples.support.Price;
 public class SimpleReplicationClientMain {
     public static void main(String[] args) throws Exception {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(configuration);
-        WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration);
+        MegaFactory factory = new MegaFactory(configuration, 1000, 1);
 
-        final JournalClient client = new JournalClient(writerFactory);
+        final JournalClient client = new JournalClient(factory);
 
-        final Journal<Price> reader = readerFactory.reader(Price.class, "price-copy");
+        final Journal<Price> reader = factory.reader(Price.class, "price-copy");
         reader.setSequentialAccess(true);
 
         client.subscribe(Price.class, null, "price-copy", new JournalListener() {

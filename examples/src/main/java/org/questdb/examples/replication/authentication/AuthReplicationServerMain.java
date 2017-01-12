@@ -26,8 +26,7 @@ package org.questdb.examples.replication.authentication;
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.ReaderFactoryImpl;
-import com.questdb.factory.WriterFactoryImpl;
+import com.questdb.factory.MegaFactory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalServer;
@@ -52,17 +51,16 @@ public class AuthReplicationServerMain {
 
     public void start() throws Exception {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(location);
-        ReaderFactoryImpl readerFactory = new ReaderFactoryImpl(configuration);
-        WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration);
+        MegaFactory factory = new MegaFactory(configuration, 1000, 2);
 
-        JournalServer server = new JournalServer(readerFactory, new AuthorizationHandler() {
+        JournalServer server = new JournalServer(factory, new AuthorizationHandler() {
             @Override
             public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) throws UnsupportedEncodingException {
                 return "MY SECRET".equals(new String(token, "UTF8"));
             }
         });
 
-        JournalWriter<Price> writer = writerFactory.writer(Price.class);
+        JournalWriter<Price> writer = factory.writer(Price.class);
         server.publish(writer);
 
         server.start();

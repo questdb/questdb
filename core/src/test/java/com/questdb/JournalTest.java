@@ -25,7 +25,7 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.WriterFactoryImpl;
+import com.questdb.factory.MegaFactory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Dates;
@@ -209,12 +209,10 @@ public class JournalTest extends AbstractTest {
             // expect exception
         }
 
-        WriterFactoryImpl f2 = new WriterFactoryImpl(new JournalConfigurationBuilder() {{
+        try (MegaFactory f2 = new MegaFactory(new JournalConfigurationBuilder() {{
             $(Quote.class)
                     .$sym("mode");
-        }}.build(theFactory.getMegaFactory().getConfiguration().getJournalBase()));
-
-        try {
+        }}.build(theFactory.getConfiguration().getJournalBase()), 1000, 1)) {
             f2.writer(new JournalKey<>(Quote.class, "quote"));
             Assert.fail("Exception expected");
         } catch (JournalException e) {

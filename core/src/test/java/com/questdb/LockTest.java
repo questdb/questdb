@@ -24,7 +24,7 @@
 package com.questdb;
 
 import com.questdb.ex.JournalException;
-import com.questdb.factory.ReaderFactoryImpl;
+import com.questdb.factory.MegaFactory;
 import com.questdb.misc.Dates;
 import com.questdb.model.Quote;
 import com.questdb.model.configuration.ModelConfiguration;
@@ -66,7 +66,7 @@ public class LockTest extends AbstractTest {
 
     public static class TestAccessor {
         public TestAccessor(File journalBase) throws JournalException {
-            try (ReaderFactoryImpl factory = new ReaderFactoryImpl(ModelConfiguration.MAIN.build(journalBase))) {
+            try (MegaFactory factory = new MegaFactory(ModelConfiguration.MAIN.build(journalBase), 1000, 1)) {
                 try (Journal<Quote> reader = factory.reader(Quote.class)) {
                     Assert.assertEquals(2, reader.size());
                 }

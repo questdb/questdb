@@ -30,7 +30,6 @@ import com.questdb.ex.FatalError;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.factory.WriterFactory;
-import com.questdb.factory.WriterFactoryImpl;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.iter.clock.Clock;
 import com.questdb.log.Log;
@@ -375,7 +374,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportIntoBusyJournal2() throws Exception {
-        WriterFactory f = new WriterFactoryImpl(theFactory.getMegaFactory().getConfiguration().getJournalBase().getAbsolutePath());
+        WriterFactory f = theFactory.getMegaFactory();
 
         try (JournalWriter w = f.writer(new JournalStructure("small.csv").$int("X").$int("Y").$())) {
             JournalEntryWriter ew = w.entryWriter();
@@ -393,7 +392,7 @@ public class HttpServerTest extends AbstractJournalTest {
             StringBuilder response = new StringBuilder();
             try {
                 Assert.assertEquals(200, HttpTestUtils.upload("/csv/small.csv", "http://localhost:9000/imp?fmt=json", null, response));
-                Assert.assertTrue(Chars.startsWith(response, "{\"status\":\"com.questdb.ex.JournalWriterAlreadyOpenException\"}"));
+                Assert.assertTrue(Chars.startsWith(response, "{\"status\":\"com.questdb.ex.WriterBusyException\"}"));
             } catch (IOException e) {
                 Assert.assertTrue(e.getMessage().contains("Connection reset"));
             } finally {
