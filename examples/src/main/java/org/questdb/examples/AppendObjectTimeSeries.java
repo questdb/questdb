@@ -25,7 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.WriterFactoryImpl;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
@@ -55,12 +55,12 @@ public class AppendObjectTimeSeries {
             ;
         }}.build(journalLocation);
 
-        try (WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration)) {
+        try (Factory factory = new Factory(configuration, 1000, 1)) {
 
             // delete existing quote journal
             Files.delete(new File(configuration.getJournalBase(), "quote"));
 
-            try (JournalWriter<Quote> writer = writerFactory.writer(Quote.class)) {
+            try (JournalWriter<Quote> writer = factory.writer(Quote.class)) {
 
                 final int count = 1000000;
                 final String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};

@@ -58,12 +58,12 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     public static void setUp() throws Exception {
         final ServerConfiguration serverConfiguration = new ServerConfiguration();
         serverConfiguration.setHttpThreads(1);
-        handler = new QueryHandler(theFactory.getMegaFactory(), serverConfiguration);
+        handler = new QueryHandler(FACTORY_CONTAINER.getFactory(), serverConfiguration);
 
         server = new HttpServer(serverConfiguration, new SimpleUrlMatcher() {{
             put("/js", handler);
-            put("/chk", new ExistenceCheckHandler(theFactory.getMegaFactory()));
-            put("/csv", new CsvHandler(theFactory.getMegaFactory(), serverConfiguration));
+            put("/chk", new ExistenceCheckHandler(FACTORY_CONTAINER.getFactory()));
+            put("/csv", new CsvHandler(FACTORY_CONTAINER.getFactory(), serverConfiguration));
         }});
 
         server.start();
@@ -253,7 +253,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     }
 
     private static void generateJournal(String name, QueryResponse.Tab[] recs, int count) throws JournalException, NumericException {
-        try (JournalWriter w = theFactory.getMegaFactory().writer(
+        try (JournalWriter w = FACTORY_CONTAINER.getFactory().writer(
                 new JournalStructure(name).
                         $sym("id").
                         $double("x").

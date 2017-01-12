@@ -24,7 +24,7 @@
 package com.questdb.txt;
 
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.txt.parser.DelimitedTextParser;
@@ -86,11 +86,11 @@ public final class ImportManager {
      * @param schema    optional instance of ImportSchema
      * @throws IOException in case imported file cannot be read
      */
-    public static void importFile(MegaFactory factory, String fileName, char delimiter, @Nullable CharSequence schema) throws IOException {
+    public static void importFile(Factory factory, String fileName, char delimiter, @Nullable CharSequence schema) throws IOException {
         importFile(factory, fileName, delimiter, schema, SAMPLE_SIZE);
     }
 
-    public static void importFile(MegaFactory factory, String fileName, char delimiter, CharSequence schema, int sampleSize) throws IOException {
+    public static void importFile(Factory factory, String fileName, char delimiter, CharSequence schema, int sampleSize) throws IOException {
 
         try (DelimitedTextParser parser = new DelimitedTextParser().of(delimiter)) {
             File file = new File(fileName);

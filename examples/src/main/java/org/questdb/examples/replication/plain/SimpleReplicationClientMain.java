@@ -25,7 +25,7 @@ package org.questdb.examples.replication.plain;
 
 import com.questdb.Journal;
 import com.questdb.JournalIterators;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalClient;
@@ -40,7 +40,7 @@ import org.questdb.examples.support.Price;
 public class SimpleReplicationClientMain {
     public static void main(String[] args) throws Exception {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        MegaFactory factory = new MegaFactory(configuration, 1000, 1);
+        Factory factory = new Factory(configuration, 1000, 1);
 
         final JournalClient client = new JournalClient(factory);
 

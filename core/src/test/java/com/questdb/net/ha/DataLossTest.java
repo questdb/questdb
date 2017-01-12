@@ -56,7 +56,7 @@ public class DataLossTest extends AbstractTest {
                         setEnableMultiCast(false);
                         setHeartbeatFrequency(50);
                     }}
-                    , theFactory.getMegaFactory());
+                    , factoryContainer.getFactory());
             server.publish(master);
             server.start();
 

@@ -24,6 +24,8 @@
 package com.questdb.factory;
 
 import com.questdb.Journal;
+import com.questdb.JournalKey;
+import com.questdb.PartitionBy;
 import com.questdb.ex.*;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
@@ -37,7 +39,7 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class CachingReaderFactory extends ReaderFactoryImpl implements JournalCloseInterceptor {
+public class CachingReaderFactory extends AbstractFactory implements JournalCloseInterceptor, ReaderFactory {
 
     public static final long CLOSED;
 
@@ -226,6 +228,31 @@ public class CachingReaderFactory extends ReaderFactoryImpl implements JournalCl
         // max entries exceeded
         LOG.info().$("Thread ").$(thread).$(" cannot allocate reader. Max entries exceeded (").$(this.maxSegments).$(')').$();
         throw FactoryFullException.INSTANCE;
+    }
+
+    @Override
+    public final <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        return reader(getConfiguration().createMetadata(key));
+    }
+
+    @Override
+    public final <T> Journal<T> reader(Class<T> clazz) throws JournalException {
+        return reader(new JournalKey<>(clazz));
+    }
+
+    @Override
+    public final <T> Journal<T> reader(Class<T> clazz, String name) throws JournalException {
+        return reader(new JournalKey<>(clazz, name));
+    }
+
+    @Override
+    public final Journal reader(String name) throws JournalException {
+        return reader(getConfiguration().readMetadata(name));
+    }
+
+    @Override
+    public final <T> Journal<T> reader(Class<T> clazz, String name, int recordHint) throws JournalException {
+        return reader(new JournalKey<>(clazz, name, PartitionBy.DEFAULT, recordHint));
     }
 
     public void unlock(String name) {

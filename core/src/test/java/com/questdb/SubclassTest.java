@@ -33,7 +33,7 @@ public class SubclassTest extends AbstractTest {
     @Test
     public void testSubclass() throws Exception {
 
-        try (JournalWriter<SubQuote> w = theFactory.getMegaFactory().writer(SubQuote.class)) {
+        try (JournalWriter<SubQuote> w = factoryContainer.getFactory().writer(SubQuote.class)) {
 
             SubQuote q = new SubQuote().setType((byte) 10);
             q.setTimestamp(System.currentTimeMillis());

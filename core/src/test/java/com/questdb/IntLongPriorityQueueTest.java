@@ -42,7 +42,7 @@ public class IntLongPriorityQueueTest extends AbstractTest {
 
     @Before
     public void setUp() {
-        indexFile = new File(theFactory.getConfiguration().getJournalBase(), "index-test");
+        indexFile = new File(factoryContainer.getConfiguration().getJournalBase(), "index-test");
     }
 
     @Test

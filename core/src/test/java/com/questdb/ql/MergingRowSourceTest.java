@@ -50,7 +50,7 @@ public class MergingRowSourceTest extends AbstractTest {
             RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new HeapMergingRowSource(srcA, srcB));
 
             long last = 0;
-            RecordCursor c = rs.prepareCursor(theFactory.getMegaFactory());
+            RecordCursor c = rs.prepareCursor(factoryContainer.getFactory());
             try {
                 int ts = rs.getMetadata().getColumnIndex("timestamp");
                 while (c.hasNext()) {
@@ -75,7 +75,7 @@ public class MergingRowSourceTest extends AbstractTest {
             try (RecordSource rs = new JournalRecordSource(new JournalPartitionSource(w.getMetadata(), true), new MergingRowSource(srcA, srcB))) {
 
                 long last = 0;
-                RecordCursor c = rs.prepareCursor(theFactory.getMegaFactory());
+                RecordCursor c = rs.prepareCursor(factoryContainer.getFactory());
                 try {
                     int ts = rs.getMetadata().getColumnIndex("timestamp");
                     while (c.hasNext()) {

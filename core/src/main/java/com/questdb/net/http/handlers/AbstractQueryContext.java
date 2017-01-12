@@ -24,7 +24,7 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.ex.*;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -104,7 +104,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
 
     public void compileQuery(
             ChunkedResponse r,
-            MegaFactory factory,
+            Factory factory,
             AtomicLong misses,
             AtomicLong hits) throws IOException {
         try {
@@ -214,7 +214,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
         return LOG.error().$('[').$(fd).$("] ");
     }
 
-    private RecordSource executeQuery(ChunkedResponse r, MegaFactory factory) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
+    private RecordSource executeQuery(ChunkedResponse r, Factory factory) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
         QueryCompiler compiler = COMPILER.get();
         ParsedModel model = compiler.parse(query);
         switch (model.getModelType()) {

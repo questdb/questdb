@@ -25,7 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
@@ -45,7 +45,7 @@ public class SQLExamples {
             System.exit(1);
         }
 
-        try (MegaFactory factory = new MegaFactory(args[0], 1000, 1)) {
+        try (Factory factory = new Factory(args[0], 1000, 1)) {
 
             // import movies data to query
             ImportManager.importFile(factory, SQLExamples.class.getResource("/movies.csv").getFile(), ',', null);

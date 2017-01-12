@@ -23,7 +23,7 @@
 
 package com.questdb.test.tools;
 
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
@@ -33,17 +33,17 @@ import org.junit.runners.model.Statement;
 
 import java.io.File;
 
-public class TheFactory implements TestRule {
+public class FactoryContainer implements TestRule {
 
     private final JournalConfigurationBuilder builder;
     private JournalConfiguration configuration;
-    private MegaFactory megaFactory;
+    private Factory factory;
 
-    public TheFactory(JournalConfigurationBuilder builder) {
+    public FactoryContainer(JournalConfigurationBuilder builder) {
         this.builder = builder;
     }
 
-    public TheFactory() {
+    public FactoryContainer() {
         this.builder = new JournalConfigurationBuilder();
     }
 
@@ -55,7 +55,7 @@ public class TheFactory implements TestRule {
                 Throwable throwable = null;
                 File tmp = Files.makeTempDir();
 
-                megaFactory = null;
+                factory = null;
 
                 try {
                     configuration = builder.build(tmp);
@@ -64,8 +64,8 @@ public class TheFactory implements TestRule {
                     throwable = e;
                 } finally {
 
-                    if (megaFactory != null) {
-                        megaFactory.close();
+                    if (factory != null) {
+                        factory.close();
                     }
 
                     Files.deleteOrException(tmp);
@@ -82,10 +82,10 @@ public class TheFactory implements TestRule {
         return configuration;
     }
 
-    public MegaFactory getMegaFactory() {
-        if (megaFactory == null) {
-            megaFactory = new MegaFactory(configuration, 0, 2);
+    public Factory getFactory() {
+        if (factory == null) {
+            factory = new Factory(configuration, 0, 2);
         }
-        return megaFactory;
+        return factory;
     }
 }

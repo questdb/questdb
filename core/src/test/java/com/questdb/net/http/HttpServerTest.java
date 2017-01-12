@@ -132,7 +132,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testConcurrentImport() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, theFactory.getMegaFactory()));
+            put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
         }});
         server.start();
 
@@ -168,11 +168,11 @@ public class HttpServerTest extends AbstractJournalTest {
 
             latch.await();
 
-            try (Journal r = theFactory.getMegaFactory().reader("test-import.csv")) {
+            try (Journal r = factoryContainer.getFactory().reader("test-import.csv")) {
                 Assert.assertEquals("First failed", 129, r.size());
             }
 
-            try (Journal r = theFactory.getMegaFactory().reader("test-import-nan.csv")) {
+            try (Journal r = factoryContainer.getFactory().reader("test-import-nan.csv")) {
                 Assert.assertEquals("Second failed", 129, r.size());
             }
         } finally {
@@ -334,7 +334,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportAppend() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, theFactory.getMegaFactory()));
+            put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
         }});
         server.start();
 
@@ -344,7 +344,7 @@ public class HttpServerTest extends AbstractJournalTest {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
             QueryCompiler qc = new QueryCompiler(configuration);
-            printer.print(qc.compile(theFactory.getMegaFactory(), "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'"), theFactory.getMegaFactory());
+            printer.print(qc.compile(factoryContainer.getFactory(), "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'"), factoryContainer.getFactory());
             TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
         } finally {
             server.halt();
@@ -356,7 +356,7 @@ public class HttpServerTest extends AbstractJournalTest {
         try (JournalWriter ignored = getWriterFactory().writer(new JournalStructure("test-import.csv").$int("x").$())) {
             final ServerConfiguration configuration = new ServerConfiguration();
             HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-                put("/imp", new ImportHandler(configuration, theFactory.getMegaFactory()));
+                put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
             }});
             server.start();
 
@@ -374,7 +374,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportIntoBusyJournal2() throws Exception {
-        WriterFactory f = theFactory.getMegaFactory();
+        WriterFactory f = factoryContainer.getFactory();
 
         try (JournalWriter w = f.writer(new JournalStructure("small.csv").$int("X").$int("Y").$())) {
             JournalEntryWriter ew = w.entryWriter();
@@ -385,7 +385,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
             final ServerConfiguration configuration = new ServerConfiguration();
             HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-                put("/imp", new ImportHandler(configuration, theFactory.getMegaFactory()));
+                put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
             }});
             server.start();
 
@@ -405,7 +405,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportNumberPrefixedColumn() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, theFactory.getMegaFactory()));
+            put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
         }});
         server.start();
 
@@ -414,8 +414,8 @@ public class HttpServerTest extends AbstractJournalTest {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
             QueryCompiler qc = new QueryCompiler(configuration);
-            try (RecordSource rs = qc.compile(theFactory.getMegaFactory(), "select count(StrSym), count(IntSym), count(_1IntCol), count(long), count() from 'test-import-num-prefix.csv'")) {
-                printer.print(rs, theFactory.getMegaFactory());
+            try (RecordSource rs = qc.compile(factoryContainer.getFactory(), "select count(StrSym), count(IntSym), count(_1IntCol), count(long), count() from 'test-import-num-prefix.csv'")) {
+                printer.print(rs, factoryContainer.getFactory());
             }
             TestUtils.assertEquals("126\t126\t128\t129\t129\n", sink);
         } finally {
@@ -427,7 +427,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportOverwrite() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, theFactory.getMegaFactory()));
+            put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
         }});
         server.start();
 
@@ -436,14 +436,14 @@ public class HttpServerTest extends AbstractJournalTest {
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
             QueryCompiler qc = new QueryCompiler(configuration);
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null, null));
-            printer.print(qc.compile(theFactory.getMegaFactory(), "select count() from 'test-import.csv'"), theFactory.getMegaFactory());
+            printer.print(qc.compile(factoryContainer.getFactory(), "select count() from 'test-import.csv'"), factoryContainer.getFactory());
             TestUtils.assertEquals("129\n", sink);
             sink.clear();
 
 //                f.closeJournal("test-import.csv");
 
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true", null, null));
-            printer.print(qc.compile(theFactory.getMegaFactory(), "select count() from 'test-import.csv'"), theFactory.getMegaFactory());
+            printer.print(qc.compile(factoryContainer.getFactory(), "select count() from 'test-import.csv'"), factoryContainer.getFactory());
             TestUtils.assertEquals("5\n", sink);
         } finally {
             server.halt();
@@ -454,7 +454,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportUnknownFormat() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, theFactory.getMegaFactory()));
+            put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
         }});
 
         server.start();
@@ -473,7 +473,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportWrongType() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, theFactory.getMegaFactory()));
+            put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
         }});
 
         server.start();
@@ -484,15 +484,15 @@ public class HttpServerTest extends AbstractJournalTest {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
             QueryCompiler qc = new QueryCompiler(configuration);
-            RecordSource src1 = qc.compile(theFactory.getMegaFactory(), "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'");
+            RecordSource src1 = qc.compile(factoryContainer.getFactory(), "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'");
             try {
-                printer.print(src1, theFactory.getMegaFactory());
+                printer.print(src1, factoryContainer.getFactory());
                 TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
             } finally {
                 Misc.free(src1);
             }
 
-            RecordSource src2 = qc.compile(theFactory.getMegaFactory(), "'test-import.csv'");
+            RecordSource src2 = qc.compile(factoryContainer.getFactory(), "'test-import.csv'");
             try {
                 Assert.assertEquals(ColumnType.DOUBLE, src2.getMetadata().getColumn("IntCol").getType());
             } finally {
@@ -507,7 +507,7 @@ public class HttpServerTest extends AbstractJournalTest {
     public void testImportWrongTypeStrictAtomicity() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, theFactory.getMegaFactory()));
+            put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
         }});
 
         server.start();
@@ -517,9 +517,9 @@ public class HttpServerTest extends AbstractJournalTest {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
             QueryCompiler qc = new QueryCompiler(configuration);
-            RecordSource src1 = qc.compile(theFactory.getMegaFactory(), "select count() from 'test-import.csv'");
+            RecordSource src1 = qc.compile(factoryContainer.getFactory(), "select count() from 'test-import.csv'");
             try {
-                printer.print(src1, theFactory.getMegaFactory());
+                printer.print(src1, factoryContainer.getFactory());
                 TestUtils.assertEquals("0\n", sink);
             } finally {
                 Misc.free(src1);

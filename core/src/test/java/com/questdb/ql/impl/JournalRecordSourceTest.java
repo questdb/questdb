@@ -36,7 +36,7 @@ import org.junit.Test;
 public class JournalRecordSourceTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUp() throws Exception {
-        try (JournalWriter w = theFactory.getMegaFactory().writer(new JournalStructure("parent")
+        try (JournalWriter w = FACTORY_CONTAINER.getFactory().writer(new JournalStructure("parent")
                 .$int("i")
                 .$double("d")
                 .$float("f")

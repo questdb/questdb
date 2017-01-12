@@ -46,7 +46,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
 
     @Test
     public void testAllGetters() throws Exception {
-        try (JournalWriter w = theFactory.getMegaFactory().writer(new JournalStructure("xyz")
+        try (JournalWriter w = FACTORY_CONTAINER.getFactory().writer(new JournalStructure("xyz")
                 .$bool("bool")
                 .$byte("byte")
                 .$double("double")
@@ -96,7 +96,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
             RBTreeSortedRecordSource map = new RBTreeSortedRecordSource(rs, rc, 1024 * 1024, 4 * 1024 * 1024);
 
             sink.clear();
-            printer.print(map, theFactory.getMegaFactory());
+            printer.print(map, FACTORY_CONTAINER.getFactory());
         }
         TestUtils.assertEquals(
                 "false\t13\t20.120000000000\t10.1500\t4\t9988908080988890\t1970-01-02T00:42:59.879Z\t902\tcomplexity made simple\tappsicle\n" +

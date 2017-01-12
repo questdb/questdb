@@ -63,7 +63,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
                     setEnableMultiCast(false);
                 }}
-                , theFactory.getMegaFactory()
+                , factoryContainer.getFactory()
                 ,
                 new AuthorizationHandler() {
                     @Override
@@ -89,7 +89,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , theFactory.getMegaFactory()
+                , factoryContainer.getFactory()
                 ,
                 new AuthorizationHandler() {
                     @Override
@@ -134,7 +134,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , theFactory.getMegaFactory()
+                , factoryContainer.getFactory()
                 ,
                 new AuthorizationHandler() {
                     @Override
@@ -191,7 +191,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , theFactory.getMegaFactory()
+                , factoryContainer.getFactory()
                 ,
                 new AuthorizationHandler() {
                     @Override
@@ -238,7 +238,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , theFactory.getMegaFactory()
+                , factoryContainer.getFactory()
                 ,
                 new AuthorizationHandler() {
                     @Override
@@ -310,7 +310,7 @@ public class AuthorizationTest extends AbstractTest {
 
                     latch.await();
 
-                    try (Journal<Quote> local = theFactory.getMegaFactory().reader(Quote.class, "local")) {
+                    try (Journal<Quote> local = factoryContainer.getFactory().reader(Quote.class, "local")) {
                         TestUtils.assertDataEquals(remote, local);
                     }
 

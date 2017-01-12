@@ -25,7 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.WriterFactoryImpl;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
 import org.questdb.examples.support.Quote;
@@ -52,12 +52,12 @@ public class AppendObjectSortMerge {
 
         String journalLocation = args[0];
 
-        try (WriterFactoryImpl writerFactory = new WriterFactoryImpl(new JournalConfigurationBuilder() {{
+        try (Factory writerFactory = new Factory(new JournalConfigurationBuilder() {{
             $(Quote.class, "quote-lag")
                     .lag(24, TimeUnit.HOURS) // enable lag
                     .$ts() // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
             ;
-        }}.build(journalLocation))) {
+        }}.build(journalLocation), 1000, 1)) {
 
             // delete existing quote journal
             Files.delete(new File(writerFactory.getConfiguration().getJournalBase(), "quote-lag"));

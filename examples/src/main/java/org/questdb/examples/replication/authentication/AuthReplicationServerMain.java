@@ -26,7 +26,7 @@ package org.questdb.examples.replication.authentication;
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalServer;
@@ -51,7 +51,7 @@ public class AuthReplicationServerMain {
 
     public void start() throws Exception {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(location);
-        MegaFactory factory = new MegaFactory(configuration, 1000, 2);
+        Factory factory = new Factory(configuration, 1000, 2);
 
         JournalServer server = new JournalServer(factory, new AuthorizationHandler() {
             @Override

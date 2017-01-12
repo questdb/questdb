@@ -53,11 +53,11 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUpClass() throws Exception {
 
-        theFactory.getMegaFactory().getConfiguration().exists("");
+        FACTORY_CONTAINER.getFactory().getConfiguration().exists("");
 
         int xcount = 100;
         int ycount = 10;
-        try (JournalWriter xw = theFactory.getMegaFactory().writer(new JournalStructure("x")
+        try (JournalWriter xw = FACTORY_CONTAINER.getFactory().writer(new JournalStructure("x")
                 .$ts()
                 .$sym("ccy")
                 .$double("rate")
@@ -72,7 +72,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 .$()
         )) {
 
-            try (JournalWriter yw = theFactory.getMegaFactory().writer(new JournalStructure("y")
+            try (JournalWriter yw = FACTORY_CONTAINER.getFactory().writer(new JournalStructure("y")
                     .$ts()
                     .$sym("ccy")
                     .$double("amount")
@@ -119,14 +119,14 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
 
                 // records for adjacent join test
 
-                try (JournalWriter jwa = theFactory.getMegaFactory().writer(new JournalStructure("a")
+                try (JournalWriter jwa = FACTORY_CONTAINER.getFactory().writer(new JournalStructure("a")
                         .$ts()
                         .$sym("ccy")
                         .$double("rate")
                         .$()
                 )) {
 
-                    try (JournalWriter jwb = theFactory.getMegaFactory().writer(new JournalStructure("b")
+                    try (JournalWriter jwb = FACTORY_CONTAINER.getFactory().writer(new JournalStructure("b")
                             .$ts()
                             .$sym("ccy")
                             .$double("amount")
@@ -437,7 +437,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         )) {
             StringSink testSink = new StringSink();
             int idx = source.getMetadata().getColumnIndex("trader");
-            RecordCursor cursor = source.prepareCursor(theFactory.getMegaFactory());
+            RecordCursor cursor = source.prepareCursor(FACTORY_CONTAINER.getFactory());
             try {
                 for (Record r : cursor) {
                     testSink.clear();
@@ -505,7 +505,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                     "2015-03-10T00:08:00.000Z\tSWHYRX\t-810.375000000000\tPULKHMJLLKQZJIONCLBYNYYWYBEPKPNZXNYWIGPCMLCBMUPYMRIGQWSZMUMXMSYXCEEDCL\t2015-03-10T00:07:50.000Z\tPEHNRX\t-969.125000000000\t0.207036912441\tSUZHUEVVELXBCOGQQGZZNTEZNOOZGQPKNLKUWCXHYPNZEBESMTXULVCTMKCZJGHRIMUNWUUQHXCRSLYJFTDNSEPESIUROKI\tVTJWCP\t0.3852\t27447\t3768436831039810156\ttrue\n" +
                     "2015-03-10T00:09:00.000Z\tSWHYRX\t-384.000000000000\tZGUJBKNTPYXUBYXGDDULXVVSCNJINCQSDOQILSLXZEMDBLNXHYUUTVSXURFLRJLIUC\t2015-03-10T00:08:50.000Z\tVTJWCP\t-1024.000000000000\t0.000000084048\tJOZWRXKMTFXRYPHFPUYWNLBVVHNSJLVKRTLXHBHDHIMFYOJREFU\tSWHYRX\t0.4008\t-25237\t-2694211234414702926\ttrue\n" +
                     "2015-03-10T00:10:00.000Z\tVTJWCP\t384.000000000000\tPGKJRQGKHQHXYUVDUZQTICMPWFZEINPQOGHUGZGDCFLNGCEFBTDNSYQTIGUTKIESOSYYLIBUFGPWTQJQWTGERXRSYZCKPFWECEH\t2015-03-10T00:09:50.000Z\tVTJWCP\t0.062803771347\t896.000000000000\tYVJISIQFNSEUHOSVSIKJFJLNEKTSLZFPGDVCLMZTXOYEPKECCJZJOSDCIWCZECJGNWQNKCYVZJRRZYDBL\tPEHNRX\t0.9202\t-15664\t-5743731661904518905\ttrue\n";
-            printer.print(source, theFactory.getMegaFactory());
+            printer.print(source, FACTORY_CONTAINER.getFactory());
             TestUtils.assertEquals(expected, sink);
         }
     }

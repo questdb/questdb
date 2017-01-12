@@ -27,7 +27,7 @@ import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Rnd;
-import com.questdb.test.tools.TheFactory;
+import com.questdb.test.tools.FactoryContainer;
 import org.junit.ClassRule;
 import org.junit.Test;
 
@@ -37,7 +37,7 @@ public class HugeTableTest {
 
     private static final Log LOG = LogFactory.getLog(HugeTableTest.class);
     @ClassRule
-    public static TheFactory theFactory = new TheFactory(new JournalConfigurationBuilder() {{
+    public static FactoryContainer factoryContainer = new FactoryContainer(new JournalConfigurationBuilder() {{
         $(Name.class).recordCountHint(15000000).txCountHint(1)
                 .$sym("name").valueCountHint(15000000).index().noCache()
         ;
@@ -45,7 +45,7 @@ public class HugeTableTest {
 
     @Test
     public void testLargeSymbolTable() throws Exception {
-        try (JournalWriter<Name> w = theFactory.getMegaFactory().writer(Name.class, "name")) {
+        try (JournalWriter<Name> w = factoryContainer.getFactory().writer(Name.class, "name")) {
             Name name = new Name();
             Rnd rnd = new Rnd();
 

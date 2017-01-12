@@ -40,7 +40,7 @@ public class QueryDateTest extends AbstractOptimiserTest {
     }
 
     private void createTab() throws JournalException, NumericException {
-        try (JournalWriter w = theFactory.getMegaFactory().writer(
+        try (JournalWriter w = FACTORY_CONTAINER.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").

@@ -29,7 +29,7 @@ import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.*;
 import com.questdb.misc.*;
@@ -159,7 +159,7 @@ public class QueryCompiler {
         throw new IllegalArgumentException("QueryModel expected");
     }
 
-    public JournalWriter createWriter(MegaFactory factory, ParsedModel model) throws ParserException, JournalException {
+    public JournalWriter createWriter(Factory factory, ParsedModel model) throws ParserException, JournalException {
         if (model.getModelType() != ParsedModel.CREATE_JOURNAL) {
             throw new IllegalArgumentException("create table statement expected");
         }
@@ -258,15 +258,15 @@ public class QueryCompiler {
         }
     }
 
-    public JournalWriter createWriter(MegaFactory factory, CharSequence statement) throws ParserException, JournalException {
+    public JournalWriter createWriter(Factory factory, CharSequence statement) throws ParserException, JournalException {
         return createWriter(factory, parse(statement));
     }
 
-    public void execute(MegaFactory factory, CharSequence statement) throws ParserException, JournalException {
+    public void execute(Factory factory, CharSequence statement) throws ParserException, JournalException {
         execute(factory, parse(statement));
     }
 
-    public void execute(MegaFactory factory, ParsedModel model) throws ParserException, JournalException {
+    public void execute(Factory factory, ParsedModel model) throws ParserException, JournalException {
         switch (model.getModelType()) {
             case ParsedModel.CREATE_JOURNAL:
                 createWriter(factory, model).close();
@@ -2275,7 +2275,7 @@ public class QueryCompiler {
         parent.addParsedWhereNode(node);
     }
 
-    private void renameJournal(MegaFactory factory, RenameJournalModel model) throws ParserException {
+    private void renameJournal(Factory factory, RenameJournalModel model) throws ParserException {
 
         String from = Chars.stripQuotes(model.getFrom().token);
         String to = Chars.stripQuotes(model.getTo().token);

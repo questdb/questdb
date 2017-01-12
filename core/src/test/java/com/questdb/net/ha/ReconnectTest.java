@@ -73,7 +73,7 @@ public class ReconnectTest extends AbstractTest {
             final CountDownLatch latch = new CountDownLatch(1);
             // create empty "local"
             getWriterFactory().writer(Quote.class, "local").close();
-            try (final Journal<Quote> local = theFactory.getMegaFactory().reader(Quote.class, "local")) {
+            try (final Journal<Quote> local = factoryContainer.getFactory().reader(Quote.class, "local")) {
                 client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
                     @Override
                     public void onCommit() {
@@ -129,6 +129,6 @@ public class ReconnectTest extends AbstractTest {
         return new JournalServer(new ServerConfig() {{
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
             setEnableMultiCast(false);
-        }}, theFactory.getMegaFactory());
+        }}, factoryContainer.getFactory());
     }
 }

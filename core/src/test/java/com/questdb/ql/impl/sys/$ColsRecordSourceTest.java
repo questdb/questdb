@@ -30,8 +30,8 @@ import org.junit.Test;
 public class $ColsRecordSourceTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUp() throws Exception {
-        compiler.execute(theFactory.getMegaFactory(), "create table xy (x int, y string, ts date), index(y buckets 30) timestamp(ts) partition by YEAR");
-        compiler.execute(theFactory.getMegaFactory(), "create table abc (a symbol, b boolean, d double), index(a buckets 70)");
+        compiler.execute(FACTORY_CONTAINER.getFactory(), "create table xy (x int, y string, ts date), index(y buckets 30) timestamp(ts) partition by YEAR");
+        compiler.execute(FACTORY_CONTAINER.getFactory(), "create table abc (a symbol, b boolean, d double), index(a buckets 70)");
         $ColsRecordSource.init();
     }
 

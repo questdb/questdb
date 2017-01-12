@@ -41,7 +41,7 @@ public class BinaryTest extends AbstractTest {
 
     @Test
     public void testBinaryAppend() throws Exception {
-        try (JournalWriter<Band> writer = theFactory.getMegaFactory().writer(Band.class)) {
+        try (JournalWriter<Band> writer = factoryContainer.getFactory().writer(Band.class)) {
 
             Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
             List<byte[]> bytes = new ArrayList<>();
@@ -65,7 +65,7 @@ public class BinaryTest extends AbstractTest {
     @Test
     public void testBinaryPerformance() throws Exception {
 
-        try (JournalWriter<Band> writer = theFactory.getMegaFactory().writer(Band.class)) {
+        try (JournalWriter<Band> writer = factoryContainer.getFactory().writer(Band.class)) {
             final int count = 20000;
             Rnd r = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
 

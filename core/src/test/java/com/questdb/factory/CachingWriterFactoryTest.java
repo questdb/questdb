@@ -49,7 +49,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        this.wf = new CachingWriterFactory(theFactory.getConfiguration(), 1000);
+        this.wf = new CachingWriterFactory(factoryContainer.getConfiguration(), 1000);
     }
 
     @After

@@ -50,7 +50,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
         final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
         getWriterFactory().writer(m).close();
 
-        try (final CachingReaderFactory rf = new CachingReaderFactory(theFactory.getConfiguration(), 2)) {
+        try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 2)) {
             Journal reader = rf.reader(m);
             Assert.assertNotNull(reader);
             rf.close();
@@ -66,7 +66,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
         final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
         getWriterFactory().writer(m).close();
 
-        try (final CachingReaderFactory rf = new CachingReaderFactory(theFactory.getConfiguration(), 2)) {
+        try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 2)) {
             Journal reader = rf.reader(m);
             Assert.assertNotNull(reader);
             reader.close();
@@ -91,7 +91,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
             meta[i] = m;
         }
 
-        try (final CachingReaderFactory rf = new CachingReaderFactory(theFactory.getConfiguration(), 2)) {
+        try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 2)) {
 
             final CyclicBarrier barrier = new CyclicBarrier(threadCount);
             final CountDownLatch halt = new CountDownLatch(threadCount);
@@ -136,7 +136,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
         final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
         getWriterFactory().writer(m).close();
 
-        try (final CachingReaderFactory rf = new CachingReaderFactory(theFactory.getConfiguration(), 2)) {
+        try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 2)) {
 
             ObjList<Journal> readers = new ObjList<>();
             try {
@@ -167,7 +167,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
             meta[i] = m;
         }
 
-        try (final CachingReaderFactory rf = new CachingReaderFactory(theFactory.getConfiguration(), 2)) {
+        try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 2)) {
 
             final CyclicBarrier barrier = new CyclicBarrier(threadCount);
             final CountDownLatch halt = new CountDownLatch(threadCount);
@@ -268,7 +268,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
 
 
         Journal x, y;
-        try (final CachingReaderFactory rf = new CachingReaderFactory(theFactory.getConfiguration(), 2)) {
+        try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 2)) {
             x = rf.reader(m1);
             Assert.assertNotNull(x);
 
@@ -320,7 +320,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
         final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
         getWriterFactory().writer(m).close();
 
-        try (final CachingReaderFactory rf = new CachingReaderFactory(theFactory.getConfiguration(), 2)) {
+        try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 2)) {
             Journal firstReader = null;
             for (int i = 0; i < 1000; i++) {
                 try (Journal reader = rf.reader(m)) {

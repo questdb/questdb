@@ -70,7 +70,7 @@ public class GenericBinaryTest extends AbstractTest {
 
             List<byte[]> actual = new ArrayList<>();
             try (RecordSource rs = compile("bintest")) {
-                RecordCursor cursor = rs.prepareCursor(theFactory.getMegaFactory());
+                RecordCursor cursor = rs.prepareCursor(factoryContainer.getFactory());
                 try {
                     for (Record e : cursor) {
                         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -130,14 +130,14 @@ public class GenericBinaryTest extends AbstractTest {
     }
 
     private JournalWriter getGenericWriter() throws JournalException {
-        return theFactory.getMegaFactory().writer(new JournalStructure("bintest") {{
+        return factoryContainer.getFactory().writer(new JournalStructure("bintest") {{
                                                         $bin("image");
                                                     }}
         );
     }
 
     private JournalWriter<BinContainer> getWriter() throws JournalException {
-        return theFactory.getMegaFactory().writer(BinContainer.class, "bintest");
+        return factoryContainer.getFactory().writer(BinContainer.class, "bintest");
     }
 
     private List<byte[]> readObject(Journal<BinContainer> reader) {
@@ -153,7 +153,7 @@ public class GenericBinaryTest extends AbstractTest {
     private List<byte[]> readOutputStream() throws ParserException {
         List<byte[]> result = new ArrayList<>();
         try (RecordSource rs = compile("bintest")) {
-            RecordCursor cursor = rs.prepareCursor(theFactory.getMegaFactory());
+            RecordCursor cursor = rs.prepareCursor(factoryContainer.getFactory());
             try {
                 for (Record e : cursor) {
                     ByteArrayOutputStream o = new ByteArrayOutputStream();

@@ -36,14 +36,14 @@ import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
-import com.questdb.test.tools.TheFactory;
+import com.questdb.test.tools.FactoryContainer;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
 import org.junit.*;
 
 public class HashJoinRecordSourceTest {
     @Rule
-    public final TheFactory theFactory = new TheFactory(new JournalConfigurationBuilder() {{
+    public final FactoryContainer factoryContainer = new FactoryContainer(new JournalConfigurationBuilder() {{
         $(Band.class).$ts();
         $(Album.class).$ts("releaseDate");
 
@@ -55,8 +55,8 @@ public class HashJoinRecordSourceTest {
 
     @Before
     public void setUp() throws Exception {
-        bw = theFactory.getMegaFactory().writer(Band.class);
-        aw = theFactory.getMegaFactory().writer(Album.class);
+        bw = factoryContainer.getFactory().writer(Band.class);
+        aw = factoryContainer.getFactory().writer(Album.class);
     }
 
     @After
@@ -102,7 +102,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.print(joinResult, theFactory.getMegaFactory());
+        p.print(joinResult, factoryContainer.getFactory());
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -147,7 +147,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.print(joinResult, theFactory.getMegaFactory());
+        p.print(joinResult, factoryContainer.getFactory());
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -194,7 +194,7 @@ public class HashJoinRecordSourceTest {
                     add("url");
                 }}
         );
-        p.print(joinResult, theFactory.getMegaFactory());
+        p.print(joinResult, factoryContainer.getFactory());
         Assert.assertEquals("pop\thttp://band1.com\n" +
                 "rock\thttp://band1.com\n" +
                 "\thttp://band2.com\n" +

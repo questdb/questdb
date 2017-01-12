@@ -782,7 +782,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                 new RecordKeyCopierCompiler(new BytecodeAssembler())
         );
         sink.clear();
-        printer.print(r, theFactory.getMegaFactory());
+        printer.print(r, FACTORY_CONTAINER.getFactory());
         TestUtils.assertEquals(expected, sink);
         assertThat(expected, "customers c join orders o on c.customerId = o.customerId where customerName ~ 'PJFSREKEUNMKWOF'");
     }
@@ -1698,7 +1698,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     private static void generateJoinData() throws JournalException, NumericException {
-        try (JournalWriter customers = theFactory.getMegaFactory().writer(
+        try (JournalWriter customers = FACTORY_CONTAINER.getFactory().writer(
                 new JournalStructure("customers").
                         $int("customerId").
                         $str("customerName").
@@ -1710,14 +1710,14 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                         $ts()
         )) {
 
-            try (JournalWriter categories = theFactory.getMegaFactory().writer(
+            try (JournalWriter categories = FACTORY_CONTAINER.getFactory().writer(
                     new JournalStructure("categories").
                             $sym("category").index().buckets(100).
                             $str("description").
                             $ts()
             )) {
 
-                try (JournalWriter employees = theFactory.getMegaFactory().writer(
+                try (JournalWriter employees = FACTORY_CONTAINER.getFactory().writer(
                         new JournalStructure("employees").
                                 $str("employeeId").index().buckets(2048).
                                 $str("firstName").
@@ -1726,7 +1726,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                                 $ts()
                 )) {
 
-                    try (JournalWriter orderDetails = theFactory.getMegaFactory().writer(
+                    try (JournalWriter orderDetails = FACTORY_CONTAINER.getFactory().writer(
                             new JournalStructure("orderDetails").
                                     $int("orderDetailId").
                                     $int("orderId").
@@ -1735,7 +1735,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                                     $ts()
                     )) {
 
-                        try (JournalWriter orders = theFactory.getMegaFactory().writer(
+                        try (JournalWriter orders = FACTORY_CONTAINER.getFactory().writer(
                                 new JournalStructure("orders").
                                         $int("orderId").
                                         $int("customerId").index().
@@ -1746,7 +1746,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                                         $()
                         )) {
 
-                            try (JournalWriter products = theFactory.getMegaFactory().writer(
+                            try (JournalWriter products = FACTORY_CONTAINER.getFactory().writer(
                                     new JournalStructure("products").
                                             $int("productId").
                                             $str("productName").
@@ -1757,14 +1757,14 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                             )) {
 
 
-                                try (JournalWriter shippers = theFactory.getMegaFactory().writer(
+                                try (JournalWriter shippers = FACTORY_CONTAINER.getFactory().writer(
                                         new JournalStructure("shippers").
                                                 $sym("shipper").
                                                 $str("phone").
                                                 $ts()
                                 )) {
 
-                                    try (JournalWriter suppliers = theFactory.getMegaFactory().writer(
+                                    try (JournalWriter suppliers = FACTORY_CONTAINER.getFactory().writer(
                                             new JournalStructure("suppliers").
                                                     $sym("supplier").buckets(100).
                                                     $str("contactName").

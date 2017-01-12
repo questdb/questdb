@@ -37,7 +37,7 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
 
     @BeforeClass
     public static void setUpClass() throws Exception {
-        JournalWriter w = theFactory.getMegaFactory().writer(
+        JournalWriter w = FACTORY_CONTAINER.getFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").index().buckets(128).
                         $double("x").
@@ -48,7 +48,7 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
         );
         w.close();
 
-        w = theFactory.getMegaFactory().writer(
+        w = FACTORY_CONTAINER.getFactory().writer(
                 new JournalStructure("tex").
                         $sym("id").index().buckets(128).
                         $double("amount").

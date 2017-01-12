@@ -62,7 +62,7 @@ public abstract class AbstractJournalTest extends AbstractTest {
         journalClientStateProducer = new JournalClientStateProducer();
         journalClientStateConsumer = new JournalClientStateConsumer();
 
-        this.masterReader = theFactory.getMegaFactory().reader(Quote.class, "master");
+        this.masterReader = factoryContainer.getFactory().reader(Quote.class, "master");
         journalDeltaProducer = new JournalDeltaProducer(masterReader);
         journalDeltaConsumer = new JournalDeltaConsumer(slave);
         channel = new MockByteChannel();

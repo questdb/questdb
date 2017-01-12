@@ -2530,7 +2530,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         sink.clear();
         try (RecordSource src = compile("select id, z from tab limit :xyz")) {
             src.getParam(":xyz").set(10L);
-            printer.print(src, theFactory.getMegaFactory(), false);
+            printer.print(src, factoryContainer.getFactory(), false);
             TestUtils.assertEquals(expected, sink);
         }
 
@@ -2538,7 +2538,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         sink.clear();
         try (RecordSource src = compile("select id, z from tab limit :xyz")) {
             src.getParam(":xyz").set(10L);
-            printer.print(src, theFactory.getMegaFactory(), false);
+            printer.print(src, factoryContainer.getFactory(), false);
             TestUtils.assertEquals(expected, sink);
         }
 
@@ -2546,7 +2546,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         sink.clear();
         try (RecordSource src = compile("select id, z from tab limit :xyz")) {
             src.getParam(":xyz").set(5L);
-            printer.print(src, theFactory.getMegaFactory(), false);
+            printer.print(src, factoryContainer.getFactory(), false);
 
             final String expected2 = "YDVRVNGSTEQODRZ\t-99\n" +
                     "RIIYMHOWKCDNZNL\t-397\n" +
@@ -2576,14 +2576,14 @@ public class SingleJournalQueryTest extends AbstractTest {
         try (RecordSource src = compile("select id, z from tab where z > :min limit :lim")) {
             src.getParam(":min").set(450);
             src.getParam(":lim").set(10L);
-            printer.print(src, theFactory.getMegaFactory(), false);
+            printer.print(src, factoryContainer.getFactory(), false);
         }
 
         sink.clear();
         try (RecordSource src = compile("select id, z from tab where :min < z limit :lim")) {
             src.getParam(":min").set(450);
             src.getParam(":lim").set(10L);
-            printer.print(src, theFactory.getMegaFactory(), false);
+            printer.print(src, factoryContainer.getFactory(), false);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -2601,7 +2601,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         createTabWithNaNs2();
         sink.clear();
         try (RecordSource src = compile("select id, z from tab where z > :min limit :lim")) {
-            printer.print(src, theFactory.getMegaFactory(), false);
+            printer.print(src, factoryContainer.getFactory(), false);
         }
     }
 

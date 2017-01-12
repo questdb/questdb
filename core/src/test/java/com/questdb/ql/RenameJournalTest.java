@@ -28,7 +28,7 @@ import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.ReaderFactory;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
@@ -58,7 +58,7 @@ public class RenameJournalTest extends AbstractTest {
     public void testJournalAlreadyOpenButIdle() throws Exception {
         createX();
 
-        MegaFactory factory = theFactory.getMegaFactory();
+        Factory factory = factoryContainer.getFactory();
         assertJournal(factory, "x");
         sink.clear();
 
@@ -90,7 +90,7 @@ public class RenameJournalTest extends AbstractTest {
     @Test
     public void testNonLiteralFrom() throws Exception {
         try {
-            compiler.execute(theFactory.getMegaFactory(), "rename table 1+2 to 'c d'");
+            compiler.execute(factoryContainer.getFactory(), "rename table 1+2 to 'c d'");
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(14, QueryError.getPosition());
@@ -100,7 +100,7 @@ public class RenameJournalTest extends AbstractTest {
     @Test
     public void testNonLiteralTo() throws Exception {
         try {
-            compiler.execute(theFactory.getMegaFactory(), "rename table x to 5+5");
+            compiler.execute(factoryContainer.getFactory(), "rename table x to 5+5");
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(19, QueryError.getPosition());
@@ -111,7 +111,7 @@ public class RenameJournalTest extends AbstractTest {
     public void testReleaseOfJournalInPool() throws Exception {
         createX();
 
-        MegaFactory f = theFactory.getMegaFactory();
+        Factory f = factoryContainer.getFactory();
 
         assertJournal(f, "x");
 
@@ -128,13 +128,13 @@ public class RenameJournalTest extends AbstractTest {
     @Test
     public void testRenameQuoted() throws Exception {
         create("'a b'");
-        compiler.execute(theFactory.getMegaFactory(), "rename table 'a b' to 'c d'");
+        compiler.execute(factoryContainer.getFactory(), "rename table 'a b' to 'c d'");
     }
 
     @Test
     public void testSimpleNonExisting() throws Exception {
         try {
-            compiler.execute(theFactory.getMegaFactory(), "rename table x to y");
+            compiler.execute(factoryContainer.getFactory(), "rename table x to y");
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(13, QueryError.getPosition());
@@ -145,8 +145,8 @@ public class RenameJournalTest extends AbstractTest {
     @Test
     public void testSimpleRename() throws Exception {
         createX();
-        compiler.execute(theFactory.getMegaFactory(), "rename table x to y");
-        assertJournal(theFactory.getMegaFactory(), "y");
+        compiler.execute(factoryContainer.getFactory(), "rename table x to y");
+        assertJournal(factoryContainer.getFactory(), "y");
     }
 
     private void assertJournal(ReaderFactory f, String dest) throws IOException, ParserException {
@@ -157,7 +157,7 @@ public class RenameJournalTest extends AbstractTest {
     }
 
     private void create(String name) throws JournalException, ParserException {
-        try (JournalWriter w = compiler.createWriter(theFactory.getMegaFactory(), "create table " + name + "(a int) record hint 100")) {
+        try (JournalWriter w = compiler.createWriter(factoryContainer.getFactory(), "create table " + name + "(a int) record hint 100")) {
             JournalEntryWriter ew = w.entryWriter();
             ew.putInt(0, 999);
             ew.append();

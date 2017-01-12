@@ -75,7 +75,7 @@ public class JournalServerAgentTest extends AbstractTest {
             setEnableMultiCast(false);
         }};
 
-        server = new JournalServer(config, theFactory.getMegaFactory());
+        server = new JournalServer(config, factoryContainer.getFactory());
         server.publish(quoteWriter);
         agent = new JournalServerAgent(server, new InetSocketAddress(NetworkConfig.DEFAULT_DATA_PORT), null);
         hugeBufferConsumer = new HugeBufferConsumer(temp.newFile());

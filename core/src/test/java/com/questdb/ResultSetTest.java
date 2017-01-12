@@ -43,7 +43,7 @@ public class ResultSetTest extends AbstractTest {
             w.commit();
         }
 
-        try (Journal<TestEntity> r = theFactory.getMegaFactory().reader(TestEntity.class)) {
+        try (Journal<TestEntity> r = factoryContainer.getFactory().reader(TestEntity.class)) {
             ResultSet<TestEntity> rs = r.query().all().asResultSet();
             Assert.assertEquals(3, rs.size());
             Assert.assertNull(rs.getSymbol(0, 4));

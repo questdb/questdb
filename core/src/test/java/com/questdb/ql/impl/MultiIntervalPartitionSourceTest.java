@@ -58,7 +58,7 @@ public class MultiIntervalPartitionSourceTest extends AbstractTest {
                                     intervals
                             ),
                             new AllRowSource()
-                    ), theFactory.getMegaFactory()
+                    ), factoryContainer.getFactory()
             );
         }
 

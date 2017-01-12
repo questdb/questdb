@@ -67,16 +67,16 @@ public class ScenarioTest extends AbstractTest {
 
 
                 try (final JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
-                    try (final Journal<Quote> remoteReader = theFactory.getMegaFactory().reader(Quote.class, "remote")) {
+                    try (final Journal<Quote> remoteReader = factoryContainer.getFactory().reader(Quote.class, "remote")) {
 
                         // create empty journal
                         getWriterFactory().writer(Quote.class, "local").close();
 
                         // setup local where data should be trickling from client
-                        try (final Journal<Quote> local = theFactory.getMegaFactory().reader(Quote.class, "local")) {
+                        try (final Journal<Quote> local = factoryContainer.getFactory().reader(Quote.class, "local")) {
                             Assert.assertEquals(0, local.size());
 
-                            JournalServer server = new JournalServer(serverConfig, theFactory.getMegaFactory());
+                            JournalServer server = new JournalServer(serverConfig, factoryContainer.getFactory());
                             JournalClient client = new JournalClient(clientConfig, getWriterFactory());
 
                             server.publish(remote);
@@ -134,7 +134,7 @@ public class ScenarioTest extends AbstractTest {
 
     @Test
     public void testSingleJournalTrickle() throws Exception {
-        JournalServer server = new JournalServer(serverConfig, theFactory.getMegaFactory());
+        JournalServer server = new JournalServer(serverConfig, factoryContainer.getFactory());
         JournalClient client = new JournalClient(clientConfig, getWriterFactory());
 
         // prepare test data
@@ -148,7 +148,7 @@ public class ScenarioTest extends AbstractTest {
                 getWriterFactory().writer(Quote.class, "local").close();
 
                 // setup local where data should be trickling from client
-                try (Journal<Quote> local = theFactory.getMegaFactory().reader(Quote.class, "local")) {
+                try (Journal<Quote> local = factoryContainer.getFactory().reader(Quote.class, "local")) {
                     Assert.assertEquals(0, local.size());
 
                     server.publish(remote);

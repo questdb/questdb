@@ -73,7 +73,7 @@ public class VirtualColumnTest extends AbstractTest {
                 add(plus);
             }})) {
 
-                p.print(src, theFactory.getMegaFactory());
+                p.print(src, factoryContainer.getFactory());
 
                 final String expected = "VTJWCPSWHY\t-104.021850585938\t-91.521850585938\n" +
                         "PEHNRXGZSX\t0.000020634160\t12.500020634160\n" +
@@ -219,7 +219,7 @@ public class VirtualColumnTest extends AbstractTest {
                         add("plus");
                     }})) {
 
-                p.print(src, theFactory.getMegaFactory());
+                p.print(src, factoryContainer.getFactory());
 
                 final String expected = "VTJWCPSWHY\t-91.521850585938\n" +
                         "PEHNRXGZSX\t12.500020634160\n" +

@@ -25,7 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.misc.Files;
 import org.questdb.examples.support.Quote;
 
@@ -47,7 +47,7 @@ public class AppendObjectUnordered {
 
         String journalLocation = args[0];
 
-        try (MegaFactory factory = new MegaFactory(journalLocation, 1000, 1)) {
+        try (Factory factory = new Factory(journalLocation, 1000, 1)) {
 
             // delete existing quote journal
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-unordered"));

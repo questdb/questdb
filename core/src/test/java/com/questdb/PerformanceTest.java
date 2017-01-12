@@ -26,7 +26,7 @@ package com.questdb;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.ReaderFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -70,7 +70,7 @@ public class PerformanceTest extends AbstractTest {
             w.commit();
         }
 
-        try (Journal<Quote> journal = theFactory.getMegaFactory().reader(Quote.class)) {
+        try (Journal<Quote> journal = factoryContainer.getFactory().reader(Quote.class)) {
             int count = 1000;
             Interval interval = new Interval(Dates.parseDateTime("2013-10-15T10:00:00.000Z"), Dates.parseDateTime("2013-10-05T10:00:00.000Z"));
             long t = 0;
@@ -96,7 +96,7 @@ public class PerformanceTest extends AbstractTest {
 
         QueryCompiler compiler = new QueryCompiler();
 
-        MegaFactory factory = theFactory.getMegaFactory();
+        Factory factory = factoryContainer.getFactory();
         try (RecordSource src = compiler.compile(factory, "quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
             int count = 1000;
             long t = 0;
@@ -119,7 +119,7 @@ public class PerformanceTest extends AbstractTest {
 
     @Test
     public void testIndexAppendAndReadSpeed() throws JournalException {
-        File indexFile = new File(theFactory.getMegaFactory().getConfiguration().getJournalBase(), "index-test");
+        File indexFile = new File(factoryContainer.getFactory().getConfiguration().getJournalBase(), "index-test");
         int totalKeys = 30000;
         int totalValues = 20000000;
         try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
@@ -211,7 +211,7 @@ public class PerformanceTest extends AbstractTest {
             }
         }
 
-        ReaderFactory readerFactory = theFactory.getMegaFactory();
+        ReaderFactory readerFactory = factoryContainer.getFactory();
         try (RecordSource rs = compile("quote")) {
             for (int i = -count; i < count; i++) {
                 if (i == 0) {
@@ -252,7 +252,7 @@ public class PerformanceTest extends AbstractTest {
             w.commit();
         }
 
-        try (Journal<Quote> journal = theFactory.getMegaFactory().reader(Quote.class)) {
+        try (Journal<Quote> journal = factoryContainer.getFactory().reader(Quote.class)) {
             int count = 1000000;
             long t = 0;
             QueryHeadBuilder qhb = journal.query().head().withKeys();

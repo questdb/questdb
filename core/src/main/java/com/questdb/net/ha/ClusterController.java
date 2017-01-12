@@ -26,7 +26,7 @@ package com.questdb.net.ha;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.net.ha.config.ClientConfig;
@@ -41,7 +41,7 @@ public class ClusterController {
     private final Log LOG = LogFactory.getLog(ClusterController.class);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final ClusterStatusListener listener;
-    private final MegaFactory factory;
+    private final Factory factory;
     private final List<JournalWriter> writers;
     private final ServerConfig serverConfig;
     private final ClientConfig clientConfig;
@@ -54,7 +54,7 @@ public class ClusterController {
     public ClusterController(
             ServerConfig serverConfig
             , ClientConfig clientConfig
-            , MegaFactory factory
+            , Factory factory
             , final int instance
             , List<JournalWriter> writers
             , ClusterStatusListener listener

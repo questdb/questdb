@@ -38,13 +38,9 @@ public interface JournalConfiguration {
 
     <T> JournalMetadata<T> createMetadata(JournalKey<T> key) throws JournalException;
 
-    void delete(CharSequence location) throws JournalException;
-
     int exists(CharSequence location);
 
     File getJournalBase();
 
     <T> JournalMetadata<T> readMetadata(String name) throws JournalException;
-
-    void rename(CharSequence from, CharSequence to) throws JournalException;
 }

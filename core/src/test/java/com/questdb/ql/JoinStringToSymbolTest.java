@@ -32,7 +32,7 @@ import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.join.CrossJoinRecordSource;
 import com.questdb.test.tools.TestUtils;
-import com.questdb.test.tools.TheFactory;
+import com.questdb.test.tools.FactoryContainer;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
 import org.junit.After;
@@ -42,7 +42,7 @@ import org.junit.Test;
 
 public class JoinStringToSymbolTest {
     @Rule
-    public final TheFactory theFactory = new TheFactory(new JournalConfigurationBuilder() {{
+    public final FactoryContainer factoryContainer = new FactoryContainer(new JournalConfigurationBuilder() {{
         $(Band.class)
                 .$sym("name").index()
                 .$sym("type")
@@ -63,8 +63,8 @@ public class JoinStringToSymbolTest {
 
     @Before
     public void setUp() throws Exception {
-        bw = theFactory.getMegaFactory().writer(Band.class);
-        aw = theFactory.getMegaFactory().writer(Album.class);
+        bw = factoryContainer.getFactory().writer(Band.class);
+        aw = factoryContainer.getFactory().writer(Album.class);
     }
 
     @After
@@ -93,7 +93,7 @@ public class JoinStringToSymbolTest {
         try (RecordSource rs = new CrossJoinRecordSource(new JournalRecordSource(
                 new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()), new JournalRecordSource(
                 new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()))) {
-            p.print(rs, theFactory.getMegaFactory());
+            p.print(rs, factoryContainer.getFactory());
         }
 
         final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\n" +

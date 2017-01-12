@@ -25,7 +25,7 @@ package org.questdb.examples.replication.ssl;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.net.ha.JournalServer;
 import com.questdb.net.ha.config.ServerConfig;
 import org.questdb.examples.support.Price;
@@ -46,7 +46,7 @@ public class SslReplicationServerMain {
     }
 
     public void start() throws Exception {
-        MegaFactory factory = new MegaFactory(location, 1000, 1);
+        Factory factory = new Factory(location, 1000, 1);
 
         JournalServer server = new JournalServer(
                 new ServerConfig() {{

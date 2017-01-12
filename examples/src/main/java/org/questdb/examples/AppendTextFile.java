@@ -25,7 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.txt.ImportManager;
 
 import java.io.IOException;
@@ -39,7 +39,7 @@ public class AppendTextFile {
             System.exit(1);
         }
 
-        try (MegaFactory factory = new MegaFactory(args[0], 1000, 1)) {
+        try (Factory factory = new Factory(args[0], 1000, 1)) {
             // import manager will determine file structure automatically
             ImportManager.importFile(factory, AppendTextFile.class.getResource("/movies.csv").getFile(), ',', null);
         }

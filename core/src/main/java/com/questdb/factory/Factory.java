@@ -15,18 +15,20 @@ import com.questdb.std.str.CompositePath;
 import com.questdb.store.Lock;
 import com.questdb.store.LockManager;
 
-public class MegaFactory implements ReaderFactory, WriterFactory {
-    private static final Log LOG = LogFactory.getLog(MegaFactory.class);
+import java.io.File;
+
+public class Factory implements ReaderFactory, WriterFactory {
+    private static final Log LOG = LogFactory.getLog(Factory.class);
 
     private final CachingWriterFactory writerFactory;
     private final CachingReaderFactory readerFactory;
 
-    public MegaFactory(JournalConfiguration configuration, long writerInactiveTTL, int readerCacheSegments) {
+    public Factory(JournalConfiguration configuration, long writerInactiveTTL, int readerCacheSegments) {
         this.writerFactory = new CachingWriterFactory(configuration, writerInactiveTTL);
         this.readerFactory = new CachingReaderFactory(configuration, readerCacheSegments);
     }
 
-    public MegaFactory(String databaseHome, long writerInactiveTTL, int readerCacheSegments) {
+    public Factory(String databaseHome, long writerInactiveTTL, int readerCacheSegments) {
         this.writerFactory = new CachingWriterFactory(databaseHome, writerInactiveTTL);
         this.readerFactory = new CachingReaderFactory(databaseHome, readerCacheSegments);
     }
@@ -38,31 +40,36 @@ public class MegaFactory implements ReaderFactory, WriterFactory {
     }
 
     public void rename(String from, String to) throws JournalException {
-        writerFactory.lock(from);
+        lock(from);
         try {
-            readerFactory.lock(from);
-            try {
-                rename0(from, to);
-            } finally {
-                readerFactory.unlock(from);
-            }
+            rename0(from, to);
         } finally {
-            writerFactory.unlock(from);
+            unlock(from);
         }
     }
 
     public void delete(String name) throws JournalException {
-        writerFactory.lock(name);
+        lock(name);
         try {
-            readerFactory.lock(name);
-            try {
-                getConfiguration().delete(name);
-            } finally {
-                readerFactory.unlock(name);
-            }
+            delete0(name);
         } finally {
-            writerFactory.unlock(name);
+            unlock(name);
         }
+    }
+
+    private void delete0(String name) throws JournalException {
+        File l = new File(getConfiguration().getJournalBase(), name);
+        Lock lock = LockManager.lockExclusive(l.getAbsolutePath());
+        try {
+            if (lock == null || !lock.isValid()) {
+                LOG.error().$("Cannot obtain lock on ").$(l).$();
+                throw JournalWriterAlreadyOpenException.INSTANCE;
+            }
+            Files.deleteOrException(l);
+        } finally {
+            LockManager.release(lock);
+        }
+
     }
 
     public void lock(String name) throws JournalException {
@@ -203,9 +210,5 @@ public class MegaFactory implements ReaderFactory, WriterFactory {
     @Override
     public <T> JournalWriter<T> writer(JournalMetadata<T> metadata) throws JournalException {
         return writerFactory.writer(metadata);
-    }
-
-    public int rename(CharSequence from, CharSequence to) {
-        return 0;
     }
 }

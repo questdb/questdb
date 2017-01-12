@@ -53,12 +53,12 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
 
     @Test
     public void testCsvHandlerConsistency() throws Exception {
-        testHandler(new CsvHandler(theFactory.getMegaFactory(), new ServerConfiguration()));
+        testHandler(new CsvHandler(FACTORY_CONTAINER.getFactory(), new ServerConfiguration()));
     }
 
     @Test
     public void testCsvOutput() throws Exception {
-        ContextHandler handler = new CsvHandler(theFactory.getMegaFactory(), new ServerConfiguration());
+        ContextHandler handler = new CsvHandler(FACTORY_CONTAINER.getFactory(), new ServerConfiguration());
         handler.setupThread();
         TestChannel channel = new TestChannel(QUERY1);
         String expected = "\"id\",\"x\",\"y\",\"z\",\"w\",\"timestamp\"\r\n" +
@@ -176,7 +176,7 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
 
     @Test
     public void testQueryHandlerConsistency() throws Exception {
-        testHandler(new QueryHandler(theFactory.getMegaFactory(), new ServerConfiguration()));
+        testHandler(new QueryHandler(FACTORY_CONTAINER.getFactory(), new ServerConfiguration()));
     }
 
     private void testHandler(ContextHandler handler) throws Exception {

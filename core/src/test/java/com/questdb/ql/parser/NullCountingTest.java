@@ -39,7 +39,7 @@ public class NullCountingTest extends AbstractOptimiserTest {
         int recordCount = 10000;
         int productCount = 200;
         int employeeCount = 10;
-        try (JournalWriter orders = theFactory.getMegaFactory().writer(
+        try (JournalWriter orders = FACTORY_CONTAINER.getFactory().writer(
                 new JournalStructure("orders").
                         $int("orderId").
                         $int("customerId").

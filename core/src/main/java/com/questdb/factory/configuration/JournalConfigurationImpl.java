@@ -28,16 +28,12 @@ import com.questdb.JournalMode;
 import com.questdb.ex.JournalDoesNotExistException;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalMetadataException;
-import com.questdb.ex.JournalWriterAlreadyOpenException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Files;
-import com.questdb.misc.Os;
 import com.questdb.std.ObjObjHashMap;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
-import com.questdb.store.Lock;
-import com.questdb.store.LockManager;
 import com.questdb.store.TxLog;
 import com.questdb.store.UnstructuredFile;
 
@@ -93,21 +89,6 @@ class JournalConfigurationImpl implements JournalConfiguration {
         }
     }
 
-    @Override
-    public void delete(CharSequence location) throws JournalException {
-        File l = new File(journalBase, location.toString());
-        Lock lock = LockManager.lockExclusive(l.getAbsolutePath());
-        try {
-            if (lock == null || !lock.isValid()) {
-                LOG.error().$("Cannot obtain lock on ").$(l).$();
-                throw JournalWriterAlreadyOpenException.INSTANCE;
-            }
-            Files.deleteOrException(l);
-        } finally {
-            LockManager.release(lock);
-        }
-    }
-
     public int exists(CharSequence location) {
         CompositePath path = tlPath.get();
         String base = getJournalBase().getAbsolutePath();
@@ -142,58 +123,5 @@ class JournalConfigurationImpl implements JournalConfiguration {
             }
         }
         return null;
-    }
-
-    @Override
-    public void rename(CharSequence from, CharSequence to) throws JournalException {
-        try (CompositePath oldName = new CompositePath()) {
-            try (CompositePath newName = new CompositePath()) {
-                String path = journalBase.getAbsolutePath();
-
-                oldName.of(path).concat(from).$();
-                newName.of(path).concat(to).$();
-
-                if (!Files.exists(oldName)) {
-                    LOG.error().$("Journal does not exist: ").$(oldName).$();
-                    throw JournalDoesNotExistException.INSTANCE;
-                }
-
-                if (Os.type == Os.WINDOWS) {
-                    oldName.of("\\\\?\\").concat(path).concat(from).$();
-                    newName.of("\\\\?\\").concat(path).concat(to).$();
-                }
-
-
-                Lock lock = LockManager.lockExclusive(oldName.toString());
-                try {
-                    if (lock == null || !lock.isValid()) {
-                        LOG.error().$("Cannot obtain lock on ").$(oldName).$();
-                        throw JournalWriterAlreadyOpenException.INSTANCE;
-                    }
-
-                    if (Files.exists(newName)) {
-                        throw new JournalException("Destination directory already exists");
-                    }
-
-
-                    Lock writeLock = LockManager.lockExclusive(newName.toString());
-                    try {
-
-                        if (writeLock == null || !writeLock.isValid()) {
-                            LOG.error().$("Cannot obtain lock on ").$(newName).$();
-                            throw JournalWriterAlreadyOpenException.INSTANCE;
-                        }
-
-                        if (!Files.rename(oldName, newName)) {
-                            throw new JournalException("Cannot rename journal: %s [%d]", oldName, Os.errno());
-                        }
-                    } finally {
-                        LockManager.release(writeLock);
-                    }
-                } finally {
-                    LockManager.release(lock);
-                }
-            }
-        }
     }
 }

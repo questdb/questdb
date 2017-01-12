@@ -24,15 +24,19 @@
 package com.questdb.factory;
 
 import com.questdb.Journal;
+import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
+import com.questdb.PartitionBy;
 import com.questdb.ex.*;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
+import com.questdb.factory.configuration.MetadataBuilder;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
 import com.questdb.mp.Job;
 
+import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Iterator;
 import java.util.Map;
@@ -57,7 +61,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * thread-safe and is guarantying that all open writers will be eventually
  * closed.
  */
-public class CachingWriterFactory extends WriterFactoryImpl implements JournalCloseInterceptor, Job {
+public class CachingWriterFactory extends AbstractFactory implements JournalCloseInterceptor, Job, WriterFactory {
 
     private static final Log LOG = LogFactory.getLog(CachingWriterFactory.class);
 
@@ -182,6 +186,36 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
         releaseAll(Long.MAX_VALUE);
     }
 
+    @Override
+    public <T> JournalWriter<T> writer(Class<T> clazz) throws JournalException {
+        return writer(new JournalKey<>(clazz));
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(Class<T> clazz, String name) throws JournalException {
+        return writer(new JournalKey<>(clazz, name));
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(Class<T> clazz, String name, int recordHint) throws JournalException {
+        return writer(new JournalKey<>(clazz, name, PartitionBy.DEFAULT, recordHint));
+    }
+
+    @Override
+    public JournalWriter writer(String name) throws JournalException {
+        return writer(getConfiguration().readMetadata(name));
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
+        return writer(getConfiguration().createMetadata(key));
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(MetadataBuilder<T> metadataBuilder) throws JournalException {
+        return writer(metadataBuilder.build());
+    }
+
     int countFreeWriters() {
         int count = 0;
         for (Map.Entry<String, Entry> me : entries.entrySet()) {
@@ -281,7 +315,13 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
     @SuppressWarnings("unchecked")
     private <T> void createWriter(String name, Entry e, JournalMetadata<T> metadata) throws JournalException {
         try {
-            JournalWriter<T> w = super.writer(metadata);
+            JournalMetadata<T> mo = getConfiguration().readMetadata(metadata.getName());
+            if (mo != null && !mo.isCompatible(metadata, false)) {
+                throw new JournalMetadataException(mo, metadata);
+            }
+
+            JournalWriter<T> w = new JournalWriter<>(metadata, new File(getConfiguration().getJournalBase(), name));
+
             if (closed) {
                 return;
             }
@@ -295,6 +335,8 @@ public class CachingWriterFactory extends WriterFactoryImpl implements JournalCl
             throw ex;
         }
     }
+
+
 
     private JournalWriter checkAndReturn(Entry e, String name, JournalMetadata<?> metadata) throws JournalException {
         JournalMetadata wm = e.writer.getMetadata();

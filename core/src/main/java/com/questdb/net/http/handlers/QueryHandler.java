@@ -26,7 +26,7 @@ package com.questdb.net.http.handlers;
 import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.ex.SlowWritableChannelException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Numbers;
 import com.questdb.net.http.ChunkedResponse;
@@ -45,13 +45,13 @@ import static com.questdb.net.http.handlers.AbstractQueryContext.*;
 
 public class QueryHandler implements ContextHandler {
 
-    private final MegaFactory factory;
+    private final Factory factory;
     private final LocalValue<QueryHandlerContext> localContext = new LocalValue<>();
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
     private final ServerConfiguration configuration;
 
-    public QueryHandler(MegaFactory factory, ServerConfiguration configuration) {
+    public QueryHandler(Factory factory, ServerConfiguration configuration) {
         this.factory = factory;
         this.configuration = configuration;
     }

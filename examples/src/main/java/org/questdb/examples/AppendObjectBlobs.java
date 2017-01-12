@@ -26,7 +26,7 @@ package org.questdb.examples;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.WriterFactoryImpl;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.factory.configuration.JournalStructure;
@@ -42,17 +42,19 @@ public class AppendObjectBlobs {
         final String dirToIndex = args[1];
 
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        WriterFactoryImpl writerFactory = new WriterFactoryImpl(configuration);
+        try (Factory factory = new Factory(configuration, 1000, 1)) {
 
-        JournalWriter writer = writerFactory.writer(new JournalStructure("files") {{
-            $sym("name").index();
-            $bin("data");
-            $ts();
-        }});
+            try (JournalWriter writer = factory.writer(new JournalStructure("files") {{
+                $sym("name").index();
+                $bin("data");
+                $ts();
+            }})) {
 
-        long t = System.currentTimeMillis();
-        int count = processDir(writer, new File(dirToIndex));
-        System.out.println("Added " + count + " files in " + (System.currentTimeMillis() - t) + " ms.");
+                long t = System.currentTimeMillis();
+                int count = processDir(writer, new File(dirToIndex));
+                System.out.println("Added " + count + " files in " + (System.currentTimeMillis() - t) + " ms.");
+            }
+        }
     }
 
     private static int processDir(JournalWriter writer, File dir) throws JournalException, IOException {

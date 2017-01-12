@@ -53,7 +53,7 @@ public class NullAggregationTest extends AbstractOptimiserTest {
     }
 
     private static void createTabWithNaNs2() throws JournalException, NumericException {
-        try (JournalWriter w = theFactory.getMegaFactory().writer(
+        try (JournalWriter w = FACTORY_CONTAINER.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").

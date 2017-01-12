@@ -23,7 +23,7 @@
 
 package com.questdb;
 
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.log.*;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
@@ -89,7 +89,7 @@ class BootstrapMain {
         configureLoggers(configuration);
 
         final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
-        MegaFactory factory = new MegaFactory(configuration.getDbPath().getAbsolutePath(), 60000, 4);
+        Factory factory = new Factory(configuration.getDbPath().getAbsolutePath(), 60000, 4);
 
         matcher.put("/imp", new ImportHandler(configuration, factory));
         matcher.put("/exec", new QueryHandler(factory, configuration));

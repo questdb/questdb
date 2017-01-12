@@ -25,7 +25,7 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.ql.RecordSource;
@@ -46,7 +46,7 @@ public class SQLParameters {
         }
 
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        try (MegaFactory factory = new MegaFactory(configuration, 1000, 1)) {
+        try (Factory factory = new Factory(configuration, 1000, 1)) {
 
 
             // import movies data to query

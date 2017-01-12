@@ -29,7 +29,7 @@ import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Numbers;
@@ -55,7 +55,7 @@ public class ClusteredProducerMain {
             $(Price.class).$ts();
         }}.build(pathToDatabase);
 
-        final MegaFactory factory = new MegaFactory(configuration, 1000, 1);
+        final Factory factory = new Factory(configuration, 1000, 1);
 
         final JournalWriter<Price> writer = factory.writer(new JournalKey<>(Price.class, null, PartitionBy.DEFAULT, 1000000000));
 

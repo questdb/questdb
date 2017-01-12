@@ -33,8 +33,8 @@ public class BulkTest extends AbstractTest {
     @Test
     public void testBulkWrite() throws Exception {
         final int batchSize = 1000000;
-        try (JournalWriter<Quote> writer = theFactory.getMegaFactory().writer(Quote.class)) {
-            try (Journal<Quote> reader = theFactory.getMegaFactory().reader(Quote.class)) {
+        try (JournalWriter<Quote> writer = factoryContainer.getFactory().writer(Quote.class)) {
+            try (Journal<Quote> reader = factoryContainer.getFactory().reader(Quote.class)) {
                 reader.setSequentialAccess(true);
                 TestUtils.generateQuoteData(writer, batchSize, System.currentTimeMillis(), 12 * 30L * 24L * 60L * 60L * 1000L / batchSize);
                 writer.commit();
@@ -54,8 +54,8 @@ public class BulkTest extends AbstractTest {
     public void testDurable() throws Exception {
         final int batchSize = 100000;
         final int iterations = 10;
-        try (JournalWriter<Quote> writer = theFactory.getMegaFactory().writer(Quote.class)) {
-            try (Journal<Quote> reader = theFactory.getMegaFactory().reader(Quote.class)) {
+        try (JournalWriter<Quote> writer = factoryContainer.getFactory().writer(Quote.class)) {
+            try (Journal<Quote> reader = factoryContainer.getFactory().reader(Quote.class)) {
                 reader.setSequentialAccess(true);
                 long start = System.currentTimeMillis();
                 long p = 10L * 24L * 60L * 60L * 1000L;

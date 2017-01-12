@@ -25,7 +25,7 @@ package org.questdb.examples.replication.plain;
 
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalServer;
@@ -47,7 +47,7 @@ public class SimpleReplicationServerMain {
 
     public void start() throws Exception {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(location);
-        MegaFactory factory = new MegaFactory(configuration, 1000, 1);
+        Factory factory = new Factory(configuration, 1000, 1);
 
         JournalServer server = new JournalServer(factory);
 

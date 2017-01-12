@@ -25,7 +25,7 @@ package org.questdb.examples.replication.authentication;
 
 import com.questdb.Journal;
 import com.questdb.JournalIterators;
-import com.questdb.factory.MegaFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalClient;
@@ -43,7 +43,7 @@ import java.io.UnsupportedEncodingException;
 public class AuthReplicationClientMain {
     public static void main(String[] args) throws Exception {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        MegaFactory factory = new MegaFactory(configuration, 1000, 2);
+        Factory factory = new Factory(configuration, 1000, 2);
 
         final JournalClient client = new JournalClient(factory, new CredentialProvider() {
             @Override
