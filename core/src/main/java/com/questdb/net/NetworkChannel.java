@@ -26,7 +26,11 @@ package com.questdb.net;
 import java.nio.channels.ByteChannel;
 
 public interface NetworkChannel extends ByteChannel {
+    long getConsecutiveBadReadCount();
+
     long getFd();
 
     long getTotalWrittenAndReset();
+
+    long getIp();
 }

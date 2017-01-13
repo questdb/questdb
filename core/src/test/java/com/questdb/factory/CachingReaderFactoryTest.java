@@ -181,14 +181,18 @@ public class CachingReaderFactoryTest extends AbstractTest {
                     Rnd rnd = new Rnd();
                     try {
                         barrier.await();
+                        String name = null;
                         for (int i = 0; i < iterations; i++) {
-                            String name = meta[rnd.nextPositiveInt() % readerCount].getName();
+                            if (name == null) {
+                                name = meta[rnd.nextPositiveInt() % readerCount].getName();
+                            }
                             while (true) {
                                 try {
                                     rf.lock(name);
                                     lockTimes.add(System.currentTimeMillis());
                                     LockSupport.parkNanos(1000L);
                                     rf.unlock(name);
+                                    name = null;
                                     break;
                                 } catch (JournalException e) {
                                     if (!(e instanceof RetryLockException)) {

@@ -253,8 +253,13 @@ public class JournalTest extends AbstractTest {
             path = w.getLocation();
         }
 
-        Files.deleteOrException(new File(path, "2013-02/sym.r"));
-        Files.deleteOrException(new File(path, "2013-02/sym.k"));
+        factoryContainer.getFactory().lock(Quote.class.getName());
+        try {
+            Files.deleteOrException(new File(path, "2013-02/sym.r"));
+            Files.deleteOrException(new File(path, "2013-02/sym.k"));
+        } finally {
+            factoryContainer.getFactory().unlock(Quote.class.getName());
+        }
 
         try (Journal<Quote> journal = factoryContainer.getFactory().reader(Quote.class)) {
             try {

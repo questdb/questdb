@@ -63,7 +63,7 @@ public class CsvHandler implements ContextHandler {
     public void handle(IOContext context) throws IOException {
         ExportHandlerContext ctx = localContext.get(context);
         if (ctx == null) {
-            localContext.set(context, ctx = new ExportHandlerContext(context.channel.getFd(), context.getServerConfiguration().getDbCyclesBeforeCancel()));
+            localContext.set(context, ctx = new ExportHandlerContext(context.getFd(), context.getServerConfiguration().getDbCyclesBeforeCancel()));
         }
         ChunkedResponse r = context.chunkedResponse();
         if (ctx.parseUrl(r, context.request)) {

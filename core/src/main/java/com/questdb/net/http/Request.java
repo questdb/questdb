@@ -23,8 +23,10 @@
 
 package com.questdb.net.http;
 
+import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.HeadersTooLargeException;
 import com.questdb.ex.MalformedHeaderException;
+import com.questdb.ex.SlowReadableChannelException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
@@ -49,6 +51,7 @@ public class Request implements Closeable, Mutable {
     private final int soRcvSmall;
     private final int soRcvLarge;
     private final int soRetries;
+    private final int soConsecutiveBadReadLimit;
 
     public Request(NetworkChannel channel, ServerConfiguration configuration) {
         this.channel = channel;
@@ -59,6 +62,7 @@ public class Request implements Closeable, Mutable {
         this.soRcvSmall = configuration.getHttpSoRcvSmall();
         this.soRcvLarge = configuration.getHttpSoRcvLarge();
         this.soRetries = configuration.getHttpSoRetries();
+        this.soConsecutiveBadReadLimit = configuration.getHttpSoConsecutiveBadReadLimit();
     }
 
     @Override
@@ -131,9 +135,17 @@ public class Request implements Closeable, Mutable {
     }
 
     private void drainChannel() throws IOException {
-        in.clear();
-        ByteBuffers.copyNonBlocking(channel, in, soRetries);
-        in.flip();
+        try {
+            in.clear();
+            ByteBuffers.copyNonBlocking(channel, in, soRetries);
+            in.flip();
+        } catch (SlowReadableChannelException e) {
+            if (channel.getConsecutiveBadReadCount() > soConsecutiveBadReadLimit) {
+                LOG.error().$("Too many failed read attempts").$();
+                throw DisconnectedChannelException.INSTANCE;
+            }
+            throw e;
+        }
     }
 
     private DirectByteCharSequence getBoundary() {

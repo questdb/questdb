@@ -59,10 +59,6 @@ public class Factory implements ReaderFactory, WriterFactory {
         return readerFactory.reader(clazz, name);
     }
 
-    public void expire() {
-        writerFactory.run();
-    }
-
     @Override
     public Journal reader(String name) throws JournalException {
         return readerFactory.reader(name);
@@ -85,6 +81,10 @@ public class Factory implements ReaderFactory, WriterFactory {
         } finally {
             unlock(name);
         }
+    }
+
+    public void expire() {
+        writerFactory.run();
     }
 
     public int getBusyReaderCount() {

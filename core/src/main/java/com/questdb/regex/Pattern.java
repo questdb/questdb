@@ -1183,16 +1183,6 @@ public final class Pattern
             }
         }
         return index - x;
-    }    /**
-     * <p>Returns the string representation of this pattern. This
-     * is the regular expression from which this pattern was
-     * compiled.</p>
-     *
-     * @return The string representation of this pattern
-     * @since 1.5
-     */
-    public String toString() {
-        return pattern;
     }
 
     private static int countCodePoints(CharSequence seq) {
@@ -1207,6 +1197,16 @@ public final class Pattern
             }
         }
         return n;
+    }    /**
+     * <p>Returns the string representation of this pattern. This
+     * is the regular expression from which this pattern was
+     * compiled.</p>
+     *
+     * @return The string representation of this pattern
+     * @since 1.5
+     */
+    public String toString() {
+        return pattern;
     }
 
     private static boolean inRange(int lower, int ch, int upper) {
@@ -1764,12 +1764,6 @@ public final class Pattern
         }
     }
 
-    /*
-     * The following private methods are mainly used to improve the
-     * readability of the code. In order to let the Java compiler easily
-     * inline them, we should not put many assertions or error checks in them.
-     */
-
     /**
      * Copies regular expression to an int array and invokes the parsing
      * of the expression which will create the object tree.
@@ -1844,6 +1838,12 @@ public final class Pattern
         patternLength = 0;
         compiled = true;
     }
+
+    /*
+     * The following private methods are mainly used to improve the
+     * readability of the code. In order to let the Java compiler easily
+     * inline them, we should not put many assertions or error checks in them.
+     */
 
     /**
      * Attempts to compose input by combining the first character
@@ -3300,10 +3300,6 @@ public final class Pattern
         }
     }
 
-    //
-    // Utility methods for code point support
-    //
-
     /**
      * Used for REs that can start anywhere within the input string.
      * This basically tries to match repeatedly at each spot in the
@@ -3345,6 +3341,10 @@ public final class Pattern
             return false;
         }
     }
+
+    //
+    // Utility methods for code point support
+    //
 
     /*
      * StartS supports supplementary characters, including unpaired surrogates.

@@ -120,7 +120,6 @@ public class HttpServerTest extends AbstractJournalTest {
             setDefaultHandler(new StaticContentHandler(configuration));
         }});
         server.start();
-
         try {
             HttpTestUtils.download(clientBuilder(true), "https://localhost:9000/upload.html", new File(temp.getRoot(), "upload.html"));
         } finally {
@@ -615,9 +614,16 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    //todo: this sometimes gets stuck on linux, could be epoll problem
+    // this test intermittently fails on fedora 25
+    // at the same tie it works consistently on OSX and windows
+    // problem seems to be either with loopback interface and/or kernel
+    // symptoms are: http client is in blocking write to socket, server epoll triggers fd, but
+    // recv(fd) returns -1 and EWOULDBLOCK and this goes on forever with epoll keep firing fd that has nothing to show
+    // fix is in server, which would allow limited number of this iterations after which connection is closed.
     public void testRangesNative() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/questdb.conf"));
+        configuration.setHttpThreads(1);
+        configuration.setHttpSoRetries(10);
         HttpServer server = new HttpServer(new ServerConfiguration() {
             @Override
             public File getHttpPublic() {

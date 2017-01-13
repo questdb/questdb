@@ -247,9 +247,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
     private static long parent2Of(long blockAddress) {
         return parentOf(parentOf(blockAddress));
-    }    @Override
-    public Record newRecord() {
-        return byRowId ? delegate.newRecord() : recordList.newRecord();
     }
 
     private static void setColor(long blockAddress, byte colour) {
@@ -257,6 +254,9 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             return;
         }
         Unsafe.getUnsafe().putByte(blockAddress + O_COLOUR, colour);
+    }    @Override
+    public Record newRecord() {
+        return byRowId ? delegate.newRecord() : recordList.newRecord();
     }
 
     private static byte colorOf(long blockAddress) {

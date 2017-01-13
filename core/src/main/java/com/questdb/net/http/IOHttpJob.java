@@ -77,7 +77,7 @@ public class IOHttpJob implements Job {
 
     private static void logAccess(IOContext context) {
         ACCESS.xinfo().
-                $ip(Net.getPeerIP(context.channel.getFd())).
+                $ip(context.channel.getIp()).
                 $(" -").
                 $(" -").
                 $(" [").

@@ -64,8 +64,10 @@ public class LagTest extends AbstractTest {
         rw.mergeAppend(data1);
         rw.commit();
 
+        File loc;
         try (Journal<Quote> reader = factoryContainer.getFactory().reader(Quote.class)) {
             reader.query().all().asResultSet().read();
+            loc = reader.getLocation();
 
             // simple append scenario
             List<Quote> data2 = new ArrayList<>();
@@ -145,18 +147,19 @@ public class LagTest extends AbstractTest {
 
             reader.refresh();
             reader.query().all().asResultSet().read();
-
-
-            String[] tempDirs = reader.getLocation().list(new FilenameFilter() {
-                @Override
-                public boolean accept(File dir, String name) {
-                    return name.startsWith("temp") && !name.endsWith(".lock");
-                }
-            });
-
-            Assert.assertNotNull(tempDirs);
-            Assert.assertEquals(2, tempDirs.length);
         }
+
+        factoryContainer.getFactory().lock(Quote.class.getName());
+
+        String[] tempDirs = loc.list(new FilenameFilter() {
+            @Override
+            public boolean accept(File dir, String name) {
+                return name.startsWith("temp") && !name.endsWith(".lock");
+            }
+        });
+
+        Assert.assertNotNull(tempDirs);
+        Assert.assertEquals(1, tempDirs.length);
     }
 
     @Test

@@ -61,7 +61,7 @@ public class QueryHandler implements ContextHandler {
         QueryHandlerContext ctx = localContext.get(context);
         if (ctx == null) {
             localContext.set(context,
-                    ctx = new QueryHandlerContext(context.channel.getFd(), context.getServerConfiguration().getDbCyclesBeforeCancel()));
+                    ctx = new QueryHandlerContext(context.getFd(), context.getServerConfiguration().getDbCyclesBeforeCancel()));
         }
         ChunkedResponse r = context.chunkedResponse();
         if (ctx.parseUrl(r, context.request)) {

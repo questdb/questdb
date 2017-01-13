@@ -24,6 +24,7 @@
 package com.questdb.misc;
 
 import com.questdb.ex.*;
+import com.questdb.net.NetworkChannel;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.IOException;
@@ -174,7 +175,7 @@ public final class ByteBuffers {
     }
 
     @SuppressWarnings("TryWithIdenticalCatches")
-    public static void copyNonBlocking(ReadableByteChannel channel, ByteBuffer to, final int retryCount)
+    public static void copyNonBlocking(NetworkChannel channel, ByteBuffer to, final int retryCount)
             throws DisconnectedChannelException, SlowReadableChannelException, EndOfChannelException {
         int r = to.remaining();
         int target = r;

@@ -154,7 +154,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
     }
 
     private void disconnect(C context, int disconnectReason) {
-        LOG.info().$("Disconnected ").$(context.getFd()).$(": ").$(DisconnectReason.nameOf(disconnectReason)).$();
+        LOG.info().$("Disconnected ").$ip(context.getIp()).$(" [").$(DisconnectReason.nameOf(disconnectReason)).$(']').$();
         context.close();
         connectionCount--;
     }

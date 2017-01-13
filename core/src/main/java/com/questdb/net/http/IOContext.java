@@ -71,13 +71,13 @@ public class IOContext implements Closeable, Mutable, Locality, Context {
     @Override
     public void close() {
         if (open.compareAndSet(true, false)) {
-            LOG.debug().$("Releasing context for ").$(channel.getFd()).$();
+            LOG.debug().$("Releasing context for ").$ip(channel.getIp()).$();
             // !!! it is important not to close request before closing local value map !!!
             Misc.free(map);
             Misc.free(channel);
             Misc.free(request);
             Misc.free(response);
-            LOG.debug().$("Released context for ").$(channel.getFd()).$();
+            LOG.debug().$("Released context for ").$ip(channel.getIp()).$();
         }
     }
 
@@ -93,6 +93,11 @@ public class IOContext implements Closeable, Mutable, Locality, Context {
     @Override
     public long getFd() {
         return channel.getFd();
+    }
+
+    @Override
+    public long getIp() {
+        return channel.getIp();
     }
 
     @Override

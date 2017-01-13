@@ -77,6 +77,11 @@ public class TestChannel implements NetworkChannel {
     }
 
     @Override
+    public long getIp() {
+        return 0;
+    }
+
+    @Override
     public int read(ByteBuffer dst) throws IOException {
         if (!fullyRead) {
             Unsafe.getUnsafe().copyMemory(reqAddress, ByteBuffers.getAddress(dst), reqLen);
@@ -84,6 +89,11 @@ public class TestChannel implements NetworkChannel {
             fullyRead = true;
             return reqLen;
         }
+        return 0;
+    }
+
+    @Override
+    public long getConsecutiveBadReadCount() {
         return 0;
     }
 

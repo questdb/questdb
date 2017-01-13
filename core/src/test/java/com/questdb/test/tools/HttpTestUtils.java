@@ -94,6 +94,7 @@ public class HttpTestUtils {
             b.addPart("data", new FileBody(resourceFile(resource)));
             post.setEntity(b.build());
             HttpResponse r = client.execute(post);
+
             if (response != null) {
                 InputStream is = r.getEntity().getContent();
                 int n;

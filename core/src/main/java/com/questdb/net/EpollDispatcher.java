@@ -160,7 +160,7 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
     }
 
     private void disconnect(C context, int disconnectReason) {
-        LOG.info().$("Disconnected ").$(context.getFd()).$(": ").$(DisconnectReason.nameOf(disconnectReason)).$();
+        LOG.info().$("Disconnected ").$ip(context.getIp()).$(" [").$(DisconnectReason.nameOf(disconnectReason)).$(']').$();
         context.close();
         connectionCount--;
     }
@@ -196,10 +196,10 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
             interestSubSequence.done(cursor);
 
             int fd = (int) context.getFd();
-            LOG.debug().$("Registering ").$(fd).$(" status ").$(channelStatus).$();
+            final long id = fdid++;
+            LOG.debug().$("Registering ").$(fd).$(" status ").$(channelStatus).$(" as ").$(id).$();
             epoll.setOffset(offset);
             offset += Epoll.SIZEOF_EVENT;
-            final long id = fdid++;
             switch (channelStatus) {
                 case ChannelStatus.READ:
                     epoll.control(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLIN);
@@ -259,7 +259,7 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
                     evt.context = context;
                     evt.channelStatus = (epoll.getEvent() & Epoll.EPOLLIN) > 0 ? ChannelStatus.READ : ChannelStatus.WRITE;
                     ioSequence.done(cursor);
-                    LOG.debug().$("Queuing ").$(id).$(" on ").$(context.getFd()).$();
+                    LOG.debug().$("Queuing ").$(id).$(" on ").$(context.getFd()).$(", status: ").$(evt.channelStatus).$();
                     pending.deleteRow(row);
                     watermark--;
                 }

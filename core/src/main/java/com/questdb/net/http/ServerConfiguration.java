@@ -51,6 +51,7 @@ public class ServerConfiguration {
     private int httpSoRcvSmall = 8 * 1024;
     private int httpSoRcvLarge = 4 * 1024 * 1024;
     private int httpSoRetries = 1024;
+    private int httpSoConsecutiveBadReadLimit = 10;
     private boolean httpAbortBrokenUploads = true;
     private String httpIndexFile = "index.html";
     private int dbAsOfDataPage = 4 * 1024 * 1024;
@@ -129,6 +130,10 @@ public class ServerConfiguration {
 
         if ((n = parseInt(props, "http.so.retries")) > -1) {
             this.httpSoRetries = n;
+        }
+
+        if ((n = parseInt(props, "http.so.consecutive.bad.reads.limit")) > -1) {
+            this.httpSoConsecutiveBadReadLimit = n;
         }
 
         if ((s = props.getProperty("http.abort.broken.uploads")) != null) {
@@ -404,6 +409,10 @@ public class ServerConfiguration {
         return httpIP;
     }
 
+    public int getHttpSoConsecutiveBadReadLimit() {
+        return httpSoConsecutiveBadReadLimit;
+    }
+
     public String getHttpIndexFile() {
         return httpIndexFile;
     }
@@ -438,6 +447,10 @@ public class ServerConfiguration {
 
     public int getHttpSoRetries() {
         return httpSoRetries;
+    }
+
+    public void setHttpSoRetries(int httpSoRetries) {
+        this.httpSoRetries = httpSoRetries;
     }
 
     public int getHttpThreads() {
