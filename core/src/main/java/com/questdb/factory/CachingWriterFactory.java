@@ -85,9 +85,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         String name = journal.getName();
         Entry e = entries.get(name);
         if (e != null) {
-            long threadId = Thread.currentThread().getId();
-
-            if (e.owner == threadId) {
+            if (e.owner != -1) {
 
                 if (e.writer.isCommitOnClose()) {
                     try {
@@ -110,7 +108,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
 
                 e.owner = -1L;
             } else {
-                LOG.error().$("Writer '").$(name).$("' is owned by thread ").$(e.owner).$();
+                LOG.error().$("Writer '").$(name).$("' is not allocated ").$(e.owner).$();
             }
         } else {
             LOG.error().$("Writer '").$(name).$("' is not managed by this pool").$();

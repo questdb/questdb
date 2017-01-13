@@ -69,7 +69,7 @@ public class JoinStringToSymbolTest {
         aw.close();
         bw.close();
 
-        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, factoryContainer.getFactory().getBusyWriterCount());
         Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
     }
 

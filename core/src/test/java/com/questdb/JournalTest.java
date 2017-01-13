@@ -114,6 +114,9 @@ public class JournalTest extends AbstractTest {
             Assert.fail();
         } catch (JournalException ignore) {
         }
+
+        factoryContainer.getFactory().expire();
+
         Assert.assertTrue(dir.exists());
         Assert.assertTrue(Files.delete(dir));
     }

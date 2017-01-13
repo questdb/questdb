@@ -615,6 +615,7 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    //todo: this sometimes gets stuck on linux, could be epoll problem
     public void testRangesNative() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/questdb.conf"));
         HttpServer server = new HttpServer(new ServerConfiguration() {

@@ -76,6 +76,8 @@ public abstract class AbstractJournalTest extends AbstractTest {
         masterReader.close();
         journalDeltaProducer.free();
         journalDeltaConsumer.free();
+        super.tearDown();
+
     }
 
     void executeSequence(boolean expectContent) throws JournalNetworkException, JournalException {

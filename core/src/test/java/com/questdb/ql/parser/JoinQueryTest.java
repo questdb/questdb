@@ -58,7 +58,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     @After
     public void tearDown() throws Exception {
         Assert.assertEquals(0, FACTORY_CONTAINER.getFactory().getBusyReaderCount());
-
+        Assert.assertEquals(0, FACTORY_CONTAINER.getFactory().getBusyWriterCount());
     }
 
     @Test
