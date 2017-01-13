@@ -197,12 +197,6 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
     }
 
     @Override
-    public void releaseCursor() {
-        parentCursor.releaseCursor();
-        recordList.releaseCursor();
-    }
-
-    @Override
     public Record getRecord() {
         return record;
     }
@@ -215,6 +209,12 @@ public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource 
     @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
+    }
+
+    @Override
+    public void releaseCursor() {
+        parentCursor.releaseCursor();
+        recordList.releaseCursor();
     }
 
     @Override

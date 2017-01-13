@@ -35,12 +35,9 @@ import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.test.tools.AbstractTest;
-import com.questdb.test.tools.TestUtils;
 import com.questdb.test.tools.FactoryContainer;
-import org.junit.Assert;
-import org.junit.Ignore;
-import org.junit.Rule;
-import org.junit.Test;
+import com.questdb.test.tools.TestUtils;
+import org.junit.*;
 
 import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -68,6 +65,23 @@ public class ClusterControllerTest extends AbstractTest {
 
     @Rule
     public final FactoryContainer tf5 = new FactoryContainer(ModelConfiguration.MAIN);
+
+    @After
+    public void tearDown() throws Exception {
+        Assert.assertEquals(0, tf.getFactory().getBusyWriterCount());
+        Assert.assertEquals(0, tf1.getFactory().getBusyWriterCount());
+        Assert.assertEquals(0, tf2.getFactory().getBusyWriterCount());
+        Assert.assertEquals(0, tf3.getFactory().getBusyWriterCount());
+        Assert.assertEquals(0, tf4.getFactory().getBusyWriterCount());
+        Assert.assertEquals(0, tf5.getFactory().getBusyWriterCount());
+
+        Assert.assertEquals(0, tf.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, tf1.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, tf2.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, tf3.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, tf4.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, tf5.getFactory().getBusyReaderCount());
+    }
 
     @Test
     @Ignore

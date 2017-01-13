@@ -31,14 +31,11 @@ import com.questdb.ql.impl.AllRowSource;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.join.CrossJoinRecordSource;
-import com.questdb.test.tools.TestUtils;
 import com.questdb.test.tools.FactoryContainer;
+import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 
 public class JoinStringToSymbolTest {
     @Rule
@@ -71,6 +68,9 @@ public class JoinStringToSymbolTest {
     public void tearDown() throws Exception {
         aw.close();
         bw.close();
+
+        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
     }
 
     @Test

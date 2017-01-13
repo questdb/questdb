@@ -72,10 +72,14 @@ public class KvIndexIntLambdaHeadRowSource implements RowSource, RowCursor {
         }
 
         keys.clear();
-        for (Record r : recordSource.prepareCursor(factory, cancellationHandler)) {
-            keys.add(r.getInt(recordSourceColumn));
+        RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
+        try {
+            for (Record r : cursor) {
+                keys.add(r.getInt(recordSourceColumn));
+            }
+        } finally {
+            cursor.releaseCursor();
         }
-
     }
 
     @Override

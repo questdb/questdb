@@ -82,7 +82,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
             long thread = Thread.currentThread().getId();
             R r = (R) journal;
 
-            if (Unsafe.arrayGet(r.entry.allocations, r.index) == thread) {
+            if (Unsafe.arrayGet(r.entry.allocations, r.index) != UNALLOCATED) {
 
                 if (closed == TRUE) {
                     // keep locked and close
@@ -97,7 +97,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
                 return false;
             }
 
-            LOG.error().$("Thread ").$(thread).$(" does not own reader '").$(name).$("' at pos ").$(r.entry.index).$(',').$(r.index).$();
+            LOG.error().$("Thread ").$(thread).$(" attempts to release unallocated reader '").$(name).$("' at pos ").$(r.entry.index).$(',').$(r.index).$();
         } else {
             LOG.error().$("Internal error. Closing foreign reader: ").$(name).$();
         }
@@ -109,6 +109,22 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         if (Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, FALSE, TRUE)) {
             releaseAll(Long.MAX_VALUE);
         }
+    }
+
+    public int getBusyCount() {
+        int count = 0;
+        for (Map.Entry<String, Entry> me : entries.entrySet()) {
+            Entry e = me.getValue();
+            do {
+                for (int i = 0; i < ENTRY_SIZE; i++) {
+                    if (Unsafe.arrayGet(e.readers, i) != null && Unsafe.arrayGet(e.allocations, i) != UNALLOCATED) {
+                        count++;
+                    }
+                }
+                e = e.next;
+            } while (e != null);
+        }
+        return count;
     }
 
     public int getMaxEntries() {
@@ -145,6 +161,31 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
             LOG.error().$("Reader '").$(name).$("' is already locked by ").$(e.lockOwner).$();
             throw JournalLockedException.INSTANCE;
         }
+    }
+
+    @Override
+    public final <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        return reader(getConfiguration().createMetadata(key));
+    }
+
+    @Override
+    public final <T> Journal<T> reader(Class<T> clazz) throws JournalException {
+        return reader(new JournalKey<>(clazz));
+    }
+
+    @Override
+    public final <T> Journal<T> reader(Class<T> clazz, String name) throws JournalException {
+        return reader(new JournalKey<>(clazz, name));
+    }
+
+    @Override
+    public final Journal reader(String name) throws JournalException {
+        return reader(getConfiguration().readMetadata(name));
+    }
+
+    @Override
+    public final <T> Journal<T> reader(Class<T> clazz, String name, int recordHint) throws JournalException {
+        return reader(new JournalKey<>(clazz, name, PartitionBy.DEFAULT, recordHint));
     }
 
     @Override
@@ -228,31 +269,6 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         // max entries exceeded
         LOG.info().$("Thread ").$(thread).$(" cannot allocate reader. Max entries exceeded (").$(this.maxSegments).$(')').$();
         throw FactoryFullException.INSTANCE;
-    }
-
-    @Override
-    public final <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return reader(getConfiguration().createMetadata(key));
-    }
-
-    @Override
-    public final <T> Journal<T> reader(Class<T> clazz) throws JournalException {
-        return reader(new JournalKey<>(clazz));
-    }
-
-    @Override
-    public final <T> Journal<T> reader(Class<T> clazz, String name) throws JournalException {
-        return reader(new JournalKey<>(clazz, name));
-    }
-
-    @Override
-    public final Journal reader(String name) throws JournalException {
-        return reader(getConfiguration().readMetadata(name));
-    }
-
-    @Override
-    public final <T> Journal<T> reader(Class<T> clazz, String name, int recordHint) throws JournalException {
-        return reader(new JournalKey<>(clazz, name, PartitionBy.DEFAULT, recordHint));
     }
 
     public void unlock(String name) {

@@ -29,8 +29,9 @@ import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
-import com.questdb.test.tools.TestUtils;
 import com.questdb.test.tools.FactoryContainer;
+import com.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -50,6 +51,12 @@ public class SSLTest {
                 .$sym("ex")
         ;
     }});
+
+    @After
+    public void tearDown() throws Exception {
+        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
+    }
 
     @Test
     public void testAuthBothCertsMissing() throws Exception {

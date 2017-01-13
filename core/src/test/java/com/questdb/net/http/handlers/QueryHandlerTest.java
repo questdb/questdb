@@ -71,7 +71,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     }
 
     @AfterClass
-    public static void tearDown() throws Exception {
+    public static void tearDown2() throws Exception {
         server.halt();
     }
 

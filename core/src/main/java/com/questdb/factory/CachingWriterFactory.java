@@ -121,6 +121,24 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         return false;
     }
 
+    @Override
+    public void close() {
+        closed = true;
+        releaseAll(Long.MAX_VALUE);
+    }
+
+    public int getBusyCount() {
+
+        int count = 0;
+        for (Map.Entry<String, Entry> stringEntryEntry : entries.entrySet()) {
+            if (stringEntryEntry.getValue().owner != -1) {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
     public void lock(String name) throws JournalException {
         if (closed) {
             LOG.info().$("Pool is closed").$();
@@ -157,6 +175,19 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         throw WriterBusyException.INSTANCE;
     }
 
+    @Override
+    public boolean run() {
+        return releaseAll(System.currentTimeMillis() - inactiveTtl);
+    }
+
+    @Override
+    public void setupThread() {
+    }
+
+    public int size() {
+        return entries.size();
+    }
+
     public void unlock(String name) {
         Entry e = entries.get(name);
         if (e == null) {
@@ -177,13 +208,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
             // unlock must remove entry because pool does not deal with null writer
             entries.remove(name);
         }
-    }
-
-
-    @Override
-    public void close() {
-        closed = true;
-        releaseAll(Long.MAX_VALUE);
     }
 
     @Override
@@ -214,33 +238,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
     @Override
     public <T> JournalWriter<T> writer(MetadataBuilder<T> metadataBuilder) throws JournalException {
         return writer(metadataBuilder.build());
-    }
-
-    int countFreeWriters() {
-        int count = 0;
-        for (Map.Entry<String, Entry> me : entries.entrySet()) {
-            Entry e = me.getValue();
-            if (e.owner == -1L) {
-                count++;
-            } else {
-                LOG.info().$("Writer '").$(me.getKey()).$("' is still owned by ").$(me.getValue().owner).$();
-            }
-        }
-
-        return count;
-    }
-
-    @Override
-    public boolean run() {
-        return releaseAll(System.currentTimeMillis() - inactiveTtl);
-    }
-
-    @Override
-    public void setupThread() {
-    }
-
-    public int size() {
-        return entries.size();
     }
 
     @Override
@@ -312,6 +309,54 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         }
     }
 
+    private JournalWriter checkAndReturn(Entry e, String name, JournalMetadata<?> metadata) throws JournalException {
+        JournalMetadata wm = e.writer.getMetadata();
+        if (metadata.isCompatible(wm, false)) {
+            if (metadata.getModelClass() != null && wm.getModelClass() == null) {
+                closeWriter(name, e);
+                createWriter(name, e, metadata);
+            }
+            return e.writer;
+        }
+
+        JournalMetadataException ex = new JournalMetadataException(wm, metadata);
+
+        if (closed) {
+            closeWriter(name, e);
+        }
+
+        e.owner = -1L;
+        throw ex;
+    }
+
+    private void closeWriter(String name, Entry e) {
+        LOG.info().$("Closing writer '").$(name).$('\'').$();
+        JournalWriter w = e.writer;
+        if (w != null) {
+            w.setCloseInterceptor(null);
+            try {
+                w.close();
+                e.writer = null;
+            } catch (Throwable e1) {
+                LOG.error().$("Cannot close writer '").$(w.getName()).$("': ").$(e1.getMessage()).$();
+            }
+        }
+    }
+
+    int countFreeWriters() {
+        int count = 0;
+        for (Map.Entry<String, Entry> me : entries.entrySet()) {
+            Entry e = me.getValue();
+            if (e.owner == -1L) {
+                count++;
+            } else {
+                LOG.info().$("Writer '").$(me.getKey()).$("' is still owned by ").$(me.getValue().owner).$();
+            }
+        }
+
+        return count;
+    }
+
     @SuppressWarnings("unchecked")
     private <T> void createWriter(String name, Entry e, JournalMetadata<T> metadata) throws JournalException {
         try {
@@ -334,28 +379,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
             e.ex = ex;
             throw ex;
         }
-    }
-
-
-
-    private JournalWriter checkAndReturn(Entry e, String name, JournalMetadata<?> metadata) throws JournalException {
-        JournalMetadata wm = e.writer.getMetadata();
-        if (metadata.isCompatible(wm, false)) {
-            if (metadata.getModelClass() != null && wm.getModelClass() == null) {
-                closeWriter(name, e);
-                createWriter(name, e, metadata);
-            }
-            return e.writer;
-        }
-
-        JournalMetadataException ex = new JournalMetadataException(wm, metadata);
-
-        if (closed) {
-            closeWriter(name, e);
-        }
-
-        e.owner = -1L;
-        throw ex;
     }
 
     private boolean releaseAll(long deadline) {
@@ -386,20 +409,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         }
 
         return removed;
-    }
-
-    private void closeWriter(String name, Entry e) {
-        LOG.info().$("Closing writer '").$(name).$('\'').$();
-        JournalWriter w = e.writer;
-        if (w != null) {
-            w.setCloseInterceptor(null);
-            try {
-                w.close();
-                e.writer = null;
-            } catch (Throwable e1) {
-                LOG.error().$("Cannot close writer '").$(w.getName()).$("': ").$(e1.getMessage()).$();
-            }
-        }
     }
 
     private static class Entry {

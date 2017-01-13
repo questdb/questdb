@@ -63,16 +63,16 @@ public class NoOpJournalPartitionSource extends AbstractImmutableIterator<Partit
     }
 
     @Override
+    public void releaseCursor() {
+    }
+
+    @Override
     public void toTop() {
     }
 
     @Override
     public boolean hasNext() {
         return false;
-    }
-
-    @Override
-    public void releaseCursor() {
     }
 
     @Override

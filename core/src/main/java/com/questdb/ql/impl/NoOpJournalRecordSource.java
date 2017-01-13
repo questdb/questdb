@@ -56,11 +56,6 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public void releaseCursor() {
-        this.cursor.releaseCursor();
-    }
-
-    @Override
     public Record getRecord() {
         return delegate.getRecord();
     }
@@ -73,6 +68,11 @@ public class NoOpJournalRecordSource extends AbstractCombinedRecordSource {
     @Override
     public StorageFacade getStorageFacade() {
         return cursor.getStorageFacade();
+    }
+
+    @Override
+    public void releaseCursor() {
+        this.cursor.releaseCursor();
     }
 
     @Override

@@ -37,15 +37,15 @@ import java.util.*;
  * java.lang.CharSequence character sequences} against the regular
  * expression.  All of the state involved in performing a match resides in the
  * matcher, so many matchers can share the same pattern.
- *
+ * <p>
  * A typical invocation sequence is thus
- *
+ * <p>
  * <blockquote><pre>
  * Pattern p = Pattern.{@link #compile compile}("a*b");
  * Matcher m = p.{@link #matcher matcher}("aaaaab");
  * boolean b = m.{@link Matcher#matches matches}();</pre></blockquote>
- *
- *
+ * <p>
+ * <p>
  * A {@link #matches matches} method is defined by this class as a
  * convenience for when a regular expression is used just once.  This method
  * compiles an expression and matches an input sequence against it in a single
@@ -54,7 +54,7 @@ import java.util.*;
  * boolean b = Pattern.matches("a*b", "aaaaab");</pre></blockquote>
  * is equivalent to the three statements above, though for repeated matches it
  * is less efficient since it does not allow the compiled pattern to be reused.
- *
+ * <p>
  * Instances of this class are immutable and are safe for use by multiple
  * concurrent threads.  Instances of the {@link Matcher} class are not safe for
  * such use.
@@ -332,12 +332,12 @@ import java.util.*;
  * that otherwise would be interpreted as unescaped constructs.  Thus the
  * expression <tt>\\</tt> matches a single backslash and <tt>\{</tt> matches a
  * left brace.
- *  * <p> It is an error to use a backslash prior to any alphabetic character that
+ * * <p> It is an error to use a backslash prior to any alphabetic character that
  * does not denote an escaped construct; these are reserved for future
  * extensions to the regular-expression language.  A backslash may be used
  * prior to a non-alphabetic character regardless of whether that character is
  * part of an unescaped construct.
- *  * <p> Backslashes within string literals in Java source code are interpreted
+ * * <p> Backslashes within string literals in Java source code are interpreted
  * as required by
  * <cite>The Java&trade; Language Specification</cite>
  * as either Unicode escapes (section 3.3) or other character escapes (section 3.10.6)
@@ -350,17 +350,17 @@ import java.util.*;
  * and leads to a compile-time error; in order to match the string
  * <tt>(hello)</tt> the string literal <tt>"&#92;&#92;(hello&#92;&#92;)"</tt>
  * must be used.
- *  * <h3><a name="cc">Character Classes</a></h3>
- *  * <p> Character classes may appear within other character classes, and
+ * * <h3><a name="cc">Character Classes</a></h3>
+ * * <p> Character classes may appear within other character classes, and
  * may be composed by the union operator (implicit) and the intersection
  * operator (<tt>&amp;&amp;</tt>).
  * The union operator denotes a class that contains every character that is
  * in at least one of its operand classes.  The intersection operator
  * denotes a class that contains every character that is in both of its
  * operand classes.
- *  * <p> The precedence of character-class operators is as follows, from
+ * * <p> The precedence of character-class operators is as follows, from
  * highest to lowest:
- *  * <blockquote><table border="0" cellpadding="1" cellspacing="0"
+ * * <blockquote><table border="0" cellpadding="1" cellspacing="0"
  * summary="Precedence of character class operators.">
  * <tr><th>1&nbsp;&nbsp;&nbsp;&nbsp;</th>
  * <td>Literal escape&nbsp;&nbsp;&nbsp;&nbsp;</td>
@@ -690,25 +690,25 @@ public final class Pattern
 
     /**
      * Enables multiline mode.
-     *      * <p> In multiline mode the expressions <tt>^</tt> and <tt>$</tt> match
+     * * <p> In multiline mode the expressions <tt>^</tt> and <tt>$</tt> match
      * just after or just before, respectively, a line terminator or the end of
      * the input sequence.  By default these expressions only match at the
      * beginning and the end of the entire input sequence.
-     *      * <p> Multiline mode can also be enabled via the embedded flag
+     * * <p> Multiline mode can also be enabled via the embedded flag
      * expression&nbsp;<tt>(?m)</tt>.  </p>
      */
     public static final int MULTILINE = 0x08;
 
     /**
      * Enables literal parsing of the pattern.
-     *      * <p> When this flag is specified then the input string that specifies
+     * * <p> When this flag is specified then the input string that specifies
      * the pattern is treated as a sequence of literal characters.
      * Metacharacters or escape sequences in the input sequence will be
      * given no special meaning.
-     *      * <p>The flags CASE_INSENSITIVE and UNICODE_CASE retain their impact on
+     * * <p>The flags CASE_INSENSITIVE and UNICODE_CASE retain their impact on
      * matching when used in conjunction with this flag. The other flags
      * become superfluous.
-     *      * <p> There is no embedded flag character for enabling literal parsing.
+     * * <p> There is no embedded flag character for enabling literal parsing.
      *
      * @since 1.5
      */
@@ -716,7 +716,7 @@ public final class Pattern
 
     /**
      * Enables dotall mode.
-     *      * <p> In dotall mode, the expression <tt>.</tt> matches any character,
+     * * <p> In dotall mode, the expression <tt>.</tt> matches any character,
      * including a line terminator.  By default this expression does not match
      * line terminators.
      * <p> Dotall mode can also be enabled via the embedded flag
@@ -727,7 +727,7 @@ public final class Pattern
 
     /**
      * Enables Unicode-aware case folding.
-     *      * <p> When this flag is specified then case-insensitive matching, when
+     * * <p> When this flag is specified then case-insensitive matching, when
      * enabled by the {@link #CASE_INSENSITIVE} flag, is done in a manner
      * consistent with the Unicode Standard.  By default, case-insensitive
      * matching assumes that only characters in the US-ASCII charset are being
@@ -764,7 +764,7 @@ public final class Pattern
      * flag expression&nbsp;<tt>(?U)</tt>.
      * The flag implies UNICODE_CASE, that is, it enables Unicode-aware case
      * folding.
-     *      * Specifying this flag may impose a performance penalty.  </p>
+     * * Specifying this flag may impose a performance penalty.  </p>
      *
      * @since 1.7
      */
@@ -932,13 +932,13 @@ public final class Pattern
     /**
      * Compiles the given regular expression and attempts to match the given
      * input against it.
-     *      * <p> An invocation of this convenience method of the form
-     *      * <blockquote><pre>
+     * * <p> An invocation of this convenience method of the form
+     * * <blockquote><pre>
      * Pattern.matches(regex, input);</pre></blockquote>
-     *      * behaves in exactly the same way as the expression
-     *      * <blockquote><pre>
+     * * behaves in exactly the same way as the expression
+     * * <blockquote><pre>
      * Pattern.compile(regex).matcher(input).matches()</pre></blockquote>
-     *      * <p> If a pattern is to be used multiple times, compiling it once and reusing
+     * * <p> If a pattern is to be used multiple times, compiling it once and reusing
      * it will be more efficient than invoking this method each time.  </p>
      *
      * @param regex The expression to be compiled
@@ -955,7 +955,7 @@ public final class Pattern
     /**
      * Returns a literal pattern <code>String</code> for the specified
      * <code>String</code>.
-     *      * <p>This method produces a <code>String</code> that can be used to
+     * * <p>This method produces a <code>String</code> that can be used to
      * create a <code>Pattern</code> that would match the string
      * <code>s</code> as if it were a literal pattern.</p> Metacharacters
      * or escape sequences in the input sequence will be given no special
@@ -1019,18 +1019,18 @@ public final class Pattern
 
     /**
      * Splits the given input sequence around matches of this pattern.
-     *      * <p> The array returned by this method contains each substring of the
+     * * <p> The array returned by this method contains each substring of the
      * input sequence that is terminated by another subsequence that matches
      * this pattern or is terminated by the end of the input sequence.  The
      * substrings in the array are in the order in which they occur in the
      * input. If this pattern does not match any subsequence of the input then
      * the resulting array has just one element, namely the input sequence in
      * string form.
-     *      * <p> When there is a positive-width match at the beginning of the input
+     * * <p> When there is a positive-width match at the beginning of the input
      * sequence then an empty leading substring is included at the beginning
      * of the resulting array. A zero-width match at the beginning however
      * never produces such empty leading substring.
-     *      * <p> The <tt>limit</tt> parameter controls the number of times the
+     * * <p> The <tt>limit</tt> parameter controls the number of times the
      * pattern is applied and therefore affects the length of the resulting
      * array.  If the limit <i>n</i> is greater than zero then the pattern
      * will be applied at most <i>n</i>&nbsp;-&nbsp;1 times, the array's
@@ -1040,9 +1040,9 @@ public final class Pattern
      * possible and the array can have any length.  If <i>n</i> is zero then
      * the pattern will be applied as many times as possible, the array can
      * have any length, and trailing empty strings will be discarded.
-     *      * <p> The input <tt>"boo:and:foo"</tt>, for example, yields the following
+     * * <p> The input <tt>"boo:and:foo"</tt>, for example, yields the following
      * results with these parameters:
-     *      * <blockquote><table cellpadding=1 cellspacing=0
+     * * <blockquote><table cellpadding=1 cellspacing=0
      * summary="Split examples showing regex, limit, and result">
      * <tr><th align="left"><i>Regex&nbsp;&nbsp;&nbsp;&nbsp;</i></th>
      * <th align="left"><i>Limit&nbsp;&nbsp;&nbsp;&nbsp;</i></th>
@@ -1115,26 +1115,14 @@ public final class Pattern
     }
 
     /**
-     * <p>Returns the string representation of this pattern. This
-     * is the regular expression from which this pattern was
-     * compiled.</p>
-     *
-     * @return The string representation of this pattern
-     * @since 1.5
-     */
-    public String toString() {
-        return pattern;
-    }
-
-    /**
      * Splits the given input sequence around matches of this pattern.
-     *      * <p> This method works as if by invoking the two-argument {@link
+     * * <p> This method works as if by invoking the two-argument {@link
      * #split(java.lang.CharSequence, int) split} method with the given input
      * sequence and a limit argument of zero.  Trailing empty strings are
      * therefore not included in the resulting array. </p>
-     *      * <p> The input <tt>"boo:and:foo"</tt>, for example, yields the following
+     * * <p> The input <tt>"boo:and:foo"</tt>, for example, yields the following
      * results with these expressions:
-     *      * <blockquote><table cellpadding=1 cellspacing=0
+     * * <blockquote><table cellpadding=1 cellspacing=0
      * summary="Split examples showing regex and result">
      * <tr><th align="left"><i>Regex&nbsp;&nbsp;&nbsp;&nbsp;</i></th>
      * <th align="left"><i>Result</i></th></tr>
@@ -1195,6 +1183,16 @@ public final class Pattern
             }
         }
         return index - x;
+    }    /**
+     * <p>Returns the string representation of this pattern. This
+     * is the regular expression from which this pattern was
+     * compiled.</p>
+     *
+     * @return The string representation of this pattern
+     * @since 1.5
+     */
+    public String toString() {
+        return pattern;
     }
 
     private static int countCodePoints(CharSequence seq) {
@@ -1567,12 +1565,6 @@ public final class Pattern
         };
     }
 
-    /*
-     * The following private methods are mainly used to improve the
-     * readability of the code. In order to let the Java compiler easily
-     * inline them, we should not put many assertions or error checks in them.
-     */
-
     /**
      * Returns a CharProperty matching all characters in a named property.
      */
@@ -1585,7 +1577,7 @@ public final class Pattern
 
     /**
      * Parse a character class, and return the node that matches it.
-     *      * Consumes a ] on the way out if consume is true. Usually consume
+     * * Consumes a ] on the way out if consume is true. Usually consume
      * is true except for the case of [abc&&def] where def is a separate
      * right hand node with "understood" brackets.
      */
@@ -1771,6 +1763,12 @@ public final class Pattern
                 return prev;
         }
     }
+
+    /*
+     * The following private methods are mainly used to improve the
+     * readability of the code. In order to let the Java compiler easily
+     * inline them, we should not put many assertions or error checks in them.
+     */
 
     /**
      * Copies regular expression to an int array and invokes the parsing
@@ -3216,10 +3214,6 @@ public final class Pattern
         }
     }
 
-    //
-    // Utility methods for code point support
-    //
-
     /**
      * Creates a bit vector for matching Latin-1 values. A normal BitClass
      * never matches values above Latin-1, and a complemented BitClass always
@@ -3305,6 +3299,10 @@ public final class Pattern
             return true;
         }
     }
+
+    //
+    // Utility methods for code point support
+    //
 
     /**
      * Used for REs that can start anywhere within the input string.
@@ -3493,11 +3491,11 @@ public final class Pattern
     /**
      * Node to anchor at the end of a line or the end of input based on the
      * multiline mode.
-     *      * When not in multiline mode, the $ can only match at the very end
+     * * When not in multiline mode, the $ can only match at the very end
      * of the input, unless the input ends in a line terminator in which
      * it matches right before the last line terminator.
-     *      * Note that \r\n is considered an atomic line terminator.
-     *      * Like ^ the $ operator matches at a position, it does not match the
+     * * Note that \r\n is considered an atomic line terminator.
+     * * Like ^ the $ operator matches at a position, it does not match the
      * line terminators themselves.
      */
     static final class Dollar extends Node {
@@ -4536,7 +4534,7 @@ public final class Pattern
     /**
      * The GroupHead saves the location where the group begins in the locals
      * and restores them when the match is done.
-     *      * The matchRef is used when a reference to this group is accessed later
+     * * The matchRef is used when a reference to this group is accessed later
      * in the expression. The locals will have a negative value in them to
      * indicate that we do not want to unset the group if the reference
      * doesn't match.
@@ -4595,7 +4593,7 @@ public final class Pattern
      * The GroupTail handles the setting of group beginning and ending
      * locations when groups are successfully matched. It must also be able to
      * unset groups that have to be backed off of.
-     *      * The GroupTail node is also used when a previous group is referenced,
+     * * The GroupTail node is also used when a previous group is referenced,
      * and in that case no group information needs to be set.
      */
     static final class GroupTail extends Node {
@@ -5235,24 +5233,24 @@ public final class Pattern
      * matching algorithm. The algorithm is based on the idea that the
      * pattern can be shifted farther ahead in the search text if it is
      * matched right to left.
-     *      * The pattern is compared to the input one character at a time, from
+     * * The pattern is compared to the input one character at a time, from
      * the rightmost character in the pattern to the left. If the characters
      * all match the pattern has been found. If a character does not match,
      * the pattern is shifted right a distance that is the maximum of two
      * functions, the bad character shift and the good suffix shift. This
      * shift moves the attempted match position through the input more
      * quickly than a naive one position at a time check.
-     *      * The bad character shift is based on the character from the text that
+     * * The bad character shift is based on the character from the text that
      * did not match. If the character does not appear in the pattern, the
      * pattern can be shifted completely beyond the bad character. If the
      * character does occur in the pattern, the pattern can be shifted to
      * line the pattern up with the next occurrence of that character.
-     *      * The good suffix shift is based on the idea that some subset on the right
+     * * The good suffix shift is based on the idea that some subset on the right
      * side of the pattern has matched. When a bad character is found, the
      * pattern can be shifted right by the pattern length if the subset does
      * not occur again in pattern, or by the amount of distance to the
      * next occurrence of the subset in the pattern.
-     *      * Boyer-Moore search methods adapted from code by Amy Yu.
+     * * Boyer-Moore search methods adapted from code by Amy Yu.
      */
     static class BnM extends Node {
         final int[] buffer;
@@ -5666,6 +5664,8 @@ public final class Pattern
             });
         }
     }
+
+
 
 
 }

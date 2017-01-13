@@ -53,13 +53,6 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     }
 
     @Override
-    public void releaseCursor() {
-        if (journal != null) {
-            journal.close();
-        }
-    }
-
-    @Override
     public JournalMetadata getMetadata() {
         return metadata;
     }
@@ -91,6 +84,14 @@ public class JournalPartitionSource extends AbstractImmutableIterator<PartitionS
     @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
+    }
+
+    @Override
+    public void releaseCursor() {
+        if (journal != null) {
+            journal.close();
+            journal = null;
+        }
     }
 
     @Override

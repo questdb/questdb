@@ -63,6 +63,9 @@ public class HashJoinRecordSourceTest {
     public void tearDown() throws Exception {
         bw.close();
         aw.close();
+
+        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
     }
 
     @Test

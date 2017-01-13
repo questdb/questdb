@@ -138,11 +138,6 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public void releaseCursor() {
-        this.recordCursor.releaseCursor();
-    }
-
-    @Override
     public Record getRecord() {
         return record;
     }
@@ -155,6 +150,11 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
     @Override
     public StorageFacade getStorageFacade() {
         return storageFacade;
+    }
+
+    @Override
+    public void releaseCursor() {
+        this.recordCursor.releaseCursor();
     }
 
     @Override

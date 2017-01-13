@@ -67,11 +67,6 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public void releaseCursor() {
-        this.partitionCursor.releaseCursor();
-    }
-
-    @Override
     public Record getRecord() {
         return record;
     }
@@ -84,6 +79,11 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
     @Override
     public StorageFacade getStorageFacade() {
         return partitionCursor.getStorageFacade();
+    }
+
+    @Override
+    public void releaseCursor() {
+        this.partitionCursor.releaseCursor();
     }
 
     @Override

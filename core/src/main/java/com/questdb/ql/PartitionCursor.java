@@ -31,7 +31,7 @@ public interface PartitionCursor extends ImmutableIterator<PartitionSlice> {
 
     StorageFacade getStorageFacade();
 
-    void toTop();
-
     void releaseCursor();
+
+    void toTop();
 }

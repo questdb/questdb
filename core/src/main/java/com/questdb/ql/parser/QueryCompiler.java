@@ -1333,12 +1333,17 @@ public class QueryCompiler {
 
     private void copy(ReaderFactory factory, RecordSource rs, JournalWriter w) throws JournalException {
         final int tsIndex = w.getMetadata().getTimestampIndex();
-        if (tsIndex == -1) {
-            copyNonPartitioned(rs.prepareCursor(factory), w, copyHelperCompiler.compile(rs.getMetadata(), w.getMetadata()));
-        } else {
-            copyPartitioned(rs.prepareCursor(factory), w, copyHelperCompiler.compile(rs.getMetadata(), w.getMetadata()), tsIndex);
+        RecordCursor cursor = rs.prepareCursor(factory);
+        try {
+            if (tsIndex == -1) {
+                copyNonPartitioned(cursor, w, copyHelperCompiler.compile(rs.getMetadata(), w.getMetadata()));
+            } else {
+                copyPartitioned(cursor, w, copyHelperCompiler.compile(rs.getMetadata(), w.getMetadata()), tsIndex);
+            }
+            w.commit();
+        } finally {
+            cursor.releaseCursor();
         }
-        w.commit();
     }
 
     private void copyNonPartitioned(RecordCursor cursor, JournalWriter w, CopyHelper helper) throws JournalException {

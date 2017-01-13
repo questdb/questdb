@@ -39,13 +39,39 @@ public class Factory implements ReaderFactory, WriterFactory {
         readerFactory.close();
     }
 
-    public void rename(String from, String to) throws JournalException {
-        lock(from);
-        try {
-            rename0(from, to);
-        } finally {
-            unlock(from);
-        }
+    @Override
+    public JournalConfiguration getConfiguration() {
+        return readerFactory.getConfiguration();
+    }
+
+    @Override
+    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        return readerFactory.reader(key);
+    }
+
+    @Override
+    public <T> Journal<T> reader(Class<T> clazz) throws JournalException {
+        return readerFactory.reader(clazz);
+    }
+
+    @Override
+    public <T> Journal<T> reader(Class<T> clazz, String name) throws JournalException {
+        return readerFactory.reader(clazz, name);
+    }
+
+    @Override
+    public Journal reader(String name) throws JournalException {
+        return readerFactory.reader(name);
+    }
+
+    @Override
+    public <T> Journal<T> reader(Class<T> clazz, String name, int recordHint) throws JournalException {
+        return readerFactory.reader(clazz, name, recordHint);
+    }
+
+    @Override
+    public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
+        return readerFactory.reader(metadata);
     }
 
     public void delete(String name) throws JournalException {
@@ -55,6 +81,73 @@ public class Factory implements ReaderFactory, WriterFactory {
         } finally {
             unlock(name);
         }
+    }
+
+    public int getBusyReaderCount() {
+        return readerFactory.getBusyCount();
+    }
+
+    public int getBusyWriterCount() {
+        return writerFactory.getBusyCount();
+    }
+
+    public void lock(String name) throws JournalException {
+        writerFactory.lock(name);
+        try {
+            readerFactory.lock(name);
+        } catch (JournalException e) {
+            writerFactory.unlock(name);
+            throw e;
+        }
+    }
+
+    public void rename(String from, String to) throws JournalException {
+        lock(from);
+        try {
+            rename0(from, to);
+        } finally {
+            unlock(from);
+        }
+    }
+
+    public void unlock(String name) {
+        readerFactory.unlock(name);
+        writerFactory.unlock(name);
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(Class<T> clazz) throws JournalException {
+        return writerFactory.writer(clazz);
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(Class<T> clazz, String name) throws JournalException {
+        return writerFactory.writer(clazz, name);
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(Class<T> clazz, String name, int recordHint) throws JournalException {
+        return writerFactory.writer(clazz, name, recordHint);
+    }
+
+    @Override
+    public JournalWriter writer(String name) throws JournalException {
+        return writerFactory.writer(name);
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
+        return writerFactory.writer(key);
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(MetadataBuilder<T> metadataBuilder) throws JournalException {
+        return writerFactory.writer(metadataBuilder);
+    }
+
+    @Override
+    public <T> JournalWriter<T> writer(JournalMetadata<T> metadata) throws JournalException {
+        return writerFactory.writer(metadata);
     }
 
     private void delete0(String name) throws JournalException {
@@ -70,21 +163,6 @@ public class Factory implements ReaderFactory, WriterFactory {
             LockManager.release(lock);
         }
 
-    }
-
-    public void lock(String name) throws JournalException {
-        writerFactory.lock(name);
-        try {
-            readerFactory.lock(name);
-        } catch (JournalException e) {
-            writerFactory.unlock(name);
-            throw e;
-        }
-    }
-
-    public void unlock(String name) {
-        readerFactory.unlock(name);
-        writerFactory.unlock(name);
     }
 
     private void rename0(CharSequence from, CharSequence to) throws JournalException {
@@ -139,76 +217,5 @@ public class Factory implements ReaderFactory, WriterFactory {
                 }
             }
         }
-    }
-
-
-    @Override
-    public JournalConfiguration getConfiguration() {
-        return readerFactory.getConfiguration();
-    }
-
-    @Override
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return readerFactory.reader(key);
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(Class<T> clazz) throws JournalException {
-        return writerFactory.writer(clazz);
-    }
-
-    @Override
-    public <T> Journal<T> reader(Class<T> clazz) throws JournalException {
-        return readerFactory.reader(clazz);
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(Class<T> clazz, String name) throws JournalException {
-        return writerFactory.writer(clazz, name);
-    }
-
-    @Override
-    public <T> Journal<T> reader(Class<T> clazz, String name) throws JournalException {
-        return readerFactory.reader(clazz, name);
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(Class<T> clazz, String name, int recordHint) throws JournalException {
-        return writerFactory.writer(clazz, name, recordHint);
-    }
-
-    @Override
-    public Journal reader(String name) throws JournalException {
-        return readerFactory.reader(name);
-    }
-
-    @Override
-    public JournalWriter writer(String name) throws JournalException {
-        return writerFactory.writer(name);
-    }
-
-    @Override
-    public <T> Journal<T> reader(Class<T> clazz, String name, int recordHint) throws JournalException {
-        return readerFactory.reader(clazz, name, recordHint);
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
-        return writerFactory.writer(key);
-    }
-
-    @Override
-    public <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
-        return readerFactory.reader(metadata);
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(MetadataBuilder<T> metadataBuilder) throws JournalException {
-        return writerFactory.writer(metadataBuilder);
-    }
-
-    @Override
-    public <T> JournalWriter<T> writer(JournalMetadata<T> metadata) throws JournalException {
-        return writerFactory.writer(metadata);
     }
 }

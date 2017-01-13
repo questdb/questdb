@@ -35,6 +35,7 @@ import com.questdb.ql.parser.QueryError;
 import com.questdb.store.SymbolTable;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -71,6 +72,12 @@ public abstract class AbstractTest {
     @Before
     public void setUp2() throws Exception {
         factoryContainer.getFactory().getConfiguration().exists("none");
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
     }
 
     protected void assertEmpty(String query) throws ParserException {

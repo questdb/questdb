@@ -74,11 +74,16 @@ abstract class KvIndexStrLambdaHeadRowSource implements RowSource, RowCursor {
 
         keys.clear();
         hashes.clear();
-        for (Record r : recordSource.prepareCursor(factory, cancellationHandler)) {
-            CharSequence s = getKey(r, recordSourceColumn);
-            if (keys.add(s)) {
-                hashes.add(Hash.boundedHash(s, buckets));
+        RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
+        try {
+            for (Record r : cursor) {
+                CharSequence s = getKey(r, recordSourceColumn);
+                if (keys.add(s)) {
+                    hashes.add(Hash.boundedHash(s, buckets));
+                }
             }
+        } finally {
+            cursor.releaseCursor();
         }
     }
 

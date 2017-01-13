@@ -293,10 +293,6 @@ public class JournalWriter<T> extends Journal<T> {
         }
     }
 
-    public boolean isInError() {
-        return inError;
-    }
-
     /**
      * Deletes entire Journal.
      *
@@ -384,6 +380,10 @@ public class JournalWriter<T> extends Journal<T> {
 
     public boolean isCommitOnClose() {
         return commitOnClose;
+    }
+
+    public boolean isInError() {
+        return inError;
     }
 
     public boolean isTxActive() {

@@ -28,6 +28,8 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Rnd;
 import com.questdb.test.tools.FactoryContainer;
+import org.junit.After;
+import org.junit.Assert;
 import org.junit.ClassRule;
 import org.junit.Test;
 
@@ -36,12 +38,19 @@ import java.util.concurrent.TimeUnit;
 public class HugeTableTest {
 
     private static final Log LOG = LogFactory.getLog(HugeTableTest.class);
+
     @ClassRule
     public static FactoryContainer factoryContainer = new FactoryContainer(new JournalConfigurationBuilder() {{
         $(Name.class).recordCountHint(15000000).txCountHint(1)
                 .$sym("name").valueCountHint(15000000).index().noCache()
         ;
     }});
+
+    @After
+    public void tearDown() throws Exception {
+        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, factoryContainer.getFactory().getBusyWriterCount());
+    }
 
     @Test
     public void testLargeSymbolTable() throws Exception {

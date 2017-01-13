@@ -58,6 +58,7 @@ public class MultipartParser implements Closeable, Mutable {
     private int boundaryPtr;
     private int consumedBoundaryLen;
     private int state;
+
     public MultipartParser(int headerBufSize, ObjectPool<DirectByteCharSequence> pool) {
         this.hb = new RequestHeaderBuffer(headerBufSize, pool);
         clear();

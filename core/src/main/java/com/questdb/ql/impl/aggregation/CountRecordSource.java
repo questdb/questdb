@@ -69,10 +69,6 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
     }
 
     @Override
-    public void releaseCursor() {
-    }
-
-    @Override
     public Record getRecord() {
         return record;
     }
@@ -85,6 +81,10 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
     @Override
     public StorageFacade getStorageFacade() {
         return null;
+    }
+
+    @Override
+    public void releaseCursor() {
     }
 
     @Override

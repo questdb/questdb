@@ -34,10 +34,11 @@ import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.AssociativeCache;
 import com.questdb.store.SymbolTable;
-import com.questdb.test.tools.TestUtils;
 import com.questdb.test.tools.FactoryContainer;
+import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.ClassRule;
 
@@ -70,6 +71,13 @@ public abstract class AbstractOptimiserTest {
             }
         }
     }
+
+    @After
+    public void tearDown() throws Exception {
+        Assert.assertEquals(0, FACTORY_CONTAINER.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, FACTORY_CONTAINER.getFactory().getBusyReaderCount());
+    }
+
 
     protected static void assertRowId(String query, String longColumn) throws ParserException {
         RecordSource src = compiler.compile(FACTORY_CONTAINER.getFactory(), query);

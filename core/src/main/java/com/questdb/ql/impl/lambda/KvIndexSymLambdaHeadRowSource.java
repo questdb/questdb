@@ -69,11 +69,17 @@ abstract class KvIndexSymLambdaHeadRowSource implements RowSource, RowCursor {
 
         SymbolTable tab = fa.getSymbolTable(columnIndex);
         keys.clear();
-        for (Record r : recordSource.prepareCursor(factory, cancellationHandler)) {
-            int k = tab.getQuick(getKey(r, recordSourceColumn));
-            if (k > -1) {
-                keys.add(k);
+
+        RecordCursor cursor = recordSource.prepareCursor(factory, cancellationHandler);
+        try {
+            for (Record r : cursor) {
+                int k = tab.getQuick(getKey(r, recordSourceColumn));
+                if (k > -1) {
+                    keys.add(k);
+                }
             }
+        } finally {
+            cursor.releaseCursor();
         }
     }
 

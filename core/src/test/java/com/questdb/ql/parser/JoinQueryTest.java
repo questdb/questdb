@@ -42,6 +42,7 @@ import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.store.MMappedSymbolTable;
 import com.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -50,7 +51,14 @@ public class JoinQueryTest extends AbstractOptimiserTest {
 
     @BeforeClass
     public static void setUpClass() throws Exception {
+        FACTORY_CONTAINER.getConfiguration().exists("");
         generateJoinData();
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        Assert.assertEquals(0, FACTORY_CONTAINER.getFactory().getBusyReaderCount());
+
     }
 
     @Test
