@@ -29,6 +29,7 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.FatalError;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
+import com.questdb.factory.FactoryEventListener;
 import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.iter.clock.Clock;
@@ -332,6 +333,17 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testImportAppend() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
+
+        final AtomicInteger errors = new AtomicInteger();
+        factoryContainer.getFactory().setEventListener(new FactoryEventListener() {
+            @Override
+            public void onEvent(int factoryType, long thread, String name, int event) {
+                if (event == FactoryEventListener.EV_UNEXPECTED_CLOSE) {
+                    errors.incrementAndGet();
+                }
+            }
+        });
+
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
         }});
@@ -348,6 +360,8 @@ public class HttpServerTest extends AbstractJournalTest {
         } finally {
             server.halt();
         }
+
+        Assert.assertEquals(0, errors.get());
     }
 
     @Test

@@ -69,21 +69,25 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
     private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
     private final long inactiveTtl;
     private volatile boolean closed = false;
+    private FactoryEventListener eventListener;
 
     public CachingWriterFactory(String databaseHome, long inactiveTtl) {
         super(databaseHome);
         this.inactiveTtl = inactiveTtl;
+        notifyListener(Thread.currentThread().getId(), null, FactoryEventListener.EV_POOL_OPEN);
     }
 
     public CachingWriterFactory(JournalConfiguration configuration, long inactiveTtl) {
         super(configuration);
         this.inactiveTtl = inactiveTtl;
+        notifyListener(Thread.currentThread().getId(), null, FactoryEventListener.EV_POOL_OPEN);
     }
 
     @Override
     public boolean canClose(Journal journal) {
         String name = journal.getName();
         Entry e = entries.get(name);
+        long thread = Thread.currentThread().getId();
         if (e != null) {
             if (e.owner != -1) {
 
@@ -91,6 +95,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
                     try {
                         e.writer.commit();
                     } catch (JournalException ex) {
+                        notifyListener(thread, name, FactoryEventListener.EV_COMMIT_EX);
                         throw new JournalRuntimeException(ex);
                     }
                 }
@@ -103,16 +108,20 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
                     e.writer.setCloseInterceptor(null);
                     e.writer = null;
                     entries.remove(name);
+                    notifyListener(thread, name, FactoryEventListener.EV_OUT_OF_POOL_CLOSE);
                     return true;
                 }
 
                 e.owner = -1L;
+                notifyListener(thread, name, FactoryEventListener.EV_RETURN);
             } else {
                 LOG.error().$("Writer '").$(name).$("' is not allocated ").$(e.owner).$();
+                notifyListener(thread, name, FactoryEventListener.EV_UNEXPECTED_CLOSE);
             }
         } else {
             LOG.error().$("Writer '").$(name).$("' is not managed by this pool").$();
             journal.setCloseInterceptor(null);
+            notifyListener(thread, name, FactoryEventListener.EV_NOT_IN_POOL);
             return true;
         }
 
@@ -123,6 +132,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
     public void close() {
         closed = true;
         releaseAll(Long.MAX_VALUE);
+        notifyListener(Thread.currentThread().getId(), null, FactoryEventListener.EV_POOL_CLOSED);
     }
 
     public int getBusyCount() {
@@ -143,11 +153,14 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
             throw FactoryClosedException.INSTANCE;
         }
 
+        long thread = Thread.currentThread().getId();
+
         Entry e = entries.get(name);
         if (e == null) {
             // We are racing to create new writer!
             e = new Entry();
             if (entries.putIfAbsent(name, e) == null) {
+                notifyListener(thread, name, FactoryEventListener.EV_LOCK_SUCCESS);
                 e.locked = true;
                 return;
             } else {
@@ -155,21 +168,20 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
             }
         }
 
-        long threadId = Thread.currentThread().getId();
-
         // try to change owner
 
         if (e != null) {
-            if ((Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, threadId) || Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, threadId, threadId))) {
+            if ((Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, thread) || Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, thread, thread))) {
                 LOG.info().$("Thread ").$(e.owner).$(" locked writer ").$(name).$();
-                closeWriter(name, e);
+                closeWriter(thread, name, e, FactoryEventListener.EV_LOCK_CLOSE, FactoryEventListener.EV_LOCK_CLOSE_EX);
                 e.locked = true;
+                notifyListener(thread, name, FactoryEventListener.EV_LOCK_SUCCESS);
                 return;
             } else {
                 LOG.error().$("Writer '").$(name).$("' is owned by thread ").$(e.owner).$();
             }
         }
-
+        notifyListener(thread, name, FactoryEventListener.EV_LOCK_BUSY);
         throw WriterBusyException.INSTANCE;
     }
 
@@ -182,30 +194,37 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
     public void setupThread() {
     }
 
+    public void setEventListener(FactoryEventListener eventListener) {
+        this.eventListener = eventListener;
+    }
+
     public int size() {
         return entries.size();
     }
 
     public void unlock(String name) {
+        long thread = Thread.currentThread().getId();
+
         Entry e = entries.get(name);
         if (e == null) {
+            notifyListener(thread, name, FactoryEventListener.EV_NOT_LOCKED);
             return;
         }
-
-        long threadId = Thread.currentThread().getId();
 
         // When entry is locked, writer must be null,
         // however if writer is not null, calling thread must be trying to unlock
         // writer that hasn't been locked. This qualifies for "illegal state"
-        if (e.owner == threadId) {
+        if (e.owner == thread) {
 
             if (e.writer != null) {
+                notifyListener(thread, name, FactoryEventListener.EV_NOT_LOCKED);
                 throw new IllegalStateException("Writer " + name + " is not locked");
             }
 
             // unlock must remove entry because pool does not deal with null writer
             entries.remove(name);
         }
+        notifyListener(thread, name, FactoryEventListener.EV_UNLOCKED);
     }
 
     @Override
@@ -252,6 +271,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         }
 
         final String name = metadata.getKey().getName();
+        long thread = Thread.currentThread().getId();
 
         Entry e = entries.get(name);
         if (e == null) {
@@ -259,7 +279,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
             e = new Entry();
             if (entries.putIfAbsent(name, e) == null) {
                 // race won
-                createWriter(name, e, metadata);
+                createWriter(thread, name, e, metadata);
                 return e.writer;
             } else {
                 LOG.info().$("Thread ").$(e.owner).$(" lost race to allocate writer '").$(name).$('\'').$();
@@ -267,29 +287,29 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
             }
         }
 
-        long threadId = Thread.currentThread().getId();
 
         // try to change owner
-        if (e != null && Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, threadId)) {
+        if (e != null && Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, thread)) {
             if (closed) {
                 // pool closed but we somehow managed to lock writer
                 // make sure that interceptor cleared to allow calling thread close writer normally
                 e.writer.setCloseInterceptor(null);
             }
-            return checkAndReturn(e, name, metadata);
+            return checkAndReturn(thread, e, name, metadata);
         } else {
             if (e == null) {
                 LOG.error().$("Writer '").$(name).$("' is not managed by this pool. Internal error?").$();
                 throw FactoryInternalException.INSTANCE;
             } else {
                 long owner = e.owner;
-                if (owner == threadId) {
+                if (owner == thread) {
 
                     if (e.locked) {
                         throw JournalLockedException.INSTANCE;
                     }
 
                     if (e.ex != null) {
+                        notifyListener(thread, name, FactoryEventListener.EV_EX_RESEND);
                         // this writer failed to allocate by this very thread
                         // ensure consistent response
                         throw e.ex;
@@ -299,7 +319,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
                         LOG.info().$("Writer '").$(name).$("' is detached").$();
                         e.writer.setCloseInterceptor(null);
                     }
-                    return checkAndReturn(e, name, metadata);
+                    return checkAndReturn(thread, e, name, metadata);
                 }
                 LOG.error().$("Writer '").$(name).$("' is already owned by thread ").$(owner).$();
                 throw WriterBusyException.INSTANCE;
@@ -307,27 +327,30 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         }
     }
 
-    private JournalWriter checkAndReturn(Entry e, String name, JournalMetadata<?> metadata) throws JournalException {
+    private JournalWriter checkAndReturn(long thread, Entry e, String name, JournalMetadata<?> metadata) throws JournalException {
         JournalMetadata wm = e.writer.getMetadata();
         if (metadata.isCompatible(wm, false)) {
             if (metadata.getModelClass() != null && wm.getModelClass() == null) {
-                closeWriter(name, e);
-                createWriter(name, e, metadata);
+                closeWriter(thread, name, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX);
+                createWriter(thread, name, e, metadata);
+            } else {
+                notifyListener(thread, name, FactoryEventListener.EV_GET);
             }
             return e.writer;
         }
 
         JournalMetadataException ex = new JournalMetadataException(wm, metadata);
+        notifyListener(thread, name, FactoryEventListener.EV_INCOMPATIBLE);
 
         if (closed) {
-            closeWriter(name, e);
+            closeWriter(thread, name, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX);
         }
 
         e.owner = -1L;
         throw ex;
     }
 
-    private void closeWriter(String name, Entry e) {
+    private void closeWriter(long thread, String name, Entry e, int ev, int evex) {
         LOG.info().$("Closing writer '").$(name).$('\'').$();
         JournalWriter w = e.writer;
         if (w != null) {
@@ -335,7 +358,9 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
             try {
                 w.close();
                 e.writer = null;
+                notifyListener(thread, name, ev);
             } catch (Throwable e1) {
+                notifyListener(thread, name, evex);
                 LOG.error().$("Cannot close writer '").$(w.getName()).$("': ").$(e1.getMessage()).$();
             }
         }
@@ -356,32 +381,40 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
     }
 
     @SuppressWarnings("unchecked")
-    private <T> void createWriter(String name, Entry e, JournalMetadata<T> metadata) throws JournalException {
+    private <T> void createWriter(long thread, String name, Entry e, JournalMetadata<T> metadata) throws JournalException {
         try {
             JournalMetadata<T> mo = getConfiguration().readMetadata(metadata.getName());
             if (mo != null && !mo.isCompatible(metadata, false)) {
                 throw new JournalMetadataException(mo, metadata);
             }
 
-            JournalWriter<T> w = new JournalWriter<>(metadata, new File(getConfiguration().getJournalBase(), name));
-
             if (closed) {
                 return;
             }
 
+            JournalWriter<T> w = new JournalWriter<>(metadata, new File(getConfiguration().getJournalBase(), name));
             w.setCloseInterceptor(this);
             LOG.info().$("Writer '").$(name).$("' is allocated by thread ").$(e.owner).$();
             e.writer = w;
+            notifyListener(thread, name, FactoryEventListener.EV_CREATE);
         } catch (JournalException ex) {
             LOG.error().$("Failed to allocate writer '").$(name).$("' in thread ").$(e.owner).$(": ").$(ex).$();
             e.ex = ex;
+            notifyListener(thread, name, FactoryEventListener.EV_CREATE_EX);
             throw ex;
+        }
+    }
+
+    private void notifyListener(long thread, String name, int event) {
+        if (eventListener != null) {
+            eventListener.onEvent(FactoryEventListener.SRC_WRITER, thread, name, event);
         }
     }
 
     private boolean releaseAll(long deadline) {
         long threadId = Thread.currentThread().getId();
         boolean removed = false;
+        notifyListener(threadId, null, FactoryEventListener.EV_RELEASE_ALL);
 
         Iterator<Map.Entry<String, Entry>> iterator = entries.entrySet().iterator();
         while (iterator.hasNext()) {
@@ -394,7 +427,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
                 // try to lock it
                 if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, threadId)) {
                     // lock successful
-                    closeWriter(me.getKey(), e);
+                    closeWriter(threadId, me.getKey(), e, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX);
                     iterator.remove();
                     removed = true;
                     Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, -1L);

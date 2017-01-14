@@ -90,8 +90,6 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                 }
             } catch (JournalException e) {
                 throw new JournalRuntimeException(e);
-            } finally {
-                writer.close();
             }
         }
     }

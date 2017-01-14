@@ -292,19 +292,7 @@ public class JournalWriter<T> extends Journal<T> {
             throw e;
         }
     }
-
-    /**
-     * Deletes entire Journal.
-     *
-     * @throws com.questdb.ex.JournalException if the Journal is open (must be closed)
-     */
-    public void delete() throws JournalException {
-        if (isOpen()) {
-            throw new JournalException("Cannot delete open journal: %s", this);
-        }
-        Files.deleteOrException(getLocation());
-    }
-
+    
     public void disableCommitOnClose() {
         this.commitOnClose = false;
     }

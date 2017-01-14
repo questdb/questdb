@@ -137,6 +137,10 @@ public class Factory implements ReaderFactory, WriterFactory {
         }
     }
 
+    public void setEventListener(FactoryEventListener eventListener) {
+        this.writerFactory.setEventListener(eventListener);
+    }
+
     public void unlock(String name) {
         readerFactory.unlock(name);
         writerFactory.unlock(name);
