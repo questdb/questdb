@@ -89,7 +89,7 @@ class BootstrapMain {
         configureLoggers(configuration);
 
         final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
-        Factory factory = new Factory(configuration.getDbPath().getAbsolutePath(), 60000, 4);
+        final Factory factory = new Factory(configuration.getDbPath().getAbsolutePath(), 60000, 4);
 
         matcher.put("/imp", new ImportHandler(configuration, factory));
         matcher.put("/exec", new QueryHandler(factory, configuration));
@@ -98,7 +98,7 @@ class BootstrapMain {
         matcher.setDefaultHandler(new StaticContentHandler(configuration));
 
         StringBuilder welcome = Misc.getThreadLocalBuilder();
-        HttpServer server = new HttpServer(configuration, matcher);
+        final HttpServer server = new HttpServer(configuration, matcher);
         if (!server.start(LogFactory.INSTANCE.getJobs(), configuration.getHttpQueueDepth())) {
             welcome.append("Could not bind socket ").append(configuration.getHttpIP()).append(':').append(configuration.getHttpPort());
             welcome.append(". Already running?");
@@ -126,6 +126,8 @@ class BootstrapMain {
             Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
                 public void run() {
                     System.out.println(new Date() + " QuestDB is shutting down");
+                    server.halt();
+                    factory.close();
                 }
             }));
         }

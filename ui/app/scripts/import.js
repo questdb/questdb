@@ -273,7 +273,7 @@ function nopropagation(e) {
             if (current.type === 'file') {
                 importRequest.data.append('data', current.file);
             } else if (current.type === 'clipboard') {
-                importRequest.url = importRequest.url + '&n=' + encodeURIComponent(current.name);
+                importRequest.url = importRequest.url + '&name=' + encodeURIComponent(current.name);
                 importRequest.data.append('data', current.content);
             }
             current.time = new Date().getTime();
