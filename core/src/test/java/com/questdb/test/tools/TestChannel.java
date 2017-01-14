@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2016 Appsicle
+ * Copyright (C) 2014-2017 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -53,7 +53,17 @@ public class TestChannel implements NetworkChannel {
     }
 
     @Override
+    public long getConsecutiveBadReadCount() {
+        return 0;
+    }
+
+    @Override
     public long getFd() {
+        return 0;
+    }
+
+    @Override
+    public long getIp() {
         return 0;
     }
 
@@ -77,11 +87,6 @@ public class TestChannel implements NetworkChannel {
     }
 
     @Override
-    public long getIp() {
-        return 0;
-    }
-
-    @Override
     public int read(ByteBuffer dst) throws IOException {
         if (!fullyRead) {
             Unsafe.getUnsafe().copyMemory(reqAddress, ByteBuffers.getAddress(dst), reqLen);
@@ -89,11 +94,6 @@ public class TestChannel implements NetworkChannel {
             fullyRead = true;
             return reqLen;
         }
-        return 0;
-    }
-
-    @Override
-    public long getConsecutiveBadReadCount() {
         return 0;
     }
 

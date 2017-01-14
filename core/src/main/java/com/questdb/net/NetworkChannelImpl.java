@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2016 Appsicle
+ * Copyright (C) 2014-2017 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -32,9 +32,9 @@ import java.nio.ByteBuffer;
 
 public class NetworkChannelImpl implements NetworkChannel {
     private final long fd;
+    private final long ip;
     private long totalWritten = 0;
     private long consecutiveBadReadCount = 0;
-    private final long ip;
 
     public NetworkChannelImpl(long fd) {
         this.fd = fd;
@@ -48,6 +48,11 @@ public class NetworkChannelImpl implements NetworkChannel {
 
     public long getFd() {
         return fd;
+    }
+
+    @Override
+    public long getIp() {
+        return ip;
     }
 
     @Override
@@ -65,11 +70,6 @@ public class NetworkChannelImpl implements NetworkChannel {
     @Override
     public void close() throws IOException {
         Files.close(fd);
-    }
-
-    @Override
-    public long getIp() {
-        return ip;
     }
 
     @Override

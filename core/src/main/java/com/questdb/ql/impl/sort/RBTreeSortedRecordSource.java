@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2016 Appsicle
+ * Copyright (C) 2014-2017 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -254,9 +254,6 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             return;
         }
         Unsafe.getUnsafe().putByte(blockAddress + O_COLOUR, colour);
-    }    @Override
-    public Record newRecord() {
-        return byRowId ? delegate.newRecord() : recordList.newRecord();
     }
 
     private static byte colorOf(long blockAddress) {
@@ -279,6 +276,11 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
             }
         }
         return p;
+    }
+
+    @Override
+    public Record newRecord() {
+        return byRowId ? delegate.newRecord() : recordList.newRecord();
     }
 
     private long allocateBlock() {

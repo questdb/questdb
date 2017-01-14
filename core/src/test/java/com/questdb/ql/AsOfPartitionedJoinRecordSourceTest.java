@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2016 Appsicle
+ * Copyright (C) 2014-2017 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -321,10 +321,6 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
         Assert.assertEquals(memUsed, Unsafe.getMemUsed());
     }
 
-    private void assertThat(String expected, RecordSource source) throws IOException {
-        assertThat(expected, source, false);
-    }
-
     @Test
     public void testNonPartitionedQuery() throws Exception {
         String expected = "2015-03-10T00:01:00.000Z\tSWHYRX\t0.937527447939\tIYMQGYIYHVZMXGRFXUIUNMOQUIHPNGNOTXDHUZFW\t2015-03-10T00:00:50.000Z\tSWHYRX\t0.000039573626\t0.000003805120\tSRGOONFCLTJCKFMQNTOGMXUKLGMXSLUQDYOPHNIMYFFDTNPHFLPBNHGZWWCCNGTNLEGPUHHIUGGLNYRZLCBDMIGQZVKHTLQZ\tVTJWCP\t0.2093\t-20638\t-5106801657083469087\ttrue\n" +
@@ -508,6 +504,10 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
             printer.print(source, FACTORY_CONTAINER.getFactory());
             TestUtils.assertEquals(expected, sink);
         }
+    }
+
+    private void assertThat(String expected, RecordSource source) throws IOException {
+        assertThat(expected, source, false);
     }
 
     static {
