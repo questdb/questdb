@@ -52,7 +52,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        w = getWriterFactory().writer(Quote.class);
+        w = factoryContainer.getFactory().writer(Quote.class);
         exprNodeObjectPool.clear();
         ExprParser.configureLexer(lexer);
     }

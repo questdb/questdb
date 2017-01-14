@@ -364,7 +364,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testAtoI() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").$str("intC").$()
         )) {
 
@@ -908,7 +908,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInAsColumn() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "q")) {
             TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
@@ -921,7 +921,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInAsColumnAliased() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "q")) {
             TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
@@ -934,7 +934,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testIntComparison() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").index().buckets(128).
                         $double("x").
@@ -1160,7 +1160,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testIntMultiplication() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $int("x").
                         $int("y").
@@ -1193,7 +1193,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testIntervalAndIndexHeapSearch() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "q")) {
             TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
@@ -1234,7 +1234,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testIntervalAndIndexSearch() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "q")) {
             TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
 
@@ -1263,7 +1263,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testIntervalIntrinsicFalse() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "q")) {
             TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
             assertEmpty("select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00' and timestamp = '2015-02-12T12:00:00'");
@@ -1326,7 +1326,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidLatestByColumn1() throws Exception {
-        getWriterFactory().writer(Quote.class, "q").close();
+        factoryContainer.getFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp from q latest by symx where sym in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1337,7 +1337,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidLatestByColumn2() throws Exception {
-        getWriterFactory().writer(Quote.class, "q").close();
+        factoryContainer.getFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp from q latest by ask where sym in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1348,7 +1348,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidLatestByColumn3() throws Exception {
-        getWriterFactory().writer(Quote.class, "q").close();
+        factoryContainer.getFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp from q latest by mode where sym in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1359,7 +1359,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidLiteralColumn() throws Exception {
-        getWriterFactory().writer(Quote.class, "q").close();
+        factoryContainer.getFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp1 from q latest by sym where sym in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1380,7 +1380,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidVirtualColumn() throws Exception {
-        getWriterFactory().writer(Quote.class, "q").close();
+        factoryContainer.getFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, (bid+ask2)/2, timestamp from q latest by sym where sym in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1390,7 +1390,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidWhereColumn1() throws Exception {
-        getWriterFactory().writer(Quote.class, "q").close();
+        factoryContainer.getFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp from q where sym2 in ('GKN.L') and ask > 100");
         } catch (ParserException e) {
@@ -1400,7 +1400,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testInvalidWhereColumn2() throws Exception {
-        getWriterFactory().writer(Quote.class, "q").close();
+        factoryContainer.getFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select sym, bid, ask, timestamp from q where sym in ('GKN.L') and ask2 > 100");
         } catch (ParserException e) {
@@ -1422,7 +1422,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     public void testJournalRefresh() throws Exception {
         createTabWithNaNs();
         assertThat("10000\n", "select count() from tab");
-        try (JournalWriter w = getWriterFactory().writer("tab")) {
+        try (JournalWriter w = factoryContainer.getFactory().writer("tab")) {
             w.setSequentialAccess(true);
             appendNaNs(w, Dates.parseDateTime("2015-10-12T00:00:00.000Z"));
         }
@@ -1473,7 +1473,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testLatestBySym() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "q")) {
             TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
@@ -1494,7 +1494,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testLatestBySymList() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "q")) {
             TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
@@ -1506,7 +1506,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testLatestBySymNoFilter() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "q")) {
             TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
@@ -2025,7 +2025,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testMissingEqualsArgument() throws Exception {
-        getWriterFactory().writer(Quote.class, "q").close();
+        factoryContainer.getFactory().writer(Quote.class, "q").close();
         try {
             expectFailure("select id, x, y, timestamp from q where id = ");
         } catch (ParserException e) {
@@ -2120,7 +2120,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testMultipleStrIdSearch() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(32).
                         $double("x").
@@ -2187,7 +2187,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testMultipleStrIdSearchUsingHeapMerge() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(32).
                         $double("x").
@@ -2818,7 +2818,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testScaledDoubleComparison() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").index().buckets(128).
                         $double("x").
@@ -2891,7 +2891,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testSearchByIntIdUnindexed() throws Exception {
 
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $int("id").
                         $double("x").
@@ -2962,7 +2962,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testSearchByStringIdInUnindexed() throws Exception {
 
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -3040,7 +3040,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testSearchByStringIdInUnindexed2() throws Exception {
 
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -3092,7 +3092,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testSearchByStringIdIndexed() throws Exception {
 
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(32).
                         $double("x").
@@ -3318,7 +3318,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testSearchIndexedStrNull() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(128).
                         $double("x").
@@ -3355,7 +3355,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testSearchIndexedSymNull() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").index().buckets(128).
                         $double("x").
@@ -3390,7 +3390,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testSearchUnindexedStrNull() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -3428,7 +3428,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testSearchUnindexedSymNull() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").
                         $double("x").
@@ -3474,7 +3474,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testStrConcat() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("x").
                         $str("y").
@@ -3894,7 +3894,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testSymRegex() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $sym("id").index().buckets(128).
                         $double("x").
@@ -3976,7 +3976,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testUnindexedIntNaN() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $int("id").
                         $double("x").
@@ -4032,7 +4032,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     @Test
     public void testVirtualColumnQuery() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "q")) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "q")) {
             TestUtils.generateQuoteData(w, 100);
         }
 
@@ -4199,7 +4199,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createIndexedTab() throws JournalException, NumericException {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(16).
                         $double("x").
@@ -4227,7 +4227,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTab() throws JournalException, NumericException {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -4255,7 +4255,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabNoNaNs() throws JournalException, NumericException {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -4288,7 +4288,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabWithNaNs() throws JournalException, NumericException {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").
                         $double("x").
@@ -4314,7 +4314,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabWithNaNs20(JournalStructure struct) throws JournalException, NumericException {
-        try (JournalWriter w = getWriterFactory().writer(struct)) {
+        try (JournalWriter w = factoryContainer.getFactory().writer(struct)) {
 
             Rnd rnd = new Rnd();
             int n = 128;
@@ -4361,7 +4361,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabWithNullsAndTime() throws JournalException, NumericException {
-        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("tab").
+        try (JournalWriter w = factoryContainer.getFactory().writer(new JournalStructure("tab").
                 $str("id").index().
                 $str("time").
                 $date("date"))) {
@@ -4379,7 +4379,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void createTabWithSymbol() throws JournalException, NumericException {
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $str("id").index().buckets(16).
                         $sym("sym").
@@ -4423,7 +4423,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
     private void tabOfDates() throws JournalException, NumericException {
         long t = Dates.parseDateTime("2016-10-08T00:00:00.000Z");
-        try (JournalWriter w = getWriterFactory().writer(
+        try (JournalWriter w = factoryContainer.getFactory().writer(
                 new JournalStructure("tab").
                         $ts().
                         recordCountHint(100)

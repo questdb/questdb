@@ -68,8 +68,8 @@ public class JournalServerAgentTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         channel = new MockByteChannel();
-        quoteWriter = getWriterFactory().writer(Quote.class);
-        tradeWriter = getWriterFactory().writer(Trade.class);
+        quoteWriter = factoryContainer.getFactory().writer(Quote.class);
+        tradeWriter = factoryContainer.getFactory().writer(Trade.class);
         ServerConfig config = new ServerConfig() {{
             setHeartbeatFrequency(100);
             setEnableMultiCast(false);
@@ -92,11 +92,11 @@ public class JournalServerAgentTest extends AbstractTest {
 
     @Test
     public void testIncrementalInteraction() throws Exception {
-        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = factoryContainer.getFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, 200);
 
             server.start();
-            try (JournalWriter<Quote> quoteClientWriter = getWriterFactory().writer(Quote.class, "client")) {
+            try (JournalWriter<Quote> quoteClientWriter = factoryContainer.getFactory().writer(Quote.class, "client")) {
 
                 JournalDeltaConsumer quoteDeltaConsumer = new JournalDeltaConsumer(quoteClientWriter);
 
@@ -162,7 +162,7 @@ public class JournalServerAgentTest extends AbstractTest {
         server.publish(tradeWriter);
         server.start();
 
-        try (Journal<Quote> quoteClientWriter = getWriterFactory().writer(Quote.class, "client")) {
+        try (Journal<Quote> quoteClientWriter = factoryContainer.getFactory().writer(Quote.class, "client")) {
 
             // send quote journal key
 //        commandProducer.write(channel, Command.ADD_KEY_CMD);

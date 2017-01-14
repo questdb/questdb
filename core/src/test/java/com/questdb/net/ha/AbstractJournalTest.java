@@ -55,9 +55,9 @@ public abstract class AbstractJournalTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        origin = getWriterFactory().writer(Quote.class, "origin");
-        slave = getWriterFactory().writer(Quote.class, "slave");
-        master = getWriterFactory().writer(Quote.class, "master");
+        origin = factoryContainer.getFactory().writer(Quote.class, "origin");
+        slave = factoryContainer.getFactory().writer(Quote.class, "slave");
+        master = factoryContainer.getFactory().writer(Quote.class, "master");
 
         journalClientStateProducer = new JournalClientStateProducer();
         journalClientStateConsumer = new JournalClientStateConsumer();

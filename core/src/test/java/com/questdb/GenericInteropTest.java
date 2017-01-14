@@ -158,7 +158,7 @@ public class GenericInteropTest extends AbstractTest {
         }
 
         try {
-            getWriterFactory().writer(new JournalStructure("test") {{
+            factoryContainer.getFactory().writer(new JournalStructure("test") {{
                 $str("sym");
                 $date("created");
             }});
@@ -222,7 +222,7 @@ public class GenericInteropTest extends AbstractTest {
 
         File location = null;
 
-        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("test") {{
+        try (JournalWriter w = factoryContainer.getFactory().writer(new JournalStructure("test") {{
             $int("id").index();
             $str("status?\0x");
         }})) {
@@ -236,7 +236,7 @@ public class GenericInteropTest extends AbstractTest {
 
         Files.deleteOrException(location);
 
-        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("test") {{
+        try (JournalWriter w = factoryContainer.getFactory().writer(new JournalStructure("test") {{
             $int("id").index();
             $str("status");
         }})) {
@@ -246,7 +246,7 @@ public class GenericInteropTest extends AbstractTest {
 
     @Test
     public void testObjectGenericObjectWriteSequence() throws Exception {
-        JournalWriter<Data> writer = getWriterFactory().writer(new JournalMetadataBuilder<Data>(Data.class, "test") {{
+        JournalWriter<Data> writer = factoryContainer.getFactory().writer(new JournalMetadataBuilder<Data>(Data.class, "test") {{
             $date("created");
             $sym("sym").index();
             $int("id").index();
@@ -296,7 +296,7 @@ public class GenericInteropTest extends AbstractTest {
             writer2.commit();
         }
 
-        writer = getWriterFactory().writer(Data.class, "test");
+        writer = factoryContainer.getFactory().writer(Data.class, "test");
 
         d.sym = "HKDUSD";
         d.created = 40000;
@@ -333,7 +333,7 @@ public class GenericInteropTest extends AbstractTest {
 
     @Test
     public void testObjectWriteGenericRead() throws Exception {
-        try (JournalWriter<Data> writer = getWriterFactory().writer(new JournalMetadataBuilder<Data>(Data.class, "test") {{
+        try (JournalWriter<Data> writer = factoryContainer.getFactory().writer(new JournalMetadataBuilder<Data>(Data.class, "test") {{
             $sym("sym").index();
             $int("id").index();
             $str("rateId").index();

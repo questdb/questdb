@@ -37,7 +37,7 @@ public class PartitionTest extends AbstractTest {
 
     @Test
     public void testIndexOf() throws JournalException, NumericException {
-        try (JournalWriter<Quote> journal = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> journal = factoryContainer.getFactory().writer(Quote.class)) {
 
             long ts1 = Dates.parseDateTime("2012-06-05T00:00:00.000");
             long ts2 = Dates.parseDateTime("2012-07-03T00:00:00.000");

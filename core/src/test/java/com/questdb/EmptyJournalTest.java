@@ -33,14 +33,14 @@ public class EmptyJournalTest extends AbstractTest {
 
     @Test
     public void testEmptyJournalIterator() throws Exception {
-        try (JournalWriter w = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter w = factoryContainer.getFactory().writer(Quote.class)) {
             testJournalIterator(w);
         }
     }
 
     @Test
     public void testJournalWithEmptyPartition() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
             w.getAppendPartition(Dates.parseDateTime("2012-02-10T10:00:00.000Z"));
             w.getAppendPartition(Dates.parseDateTime("2012-03-10T10:00:00.000Z"));
             testJournalIterator(w);

@@ -51,7 +51,7 @@ public class GenericTest extends AbstractTest {
 
     @Test
     public void testClassToGenericPublish() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote")) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "quote")) {
 
             JournalServer server = new JournalServer(new ServerConfig() {{
                 addNode(new ServerNode(1, "localhost"));
@@ -66,7 +66,7 @@ public class GenericTest extends AbstractTest {
 
             JournalClient client = new JournalClient(new ClientConfig("localhost") {{
                 setEnableMultiCast(false);
-            }}, getWriterFactory());
+            }}, factoryContainer.getFactory());
 
             client.subscribe(new JournalKey("quote"), new JournalKey("abc"), new JournalListener() {
                 @Override
@@ -203,7 +203,7 @@ public class GenericTest extends AbstractTest {
     @Test
     public void testDuplicateTimestamp() throws Exception {
         try {
-            getWriterFactory().writer(new JournalStructure("xyz") {{
+            factoryContainer.getFactory().writer(new JournalStructure("xyz") {{
                 $sym("x").index();
                 $int("y");
                 $double("z");
@@ -220,7 +220,7 @@ public class GenericTest extends AbstractTest {
     @Test
     public void testGenericPublish() throws Exception {
 
-        try (JournalWriter w = getWriterFactory().writer(new JournalStructure("xyz") {{
+        try (JournalWriter w = factoryContainer.getFactory().writer(new JournalStructure("xyz") {{
             $sym("x").index();
             $int("y");
             $double("z");
@@ -240,7 +240,7 @@ public class GenericTest extends AbstractTest {
 
             JournalClient client = new JournalClient(new ClientConfig("localhost") {{
                 setEnableMultiCast(false);
-            }}, getWriterFactory());
+            }}, factoryContainer.getFactory());
             client.subscribe(new JournalKey("xyz"), new JournalKey("abc"), new JournalListener() {
                 @Override
                 public void onCommit() {

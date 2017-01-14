@@ -38,7 +38,7 @@ public class TopRecordSourceTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote")) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "quote")) {
             TestUtils.generateQuoteData(w, 100000);
         }
     }

@@ -51,9 +51,9 @@ public class JournalSymbolTableTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        origin = getWriterFactory().writer(Quote.class, "origin");
-        master = getWriterFactory().writer(Quote.class, "master");
-        slave = getWriterFactory().writer(Quote.class, "slave");
+        origin = factoryContainer.getFactory().writer(Quote.class, "origin");
+        master = factoryContainer.getFactory().writer(Quote.class, "master");
+        slave = factoryContainer.getFactory().writer(Quote.class, "slave");
 
         channel = new MockByteChannel();
 

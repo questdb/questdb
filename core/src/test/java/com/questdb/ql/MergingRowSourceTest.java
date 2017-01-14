@@ -41,7 +41,7 @@ import org.junit.Test;
 public class MergingRowSourceTest extends AbstractTest {
     @Test
     public void testHeapMerge() throws JournalException, NumericException {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
             TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
 
             RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);
@@ -66,7 +66,7 @@ public class MergingRowSourceTest extends AbstractTest {
 
     @Test
     public void testMerge() throws JournalException, NumericException {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
             TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
 
             RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);

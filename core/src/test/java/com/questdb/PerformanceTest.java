@@ -65,7 +65,7 @@ public class PerformanceTest extends AbstractTest {
     @Test
     public void testAllBySymbolValueOverInterval() throws JournalException, NumericException {
 
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
             TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
@@ -89,7 +89,7 @@ public class PerformanceTest extends AbstractTest {
     @Test
     public void testAllBySymbolValueOverIntervalNew() throws JournalException, ParserException, InterruptedException, NumericException {
 
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
             TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
@@ -175,7 +175,7 @@ public class PerformanceTest extends AbstractTest {
         long t = 0;
         long result;
 
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
             for (int i = -count; i < count; i++) {
                 w.truncate();
                 if (i == 0) {
@@ -247,7 +247,7 @@ public class PerformanceTest extends AbstractTest {
     @Test
     public void testLatestBySymbol() throws JournalException, NumericException {
 
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
             TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
@@ -268,7 +268,7 @@ public class PerformanceTest extends AbstractTest {
 
     @Test
     public void testRawAppendPerformance() throws JournalException, ParserException, NumericException {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
             long t = 0;
             int count = 10;
             for (int i = -count; i < count; i++) {

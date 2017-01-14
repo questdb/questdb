@@ -32,7 +32,7 @@ public class PartitionCloseTest extends AbstractTest {
 
     @Test
     public void testCommitFileClose() throws Exception {
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
 
             Quote q = new Quote();
             q.setBid(10);

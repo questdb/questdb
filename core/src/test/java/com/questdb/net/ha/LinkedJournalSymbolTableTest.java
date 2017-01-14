@@ -51,9 +51,9 @@ public class LinkedJournalSymbolTableTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        origin = getWriterFactory().writer(RDFNode.class, "origin");
-        master = getWriterFactory().writer(RDFNode.class, "master");
-        slave = getWriterFactory().writer(RDFNode.class, "slave");
+        origin = factoryContainer.getFactory().writer(RDFNode.class, "origin");
+        master = factoryContainer.getFactory().writer(RDFNode.class, "master");
+        slave = factoryContainer.getFactory().writer(RDFNode.class, "slave");
 
         channel = new MockByteChannel();
 

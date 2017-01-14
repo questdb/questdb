@@ -370,7 +370,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportIntoBusyJournal() throws Exception {
-        try (JournalWriter ignored = getWriterFactory().writer(new JournalStructure("test-import.csv").$int("x").$())) {
+        try (JournalWriter ignored = factoryContainer.getFactory().writer(new JournalStructure("test-import.csv").$int("x").$())) {
             final ServerConfiguration configuration = new ServerConfiguration();
             HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
                 put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));

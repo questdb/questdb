@@ -41,7 +41,7 @@ public class MultiIntervalPartitionSourceTest extends AbstractTest {
     public void testIntervalMerge() throws Exception {
         StringSink sink = new StringSink();
 
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
             TestUtils.generateQuoteData(w, 600, Dates.parseDateTime("2014-03-10T02:00:00.000Z"), Dates.MINUTE_MILLIS);
             w.commit();
 

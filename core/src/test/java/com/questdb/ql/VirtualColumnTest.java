@@ -46,7 +46,7 @@ public class VirtualColumnTest extends AbstractTest {
     @Test
     public void testPlusDouble() throws Exception {
 
-        try (final JournalWriter w = getWriterFactory().writer(new JournalStructure("xyz") {{
+        try (final JournalWriter w = factoryContainer.getFactory().writer(new JournalStructure("xyz") {{
             $str("ccy");
             $double("bid");
         }})) {
@@ -184,7 +184,7 @@ public class VirtualColumnTest extends AbstractTest {
     @Test
     public void testSelectedColumns() throws Exception {
 
-        try (final JournalWriter w = getWriterFactory().writer(new JournalStructure("xyz") {{
+        try (final JournalWriter w = factoryContainer.getFactory().writer(new JournalStructure("xyz") {{
             $str("ccy");
             $double("bid");
         }})) {

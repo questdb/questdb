@@ -44,7 +44,7 @@ public class LagTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        rw = getWriterFactory().writer(Quote.class);
+        rw = factoryContainer.getFactory().writer(Quote.class);
     }
 
     @After
@@ -158,7 +158,7 @@ public class LagTest extends AbstractTest {
 
     @Test
     public void testLagDelete() throws Exception {
-        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = factoryContainer.getFactory().writer(Quote.class, "origin")) {
             TestData.appendQuoteData2(origin);
 
             rw.mergeAppend(origin.query().all().asResultSet().subset(0, 300));
@@ -211,7 +211,7 @@ public class LagTest extends AbstractTest {
 
         rw.close();
 
-        rw = getWriterFactory().writer(Quote.class);
+        rw = factoryContainer.getFactory().writer(Quote.class);
         Assert.assertEquals(6, rw.size());
         Assert.assertEquals(5, rw.openOrCreateLagPartition().size());
         rw.purgeTempPartitions();

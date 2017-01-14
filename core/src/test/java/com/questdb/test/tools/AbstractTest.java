@@ -24,7 +24,6 @@
 package com.questdb.test.tools;
 
 import com.questdb.ex.ParserException;
-import com.questdb.factory.WriterFactory;
 import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
 import com.questdb.ql.Record;
@@ -65,13 +64,9 @@ public abstract class AbstractTest {
         }
     }
 
-    public WriterFactory getWriterFactory() {
-        return factoryContainer.getFactory();
-    }
-
     @Before
     public void setUp2() throws Exception {
-        factoryContainer.getFactory().getConfiguration().exists("none");
+        factoryContainer.getConfiguration().exists("none");
     }
 
     @After

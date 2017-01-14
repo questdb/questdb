@@ -87,7 +87,7 @@ public class ClusterControllerTest extends AbstractTest {
     @Ignore
     public void testBusyFailOver() throws Exception {
 
-        try (JournalWriter<Quote> writer1 = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> writer1 = factoryContainer.getFactory().writer(Quote.class)) {
             try (final JournalWriter<Quote> writer2 = tf.getFactory().writer(Quote.class)) {
 
                 final CountDownLatch active1 = new CountDownLatch(1);
@@ -391,7 +391,7 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch standby = new CountDownLatch(1);
         final CountDownLatch shutdown = new CountDownLatch(1);
 
-        try (JournalWriter writer = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter writer = factoryContainer.getFactory().writer(Quote.class)) {
             ClusterController controller = createControllerX(writer, 1, factoryContainer.getFactory(), active, standby, shutdown);
 
             controller.start();
@@ -417,7 +417,7 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        try (JournalWriter writer1 = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter writer1 = factoryContainer.getFactory().writer(Quote.class)) {
 
             try (JournalWriter writer2 = tf.getFactory().writer(Quote.class)) {
                 ClusterController controller1 = createControllerX(writer1, 0, factoryContainer.getFactory(), active1Latch, standby1Latch, shutdown1);

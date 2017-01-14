@@ -34,7 +34,7 @@ public class JournalRecoveryTest extends AbstractTest {
 
     @Test
     public void testLagRecovery() throws Exception {
-        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = factoryContainer.getFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, 100000, new Interval("2013-01-01T00:00:00.000Z", "2013-05-30T12:55:00.000Z"));
 
             try (Journal<Quote> r = factoryContainer.getFactory().reader(Quote.class, "origin")) {
@@ -42,7 +42,7 @@ public class JournalRecoveryTest extends AbstractTest {
             }
 
             long ts;
-            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
                 w.disableCommitOnClose();
                 w.append(origin.query().all().asResultSet().subset(0, 15000));
                 w.mergeAppend(origin.query().all().asResultSet().subset(15000, 17000));
@@ -64,7 +64,7 @@ public class JournalRecoveryTest extends AbstractTest {
                 Assert.assertEquals(17000, w.size());
             }
 
-            try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+            try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
                 Assert.assertEquals(ts, w.getMaxTimestamp());
                 Assert.assertEquals(17000, w.size());
             }
