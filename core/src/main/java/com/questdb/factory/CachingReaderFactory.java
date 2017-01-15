@@ -129,6 +129,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
                                 r.setCloseInterceptor(null);
                                 try {
                                     r.close();
+                                    LOG.info().$("Reader '").$(r.getName()).$("' closed due to inactivity.").$();
                                 } catch (Throwable e1) {
                                     LOG.error().$("Cannot close reader '").$(r.getName()).$("': ").$(e1.getMessage()).$();
                                 }
@@ -231,7 +232,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
             } else {
                 // existence check
                 if (getConfiguration().exists(name) != JournalConfiguration.EXISTS) {
-                    LOG.info().$("Reader ").$(name).$(" does not exist '").$();
+                    LOG.info().$("Reader '").$(name).$("' does not exist").$();
                     throw JournalDoesNotExistException.INSTANCE;
                 }
                 LOG.info().$("Thread ").$(thread).$(" WON the race to create first entry for '").$(name).$('\'').$();
@@ -248,10 +249,10 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         do {
             for (int i = 0; i < ENTRY_SIZE; i++) {
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                    LOG.info().$("Thread ").$(thread).$(" allocated reader '").$(name).$("' at pos: ").$(e.index).$(',').$(i).$();
                     // got lock, allocate if needed
                     R r = Unsafe.arrayGet(e.readers, i);
                     if (r == null) {
+                        LOG.info().$("Thread ").$(thread).$(" created new reader '").$(name).$("' at pos: ").$(e.index).$(',').$(i).$();
                         r = new R(e, i, metadata, new File(getConfiguration().getJournalBase(), metadata.getName()));
                         if (closed == TRUE) {
                             // don't assign interceptor or keep reference
@@ -261,6 +262,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
                         Unsafe.arrayPut(e.readers, i, r);
                         r.setCloseInterceptor(this);
                     } else {
+                        LOG.info().$("Thread ").$(thread).$(" allocated reader '").$(name).$("' at pos: ").$(e.index).$(',').$(i).$();
                         r.refresh();
                     }
 

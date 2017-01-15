@@ -57,6 +57,7 @@ public class HttpServer {
     private final UrlMatcher urlMatcher;
     private final ServerConfiguration configuration;
     private final ContextFactory<IOContext> contextFactory;
+    private final ObjHashSet<Job> jobs = new ObjHashSet<>();
     private volatile boolean running = true;
     private Clock clock = MilliClock.INSTANCE;
     private Dispatcher<IOContext> dispatcher;
@@ -75,6 +76,10 @@ public class HttpServer {
                 return new IOContext(new NetworkChannelImpl(fd), configuration, clock);
             }
         };
+    }
+
+    public ObjHashSet<Job> getJobs() {
+        return jobs;
     }
 
     public void halt() {
@@ -104,7 +109,7 @@ public class HttpServer {
         this.clock = clock;
     }
 
-    public boolean start(ObjHashSet<? extends Job> extraJobs, int queueDepth) {
+    public boolean start(int queueDepth) {
         this.running = true;
         ioQueue = new RingQueue<>(EVENT_FACTORY, queueDepth);
         SPSequence ioPubSequence = new SPSequence(ioQueue.getCapacity());
@@ -119,14 +124,8 @@ public class HttpServer {
             return false;
         }
 
-        IOHttpJob ioHttp = new IOHttpJob(ioQueue, ioSubSequence, this.dispatcher, urlMatcher);
-
-        ObjHashSet<Job> jobs = new ObjHashSet<>();
         jobs.add(this.dispatcher);
-        jobs.add(ioHttp);
-        if (extraJobs != null) {
-            jobs.addAll(extraJobs);
-        }
+        jobs.add(new IOHttpJob(ioQueue, ioSubSequence, this.dispatcher, urlMatcher));
 
         for (int i = 0; i < workerCount; i++) {
             Worker w;
@@ -140,7 +139,7 @@ public class HttpServer {
     }
 
     public void start() {
-        start(null, 1024);
+        start(1024);
     }
 
     private Dispatcher<IOContext> createDispatcher(

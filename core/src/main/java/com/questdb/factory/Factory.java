@@ -35,6 +35,9 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Files;
 import com.questdb.misc.Os;
+import com.questdb.mp.Job;
+import com.questdb.mp.SynchronizedJob;
+import com.questdb.std.ObjHashSet;
 import com.questdb.std.str.CompositePath;
 import com.questdb.store.Lock;
 import com.questdb.store.LockManager;
@@ -49,6 +52,8 @@ public class Factory implements ReaderFactory, WriterFactory {
     private final CachingReaderFactory readerFactory;
     private final JournalConfiguration configuration;
     private final ConcurrentHashMap<String, JournalMetadata> metadataCache = new ConcurrentHashMap<>();
+    private final WriterMaintenanceJob writerMaintenanceJob = new WriterMaintenanceJob();
+    private final ReaderMaintenanceJob readerMaintenanceJob = new ReaderMaintenanceJob();
 
     public Factory(JournalConfiguration configuration, long inactiveTtlMs, int readerCacheSegments) {
         this.writerFactory = new CachingWriterFactory(configuration, inactiveTtlMs);
@@ -115,6 +120,12 @@ public class Factory implements ReaderFactory, WriterFactory {
 
     public void expire() {
         writerFactory.releaseInactive();
+        readerFactory.releaseInactive();
+    }
+
+    public void exportJobs(ObjHashSet<Job> jobs) {
+        jobs.add(writerMaintenanceJob);
+        jobs.add(readerMaintenanceJob);
     }
 
     public int getBusyReaderCount() {
@@ -274,6 +285,20 @@ public class Factory implements ReaderFactory, WriterFactory {
                     LockManager.release(lock);
                 }
             }
+        }
+    }
+
+    private class WriterMaintenanceJob extends SynchronizedJob {
+        @Override
+        protected boolean runSerially() {
+            return writerFactory.releaseInactive();
+        }
+    }
+
+    private class ReaderMaintenanceJob extends SynchronizedJob {
+        @Override
+        protected boolean runSerially() {
+            return readerFactory.releaseInactive();
         }
     }
 }

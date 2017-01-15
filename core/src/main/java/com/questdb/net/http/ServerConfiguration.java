@@ -71,6 +71,8 @@ public class ServerConfiguration {
     private int dbAnalyticWindowPage = 4 * 1024 * 1024;
     private int dbFnVarianceMeans = 1024 * 1024;
     private int dbFnVarianceData = 64 * 1024 * 1024;
+    private long dbPoolIdleTimeout = 60000;
+    private int dbReaderPoolSize = 2;
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");
     private File httpPublic = new File("public");
@@ -299,6 +301,16 @@ public class ServerConfiguration {
             }
             sslConfig.setRequireClientAuth("true".equals(props.getProperty("http.ssl.auth")));
         }
+
+        long l;
+
+        if ((l = parseLong(props, "db.pool.idle.timeout")) > -1) {
+            this.dbPoolIdleTimeout = l;
+        }
+
+        if ((n = parseInt(props, "db.reader.pool.size")) > -1) {
+            this.dbReaderPoolSize = n;
+        }
     }
 
     public File getAccessLog() {
@@ -355,6 +367,14 @@ public class ServerConfiguration {
 
     public File getDbPath() {
         return dbPath;
+    }
+
+    public long getDbPoolIdleTimeout() {
+        return dbPoolIdleTimeout;
+    }
+
+    public int getDbReaderPoolSize() {
+        return dbReaderPoolSize;
     }
 
     public int getDbSortDataPage() {
@@ -537,6 +557,18 @@ public class ServerConfiguration {
         if (val != null) {
             try {
                 return Numbers.parseInt(val);
+            } catch (NumericException e) {
+                System.out.println(name + ": invalid value");
+            }
+        }
+        return -1;
+    }
+
+    private long parseLong(Properties props, String name) {
+        String val = props.getProperty(name);
+        if (val != null) {
+            try {
+                return Numbers.parseLong(val);
             } catch (NumericException e) {
                 System.out.println(name + ": invalid value");
             }

@@ -58,7 +58,7 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 class BootstrapMain {
 
     public static void main(String[] args) throws Exception {
-        System.err.printf("QuestDB HTTP Server %s%nCopyright (C) Appsicle 2014-2016, all rights reserved.%n%n", getVersion());
+        System.err.printf("QuestDB HTTP Server %s%nCopyright (C) Appsicle 2014-2017, all rights reserved.%n%n", getVersion());
         if (args.length < 1) {
             System.err.println("Root directory name expected");
             return;
@@ -89,7 +89,11 @@ class BootstrapMain {
         configureLoggers(configuration);
 
         final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
-        final Factory factory = new Factory(configuration.getDbPath().getAbsolutePath(), 60000, 4);
+        final Factory factory = new Factory(
+                configuration.getDbPath().getAbsolutePath(),
+                configuration.getDbPoolIdleTimeout(),
+                configuration.getDbReaderPoolSize()
+        );
 
         matcher.put("/imp", new ImportHandler(configuration, factory));
         matcher.put("/exec", new QueryHandler(factory, configuration));
@@ -99,7 +103,11 @@ class BootstrapMain {
 
         StringBuilder welcome = Misc.getThreadLocalBuilder();
         final HttpServer server = new HttpServer(configuration, matcher);
-        if (!server.start(LogFactory.INSTANCE.getJobs(), configuration.getHttpQueueDepth())) {
+
+        server.getJobs().addAll(LogFactory.INSTANCE.getJobs());
+        factory.exportJobs(server.getJobs());
+
+        if (!server.start(configuration.getHttpQueueDepth())) {
             welcome.append("Could not bind socket ").append(configuration.getHttpIP()).append(':').append(configuration.getHttpPort());
             welcome.append(". Already running?");
             System.err.println(welcome);
