@@ -31,10 +31,7 @@ import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.test.tools.FactoryContainer;
 import com.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 
 import java.io.InputStream;
 import java.util.concurrent.CountDownLatch;
@@ -59,6 +56,7 @@ public class SSLTest {
     }
 
     @Test
+    @Ignore
     public void testAuthBothCertsMissing() throws Exception {
 
         try (JournalWriter<Quote> remote = factoryContainer.getFactory().writer(Quote.class, "remote")) {

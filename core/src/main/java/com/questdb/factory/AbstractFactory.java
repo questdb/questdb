@@ -28,15 +28,17 @@ import com.questdb.factory.configuration.JournalConfigurationBuilder;
 
 import java.io.Closeable;
 
-public class AbstractFactory implements Closeable {
+abstract class AbstractFactory implements Closeable {
     private final JournalConfiguration configuration;
+    private final long inactiveTtlMs;
 
-    public AbstractFactory(JournalConfiguration configuration) {
+    public AbstractFactory(JournalConfiguration configuration, long inactiveTtlMs) {
         this.configuration = configuration;
+        this.inactiveTtlMs = inactiveTtlMs;
     }
 
-    public AbstractFactory(String databaseHome) {
-        this(new JournalConfigurationBuilder().build(databaseHome));
+    public AbstractFactory(String databaseHome, long inactiveTtlMs) {
+        this(new JournalConfigurationBuilder().build(databaseHome), inactiveTtlMs);
     }
 
     @Override
@@ -46,4 +48,10 @@ public class AbstractFactory implements Closeable {
     public JournalConfiguration getConfiguration() {
         return configuration;
     }
+
+    public boolean releaseInactive() {
+        return releaseAll(System.currentTimeMillis() - inactiveTtlMs);
+    }
+
+    protected abstract boolean releaseAll(long deadline);
 }

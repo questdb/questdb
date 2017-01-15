@@ -98,7 +98,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
                     barrier.await();
 
                     for (int i = 0; i < 1000; i++) {
-                        wf.run();
+                        wf.releaseInactive();
                         LockSupport.parkNanos(10L);
                     }
 

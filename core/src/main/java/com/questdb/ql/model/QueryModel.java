@@ -26,7 +26,7 @@ package com.questdb.ql.model;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.ReaderFactory;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -185,7 +185,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator {
         withClauses.clear();
     }
 
-    public RecordMetadata collectJournalMetadata(ReaderFactory factory) throws ParserException {
+    public RecordMetadata collectJournalMetadata(Factory factory) throws ParserException {
         if (journalMetadata != null) {
             return journalMetadata;
         }
@@ -198,27 +198,29 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator {
         String reader = stripMarker(Chars.stripQuotes(readerNode.token));
 
         SystemViewFactory systemViewFactory = SysFactories.getFactory(reader);
+
         if (systemViewFactory != null) {
             return systemViewFactory.getMetadata();
         }
 
-        JournalConfiguration configuration = factory.getConfiguration();
-        if (configuration.exists(reader) == JournalConfiguration.DOES_NOT_EXIST) {
+        int status = factory.getConfiguration().exists(reader);
+
+        if (status == JournalConfiguration.DOES_NOT_EXIST) {
             throw QueryError.$(readerNode.position, "Journal does not exist");
         }
 
-        if (configuration.exists(reader) == JournalConfiguration.EXISTS_FOREIGN) {
+        if (status == JournalConfiguration.EXISTS_FOREIGN) {
             throw QueryError.$(readerNode.position, "Journal directory is of unknown format");
         }
 
         try {
-            return journalMetadata = configuration.readMetadata(reader);
+            return journalMetadata = factory.getConfiguration().readMetadata(reader);
         } catch (JournalException e) {
             throw QueryError.$(readerNode.position, e.getMessage());
         }
     }
 
-    public void createColumnNameHistogram(ReaderFactory factory) throws ParserException {
+    public void createColumnNameHistogram(Factory factory) throws ParserException {
         columnNameHistogram.clear();
         createColumnNameHistogram0(columnNameHistogram, this, factory, false);
     }
@@ -503,7 +505,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator {
         }
     }
 
-    private static void createColumnNameHistogram0(CharSequenceIntHashMap histogram, QueryModel model, ReaderFactory factory, boolean ignoreJoins) throws ParserException {
+    private static void createColumnNameHistogram0(CharSequenceIntHashMap histogram, QueryModel model, Factory factory, boolean ignoreJoins) throws ParserException {
         ObjList<QueryModel> jm = model.getJoinModels();
         int jmSize = ignoreJoins ? 0 : jm.size();
 

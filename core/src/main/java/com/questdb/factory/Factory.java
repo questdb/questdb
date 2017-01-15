@@ -26,6 +26,7 @@ package com.questdb.factory;
 import com.questdb.Journal;
 import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
+import com.questdb.PartitionBy;
 import com.questdb.ex.*;
 import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.factory.configuration.JournalMetadata;
@@ -39,21 +40,26 @@ import com.questdb.store.Lock;
 import com.questdb.store.LockManager;
 
 import java.io.File;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class Factory implements ReaderFactory, WriterFactory {
     private static final Log LOG = LogFactory.getLog(Factory.class);
 
     private final CachingWriterFactory writerFactory;
     private final CachingReaderFactory readerFactory;
+    private final JournalConfiguration configuration;
+    private final ConcurrentHashMap<String, JournalMetadata> metadataCache = new ConcurrentHashMap<>();
 
-    public Factory(JournalConfiguration configuration, long writerInactiveTTL, int readerCacheSegments) {
-        this.writerFactory = new CachingWriterFactory(configuration, writerInactiveTTL);
-        this.readerFactory = new CachingReaderFactory(configuration, readerCacheSegments);
+    public Factory(JournalConfiguration configuration, long inactiveTtlMs, int readerCacheSegments) {
+        this.writerFactory = new CachingWriterFactory(configuration, inactiveTtlMs);
+        this.readerFactory = new CachingReaderFactory(configuration, inactiveTtlMs, readerCacheSegments);
+        this.configuration = configuration;
     }
 
-    public Factory(String databaseHome, long writerInactiveTTL, int readerCacheSegments) {
-        this.writerFactory = new CachingWriterFactory(databaseHome, writerInactiveTTL);
-        this.readerFactory = new CachingReaderFactory(databaseHome, readerCacheSegments);
+    public Factory(String databaseHome, long inactiveTtlMs, int readerCacheSegments) {
+        this.writerFactory = new CachingWriterFactory(databaseHome, inactiveTtlMs);
+        this.readerFactory = new CachingReaderFactory(databaseHome, inactiveTtlMs, readerCacheSegments);
+        this.configuration = this.readerFactory.getConfiguration();
     }
 
     @Override
@@ -64,32 +70,33 @@ public class Factory implements ReaderFactory, WriterFactory {
 
     @Override
     public JournalConfiguration getConfiguration() {
-        return readerFactory.getConfiguration();
+        return configuration;
     }
 
     @Override
-    public <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
-        return readerFactory.reader(key);
+    public final <T> Journal<T> reader(JournalKey<T> key) throws JournalException {
+        return reader(getConfiguration().createMetadata(key));
     }
 
     @Override
-    public <T> Journal<T> reader(Class<T> clazz) throws JournalException {
-        return readerFactory.reader(clazz);
+    public final <T> Journal<T> reader(Class<T> clazz) throws JournalException {
+        return reader(new JournalKey<>(clazz));
     }
 
     @Override
-    public <T> Journal<T> reader(Class<T> clazz, String name) throws JournalException {
-        return readerFactory.reader(clazz, name);
+    public final <T> Journal<T> reader(Class<T> clazz, String name) throws JournalException {
+        return reader(new JournalKey<>(clazz, name));
     }
 
     @Override
-    public Journal reader(String name) throws JournalException {
-        return readerFactory.reader(name);
+    @SuppressWarnings("unchecked")
+    public final Journal reader(String name) throws JournalException {
+        return reader(getMetadata(name));
     }
 
     @Override
-    public <T> Journal<T> reader(Class<T> clazz, String name, int recordHint) throws JournalException {
-        return readerFactory.reader(clazz, name, recordHint);
+    public final <T> Journal<T> reader(Class<T> clazz, String name, int recordHint) throws JournalException {
+        return reader(new JournalKey<>(clazz, name, PartitionBy.DEFAULT, recordHint));
     }
 
     @Override
@@ -107,7 +114,7 @@ public class Factory implements ReaderFactory, WriterFactory {
     }
 
     public void expire() {
-        writerFactory.run();
+        writerFactory.releaseInactive();
     }
 
     public int getBusyReaderCount() {
@@ -116,6 +123,21 @@ public class Factory implements ReaderFactory, WriterFactory {
 
     public int getBusyWriterCount() {
         return writerFactory.getBusyCount();
+    }
+
+    public JournalMetadata getMetadata(String name) throws JournalException {
+        JournalMetadata metadata = metadataCache.get(name);
+        if (metadata != null) {
+            return metadata;
+        }
+
+        metadata = configuration.readMetadata(name);
+        JournalMetadata other = metadataCache.putIfAbsent(name, metadata);
+        if (other != null) {
+            return other;
+        }
+
+        return metadata;
     }
 
     public void lock(String name) throws JournalException {
@@ -148,32 +170,33 @@ public class Factory implements ReaderFactory, WriterFactory {
 
     @Override
     public <T> JournalWriter<T> writer(Class<T> clazz) throws JournalException {
-        return writerFactory.writer(clazz);
+        return writer(new JournalKey<>(clazz));
     }
 
     @Override
     public <T> JournalWriter<T> writer(Class<T> clazz, String name) throws JournalException {
-        return writerFactory.writer(clazz, name);
+        return writer(new JournalKey<>(clazz, name));
     }
 
     @Override
     public <T> JournalWriter<T> writer(Class<T> clazz, String name, int recordHint) throws JournalException {
-        return writerFactory.writer(clazz, name, recordHint);
+        return writer(new JournalKey<>(clazz, name, PartitionBy.DEFAULT, recordHint));
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public JournalWriter writer(String name) throws JournalException {
-        return writerFactory.writer(name);
+        return writer(getMetadata(name));
     }
 
     @Override
     public <T> JournalWriter<T> writer(JournalKey<T> key) throws JournalException {
-        return writerFactory.writer(key);
+        return writer(getConfiguration().createMetadata(key));
     }
 
     @Override
     public <T> JournalWriter<T> writer(MetadataBuilder<T> metadataBuilder) throws JournalException {
-        return writerFactory.writer(metadataBuilder);
+        return writer(metadataBuilder.build());
     }
 
     @Override
@@ -189,6 +212,7 @@ public class Factory implements ReaderFactory, WriterFactory {
                 LOG.error().$("Cannot obtain lock on ").$(l).$();
                 throw JournalWriterAlreadyOpenException.INSTANCE;
             }
+            metadataCache.remove(name);
             Files.deleteOrException(l);
         } finally {
             LockManager.release(lock);
@@ -214,8 +238,9 @@ public class Factory implements ReaderFactory, WriterFactory {
                     newName.of("\\\\?\\").concat(path).concat(to).$();
                 }
 
+                String oname = oldName.toString();
 
-                Lock lock = LockManager.lockExclusive(oldName.toString());
+                Lock lock = LockManager.lockExclusive(oname);
                 try {
                     if (lock == null || !lock.isValid()) {
                         LOG.error().$("Cannot obtain lock on ").$(oldName).$();
@@ -235,6 +260,8 @@ public class Factory implements ReaderFactory, WriterFactory {
                             LOG.error().$("Cannot obtain lock on ").$(newName).$();
                             throw FactoryInternalException.INSTANCE;
                         }
+
+                        metadataCache.remove(oname);
 
                         if (!Files.rename(oldName, newName)) {
                             LOG.error().$("Cannot rename ").$(oldName).$(" to ").$(newName).$(": ").$(Os.errno()).$();
