@@ -34,6 +34,7 @@ import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -42,6 +43,7 @@ import java.util.concurrent.TimeUnit;
 public class ReconnectTest extends AbstractTest {
 
     @Test
+    @Ignore
     public void testServerRestart() throws Exception {
         final int size = 10000;
         try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote", 2 * size)) {
