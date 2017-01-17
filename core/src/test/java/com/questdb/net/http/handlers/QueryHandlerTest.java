@@ -73,6 +73,13 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     @AfterClass
     public static void tearDown2() throws Exception {
         server.halt();
+        Assert.assertEquals(0, FACTORY_CONTAINER.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, FACTORY_CONTAINER.getFactory().getBusyWriterCount());
+    }
+
+    @Override
+    @After
+    public void tearDown() throws Exception {
     }
 
     @Test

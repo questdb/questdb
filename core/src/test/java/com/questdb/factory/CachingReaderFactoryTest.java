@@ -255,7 +255,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
                                     try {
                                         rf.lock(name);
                                         lockTimes.add(System.currentTimeMillis());
-                                        LockSupport.parkNanos(1L);
+                                        LockSupport.parkNanos(100L);
                                         rf.unlock(name);
                                         name = null;
                                         break;
@@ -288,7 +288,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
                                 if (metadata == meta[readerCount - 1] && barrier.getNumberWaiting() > 0) {
                                     barrier.await();
                                 }
-                                LockSupport.parkNanos(1L);
+                                LockSupport.parkNanos(10L);
                             } catch (JournalLockedException ignored) {
                             } catch (Exception e) {
                                 e.printStackTrace();

@@ -267,7 +267,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
                         Unsafe.arrayPut(e.readers, i, r);
                         r.setCloseInterceptor(this);
                     } else {
-                        LOG.info().$("Thread ").$(thread).$(" allocated reader '").$(name).$("' at pos: ").$(e.index).$(',').$(i).$();
+                        LOG.info().$("Thread ").$(thread).$(" allocated reader '").$(name).$("' (").$(e.index).$(',').$(i).$(')').$();
                         r.refresh();
                     }
 
