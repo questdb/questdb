@@ -23,33 +23,25 @@
 
 package com.questdb.factory;
 
-public interface FactoryEventListener {
-    byte SRC_WRITER = 1;
-    byte SRC_READER = 2;
+public final class FactoryConstants {
+    public static final int CR_POOL_CLOSE = 1;
+    public static final int CR_NAME_LOCK = 2;
+    public static final int CR_IDLE = 3;
+    public static final int CR_REOPEN = 4;
+    static final long UNALLOCATED = -1L;
 
-    short EV_RETURN = 1;
-    short EV_OUT_OF_POOL_CLOSE = 2;
-    short EV_UNEXPECTED_CLOSE = 3;
-    short EV_COMMIT_EX = 4;
-    short EV_NOT_IN_POOL = 5;
-    short EV_LOCK_SUCCESS = 6;
-    short EV_LOCK_BUSY = 7;
-    short EV_UNLOCKED = 8;
-    short EV_NOT_LOCKED = 9;
-    short EV_CREATE = 10;
-    short EV_GET = 11;
-    short EV_CLOSE = 12;
-    short EV_INCOMPATIBLE = 13;
-    short EV_CREATE_EX = 14;
-    short EV_CLOSE_EX = 15;
-    short EV_EXPIRE = 17;
-    short EV_EXPIRE_EX = 18;
-    short EV_LOCK_CLOSE = 19;
-    short EV_LOCK_CLOSE_EX = 20;
-    short EV_EX_RESEND = 21;
-    short EV_RELEASE_ALL = 22;
-    short EV_POOL_OPEN = 23;
-    short EV_POOL_CLOSED = 24;
-
-    boolean onEvent(byte factoryType, long thread, String name, short event);
+    static String closeReasonText(int reason) {
+        switch (reason) {
+            case CR_POOL_CLOSE:
+                return "[POOL CLOSED]";
+            case CR_NAME_LOCK:
+                return "[LOCKED]";
+            case CR_IDLE:
+                return "[IDLE]";
+            case CR_REOPEN:
+                return "[REOPEN]";
+            default:
+                return "[UNKNOWN]";
+        }
+    }
 }

@@ -23,7 +23,7 @@
 
 package com.questdb.mp;
 
-final class OpenBarrier implements Barrier {
+public final class OpenBarrier implements Barrier {
     public final static OpenBarrier INSTANCE = new OpenBarrier();
 
     private OpenBarrier() {
@@ -31,7 +31,7 @@ final class OpenBarrier implements Barrier {
 
     @Override
     public long availableIndex(long lo) {
-        return Long.MIN_VALUE;
+        return Long.MAX_VALUE;
     }
 
     @Override

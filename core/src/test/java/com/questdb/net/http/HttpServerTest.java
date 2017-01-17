@@ -337,10 +337,11 @@ public class HttpServerTest extends AbstractJournalTest {
         final AtomicInteger errors = new AtomicInteger();
         factoryContainer.getFactory().setEventListener(new FactoryEventListener() {
             @Override
-            public void onEvent(int factoryType, long thread, String name, int event) {
+            public boolean onEvent(byte factoryType, long thread, String name, short event) {
                 if (event == FactoryEventListener.EV_UNEXPECTED_CLOSE) {
                     errors.incrementAndGet();
                 }
+                return true;
             }
         });
 

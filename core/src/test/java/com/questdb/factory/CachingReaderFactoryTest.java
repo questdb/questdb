@@ -62,7 +62,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
                 public void run() {
                     try {
                         for (int i = 0; i < 1000; i++) {
-                            try (Journal w = rf.reader(m)) {
+                            try (Journal ignored = rf.reader(m)) {
                                 readerCount.incrementAndGet();
                             } catch (FactoryFullException ignored) {
                             }
@@ -231,96 +231,100 @@ public class CachingReaderFactoryTest extends AbstractTest {
             meta[i] = m;
         }
 
-        try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 1000, 2)) {
+        try {
+            try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 1000, 2)) {
 
-            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-            final CountDownLatch halt = new CountDownLatch(threadCount);
-            final AtomicInteger errors = new AtomicInteger();
-            final LongList lockTimes = new LongList();
-            final LongList workerTimes = new LongList();
+                final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                final CountDownLatch halt = new CountDownLatch(threadCount);
+                final AtomicInteger errors = new AtomicInteger();
+                final LongList lockTimes = new LongList();
+                final LongList workerTimes = new LongList();
 
-            new Thread() {
-                @Override
-                public void run() {
-                    Rnd rnd = new Rnd();
-                    try {
-                        barrier.await();
-                        String name = null;
-                        for (int i = 0; i < iterations; i++) {
-                            if (name == null) {
-                                name = meta[rnd.nextPositiveInt() % readerCount].getName();
-                            }
-                            while (true) {
-                                try {
-                                    rf.lock(name);
-                                    lockTimes.add(System.currentTimeMillis());
-                                    LockSupport.parkNanos(1000L);
-                                    rf.unlock(name);
-                                    name = null;
-                                    break;
-                                } catch (JournalException e) {
-                                    if (!(e instanceof RetryLockException)) {
-                                        e.printStackTrace();
-                                        errors.incrementAndGet();
+                new Thread() {
+                    @Override
+                    public void run() {
+                        Rnd rnd = new Rnd();
+                        try {
+                            barrier.await();
+                            String name = null;
+                            for (int i = 0; i < iterations; i++) {
+                                if (name == null) {
+                                    name = meta[rnd.nextPositiveInt() % readerCount].getName();
+                                }
+                                while (true) {
+                                    try {
+                                        rf.lock(name);
+                                        lockTimes.add(System.currentTimeMillis());
+                                        LockSupport.parkNanos(1L);
+                                        rf.unlock(name);
+                                        name = null;
                                         break;
+                                    } catch (JournalException e) {
+                                        if (!(e instanceof RetryLockException)) {
+                                            e.printStackTrace();
+                                            errors.incrementAndGet();
+                                            break;
+                                        }
                                     }
                                 }
                             }
-                        }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                        errors.incrementAndGet();
-                    }
-                    halt.countDown();
-                }
-            }.start();
-
-            new Thread() {
-                @Override
-                public void run() {
-                    Rnd rnd = new Rnd();
-
-                    workerTimes.add(System.currentTimeMillis());
-                    for (int i = 0; i < iterations; i++) {
-                        JournalMetadata<?> metadata = meta[rnd.nextPositiveInt() % readerCount];
-                        try (Journal<?> ignored = rf.reader(metadata)) {
-                            if (metadata == meta[readerCount - 1] && barrier.getNumberWaiting() > 0) {
-                                barrier.await();
-                            }
-                            LockSupport.parkNanos(100L);
-                        } catch (JournalLockedException ignored) {
                         } catch (Exception e) {
                             e.printStackTrace();
                             errors.incrementAndGet();
                         }
+                        halt.countDown();
                     }
-                    workerTimes.add(System.currentTimeMillis());
+                }.start();
 
-                    halt.countDown();
+                new Thread() {
+                    @Override
+                    public void run() {
+                        Rnd rnd = new Rnd();
+
+                        workerTimes.add(System.currentTimeMillis());
+                        for (int i = 0; i < iterations; i++) {
+                            JournalMetadata<?> metadata = meta[rnd.nextPositiveInt() % readerCount];
+                            try (Journal<?> ignored = rf.reader(metadata)) {
+                                if (metadata == meta[readerCount - 1] && barrier.getNumberWaiting() > 0) {
+                                    barrier.await();
+                                }
+                                LockSupport.parkNanos(1L);
+                            } catch (JournalLockedException ignored) {
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                                errors.incrementAndGet();
+                            }
+                        }
+                        workerTimes.add(System.currentTimeMillis());
+
+                        halt.countDown();
+                    }
+                }.start();
+
+                halt.await();
+                Assert.assertEquals(0, errors.get());
+
+                // check that there are lock times between worker times
+                int count = 0;
+
+                // ensure that we have worker times
+                Assert.assertEquals(2, workerTimes.size());
+                long lo = workerTimes.get(0);
+                long hi = workerTimes.get(1);
+
+                Assert.assertTrue(lockTimes.size() > 0);
+
+                for (int i = 0, n = lockTimes.size(); i < n; i++) {
+                    long t = lockTimes.getQuick(i);
+                    if (t > lo && t < hi) {
+                        count++;
+                    }
                 }
-            }.start();
 
-            halt.await();
-            Assert.assertEquals(0, errors.get());
-
-            // check that there are lock times between worker times
-            int count = 0;
-
-            // ensure that we have worker times
-            Assert.assertEquals(2, workerTimes.size());
-            long lo = workerTimes.get(0);
-            long hi = workerTimes.get(1);
-
-            Assert.assertTrue(lockTimes.size() > 0);
-
-            for (int i = 0, n = lockTimes.size(); i < n; i++) {
-                long t = lockTimes.getQuick(i);
-                if (t > lo && t < hi) {
-                    count++;
-                }
+                Assert.assertTrue(count > 0);
             }
-
-            Assert.assertTrue(count > 0);
+        } catch (Throwable e) {
+            e.printStackTrace();
         }
 
     }
@@ -380,6 +384,28 @@ public class CachingReaderFactoryTest extends AbstractTest {
 
         // "x" was not busy and should be closed by factory
         Assert.assertFalse(x.isOpen());
+    }
+
+    @Test
+    public void testLockUnlockMultiple() throws Exception {
+        final JournalMetadata<?> m1 = new JournalStructure("x").$date("ts").$().build();
+        getWriterFactory().writer(m1).close();
+
+        try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 1000, 2)) {
+            Journal r1 = rf.reader(m1);
+            Journal r2 = rf.reader(m1);
+
+            r1.close();
+            try {
+                rf.lock(m1.getName());
+            } catch (RetryLockException e) {
+                e.printStackTrace();
+            }
+            r2.close();
+            rf.lock(m1.getName());
+            rf.unlock(m1.getName());
+        }
+
     }
 
     @Test

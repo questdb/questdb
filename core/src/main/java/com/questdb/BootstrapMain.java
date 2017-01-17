@@ -24,9 +24,12 @@
 package com.questdb;
 
 import com.questdb.factory.Factory;
+import com.questdb.iter.clock.MilliClock;
 import com.questdb.log.*;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
+import com.questdb.mon.FactoryEventLogger;
+import com.questdb.mp.Job;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.net.http.HttpServer;
@@ -34,6 +37,7 @@ import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.net.http.handlers.*;
 import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.ObjHashSet;
 import sun.misc.Signal;
 import sun.misc.SignalHandler;
 
@@ -85,28 +89,39 @@ class BootstrapMain {
             return;
         }
 
+        // main configuration
         final ServerConfiguration configuration = new ServerConfiguration(conf);
         configureLoggers(configuration);
 
-        final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
+        // reader/writer factory and cache
         final Factory factory = new Factory(
                 configuration.getDbPath().getAbsolutePath(),
                 configuration.getDbPoolIdleTimeout(),
                 configuration.getDbReaderPoolSize()
         );
 
+        // monitoring setup
+        final FactoryEventLogger factoryEventLogger = new FactoryEventLogger(factory, 10000000, 5000, MilliClock.INSTANCE);
+
+        // URL matcher configuration
+        final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
         matcher.put("/imp", new ImportHandler(configuration, factory));
         matcher.put("/exec", new QueryHandler(factory, configuration));
         matcher.put("/exp", new CsvHandler(factory, configuration));
         matcher.put("/chk", new ExistenceCheckHandler(factory));
         matcher.setDefaultHandler(new StaticContentHandler(configuration));
 
-        StringBuilder welcome = Misc.getThreadLocalBuilder();
+        // server configuration
+        // add all other jobs to server as it will be scheduling workers to do them
         final HttpServer server = new HttpServer(configuration, matcher);
+        ObjHashSet<Job> jobs = server.getJobs();
 
-        server.getJobs().addAll(LogFactory.INSTANCE.getJobs());
-        factory.exportJobs(server.getJobs());
+        jobs.addAll(LogFactory.INSTANCE.getJobs());
+        jobs.add(factoryEventLogger);
+        factory.exportJobs(jobs);
 
+        // welcome message
+        StringBuilder welcome = Misc.getThreadLocalBuilder();
         if (!server.start(configuration.getHttpQueueDepth())) {
             welcome.append("Could not bind socket ").append(configuration.getHttpIP()).append(':').append(configuration.getHttpPort());
             welcome.append(". Already running?");
@@ -135,6 +150,7 @@ class BootstrapMain {
                 public void run() {
                     System.out.println(new Date() + " QuestDB is shutting down");
                     server.halt();
+                    factoryEventLogger.close();
                     factory.close();
                 }
             }));

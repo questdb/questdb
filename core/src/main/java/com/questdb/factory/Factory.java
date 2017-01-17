@@ -136,6 +136,14 @@ public class Factory implements ReaderFactory, WriterFactory {
         return writerFactory.getBusyCount();
     }
 
+    public FactoryEventListener getEventListener() {
+        return this.writerFactory.getEventListener();
+    }
+
+    public void setEventListener(FactoryEventListener eventListener) {
+        this.writerFactory.setEventListener(eventListener);
+    }
+
     public JournalMetadata getMetadata(String name) throws JournalException {
         JournalMetadata metadata = metadataCache.get(name);
         if (metadata != null) {
@@ -168,10 +176,6 @@ public class Factory implements ReaderFactory, WriterFactory {
         } finally {
             unlock(from);
         }
-    }
-
-    public void setEventListener(FactoryEventListener eventListener) {
-        this.writerFactory.setEventListener(eventListener);
     }
 
     public void unlock(String name) {

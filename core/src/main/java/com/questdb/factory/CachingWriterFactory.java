@@ -132,7 +132,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
     protected boolean releaseAll(long deadline) {
         long threadId = Thread.currentThread().getId();
         boolean removed = false;
-        notifyListener(threadId, null, FactoryEventListener.EV_RELEASE_ALL);
+        final int reason = deadline == Long.MAX_VALUE ? FactoryConstants.CR_POOL_CLOSE : FactoryConstants.CR_IDLE;
 
         Iterator<Map.Entry<String, Entry>> iterator = entries.entrySet().iterator();
         while (iterator.hasNext()) {
@@ -145,7 +145,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
                 // try to lock it
                 if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, threadId)) {
                     // lock successful
-                    closeWriter(threadId, me.getKey(), e, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX);
+                    closeWriter(threadId, me.getKey(), e, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, reason);
                     iterator.remove();
                     removed = true;
                     Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, -1L);
@@ -170,6 +170,14 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         }
 
         return count;
+    }
+
+    public FactoryEventListener getEventListener() {
+        return eventListener;
+    }
+
+    public void setEventListener(FactoryEventListener eventListener) {
+        this.eventListener = eventListener;
     }
 
     public void lock(String name) throws JournalException {
@@ -198,7 +206,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         if (e != null) {
             if ((Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, thread) || Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, thread, thread))) {
                 LOG.info().$("Thread ").$(e.owner).$(" locked writer ").$(name).$();
-                closeWriter(thread, name, e, FactoryEventListener.EV_LOCK_CLOSE, FactoryEventListener.EV_LOCK_CLOSE_EX);
+                closeWriter(thread, name, e, FactoryEventListener.EV_LOCK_CLOSE, FactoryEventListener.EV_LOCK_CLOSE_EX, FactoryConstants.CR_NAME_LOCK);
                 e.locked = true;
                 notifyListener(thread, name, FactoryEventListener.EV_LOCK_SUCCESS);
                 return;
@@ -208,10 +216,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         }
         notifyListener(thread, name, FactoryEventListener.EV_LOCK_BUSY);
         throw WriterBusyException.INSTANCE;
-    }
-
-    public void setEventListener(FactoryEventListener eventListener) {
-        this.eventListener = eventListener;
     }
 
     public int size() {
@@ -247,7 +251,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         JournalMetadata wm = e.writer.getMetadata();
         if (metadata.isCompatible(wm, false)) {
             if (metadata.getModelClass() != null && wm.getModelClass() == null) {
-                closeWriter(thread, name, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX);
+                closeWriter(thread, name, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, FactoryConstants.CR_REOPEN);
                 createWriter(thread, name, e, metadata);
             } else {
                 notifyListener(thread, name, FactoryEventListener.EV_GET);
@@ -259,21 +263,21 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         notifyListener(thread, name, FactoryEventListener.EV_INCOMPATIBLE);
 
         if (closed) {
-            closeWriter(thread, name, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX);
+            closeWriter(thread, name, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, FactoryConstants.CR_POOL_CLOSE);
         }
 
         e.owner = -1L;
         throw ex;
     }
 
-    private void closeWriter(long thread, String name, Entry e, int ev, int evex) {
-        LOG.info().$("Closing writer '").$(name).$('\'').$();
+    private void closeWriter(long thread, String name, Entry e, short ev, short evex, int reason) {
         JournalWriter w = e.writer;
         if (w != null) {
             w.setCloseInterceptor(null);
             try {
                 w.close();
                 e.writer = null;
+                LOG.info().$("Closed writer '").$(name).$('\'').$(FactoryConstants.closeReasonText(reason)).$();
                 notifyListener(thread, name, ev);
             } catch (Throwable e1) {
                 notifyListener(thread, name, evex);
@@ -321,7 +325,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         }
     }
 
-    private void notifyListener(long thread, String name, int event) {
+    private void notifyListener(long thread, String name, short event) {
         if (eventListener != null) {
             eventListener.onEvent(FactoryEventListener.SRC_WRITER, thread, name, event);
         }
