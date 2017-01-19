@@ -1216,18 +1216,6 @@ public final class Pattern
     }
 
     /**
-     * <p>Returns the string representation of this pattern. This
-     * is the regular expression from which this pattern was
-     * compiled.</p>
-     *
-     * @return The string representation of this pattern
-     * @since 1.5
-     */
-    public String toString() {
-        return pattern;
-    }
-
-    /**
      * Returns the set union of two CharProperty nodes.
      */
     private static CharProperty union(final CharProperty lhs,
@@ -1249,6 +1237,18 @@ public final class Pattern
                 return lhs.isSatisfiedBy(ch) && rhs.isSatisfiedBy(ch);
             }
         };
+    }
+
+    /**
+     * <p>Returns the string representation of this pattern. This
+     * is the regular expression from which this pattern was
+     * compiled.</p>
+     *
+     * @return The string representation of this pattern
+     * @since 1.5
+     */
+    public String toString() {
+        return pattern;
     }
 
     /**
@@ -1878,12 +1878,6 @@ public final class Pattern
         return head;
     }
 
-    /*
-     * The following private methods are mainly used to improve the
-     * readability of the code. In order to let the Java compiler easily
-     * inline them, we should not put many assertions or error checks in them.
-     */
-
     /**
      * Utility method for parsing unicode escape sequences.
      */
@@ -1898,6 +1892,12 @@ public final class Pattern
     private PatternSyntaxException error(String s) {
         return new PatternSyntaxException(s, normalizedPattern, cursor - 1);
     }
+
+    /*
+     * The following private methods are mainly used to improve the
+     * readability of the code. In order to let the Java compiler easily
+     * inline them, we should not put many assertions or error checks in them.
+     */
 
     /**
      * Parses an escape sequence to determine the actual value that needs
@@ -3402,10 +3402,6 @@ public final class Pattern
         }
     }
 
-    //
-    // Utility methods for code point support
-    //
-
     /**
      * Node to anchor at the end of input. This is the absolute end, so this
      * should not match at the last newline before the end as $ will.
@@ -3453,6 +3449,10 @@ public final class Pattern
             return next.match(matcher, i, seq);
         }
     }
+
+    //
+    // Utility methods for code point support
+    //
 
     /**
      * Node to anchor at the beginning of a line when in unixdot mode.
@@ -4981,7 +4981,7 @@ public final class Pattern
 
         boolean match(Matcher matcher, int i, CharSequence seq) {
             int savedTo = matcher.to;
-            boolean conditionMatched = false;
+            boolean conditionMatched;
 
             // Relax transparent region boundaries for lookahead
             if (matcher.transparentBounds)
@@ -5008,7 +5008,7 @@ public final class Pattern
 
         boolean match(Matcher matcher, int i, CharSequence seq) {
             int savedTo = matcher.to;
-            boolean conditionMatched = false;
+            boolean conditionMatched;
 
             // Relax transparent region boundaries for lookahead
             if (matcher.transparentBounds)

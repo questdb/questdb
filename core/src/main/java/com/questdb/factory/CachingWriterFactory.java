@@ -63,7 +63,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
     private final static long ENTRY_OWNER;
     private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
     private volatile boolean closed = false;
-    private FactoryEventListener eventListener;
 
     public CachingWriterFactory(String databaseHome, long inactiveTtl) {
         super(databaseHome, inactiveTtl);
@@ -168,14 +167,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         }
 
         return count;
-    }
-
-    public FactoryEventListener getEventListener() {
-        return eventListener;
-    }
-
-    public void setEventListener(FactoryEventListener eventListener) {
-        this.eventListener = eventListener;
     }
 
     public void lock(String name) throws JournalException {
@@ -324,8 +315,9 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
     }
 
     private void notifyListener(long thread, String name, short event) {
-        if (eventListener != null) {
-            eventListener.onEvent(FactoryEventListener.SRC_WRITER, thread, name, event);
+        FactoryEventListener listener = getEventListener();
+        if (listener != null) {
+            listener.onEvent(FactoryEventListener.SRC_WRITER, thread, name, event);
         }
     }
 

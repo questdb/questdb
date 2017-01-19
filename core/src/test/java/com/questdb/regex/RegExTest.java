@@ -456,7 +456,7 @@ public class RegExTest {
     // This is for bug 4997476
     // It is weird code submitted by customer demonstrating a regression
     private static void wordSearchTest() {
-        String testString = new String("word1 word2 word3");
+        String testString = "word1 word2 word3";
         Pattern p = Pattern.compile("\\b");
         Matcher m = p.matcher(testString);
         int position = 0;
@@ -493,7 +493,7 @@ public class RegExTest {
     // This test is for 4979006
     // Check to see if word boundary construct properly handles unicode
     // non spacing marks
-    private static void unicodeWordBoundsTest() throws Exception {
+    private static void unicodeWordBoundsTest() {
         String spaces = "  ";
         String wordChar = "a";
         String nsm = "\u030a";
@@ -1960,7 +1960,7 @@ public class RegExTest {
 
         // Should find empty pattern at beginning of input
         boolean result = m.find();
-        if (result != true)
+        if (!result)
             failCount++;
         if (m.start() != 0)
             failCount++;
@@ -1968,7 +1968,7 @@ public class RegExTest {
         // Should not match entire input if input is not empty
         m.reset();
         result = m.matches();
-        if (result == true)
+        if (result)
             failCount++;
 
         try {
@@ -1981,15 +1981,15 @@ public class RegExTest {
         // Should match entire input if input is empty
         m.reset("");
         result = m.matches();
-        if (result != true)
+        if (!result)
             failCount++;
 
         result = Pattern.matches("", "");
-        if (result != true)
+        if (!result)
             failCount++;
 
         result = Pattern.matches("", "foo");
-        if (result == true)
+        if (result)
             failCount++;
         report("EmptyPattern");
     }
@@ -2926,24 +2926,22 @@ public class RegExTest {
             // random group + random string + random group
             StringBuilder bufferToRep = new StringBuilder();
             int groupIndex1 = generator.nextInt(5);
-            bufferToRep.append("$" + (groupIndex1 + 1));
+            bufferToRep.append("$").append(groupIndex1 + 1);
             String randomMidString = getRandomAlphaString(5);
             bufferToRep.append(randomMidString);
             int groupIndex2 = generator.nextInt(5);
-            bufferToRep.append("$" + (groupIndex2 + 1));
+            bufferToRep.append("$").append(groupIndex2 + 1);
             String replacement = bufferToRep.toString();
 
             // Do the replacement
             String result = m.replaceAll(replacement);
 
             // Construct expected result
-            StringBuilder bufferToRes = new StringBuilder();
-            bufferToRes.append(leadingString);
-            bufferToRes.append(groups[groupIndex1]);
-            bufferToRes.append(randomMidString);
-            bufferToRes.append(groups[groupIndex2]);
-            bufferToRes.append(trailingString);
-            String expectedResult = bufferToRes.toString();
+            String expectedResult = leadingString +
+                    groups[groupIndex1] +
+                    randomMidString +
+                    groups[groupIndex2] +
+                    trailingString;
 
             // Check results
             if (!result.equals(expectedResult))
@@ -3010,7 +3008,7 @@ public class RegExTest {
      * Tests the Boyer-Moore pattern matching of a character sequence
      * on randomly generated patterns.
      */
-    private static void bm() throws Exception {
+    private static void bm() {
         doBnM('a');
         report("Boyer Moore (ASCII)");
 
@@ -3094,7 +3092,7 @@ public class RegExTest {
      * The Boyer-Moore optimization is not done on these patterns
      * because it uses unicode case folding.
      */
-    private static void slice() throws Exception {
+    private static void slice() {
         doSlice(Character.MAX_VALUE);
         report("Slice");
 
@@ -3232,7 +3230,7 @@ public class RegExTest {
 
             if (found) {
                 result.append("true ");
-                result.append(m.group(0) + " ");
+                result.append(m.group(0)).append(" ");
             } else {
                 result.append("false ");
             }
@@ -3242,7 +3240,7 @@ public class RegExTest {
             if (found) {
                 for (int i = 1; i < m.groupCount() + 1; i++)
                     if (m.group(i) != null)
-                        result.append(" " + m.group(i));
+                        result.append(" ").append(m.group(i));
             }
 
             // Read a line for the expected result
@@ -3706,7 +3704,7 @@ public class RegExTest {
         report("unicodeHexNotation");
     }
 
-    private static void unicodeClassesTest() throws Exception {
+    private static void unicodeClassesTest() {
 
         Matcher lower = Pattern.compile("\\p{Lower}").matcher("");
         Matcher upper = Pattern.compile("\\p{Upper}").matcher("");

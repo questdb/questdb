@@ -50,7 +50,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
     private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
     private final int maxEntries;
-    private volatile int closed = FALSE;
+    private final int closed = FALSE;
 
     public CachingReaderFactory(String databaseHome, long inactiveTtl, int maxSegments) {
         super(databaseHome, inactiveTtl);
@@ -69,13 +69,15 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         String name = journal.getName();
 
         if (journal instanceof R) {
+            long thread = Thread.currentThread().getId();
+
             Entry e = entries.get(name);
             if (e == null) {
                 LOG.error().$("Reader '").$(name).$("' is not managed by this pool").$();
+                notifyListener(thread, name, FactoryEventListener.EV_NOT_IN_POOL);
                 return true;
             }
 
-            long thread = Thread.currentThread().getId();
             R r = (R) journal;
 
             if (Unsafe.arrayGetVolatile(r.entry.allocations, r.index) != FactoryConstants.UNALLOCATED) {
@@ -215,6 +217,13 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         }
     }
 
+    private void notifyListener(long thread, String name, short event) {
+        FactoryEventListener listener = getEventListener();
+        if (listener != null) {
+            listener.onEvent(FactoryEventListener.SRC_READER, thread, name, event);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
         if (closed == TRUE) {
@@ -302,9 +311,10 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         final long[] allocations = new long[ENTRY_SIZE];
         final long[] releaseTimes = new long[ENTRY_SIZE];
         final R[] readers = new R[ENTRY_SIZE];
+        final long lockOwner = -1L;
+        @SuppressWarnings("unused")
         long nextStatus = 0;
         volatile Entry next;
-        volatile long lockOwner = -1L;
         int index = 0;
 
         public Entry(int index) {

@@ -31,6 +31,7 @@ import java.io.Closeable;
 abstract class AbstractFactory implements Closeable {
     private final JournalConfiguration configuration;
     private final long inactiveTtlMs;
+    protected FactoryEventListener eventListener;
 
     public AbstractFactory(JournalConfiguration configuration, long inactiveTtlMs) {
         this.configuration = configuration;
@@ -47,6 +48,14 @@ abstract class AbstractFactory implements Closeable {
 
     public JournalConfiguration getConfiguration() {
         return configuration;
+    }
+
+    public FactoryEventListener getEventListener() {
+        return eventListener;
+    }
+
+    public void setEventListener(FactoryEventListener eventListener) {
+        this.eventListener = eventListener;
     }
 
     public boolean releaseInactive() {
