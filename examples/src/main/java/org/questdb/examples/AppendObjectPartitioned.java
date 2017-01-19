@@ -58,7 +58,7 @@ public class AppendObjectPartitioned {
                     // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
                     .$ts()
             ;
-        }}.build(journalLocation), 1000, 1)) {
+        }}.build(journalLocation), 1000, 1, 0)) {
 
             Files.delete(new File(factory.getConfiguration().getJournalBase(), "quote-by-day"));
 

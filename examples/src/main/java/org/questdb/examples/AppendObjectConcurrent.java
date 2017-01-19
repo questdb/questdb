@@ -76,7 +76,7 @@ public class AppendObjectConcurrent {
         int nMessages = 1000000;
 
         JournalConfiguration configuration = ModelConfiguration.CONFIG.build(args[0]);
-        try (Factory factory = new Factory(configuration, 1000, 1)) {
+        try (Factory factory = new Factory(configuration, 1000, 1, 0)) {
 
             // start publishing threads
             for (int i = 0; i < nThreads; i++) {

@@ -40,7 +40,7 @@ import org.questdb.examples.support.Price;
 public class SimpleReplicationClientMain {
     public static void main(String[] args) throws Exception {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        Factory factory = new Factory(configuration, 1000, 1);
+        Factory factory = new Factory(configuration, 1000, 1, 0);
 
         final JournalClient client = new JournalClient(factory);
 

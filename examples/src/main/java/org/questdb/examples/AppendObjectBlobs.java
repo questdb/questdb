@@ -42,7 +42,7 @@ public class AppendObjectBlobs {
         final String dirToIndex = args[1];
 
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        try (Factory factory = new Factory(configuration, 1000, 1)) {
+        try (Factory factory = new Factory(configuration, 1000, 1, 0)) {
 
             try (JournalWriter writer = factory.writer(new JournalStructure("files") {{
                 $sym("name").index();

@@ -45,7 +45,7 @@ public class SQLErrorHandling {
             System.exit(1);
         }
 
-        try (Factory factory = new Factory(args[0], 1000, 1)) {
+        try (Factory factory = new Factory(args[0], 1000, 1, 0)) {
 
             // import movies data to query
             ImportManager.importFile(factory, SQLErrorHandling.class.getResource("/movies.csv").getFile(), ',', null);

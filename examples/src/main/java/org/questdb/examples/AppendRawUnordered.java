@@ -41,7 +41,7 @@ public class AppendRawUnordered {
         final String location = args[0];
 
         // factory can be reused in application and must be explicitly closed when no longer needed.
-        try (Factory factory = new Factory(location, 1000, 1)) {
+        try (Factory factory = new Factory(location, 1000, 1, 0)) {
             // Lets add some random data to journal "customers".
             // This journal does not have associated java object. We will leverage generic data access
             // to populate it.

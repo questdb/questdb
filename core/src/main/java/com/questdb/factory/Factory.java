@@ -52,19 +52,28 @@ public class Factory implements ReaderFactory, WriterFactory {
     private final CachingReaderFactory readerFactory;
     private final JournalConfiguration configuration;
     private final ConcurrentHashMap<String, JournalMetadata> metadataCache = new ConcurrentHashMap<>();
-    private final WriterMaintenanceJob writerMaintenanceJob = new WriterMaintenanceJob();
-    private final ReaderMaintenanceJob readerMaintenanceJob = new ReaderMaintenanceJob();
+    private final WriterMaintenanceJob writerMaintenanceJob;
+    private final ReaderMaintenanceJob readerMaintenanceJob;
 
-    public Factory(JournalConfiguration configuration, long inactiveTtlMs, int readerCacheSegments) {
-        this.writerFactory = new CachingWriterFactory(configuration, inactiveTtlMs);
-        this.readerFactory = new CachingReaderFactory(configuration, inactiveTtlMs, readerCacheSegments);
-        this.configuration = configuration;
+    // used by tests only
+    public Factory(JournalConfiguration configuration) {
+        this(configuration, 0, 2, 0);
     }
 
-    public Factory(String databaseHome, long inactiveTtlMs, int readerCacheSegments) {
+    public Factory(JournalConfiguration configuration, long idleTimeoutMs, int maxSegments, long idleCheckIntervalMs) {
+        this.writerFactory = new CachingWriterFactory(configuration, idleTimeoutMs);
+        this.readerFactory = new CachingReaderFactory(configuration, idleTimeoutMs, maxSegments);
+        this.configuration = configuration;
+        this.writerMaintenanceJob = new WriterMaintenanceJob(idleCheckIntervalMs);
+        this.readerMaintenanceJob = new ReaderMaintenanceJob(idleCheckIntervalMs);
+    }
+
+    public Factory(String databaseHome, long inactiveTtlMs, int readerCacheSegments, long idleCheckIntervalMs) {
         this.writerFactory = new CachingWriterFactory(databaseHome, inactiveTtlMs);
         this.readerFactory = new CachingReaderFactory(databaseHome, inactiveTtlMs, readerCacheSegments);
         this.configuration = this.readerFactory.getConfiguration();
+        this.writerMaintenanceJob = new WriterMaintenanceJob(idleCheckIntervalMs);
+        this.readerMaintenanceJob = new ReaderMaintenanceJob(idleCheckIntervalMs);
     }
 
     @Override
@@ -292,16 +301,47 @@ public class Factory implements ReaderFactory, WriterFactory {
         }
     }
 
-    private class WriterMaintenanceJob extends SynchronizedJob {
+    private static abstract class PeriodicSynchronizedJob extends SynchronizedJob {
+        private final long checkInterval;
+        private long last = 0;
+
+        public PeriodicSynchronizedJob(long checkInterval) {
+            this.checkInterval = checkInterval;
+        }
+
+        abstract boolean doRun();
+
         @Override
         protected boolean runSerially() {
+            long t = System.currentTimeMillis();
+            if (last + checkInterval < t) {
+                last = t;
+                return doRun();
+            }
+            return false;
+        }
+    }
+
+    private class WriterMaintenanceJob extends PeriodicSynchronizedJob {
+
+        public WriterMaintenanceJob(long checkInterval) {
+            super(checkInterval);
+        }
+
+        @Override
+        protected boolean doRun() {
             return writerFactory.releaseInactive();
         }
     }
 
-    private class ReaderMaintenanceJob extends SynchronizedJob {
+    private class ReaderMaintenanceJob extends PeriodicSynchronizedJob {
+
+        public ReaderMaintenanceJob(long checkInterval) {
+            super(checkInterval);
+        }
+
         @Override
-        protected boolean runSerially() {
+        protected boolean doRun() {
             return readerFactory.releaseInactive();
         }
     }

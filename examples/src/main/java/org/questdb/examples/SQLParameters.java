@@ -46,7 +46,7 @@ public class SQLParameters {
         }
 
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        try (Factory factory = new Factory(configuration, 1000, 1)) {
+        try (Factory factory = new Factory(configuration, 1000, 1, 0)) {
 
 
             // import movies data to query

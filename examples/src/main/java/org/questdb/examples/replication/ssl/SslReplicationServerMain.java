@@ -46,7 +46,7 @@ public class SslReplicationServerMain {
     }
 
     public void start() throws Exception {
-        Factory factory = new Factory(location, 1000, 1);
+        Factory factory = new Factory(location, 1000, 1, 0);
 
         JournalServer server = new JournalServer(
                 new ServerConfig() {{

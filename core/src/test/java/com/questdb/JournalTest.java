@@ -215,7 +215,7 @@ public class JournalTest extends AbstractTest {
         try (Factory f2 = new Factory(new JournalConfigurationBuilder() {{
             $(Quote.class)
                     .$sym("mode");
-        }}.build(factoryContainer.getConfiguration().getJournalBase()), 1000, 1)) {
+        }}.build(factoryContainer.getConfiguration().getJournalBase()))) {
             f2.writer(new JournalKey<>(Quote.class, "quote"));
             Assert.fail("Exception expected");
         } catch (JournalException e) {

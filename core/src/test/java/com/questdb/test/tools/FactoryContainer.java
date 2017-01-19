@@ -84,7 +84,7 @@ public class FactoryContainer implements TestRule {
 
     public Factory getFactory() {
         if (factory == null) {
-            factory = new Factory(configuration, 0, 2);
+            factory = new Factory(configuration);
         }
         return factory;
     }

@@ -43,7 +43,7 @@ import java.io.InputStream;
 public class SslReplicationClientMain {
     public static void main(String[] args) throws Exception {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        Factory factory = new Factory(configuration, 1000, 1);
+        Factory factory = new Factory(configuration, 1000, 1, 0);
 
         final JournalClient client = new JournalClient(
                 new ClientConfig() {{

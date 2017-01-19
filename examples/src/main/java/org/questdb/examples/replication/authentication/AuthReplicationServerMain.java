@@ -51,7 +51,7 @@ public class AuthReplicationServerMain {
 
     public void start() throws Exception {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(location);
-        Factory factory = new Factory(configuration, 1000, 2);
+        Factory factory = new Factory(configuration, 1000, 2, 0);
 
         JournalServer server = new JournalServer(factory, new AuthorizationHandler() {
             @Override

@@ -42,7 +42,7 @@ public class ClusterConsumerMain {
             $(Price.class).$ts();
         }}.build(args[0]);
 
-        final Factory factory = new Factory(configuration, 1000, 1);
+        final Factory factory = new Factory(configuration, 1000, 1, 0);
 
         final JournalClient client = new JournalClient(new ClientConfig("127.0.0.1:7080,127.0.0.1:7090") {{
             getReconnectPolicy().setRetryCount(6);

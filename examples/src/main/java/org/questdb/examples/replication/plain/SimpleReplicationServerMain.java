@@ -47,7 +47,7 @@ public class SimpleReplicationServerMain {
 
     public void start() throws Exception {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(location);
-        Factory factory = new Factory(configuration, 1000, 1);
+        Factory factory = new Factory(configuration, 1000, 1, 0);
 
         JournalServer server = new JournalServer(factory);
 

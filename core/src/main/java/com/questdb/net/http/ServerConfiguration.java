@@ -72,6 +72,7 @@ public class ServerConfiguration {
     private int dbFnVarianceMeans = 1024 * 1024;
     private int dbFnVarianceData = 64 * 1024 * 1024;
     private long dbPoolIdleTimeout = 60000;
+    private long dbPoolIdleCheckInterval = 60000;
     private int dbReaderPoolSize = 2;
     private File dbPath = new File("db");
     private File mimeTypes = new File("conf/mime.types");
@@ -308,6 +309,10 @@ public class ServerConfiguration {
             this.dbPoolIdleTimeout = l;
         }
 
+        if ((l = parseLong(props, "db.pool.idle.check.interval")) > -1) {
+            this.dbPoolIdleCheckInterval = l;
+        }
+
         if ((n = parseInt(props, "db.reader.pool.size")) > -1) {
             this.dbReaderPoolSize = n;
         }
@@ -367,6 +372,10 @@ public class ServerConfiguration {
 
     public File getDbPath() {
         return dbPath;
+    }
+
+    public long getDbPoolIdleCheckInterval() {
+        return dbPoolIdleCheckInterval;
     }
 
     public long getDbPoolIdleTimeout() {

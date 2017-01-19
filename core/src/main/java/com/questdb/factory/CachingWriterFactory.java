@@ -31,12 +31,11 @@ import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.ConcurrentHashMap;
 
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Iterator;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * This class maintains cache of open writers to avoid OS overhead of
@@ -134,10 +133,9 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         boolean removed = false;
         final int reason = deadline == Long.MAX_VALUE ? FactoryConstants.CR_POOL_CLOSE : FactoryConstants.CR_IDLE;
 
-        Iterator<Map.Entry<String, Entry>> iterator = entries.entrySet().iterator();
+        Iterator<Entry> iterator = entries.values().iterator();
         while (iterator.hasNext()) {
-            Map.Entry<String, Entry> me = iterator.next();
-            Entry e = me.getValue();
+            Entry e = iterator.next();
             // lastReleaseTime is volatile, which makes
             // order of conditions important
             if ((deadline > e.lastReleaseTime && e.owner == -1)) {
@@ -145,13 +143,13 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
                 // try to lock it
                 if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, threadId)) {
                     // lock successful
-                    closeWriter(threadId, me.getKey(), e, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, reason);
+                    closeWriter(threadId, e, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, reason);
                     iterator.remove();
                     removed = true;
                     Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, -1L);
                 }
             } else if (e.ex != null) {
-                LOG.info().$("Removing entry for failed to allocate writer '").$(me.getKey()).$('\'').$();
+                LOG.info().$("Removing entry for failed to allocate writer").$();
                 iterator.remove();
                 removed = true;
             }
@@ -163,8 +161,8 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
     public int getBusyCount() {
 
         int count = 0;
-        for (Map.Entry<String, Entry> stringEntryEntry : entries.entrySet()) {
-            if (stringEntryEntry.getValue().owner != -1) {
+        for (Entry e : entries.values()) {
+            if (e.owner != -1) {
                 count++;
             }
         }
@@ -206,7 +204,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         if (e != null) {
             if ((Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, thread) || Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, thread, thread))) {
                 LOG.info().$("Thread ").$(e.owner).$(" locked writer ").$(name).$();
-                closeWriter(thread, name, e, FactoryEventListener.EV_LOCK_CLOSE, FactoryEventListener.EV_LOCK_CLOSE_EX, FactoryConstants.CR_NAME_LOCK);
+                closeWriter(thread, e, FactoryEventListener.EV_LOCK_CLOSE, FactoryEventListener.EV_LOCK_CLOSE_EX, FactoryConstants.CR_NAME_LOCK);
                 e.locked = true;
                 notifyListener(thread, name, FactoryEventListener.EV_LOCK_SUCCESS);
                 return;
@@ -251,7 +249,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         JournalMetadata wm = e.writer.getMetadata();
         if (metadata.isCompatible(wm, false)) {
             if (metadata.getModelClass() != null && wm.getModelClass() == null) {
-                closeWriter(thread, name, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, FactoryConstants.CR_REOPEN);
+                closeWriter(thread, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, FactoryConstants.CR_REOPEN);
                 createWriter(thread, name, e, metadata);
             } else {
                 notifyListener(thread, name, FactoryEventListener.EV_GET);
@@ -263,16 +261,17 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         notifyListener(thread, name, FactoryEventListener.EV_INCOMPATIBLE);
 
         if (closed) {
-            closeWriter(thread, name, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, FactoryConstants.CR_POOL_CLOSE);
+            closeWriter(thread, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, FactoryConstants.CR_POOL_CLOSE);
         }
 
         e.owner = -1L;
         throw ex;
     }
 
-    private void closeWriter(long thread, String name, Entry e, short ev, short evex, int reason) {
+    private void closeWriter(long thread, Entry e, short ev, short evex, int reason) {
         JournalWriter w = e.writer;
         if (w != null) {
+            String name = e.writer.getName();
             w.setCloseInterceptor(null);
             try {
                 w.close();
@@ -288,12 +287,11 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
 
     int countFreeWriters() {
         int count = 0;
-        for (Map.Entry<String, Entry> me : entries.entrySet()) {
-            Entry e = me.getValue();
+        for (Entry e : entries.values()) {
             if (e.owner == -1L) {
                 count++;
             } else {
-                LOG.info().$("Writer '").$(me.getKey()).$("' is still owned by ").$(me.getValue().owner).$();
+                LOG.info().$("Writer '").$(e.writer.getName()).$("' is still owned by ").$(e.owner).$();
             }
         }
 

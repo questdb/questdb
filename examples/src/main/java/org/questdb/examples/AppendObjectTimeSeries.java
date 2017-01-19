@@ -55,7 +55,7 @@ public class AppendObjectTimeSeries {
             ;
         }}.build(journalLocation);
 
-        try (Factory factory = new Factory(configuration, 1000, 1)) {
+        try (Factory factory = new Factory(configuration, 1000, 1, 0)) {
 
             // delete existing quote journal
             Files.delete(new File(configuration.getJournalBase(), "quote"));

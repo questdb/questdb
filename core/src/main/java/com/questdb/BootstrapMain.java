@@ -97,7 +97,8 @@ class BootstrapMain {
         final Factory factory = new Factory(
                 configuration.getDbPath().getAbsolutePath(),
                 configuration.getDbPoolIdleTimeout(),
-                configuration.getDbReaderPoolSize()
+                configuration.getDbReaderPoolSize(),
+                configuration.getDbPoolIdleCheckInterval()
         );
 
         // monitoring setup

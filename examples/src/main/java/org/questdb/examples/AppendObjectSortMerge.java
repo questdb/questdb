@@ -57,7 +57,7 @@ public class AppendObjectSortMerge {
                     .lag(24, TimeUnit.HOURS) // enable lag
                     .$ts() // tell factory that Quote has "timestamp" column. If column is called differently you can pass its name
             ;
-        }}.build(journalLocation), 1000, 1)) {
+        }}.build(journalLocation), 1000, 1, 0)) {
 
             // delete existing quote journal
             Files.delete(new File(writerFactory.getConfiguration().getJournalBase(), "quote-lag"));

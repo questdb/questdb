@@ -43,7 +43,7 @@ import java.io.UnsupportedEncodingException;
 public class AuthReplicationClientMain {
     public static void main(String[] args) throws Exception {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
-        Factory factory = new Factory(configuration, 1000, 2);
+        Factory factory = new Factory(configuration);
 
         final JournalClient client = new JournalClient(factory, new CredentialProvider() {
             @Override

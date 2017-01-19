@@ -55,7 +55,7 @@ public class ClusteredProducerMain {
             $(Price.class).$ts();
         }}.build(pathToDatabase);
 
-        final Factory factory = new Factory(configuration, 1000, 1);
+        final Factory factory = new Factory(configuration, 1000, 1, 0);
 
         final JournalWriter<Price> writer = factory.writer(new JournalKey<>(Price.class, null, PartitionBy.DEFAULT, 1000000000));
 
