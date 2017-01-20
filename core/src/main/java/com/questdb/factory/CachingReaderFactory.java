@@ -50,7 +50,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
     private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
     private final int maxEntries;
-    private final int closed = FALSE;
+    private volatile int closed = FALSE;
 
     public CachingReaderFactory(String databaseHome, long inactiveTtl, int maxSegments) {
         super(databaseHome, inactiveTtl);
@@ -311,7 +311,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         final long[] allocations = new long[ENTRY_SIZE];
         final long[] releaseTimes = new long[ENTRY_SIZE];
         final R[] readers = new R[ENTRY_SIZE];
-        final long lockOwner = -1L;
+        volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
         long nextStatus = 0;
         volatile Entry next;
