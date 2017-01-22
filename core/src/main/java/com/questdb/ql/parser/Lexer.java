@@ -30,7 +30,6 @@ import com.questdb.std.IntObjHashMap;
 import com.questdb.std.str.AbstractCharSequence;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
@@ -62,7 +61,7 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
             symbols.put(c0, l);
         }
         l.add(token);
-        Collections.sort(l, comparator);
+        l.sort(comparator);
     }
 
     public CharSequence getContent() {

@@ -43,32 +43,12 @@ import com.questdb.store.SymbolTable;
 
 public class $ColsRecordSource extends AbstractRecordSource {
     private static final Log LOG = LogFactory.getLog($ColsRecordSource.class);
-    private static final ThreadLocal<Path> tlPath = new ThreadLocal<Path>() {
-        @Override
-        protected Path initialValue() {
-            return new Path();
-        }
-    };
-    private static final ThreadLocal<CompositePath> tlCompositePath = new ThreadLocal<CompositePath>() {
-        @Override
-        protected CompositePath initialValue() {
-            return new CompositePath();
-        }
-    };
+    private static final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
+    private static final ThreadLocal<CompositePath> tlCompositePath = ThreadLocal.withInitial(CompositePath::new);
 
-    private static final ThreadLocal<NativeLPSZ> tlNativeLpsz = new ThreadLocal<NativeLPSZ>() {
-        @Override
-        protected NativeLPSZ initialValue() {
-            return new NativeLPSZ();
-        }
-    };
+    private static final ThreadLocal<NativeLPSZ> tlNativeLpsz = ThreadLocal.withInitial(NativeLPSZ::new);
 
-    private static final ThreadLocal<DirectCharSequence> tlDcs = new ThreadLocal<DirectCharSequence>() {
-        @Override
-        protected DirectCharSequence initialValue() {
-            return new DirectCharSequence();
-        }
-    };
+    private static final ThreadLocal<DirectCharSequence> tlDcs = ThreadLocal.withInitial(DirectCharSequence::new);
 
     private final RecordMetadata metadata;
     private final RecordList records;

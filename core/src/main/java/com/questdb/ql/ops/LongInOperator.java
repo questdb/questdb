@@ -25,7 +25,6 @@ package com.questdb.ql.ops;
 
 import com.questdb.ex.ParserException;
 import com.questdb.misc.Numbers;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.LongHashSet;
@@ -33,12 +32,7 @@ import com.questdb.store.ColumnType;
 
 public class LongInOperator extends AbstractVirtualColumn implements Function {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new LongInOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new LongInOperator(position);
 
     private final LongHashSet set = new LongHashSet();
     private VirtualColumn lhs;

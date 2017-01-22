@@ -27,12 +27,7 @@ import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
 public class ColumnCastModel implements Mutable {
-    public static final ObjectFactory<ColumnCastModel> FACTORY = new ObjectFactory<ColumnCastModel>() {
-        @Override
-        public ColumnCastModel newInstance() {
-            return new ColumnCastModel();
-        }
-    };
+    public static final ObjectFactory<ColumnCastModel> FACTORY = ColumnCastModel::new;
 
     private ExprNode name;
     private int columnType;

@@ -27,12 +27,7 @@ import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
 public class ImportedColumnMetadata implements Mutable {
-    public static final ObjectFactory<ImportedColumnMetadata> FACTORY = new ObjectFactory<ImportedColumnMetadata>() {
-        @Override
-        public ImportedColumnMetadata newInstance() {
-            return new ImportedColumnMetadata();
-        }
-    };
+    public static final ObjectFactory<ImportedColumnMetadata> FACTORY = ImportedColumnMetadata::new;
 
     public int importedColumnType;
     public CharSequence name;

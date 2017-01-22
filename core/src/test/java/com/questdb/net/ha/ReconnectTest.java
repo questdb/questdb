@@ -60,12 +60,9 @@ public class ReconnectTest extends AbstractTest {
                         getReconnectPolicy().setRetryCount(5);
                         getReconnectPolicy().setSleepBetweenRetriesMillis(TimeUnit.SECONDS.toMillis(1));
                     }}, getWriterFactory(), null,
-                    new JournalClient.Callback() {
-                        @Override
-                        public void onEvent(int evt) {
-                            if (evt == JournalClientEvents.EVT_CONNECTED) {
-                                connectedLatch.countDown();
-                            }
+                    evt -> {
+                        if (evt == JournalClientEvents.EVT_CONNECTED) {
+                            connectedLatch.countDown();
                         }
                     }
             );

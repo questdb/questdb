@@ -30,7 +30,6 @@ import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
-import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
 import com.questdb.store.ColumnType;
 
@@ -39,12 +38,7 @@ import java.io.IOException;
 
 public class PrevPartitionedAnalyticFunction extends AbstractPrevAnalyticFunction implements Closeable {
     private final static ThreadLocal<VirtualColumnTypeResolver> tlPartitionByTypeResolver = new VirtualColumnTypeResolver.ResolverThreadLocal();
-    private final static ThreadLocal<VirtualColumnTypeResolver2> tlVirtualColumnResolver = new ThreadLocal<>(new ObjectFactory<VirtualColumnTypeResolver2>() {
-        @Override
-        public VirtualColumnTypeResolver2 newInstance() {
-            return new VirtualColumnTypeResolver2();
-        }
-    });
+    private final static ThreadLocal<VirtualColumnTypeResolver2> tlVirtualColumnResolver = new ThreadLocal<>(VirtualColumnTypeResolver2::new);
     private final DirectMap map;
     private final ObjList<VirtualColumn> partitionBy;
 

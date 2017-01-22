@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.eq;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -32,12 +31,7 @@ import com.questdb.store.ColumnType;
 
 public class DoubleEqualOperator extends AbstractBinaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DoubleEqualOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new DoubleEqualOperator(position);
 
     private DoubleEqualOperator(int position) {
         super(ColumnType.BOOLEAN, position);

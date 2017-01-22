@@ -24,7 +24,6 @@
 package com.questdb.ql.ops.eq;
 
 import com.questdb.misc.Numbers;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractBinaryOperator;
@@ -35,12 +34,7 @@ import com.questdb.store.SymbolTable;
 
 public class StrEqualSymOperator extends AbstractBinaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new StrEqualSymOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new StrEqualSymOperator(position);
 
     private int key;
 

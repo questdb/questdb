@@ -27,12 +27,7 @@ import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
 public class RenameJournalModel implements Mutable, ParsedModel {
-    public static final ObjectFactory<RenameJournalModel> FACTORY = new ObjectFactory<RenameJournalModel>() {
-        @Override
-        public RenameJournalModel newInstance() {
-            return new RenameJournalModel();
-        }
-    };
+    public static final ObjectFactory<RenameJournalModel> FACTORY = RenameJournalModel::new;
 
     private ExprNode from;
     private ExprNode to;

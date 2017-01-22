@@ -23,18 +23,12 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.store.ColumnType;
 
 public class RoundFunction extends AbstractUnaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new RoundFunction(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new RoundFunction(position);
 
     private RoundFunction(int position) {
         super(ColumnType.LONG, position);

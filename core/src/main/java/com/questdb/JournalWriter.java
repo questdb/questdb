@@ -43,7 +43,6 @@ import com.questdb.store.*;
 import com.questdb.txt.sink.FlexBufferSink;
 
 import java.io.File;
-import java.io.FileFilter;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.channels.FileChannel;
@@ -732,11 +731,7 @@ public class JournalWriter<T> extends Journal<T> {
     }
 
     private void rollbackPartitionDirs() throws JournalException {
-        File[] files = getLocation().listFiles(new FileFilter() {
-            public boolean accept(File f) {
-                return f.isDirectory() && !f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX);
-            }
-        });
+        File[] files = getLocation().listFiles(f -> f.isDirectory() && !f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX));
 
         if (files != null) {
             Arrays.sort(files);
@@ -934,64 +929,57 @@ public class JournalWriter<T> extends Journal<T> {
 
         public void start() {
             running = true;
-            executor.submit(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        while (true) {
-                            try {
-                                subSeq.done(subSeq.waitForNext());
-                                if (txLog != null) {
-                                    final Tx tx1 = new Tx();
-                                    final String lagPartitionName = writer.hasIrregularPartition() ? writer.getIrregularPartition().getName() : null;
+            executor.submit(() -> {
+                try {
+                    while (true) {
+                        try {
+                            subSeq.done(subSeq.waitForNext());
+                            if (txLog != null) {
+                                final Tx tx1 = new Tx();
+                                final String lagPartitionName = writer.hasIrregularPartition() ? writer.getIrregularPartition().getName() : null;
 
-                                    File[] files = writer.getLocation().listFiles(new FileFilter() {
-                                        public boolean accept(File f) {
-                                            return f.isDirectory() && f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX) &&
-                                                    (lagPartitionName == null || !lagPartitionName.equals(f.getName()));
+                                File[] files = writer.getLocation().listFiles(f -> f.isDirectory() && f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX) &&
+                                        (lagPartitionName == null || !lagPartitionName.equals(f.getName())));
+
+                                if (files != null) {
+
+                                    Arrays.sort(files);
+
+                                    for (int i = 0; i < files.length; i++) {
+
+                                        if (!txLog.isEmpty()) {
+                                            txLog.head(tx1);
+                                            if (files[i].getName().equals(tx1.lagName)) {
+                                                continue;
+                                            }
                                         }
-                                    });
 
-                                    if (files != null) {
+                                        // get exclusive lock
+                                        Lock lock = LockManager.lockExclusive(files[i].getAbsolutePath());
+                                        try {
+                                            if (lock != null && lock.isValid()) {
+                                                LOG.debug().$("Purging :").$(files[i].getAbsolutePath()).$();
 
-                                        Arrays.sort(files);
-
-                                        for (int i = 0; i < files.length; i++) {
-
-                                            if (!txLog.isEmpty()) {
-                                                txLog.head(tx1);
-                                                if (files[i].getName().equals(tx1.lagName)) {
-                                                    continue;
+                                                if (!Files.delete(files[i])) {
+                                                    LOG.debug().$("Could not purge: ").$(files[i].getAbsolutePath()).$();
                                                 }
+                                            } else {
+                                                LOG.debug().$("Partition in use: ").$(files[i].getAbsolutePath()).$();
                                             }
-
-                                            // get exclusive lock
-                                            Lock lock = LockManager.lockExclusive(files[i].getAbsolutePath());
-                                            try {
-                                                if (lock != null && lock.isValid()) {
-                                                    LOG.debug().$("Purging :").$(files[i].getAbsolutePath()).$();
-
-                                                    if (!Files.delete(files[i])) {
-                                                        LOG.debug().$("Could not purge: ").$(files[i].getAbsolutePath()).$();
-                                                    }
-                                                } else {
-                                                    LOG.debug().$("Partition in use: ").$(files[i].getAbsolutePath()).$();
-                                                }
-                                            } finally {
-                                                LockManager.release(lock);
-                                            }
+                                        } finally {
+                                            LockManager.release(lock);
                                         }
                                     }
                                 }
-                            } catch (Throwable ignore) {
-                                running = false;
-                                haltLatch.countDown();
-                                break;
                             }
+                        } catch (Throwable ignore) {
+                            running = false;
+                            haltLatch.countDown();
+                            break;
                         }
-                    } finally {
-                        txLog = Misc.free(txLog);
                     }
+                } finally {
+                    txLog = Misc.free(txLog);
                 }
             });
         }

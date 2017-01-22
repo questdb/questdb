@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.sum;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
@@ -33,12 +32,7 @@ import com.questdb.store.ColumnType;
 
 public final class SumLongAggregator extends AbstractUnaryAggregator {
 
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new SumLongAggregator(position);
-        }
-    };
+    public static final VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new SumLongAggregator(position);
 
     private SumLongAggregator(int position) {
         super(ColumnType.LONG, position);

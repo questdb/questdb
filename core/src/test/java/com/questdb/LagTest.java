@@ -35,7 +35,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
-import java.io.FilenameFilter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -151,12 +150,7 @@ public class LagTest extends AbstractTest {
 
         factoryContainer.getFactory().lock(Quote.class.getName());
 
-        String[] tempDirs = loc.list(new FilenameFilter() {
-            @Override
-            public boolean accept(File dir, String name) {
-                return name.startsWith("temp") && !name.endsWith(".lock");
-            }
-        });
+        String[] tempDirs = loc.list((dir, name) -> name.startsWith("temp") && !name.endsWith(".lock"));
 
         Assert.assertNotNull(tempDirs);
         Assert.assertEquals(1, tempDirs.length);

@@ -286,34 +286,31 @@ public class LogFactory implements Closeable {
             level = level | LogLevel.LOG_LEVEL_DEBUG;
         }
 
-        return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, new LogWriterFactory() {
-            @Override
-            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                try {
-                    LogWriter w = (LogWriter) constructor.newInstance(ring, seq, level);
+        return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, (ring, seq, level1) -> {
+            try {
+                LogWriter w1 = (LogWriter) constructor.newInstance(ring, seq, level1);
 
-                    for (String n : properties.stringPropertyNames()) {
-                        if (n.startsWith(writer)) {
-                            String p = n.substring(writer.length());
+                for (String n : properties.stringPropertyNames()) {
+                    if (n.startsWith(writer)) {
+                        String p = n.substring(writer.length());
 
-                            if (reserved.contains(p)) {
-                                continue;
+                        if (reserved.contains(p)) {
+                            continue;
+                        }
+
+                        try {
+                            Field f = cl.getDeclaredField(p);
+                            if (f != null && f.getType() == String.class) {
+                                Unsafe.getUnsafe().putObject(w1, Unsafe.getUnsafe().objectFieldOffset(f), properties.getProperty(n));
                             }
-
-                            try {
-                                Field f = cl.getDeclaredField(p);
-                                if (f != null && f.getType() == String.class) {
-                                    Unsafe.getUnsafe().putObject(w, Unsafe.getUnsafe().objectFieldOffset(f), properties.getProperty(n));
-                                }
-                            } catch (Exception e) {
-                                throw new LogError("Unknown property: " + n, e);
-                            }
+                        } catch (Exception e) {
+                            throw new LogError("Unknown property: " + n, e);
                         }
                     }
-                    return w;
-                } catch (Exception e) {
-                    throw new LogError("Error creating log writer", e);
                 }
+                return w1;
+            } catch (Exception e) {
+                throw new LogError("Error creating log writer", e);
             }
         });
     }
@@ -358,12 +355,7 @@ public class LogFactory implements Closeable {
         if (System.getProperty(DEBUG_TRIGGER) != null) {
             level = level | LogLevel.LOG_LEVEL_DEBUG;
         }
-        add(new LogWriterConfig(level, new LogWriterFactory() {
-            @Override
-            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                return new LogConsoleWriter(ring, seq, level);
-            }
-        }));
+        add(new LogWriterConfig(level, LogConsoleWriter::new));
         bind();
     }
 
@@ -538,12 +530,7 @@ public class LogFactory implements Closeable {
         private FanOut fanOut;
 
         public Holder(int queueDepth, final int recordLength) {
-            this.ring = new RingQueue<>(new ObjectFactory<LogRecordSink>() {
-                @Override
-                public LogRecordSink newInstance() {
-                    return new LogRecordSink(recordLength);
-                }
-            }, queueDepth);
+            this.ring = new RingQueue<>(() -> new LogRecordSink(recordLength), queueDepth);
             this.lSeq = new MPSequence(queueDepth);
         }
     }

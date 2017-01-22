@@ -43,12 +43,7 @@ import java.util.concurrent.CountDownLatch;
 
 public class HttpServer {
     private final static Log LOG = LogFactory.getLog(HttpServer.class);
-    private static final ObjectFactory<Event<IOContext>> EVENT_FACTORY = new ObjectFactory<Event<IOContext>>() {
-        @Override
-        public Event<IOContext> newInstance() {
-            return new Event<>();
-        }
-    };
+    private static final ObjectFactory<Event<IOContext>> EVENT_FACTORY = Event::new;
     private final InetSocketAddress address;
     private final ObjList<Worker> workers;
     private final CountDownLatch haltLatch;
@@ -70,12 +65,7 @@ public class HttpServer {
         this.haltLatch = new CountDownLatch(workerCount);
         this.workers = new ObjList<>(workerCount);
         this.configuration = configuration;
-        this.contextFactory = new ContextFactory<IOContext>() {
-            @Override
-            public IOContext newInstance(long fd, Clock clock) {
-                return new IOContext(new NetworkChannelImpl(fd), configuration, clock);
-            }
-        };
+        this.contextFactory = (fd, clock) -> new IOContext(new NetworkChannelImpl(fd), configuration, clock);
     }
 
     public ObjHashSet<Job> getJobs() {

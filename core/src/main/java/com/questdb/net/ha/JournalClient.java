@@ -486,12 +486,7 @@ public class JournalClient {
     }
 
     private static class SubscriptionHolder {
-        private static final ObjectFactory<SubscriptionHolder> FACTORY = new ObjectFactory<SubscriptionHolder>() {
-            @Override
-            public SubscriptionHolder newInstance() {
-                return new SubscriptionHolder();
-            }
-        };
+        private static final ObjectFactory<SubscriptionHolder> FACTORY = SubscriptionHolder::new;
 
         private int type = 0;
         private JournalKey remote;

@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.last;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
@@ -33,12 +32,7 @@ import com.questdb.store.ColumnType;
 
 public final class LastFloatAggregator extends AbstractUnaryAggregator {
 
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new LastFloatAggregator(position);
-        }
-    };
+    public static final VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new LastFloatAggregator(position);
 
     private LastFloatAggregator(int position) {
         super(ColumnType.FLOAT, position);

@@ -24,7 +24,6 @@
 package com.questdb.ql.ops.conv;
 
 import com.questdb.misc.Dates;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
@@ -34,12 +33,7 @@ import com.questdb.store.ColumnType;
 import com.questdb.txt.sink.StringSink;
 
 public class DtoA4Function extends AbstractUnaryOperator {
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DtoA4Function(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new DtoA4Function(position);
     private final StringSink sinkA = new StringSink();
     private final StringSink sinkB = new StringSink();
 

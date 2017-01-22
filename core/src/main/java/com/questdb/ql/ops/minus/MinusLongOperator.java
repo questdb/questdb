@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.minus;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -32,12 +31,7 @@ import com.questdb.store.ColumnType;
 
 public class MinusLongOperator extends AbstractBinaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new MinusLongOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new MinusLongOperator(position);
 
     private MinusLongOperator(int position) {
         super(ColumnType.LONG, position);

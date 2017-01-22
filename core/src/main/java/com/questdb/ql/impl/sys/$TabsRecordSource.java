@@ -43,25 +43,10 @@ import com.questdb.std.str.*;
 public class $TabsRecordSource extends AbstractRecordSource {
 
     private static final Log LOG = LogFactory.getLog($TabsRecordSource.class);
-    private static final ThreadLocal<Path> tlPath = new ThreadLocal<Path>() {
-        @Override
-        protected Path initialValue() {
-            return new Path();
-        }
-    };
-    private static final ThreadLocal<CompositePath> tlCompositePath = new ThreadLocal<CompositePath>() {
-        @Override
-        protected CompositePath initialValue() {
-            return new CompositePath();
-        }
-    };
+    private static final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
+    private static final ThreadLocal<CompositePath> tlCompositePath = ThreadLocal.withInitial(CompositePath::new);
 
-    private static final ThreadLocal<NativeLPSZ> tlNativeLpsz = new ThreadLocal<NativeLPSZ>() {
-        @Override
-        protected NativeLPSZ initialValue() {
-            return new NativeLPSZ();
-        }
-    };
+    private static final ThreadLocal<NativeLPSZ> tlNativeLpsz = ThreadLocal.withInitial(NativeLPSZ::new);
 
     private final RecordList records;
     private final $TabsRecordMetadata metadata;

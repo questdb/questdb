@@ -317,18 +317,15 @@ public class JournalTest extends AbstractTest {
 
             final CountDownLatch finished = new CountDownLatch(1);
             final AtomicInteger errors = new AtomicInteger();
-            new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        factoryContainer.getFactory().writer(Quote.class);
-                        errors.incrementAndGet();
-                    } catch (JournalException e) {
-                        // ignore
-                    }
-                    finished.countDown();
+            new Thread(() -> {
+                try {
+                    factoryContainer.getFactory().writer(Quote.class);
+                    errors.incrementAndGet();
+                } catch (JournalException e) {
+                    // ignore
                 }
-            }.start();
+                finished.countDown();
+            }).start();
 
             Assert.assertTrue(finished.await(1, TimeUnit.SECONDS));
             Assert.assertEquals(0, errors.get());

@@ -24,7 +24,6 @@
 package com.questdb.ql.ops.neg;
 
 import com.questdb.ex.ParserException;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
@@ -35,12 +34,7 @@ import com.questdb.store.ColumnType;
 
 public class DoubleNegativeOperator extends AbstractVirtualColumn implements Function {
 
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DoubleNegativeOperator(position);
-        }
-    };
+    public static final VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new DoubleNegativeOperator(position);
 
     private VirtualColumn value;
 

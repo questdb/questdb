@@ -24,7 +24,6 @@
 package com.questdb.ql.ops.count;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
@@ -38,12 +37,7 @@ import com.questdb.store.ColumnType;
 
 public final class CountAggregator extends AbstractVirtualColumn implements AggregatorFunction, Function {
 
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new CountAggregator(position);
-        }
-    };
+    public static final VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new CountAggregator(position);
     private int index;
 
     private CountAggregator(int position) {

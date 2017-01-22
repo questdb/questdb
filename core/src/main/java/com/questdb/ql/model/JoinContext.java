@@ -26,12 +26,7 @@ package com.questdb.ql.model;
 import com.questdb.std.*;
 
 public class JoinContext implements Mutable {
-    public static final ObjectFactory<JoinContext> FACTORY = new ObjectFactory<JoinContext>() {
-        @Override
-        public JoinContext newInstance() {
-            return new JoinContext();
-        }
-    };
+    public static final ObjectFactory<JoinContext> FACTORY = JoinContext::new;
     private static final int TYPICAL_NUMBER_OF_JOIN_COLUMNS = 4;
 
     public final IntList aIndexes = new IntList(TYPICAL_NUMBER_OF_JOIN_COLUMNS);

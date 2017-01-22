@@ -25,16 +25,10 @@ package com.questdb.ql.impl.aggregation;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.std.ObjList;
-import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
 
 public final class AggregationUtils {
-    static final ThreadLocal<ObjList<RecordColumnMetadata>> TL_COLUMNS = new ThreadLocal<>(new ObjectFactory<ObjList<RecordColumnMetadata>>() {
-        @Override
-        public ObjList<RecordColumnMetadata> newInstance() {
-            return new ObjList<>();
-        }
-    });
+    static final ThreadLocal<ObjList<RecordColumnMetadata>> TL_COLUMNS = new ThreadLocal<>(ObjList::new);
 
     private AggregationUtils() {
     }

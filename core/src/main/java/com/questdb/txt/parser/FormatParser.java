@@ -31,12 +31,7 @@ import com.questdb.std.ObjectFactory;
 import static com.questdb.txt.TextFileDelimiter.*;
 
 public class FormatParser {
-    public static final ObjectFactory<FormatParser> FACTORY = new ObjectFactory<FormatParser>() {
-        @Override
-        public FormatParser newInstance() {
-            return new FormatParser();
-        }
-    };
+    public static final ObjectFactory<FormatParser> FACTORY = FormatParser::new;
     private static final int maxLines = 10000;
     private final IntList commas = new IntList(maxLines);
     private final IntList pipes = new IntList(maxLines);

@@ -25,7 +25,6 @@ package com.questdb.ql.impl.map;
 
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.std.ObjList;
-import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
 
 public class VirtualColumnTypeResolver implements ColumnTypeResolver {
@@ -49,12 +48,7 @@ public class VirtualColumnTypeResolver implements ColumnTypeResolver {
 
     public static class ResolverThreadLocal extends ThreadLocal<VirtualColumnTypeResolver> {
         public ResolverThreadLocal() {
-            super(new ObjectFactory<VirtualColumnTypeResolver>() {
-                @Override
-                public VirtualColumnTypeResolver newInstance() {
-                    return new VirtualColumnTypeResolver();
-                }
-            });
+            super(VirtualColumnTypeResolver::new);
         }
     }
 }

@@ -25,7 +25,6 @@ package com.questdb.ql.ops.conv;
 
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Dates;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
@@ -34,12 +33,7 @@ import com.questdb.store.ColumnType;
 
 public class Time24ToMillisFunction extends AbstractUnaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new Time24ToMillisFunction(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new Time24ToMillisFunction(position);
 
     private Time24ToMillisFunction(int position) {
         super(ColumnType.LONG, position);

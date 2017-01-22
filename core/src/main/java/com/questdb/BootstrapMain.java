@@ -25,13 +25,14 @@ package com.questdb;
 
 import com.questdb.factory.Factory;
 import com.questdb.iter.clock.MilliClock;
-import com.questdb.log.*;
+import com.questdb.log.LogFactory;
+import com.questdb.log.LogFileWriter;
+import com.questdb.log.LogLevel;
+import com.questdb.log.LogWriterConfig;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
 import com.questdb.mon.FactoryEventLogger;
 import com.questdb.mp.Job;
-import com.questdb.mp.RingQueue;
-import com.questdb.mp.Sequence;
 import com.questdb.net.http.HttpServer;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
@@ -39,7 +40,6 @@ import com.questdb.net.http.handlers.*;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjHashSet;
 import sun.misc.Signal;
-import sun.misc.SignalHandler;
 
 import java.io.File;
 import java.io.IOException;
@@ -141,19 +141,15 @@ class BootstrapMain {
 
             if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
                 // suppress HUP signal
-                Signal.handle(new Signal("HUP"), new SignalHandler() {
-                    public void handle(Signal signal) {
-                    }
+                Signal.handle(new Signal("HUP"), signal -> {
                 });
             }
 
-            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-                public void run() {
-                    System.out.println(new Date() + " QuestDB is shutting down");
-                    server.halt();
-                    factoryEventLogger.close();
-                    factory.close();
-                }
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                System.out.println(new Date() + " QuestDB is shutting down");
+                server.halt();
+                factoryEventLogger.close();
+                factory.close();
             }));
         }
     }
@@ -203,24 +199,18 @@ class BootstrapMain {
     }
 
     private static void configureLoggers(final ServerConfiguration configuration) {
-        LogFactory.INSTANCE.add(new LogWriterConfig("access", LogLevel.LOG_LEVEL_ALL, new LogWriterFactory() {
-            @Override
-            public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                LogFileWriter w = new LogFileWriter(ring, seq, level);
-                w.setLocation(configuration.getAccessLog().getAbsolutePath());
-                return w;
-            }
+        LogFactory.INSTANCE.add(new LogWriterConfig("access", LogLevel.LOG_LEVEL_ALL, (ring, seq, level) -> {
+            LogFileWriter w = new LogFileWriter(ring, seq, level);
+            w.setLocation(configuration.getAccessLog().getAbsolutePath());
+            return w;
         }));
 
         final int level = System.getProperty(LogFactory.DEBUG_TRIGGER) != null ? LogLevel.LOG_LEVEL_ALL : LogLevel.LOG_LEVEL_ERROR | LogLevel.LOG_LEVEL_INFO;
         LogFactory.INSTANCE.add(new LogWriterConfig(level,
-                new LogWriterFactory() {
-                    @Override
-                    public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                        LogFileWriter w = new LogFileWriter(ring, seq, level);
-                        w.setLocation(configuration.getErrorLog().getAbsolutePath());
-                        return w;
-                    }
+                (ring, seq, level1) -> {
+                    LogFileWriter w = new LogFileWriter(ring, seq, level1);
+                    w.setLocation(configuration.getErrorLog().getAbsolutePath());
+                    return w;
                 }));
 
         LogFactory.INSTANCE.bind();
@@ -234,7 +224,7 @@ class BootstrapMain {
         final Path source;
         final int sourceLen;
         if (components.length > 1) {
-            fs = FileSystems.newFileSystem(URI.create(components[0]), new HashMap<String, Object>());
+            fs = FileSystems.newFileSystem(URI.create(components[0]), new HashMap<>());
             source = fs.getPath(components[1]);
             sourceLen = source.toAbsolutePath().toString().length();
         } else {

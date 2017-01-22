@@ -111,7 +111,7 @@ public class JournalServer {
                 , Integer.MAX_VALUE
                 , 60L
                 , TimeUnit.SECONDS
-                , new SynchronousQueue<Runnable>()
+                , new SynchronousQueue<>()
                 , new NamedDaemonThreadFactory("questdb-server-" + instance + "-agent", true)
         );
         this.bridge = new JournalEventBridge(config.getHeartbeatFrequency(), TimeUnit.MILLISECONDS);

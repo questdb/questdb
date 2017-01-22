@@ -24,20 +24,16 @@
 package com.questdb.net.ha;
 
 import com.questdb.Journal;
-import com.questdb.JournalKey;
 import com.questdb.JournalWriter;
 import com.questdb.ex.FatalError;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.NumericException;
 import com.questdb.model.Quote;
-import com.questdb.net.ha.auth.AuthorizationHandler;
-import com.questdb.net.ha.auth.CredentialProvider;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.net.ha.krb.SSOCredentialProvider;
-import com.questdb.std.ObjList;
 import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
@@ -65,20 +61,10 @@ public class AuthorizationTest extends AbstractTest {
                 }}
                 , factoryContainer.getFactory()
                 ,
-                new AuthorizationHandler() {
-                    @Override
-                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
-                        return "SECRET".equals(new String(token));
-                    }
-                });
+                (token, requestedKeys) -> "SECRET".equals(new String(token)));
 
 
-        JournalClient client = new JournalClient(local, getWriterFactory(), new CredentialProvider() {
-            @Override
-            public byte[] createToken() {
-                return "SECRET".getBytes();
-            }
-        });
+        JournalClient client = new JournalClient(local, getWriterFactory(), "SECRET"::getBytes);
         beginSync(server, client);
     }
 
@@ -91,31 +77,23 @@ public class AuthorizationTest extends AbstractTest {
                 }}
                 , factoryContainer.getFactory()
                 ,
-                new AuthorizationHandler() {
-                    @Override
-                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
-                        return "SECRET".equals(new String(token));
-                    }
-                });
+                (token, requestedKeys) -> "SECRET".equals(new String(token)));
 
         server.start();
         try {
 
             final AtomicInteger authErrors = new AtomicInteger();
             final CountDownLatch error = new CountDownLatch(1);
-            JournalClient client = new JournalClient(local, getWriterFactory(), null, new JournalClient.Callback() {
-                @Override
-                public void onEvent(int evt) {
-                    switch (evt) {
-                        case JournalClientEvents.EVT_AUTH_CONFIG_ERROR:
-                            authErrors.incrementAndGet();
-                            break;
-                        case JournalClientEvents.EVT_TERMINATED:
-                            error.countDown();
-                            break;
-                        default:
-                            break;
-                    }
+            JournalClient client = new JournalClient(local, getWriterFactory(), null, evt -> {
+                switch (evt) {
+                    case JournalClientEvents.EVT_AUTH_CONFIG_ERROR:
+                        authErrors.incrementAndGet();
+                        break;
+                    case JournalClientEvents.EVT_TERMINATED:
+                        error.countDown();
+                        break;
+                    default:
+                        break;
                 }
             });
 
@@ -136,12 +114,7 @@ public class AuthorizationTest extends AbstractTest {
                 }}
                 , factoryContainer.getFactory()
                 ,
-                new AuthorizationHandler() {
-                    @Override
-                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
-                        return "SECRET".equals(new String(token));
-                    }
-                });
+                (token, requestedKeys) -> "SECRET".equals(new String(token)));
 
 
         final AtomicInteger authErrorCount = new AtomicInteger();
@@ -150,25 +123,17 @@ public class AuthorizationTest extends AbstractTest {
         JournalClient client = new JournalClient(
                 local,
                 getWriterFactory(),
-                new CredentialProvider() {
-                    @Override
-                    public byte[] createToken() {
-                        return "NON_SECRET".getBytes();
-                    }
-                },
-                new JournalClient.Callback() {
-                    @Override
-                    public void onEvent(int evt) {
-                        switch (evt) {
-                            case JournalClientEvents.EVT_AUTH_ERROR:
-                                authErrorCount.incrementAndGet();
-                                break;
-                            case JournalClientEvents.EVT_TERMINATED:
-                                serverError.countDown();
-                                break;
-                            default:
-                                break;
-                        }
+                "NON_SECRET"::getBytes,
+                evt -> {
+                    switch (evt) {
+                        case JournalClientEvents.EVT_AUTH_ERROR:
+                            authErrorCount.incrementAndGet();
+                            break;
+                        case JournalClientEvents.EVT_TERMINATED:
+                            serverError.countDown();
+                            break;
+                        default:
+                            break;
                     }
                 });
 
@@ -193,30 +158,22 @@ public class AuthorizationTest extends AbstractTest {
                 }}
                 , factoryContainer.getFactory()
                 ,
-                new AuthorizationHandler() {
-                    @Override
-                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
-                        return "SECRET".equals(new String(token));
-                    }
-                });
+                (token, requestedKeys) -> "SECRET".equals(new String(token)));
 
 
         final AtomicInteger authErrorCount = new AtomicInteger();
         final CountDownLatch terminated = new CountDownLatch(1);
         JournalClient client = new JournalClient(local, getWriterFactory(), new SSOCredentialProvider("HOST/test"),
-                new JournalClient.Callback() {
-                    @Override
-                    public void onEvent(int evt) {
-                        switch (evt) {
-                            case JournalClientEvents.EVT_AUTH_CONFIG_ERROR:
-                                authErrorCount.incrementAndGet();
-                                break;
-                            case JournalClientEvents.EVT_TERMINATED:
-                                terminated.countDown();
-                                break;
-                            default:
-                                break;
-                        }
+                evt -> {
+                    switch (evt) {
+                        case JournalClientEvents.EVT_AUTH_CONFIG_ERROR:
+                            authErrorCount.incrementAndGet();
+                            break;
+                        case JournalClientEvents.EVT_TERMINATED:
+                            terminated.countDown();
+                            break;
+                        default:
+                            break;
                     }
                 });
 
@@ -240,36 +197,25 @@ public class AuthorizationTest extends AbstractTest {
                 }}
                 , factoryContainer.getFactory()
                 ,
-                new AuthorizationHandler() {
-                    @Override
-                    public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) {
-                        throw new FatalError("BANG!");
-                    }
+                (token, requestedKeys) -> {
+                    throw new FatalError("BANG!");
                 });
 
         final AtomicInteger authErrorCount = new AtomicInteger();
         final CountDownLatch serverError = new CountDownLatch(1);
 
-        JournalClient client = new JournalClient(local, getWriterFactory(), new CredentialProvider() {
-            @Override
-            public byte[] createToken() {
-                return "SECRET".getBytes();
+        JournalClient client = new JournalClient(local, getWriterFactory(), "SECRET"::getBytes, evt -> {
+            switch (evt) {
+                case JournalClientEvents.EVT_AUTH_ERROR:
+                    authErrorCount.incrementAndGet();
+                    break;
+                case JournalClientEvents.EVT_TERMINATED:
+                    serverError.countDown();
+                    break;
+                default:
+                    break;
             }
-        }, new JournalClient.Callback() {
-            @Override
-            public void onEvent(int evt) {
-                switch (evt) {
-                    case JournalClientEvents.EVT_AUTH_ERROR:
-                        authErrorCount.incrementAndGet();
-                        break;
-                    case JournalClientEvents.EVT_TERMINATED:
-                        serverError.countDown();
-                        break;
-                    default:
-                        break;
-                }
 
-            }
         });
 
 

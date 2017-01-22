@@ -25,7 +25,6 @@ package com.questdb.ql.ops;
 
 import com.questdb.ex.ParserException;
 import com.questdb.misc.Numbers;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.IntHashSet;
@@ -33,12 +32,7 @@ import com.questdb.store.ColumnType;
 
 public class IntInOperator extends AbstractVirtualColumn implements Function {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new IntInOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new IntInOperator(position);
 
     private final IntHashSet set = new IntHashSet();
     private VirtualColumn lhs;

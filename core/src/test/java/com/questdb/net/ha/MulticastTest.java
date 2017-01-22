@@ -88,12 +88,9 @@ public class MulticastTest extends AbstractTest {
         }}, factoryContainer.getFactory(), null, 0);
 
         final CountDownLatch connected = new CountDownLatch(1);
-        JournalClient client = new JournalClient(new ClientConfig(), getWriterFactory(), null, new JournalClient.Callback() {
-            @Override
-            public void onEvent(int evt) {
-                if (evt == JournalClientEvents.EVT_CONNECTED) {
-                    connected.countDown();
-                }
+        JournalClient client = new JournalClient(new ClientConfig(), getWriterFactory(), null, evt -> {
+            if (evt == JournalClientEvents.EVT_CONNECTED) {
+                connected.countDown();
             }
         });
 

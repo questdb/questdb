@@ -27,12 +27,7 @@ import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
 public class QueryColumn implements Mutable {
-    public final static ObjectFactory<QueryColumn> FACTORY = new ObjectFactory<QueryColumn>() {
-        @Override
-        public QueryColumn newInstance() {
-            return new QueryColumn();
-        }
-    };
+    public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private String alias;
     private int aliasPosition;
     private ExprNode ast;

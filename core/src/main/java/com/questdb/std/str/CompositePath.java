@@ -29,12 +29,7 @@ import com.questdb.std.ObjectFactory;
 import java.io.Closeable;
 
 public final class CompositePath extends AbstractCharSequence implements Closeable, LPSZ {
-    public static final ObjectFactory<CompositePath> FACTORY = new ObjectFactory<CompositePath>() {
-        @Override
-        public CompositePath newInstance() {
-            return new CompositePath();
-        }
-    };
+    public static final ObjectFactory<CompositePath> FACTORY = CompositePath::new;
     private static final int OVERHEAD = 4;
     private long ptr = 0;
     private long wptr;

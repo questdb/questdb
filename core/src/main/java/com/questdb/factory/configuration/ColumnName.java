@@ -24,18 +24,12 @@
 package com.questdb.factory.configuration;
 
 import com.questdb.misc.Chars;
-import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.FlyweightCharSequence;
 import org.jetbrains.annotations.NotNull;
 
 public class ColumnName implements CharSequence {
-    private static final ThreadLocal<ColumnName> SINGLETON = new ThreadLocal<>(new ObjectFactory<ColumnName>() {
-        @Override
-        public ColumnName newInstance() {
-            return new ColumnName();
-        }
-    });
+    private static final ThreadLocal<ColumnName> SINGLETON = new ThreadLocal<>(ColumnName::new);
     private final FlyweightCharSequence alias = new FlyweightCharSequence();
     private final FlyweightCharSequence name = new FlyweightCharSequence();
     private CharSequence underlying;

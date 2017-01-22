@@ -23,19 +23,13 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.constant.BooleanConstant;
 import com.questdb.store.ColumnType;
 
 public class OrOperator extends AbstractBinaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new OrOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new OrOperator(position);
 
     private OrOperator(int position) {
         super(ColumnType.BOOLEAN, position);

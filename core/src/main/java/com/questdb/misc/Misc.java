@@ -26,7 +26,6 @@ package com.questdb.misc;
 import com.questdb.ex.FatalError;
 import com.questdb.ex.NumericException;
 import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.ObjectFactory;
 import com.questdb.std.ObjectPool;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.DirectByteCharSequence;
@@ -36,12 +35,7 @@ import java.io.IOException;
 
 public final class Misc {
     public static final String EOL = "\r\n";
-    private final static ThreadLocal<StringBuilder> tlBuilder = new ThreadLocal<>(new ObjectFactory<StringBuilder>() {
-        @Override
-        public StringBuilder newInstance() {
-            return new StringBuilder();
-        }
-    });
+    private final static ThreadLocal<StringBuilder> tlBuilder = new ThreadLocal<>(StringBuilder::new);
 
     private Misc() {
     }

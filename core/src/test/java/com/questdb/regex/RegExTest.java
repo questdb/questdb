@@ -285,69 +285,21 @@ public class RegExTest {
     }
 
     private static void nullArgumentTest() {
-        check(new Runnable() {
-            public void run() {
-                Pattern.compile(null);
-            }
-        });
-        check(new Runnable() {
-            public void run() {
-                Pattern.matches(null, null);
-            }
-        });
-        check(new Runnable() {
-            public void run() {
-                Pattern.matches("xyz", null);
-            }
-        });
-        check(new Runnable() {
-            public void run() {
-                Pattern.quote(null);
-            }
-        });
-        check(new Runnable() {
-            public void run() {
-                Pattern.compile("xyz").split(null);
-            }
-        });
-        check(new Runnable() {
-            public void run() {
-                Pattern.compile("xyz").matcher(null);
-            }
-        });
+        check(() -> Pattern.compile(null));
+        check(() -> Pattern.matches(null, null));
+        check(() -> Pattern.matches("xyz", null));
+        check(() -> Pattern.quote(null));
+        check(() -> Pattern.compile("xyz").split(null));
+        check(() -> Pattern.compile("xyz").matcher(null));
 
         final Matcher m = Pattern.compile("xyz").matcher("xyz");
         m.matches();
-        check(new Runnable() {
-            public void run() {
-                m.appendTail(null);
-            }
-        });
-        check(new Runnable() {
-            public void run() {
-                m.replaceAll(null);
-            }
-        });
-        check(new Runnable() {
-            public void run() {
-                m.replaceFirst(null);
-            }
-        });
-        check(new Runnable() {
-            public void run() {
-                m.appendReplacement(null, null);
-            }
-        });
-        check(new Runnable() {
-            public void run() {
-                m.reset(null);
-            }
-        });
-        check(new Runnable() {
-            public void run() {
-                Matcher.quoteReplacement(null);
-            }
-        });
+        check(() -> m.appendTail(null));
+        check(() -> m.replaceAll(null));
+        check(() -> m.replaceFirst(null));
+        check(() -> m.appendReplacement(null, null));
+        check(() -> m.reset(null));
+        check(() -> Matcher.quoteReplacement(null));
         //check(new Runnable() { public void run() { m.usePattern(null);}});
 
         report("Null Argument");

@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.div;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -32,12 +31,7 @@ import com.questdb.store.ColumnType;
 
 public class DivDoubleOperator extends AbstractBinaryOperator {
 
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DivDoubleOperator(position);
-        }
-    };
+    public static final VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new DivDoubleOperator(position);
 
     private DivDoubleOperator(int position) {
         super(ColumnType.DOUBLE, position);

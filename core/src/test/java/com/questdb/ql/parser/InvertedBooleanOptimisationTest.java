@@ -40,12 +40,7 @@ public class InvertedBooleanOptimisationTest extends AbstractTest {
     private final ExprParser p = new ExprParser(exprNodeObjectPool);
     private final ExprAstBuilder ast = new ExprAstBuilder();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
-    private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = new PostOrderTreeTraversalAlgo.Visitor() {
-        @Override
-        public void visit(ExprNode node) {
-            rpn.onNode(node);
-        }
-    };
+    private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = rpn::onNode;
     private final QueryCompiler compiler = new QueryCompiler();
 
     @Before

@@ -25,7 +25,6 @@ package com.questdb.ql.ops;
 
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
@@ -36,12 +35,7 @@ import com.questdb.store.ColumnType;
 
 public final class VwapAggregator extends AbstractBinaryOperator implements AggregatorFunction, MapRecordValueInterceptor {
 
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new VwapAggregator(position);
-        }
-    };
+    public static final VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new VwapAggregator(position);
 
     private final static RecordColumnMetadata INTERNAL_COL_AMOUNT = new RecordColumnMetadataImpl("$sumAmt", ColumnType.DOUBLE);
     private final static RecordColumnMetadata INTERNAL_COL_QUANTITY = new RecordColumnMetadataImpl("$sumQty", ColumnType.DOUBLE);

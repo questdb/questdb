@@ -80,19 +80,16 @@ public class SSLTest {
                     try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                         getSslConfig().setTrustStore(is, "changeit");
                     }
-                }}, factoryContainer.getFactory(), null, new JournalClient.Callback() {
-                    @Override
-                    public void onEvent(int evt) {
-                        switch (evt) {
-                            case JournalClientEvents.EVT_SERVER_ERROR:
-                                serverErrorCount.incrementAndGet();
-                                break;
-                            case JournalClientEvents.EVT_TERMINATED:
-                                terminated.countDown();
-                                break;
-                            default:
-                                break;
-                        }
+                }}, factoryContainer.getFactory(), null, evt -> {
+                    switch (evt) {
+                        case JournalClientEvents.EVT_SERVER_ERROR:
+                            serverErrorCount.incrementAndGet();
+                            break;
+                        case JournalClientEvents.EVT_TERMINATED:
+                            terminated.countDown();
+                            break;
+                        default:
+                            break;
                     }
                 });
 
@@ -225,19 +222,16 @@ public class SSLTest {
 
                 JournalClient client = new JournalClient(new ClientConfig("localhost") {{
                     getSslConfig().setSecure(true);
-                }}, factoryContainer.getFactory(), null, new JournalClient.Callback() {
-                    @Override
-                    public void onEvent(int evt) {
-                        switch (evt) {
-                            case JournalClientEvents.EVT_SERVER_ERROR:
-                                serverErrorCount.incrementAndGet();
-                                break;
-                            case JournalClientEvents.EVT_TERMINATED:
-                                terminated.countDown();
-                                break;
-                            default:
-                                break;
-                        }
+                }}, factoryContainer.getFactory(), null, evt -> {
+                    switch (evt) {
+                        case JournalClientEvents.EVT_SERVER_ERROR:
+                            serverErrorCount.incrementAndGet();
+                            break;
+                        case JournalClientEvents.EVT_TERMINATED:
+                            terminated.countDown();
+                            break;
+                        default:
+                            break;
                     }
                 });
 
@@ -286,19 +280,16 @@ public class SSLTest {
                     try (InputStream is = this.getClass().getResourceAsStream("/keystore/singlekey.ks")) {
                         getSslConfig().setKeyStore(is, "changeit");
                     }
-                }}, factoryContainer.getFactory(), null, new JournalClient.Callback() {
-                    @Override
-                    public void onEvent(int evt) {
-                        switch (evt) {
-                            case JournalClientEvents.EVT_SERVER_ERROR:
-                                serverErrorCount.incrementAndGet();
-                                break;
-                            case JournalClientEvents.EVT_TERMINATED:
-                                terminated.countDown();
-                                break;
-                            default:
-                                break;
-                        }
+                }}, factoryContainer.getFactory(), null, evt -> {
+                    switch (evt) {
+                        case JournalClientEvents.EVT_SERVER_ERROR:
+                            serverErrorCount.incrementAndGet();
+                            break;
+                        case JournalClientEvents.EVT_TERMINATED:
+                            terminated.countDown();
+                            break;
+                        default:
+                            break;
                     }
                 });
 

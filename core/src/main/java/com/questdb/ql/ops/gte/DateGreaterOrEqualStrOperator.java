@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.gte;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
@@ -31,12 +30,7 @@ import com.questdb.ql.ops.gt.DateToStrCmpBaseOperator;
 
 public class DateGreaterOrEqualStrOperator extends DateToStrCmpBaseOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DateGreaterOrEqualStrOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new DateGreaterOrEqualStrOperator(position);
 
     private DateGreaterOrEqualStrOperator(int position) {
         super(position);

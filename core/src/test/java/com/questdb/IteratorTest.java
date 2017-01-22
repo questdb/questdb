@@ -46,13 +46,10 @@ import java.util.concurrent.Executors;
 
 public class IteratorTest extends AbstractTest {
 
-    private final Comparator<Quote> comparator = new Comparator<Quote>() {
-        @Override
-        public int compare(Quote o1, Quote o2) {
-            long x = o1.getTimestamp();
-            long y = o2.getTimestamp();
-            return (x < y) ? -1 : ((x == y) ? 0 : 1);
-        }
+    private final Comparator<Quote> comparator = (o1, o2) -> {
+        long x = o1.getTimestamp();
+        long y = o2.getTimestamp();
+        return (x < y) ? -1 : ((x == y) ? 0 : 1);
     };
 
     @Test
@@ -300,12 +297,7 @@ public class IteratorTest extends AbstractTest {
             add(10);
         }};
 
-        MergingIterator<Integer> iterator = new MergingIterator<Integer>().$new(listA.iterator(), listB.iterator(), new Comparator<Integer>() {
-            @Override
-            public int compare(Integer o1, Integer o2) {
-                return o1.compareTo(o2);
-            }
-        });
+        MergingIterator<Integer> iterator = new MergingIterator<Integer>().$new(listA.iterator(), listB.iterator(), Integer::compareTo);
 
         int expected[] = {1, 1, 2, 2, 3, 4, 4, 4, 5, 6, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17};
         int i = 0;

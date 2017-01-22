@@ -26,7 +26,6 @@ package com.questdb.ql.ops;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.misc.Dates;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.parser.QueryError;
@@ -34,12 +33,7 @@ import com.questdb.store.ColumnType;
 
 public class DateInOperator extends AbstractVirtualColumn implements Function {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DateInOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new DateInOperator(position);
 
     private VirtualColumn lhs;
     private long lo;

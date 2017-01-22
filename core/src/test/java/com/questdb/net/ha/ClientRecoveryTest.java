@@ -37,12 +37,9 @@ public class ClientRecoveryTest extends AbstractTest {
     @Test
     public void testClientWriterRelease() throws Exception {
         final CountDownLatch serverError = new CountDownLatch(1);
-        JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, new JournalClient.Callback() {
-            @Override
-            public void onEvent(int evt) {
-                if (evt == JournalClientEvents.EVT_TERMINATED) {
-                    serverError.countDown();
-                }
+        JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+            if (evt == JournalClientEvents.EVT_TERMINATED) {
+                serverError.countDown();
             }
         });
 

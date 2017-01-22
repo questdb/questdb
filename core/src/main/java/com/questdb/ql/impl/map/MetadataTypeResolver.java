@@ -25,7 +25,6 @@ package com.questdb.ql.impl.map;
 
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.std.IntList;
-import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
 
 public class MetadataTypeResolver implements ColumnTypeResolver {
@@ -51,12 +50,7 @@ public class MetadataTypeResolver implements ColumnTypeResolver {
 
     public static final class MetadataTypeResolverThreadLocal extends ThreadLocal<MetadataTypeResolver> {
         public MetadataTypeResolverThreadLocal() {
-            super(new ObjectFactory<MetadataTypeResolver>() {
-                @Override
-                public MetadataTypeResolver newInstance() {
-                    return new MetadataTypeResolver();
-                }
-            });
+            super(MetadataTypeResolver::new);
         }
     }
 }

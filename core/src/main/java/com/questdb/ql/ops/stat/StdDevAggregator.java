@@ -29,12 +29,7 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 
 public class StdDevAggregator extends VarAggregator {
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new StdDevAggregator(position, configuration);
-        }
-    };
+    public static final VirtualColumnFactory<Function> FACTORY = StdDevAggregator::new;
 
     public StdDevAggregator(int position, ServerConfiguration configuration) {
         super(position, configuration);

@@ -28,12 +28,7 @@ import com.questdb.std.ObjectFactory;
 
 public class WithClauseModel implements Mutable {
 
-    public static final ObjectFactory<WithClauseModel> FACTORY = new ObjectFactory<WithClauseModel>() {
-        @Override
-        public WithClauseModel newInstance() {
-            return new WithClauseModel();
-        }
-    };
+    public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
     private int lo;
     private int hi;
     private QueryModel model;

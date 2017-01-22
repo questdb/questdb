@@ -30,12 +30,7 @@ import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 
 public class CreateJournalModel implements Mutable, ParsedModel {
-    public static final ObjectFactory<CreateJournalModel> FACTORY = new ObjectFactory<CreateJournalModel>() {
-        @Override
-        public CreateJournalModel newInstance() {
-            return new CreateJournalModel();
-        }
-    };
+    public static final ObjectFactory<CreateJournalModel> FACTORY = CreateJournalModel::new;
     private final ObjList<ColumnIndexModel> columnIndexModels = new ObjList<>();
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private ExprNode name;

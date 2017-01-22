@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.max;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
@@ -33,12 +32,7 @@ import com.questdb.store.ColumnType;
 
 public final class MaxDoubleAggregator extends AbstractUnaryAggregator {
 
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new MaxDoubleAggregator(position);
-        }
-    };
+    public static final VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new MaxDoubleAggregator(position);
 
     private MaxDoubleAggregator(int position) {
         super(ColumnType.DOUBLE, position);

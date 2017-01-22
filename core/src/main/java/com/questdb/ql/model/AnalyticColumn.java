@@ -28,12 +28,7 @@ import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 
 public final class AnalyticColumn extends QueryColumn {
-    public final static ObjectFactory<AnalyticColumn> FACTORY = new ObjectFactory<AnalyticColumn>() {
-        @Override
-        public AnalyticColumn newInstance() {
-            return new AnalyticColumn();
-        }
-    };
+    public final static ObjectFactory<AnalyticColumn> FACTORY = AnalyticColumn::new;
     private final ObjList<ExprNode> partitionBy = new ObjList<>(2);
     private final ObjList<ExprNode> orderBy = new ObjList<>(2);
     private final IntList orderByDirection = new IntList(2);

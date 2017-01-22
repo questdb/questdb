@@ -26,12 +26,7 @@ package com.questdb.net.ha.bridge;
 import com.questdb.std.ObjectFactory;
 
 public class JournalEvent {
-    public static final ObjectFactory<JournalEvent> EVENT_FACTORY = new ObjectFactory<JournalEvent>() {
-        @Override
-        public JournalEvent newInstance() {
-            return new JournalEvent();
-        }
-    };
+    public static final ObjectFactory<JournalEvent> EVENT_FACTORY = JournalEvent::new;
     private int index;
     private long timestamp;
 

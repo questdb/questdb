@@ -45,7 +45,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.Comparator;
 
 public class FilesTest {
 
@@ -138,12 +137,7 @@ public class FilesTest {
             }
         }
 
-        names.sort(new Comparator<String>() {
-            @Override
-            public int compare(String o1, String o2) {
-                return Chars.compare(o1, o2);
-            }
-        });
+        names.sort(Chars::compare);
 
         Assert.assertEquals("[.,..,a.txt]", names.toString());
     }

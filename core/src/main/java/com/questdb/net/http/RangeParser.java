@@ -29,12 +29,7 @@ import com.questdb.misc.Numbers;
 import com.questdb.std.ObjectFactory;
 
 public class RangeParser {
-    public static final ObjectFactory<RangeParser> FACTORY = new ObjectFactory<RangeParser>() {
-        @Override
-        public RangeParser newInstance() {
-            return new RangeParser();
-        }
-    };
+    public static final ObjectFactory<RangeParser> FACTORY = RangeParser::new;
     private static final String BYTES = "bytes=";
     private long lo;
     private long hi;

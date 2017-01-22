@@ -25,7 +25,6 @@ package com.questdb.ql.ops.conv;
 
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Numbers;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
@@ -34,12 +33,7 @@ import com.questdb.store.ColumnType;
 
 public class AtoDFunction extends AbstractUnaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new AtoDFunction(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new AtoDFunction(position);
 
     private AtoDFunction(int position) {
         super(ColumnType.DOUBLE, position);

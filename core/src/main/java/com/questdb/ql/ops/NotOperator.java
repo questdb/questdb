@@ -23,18 +23,12 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.store.ColumnType;
 
 public class NotOperator extends AbstractUnaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new NotOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new NotOperator(position);
 
     private NotOperator(int position) {
         super(ColumnType.BOOLEAN, position);

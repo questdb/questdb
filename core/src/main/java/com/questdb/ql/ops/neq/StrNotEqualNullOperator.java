@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.neq;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -33,12 +32,7 @@ import com.questdb.store.VariableColumn;
 
 public class StrNotEqualNullOperator extends AbstractBinaryOperator {
 
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new StrNotEqualNullOperator(position);
-        }
-    };
+    public static final VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new StrNotEqualNullOperator(position);
 
     private StrNotEqualNullOperator(int position) {
         super(ColumnType.BOOLEAN, position);

@@ -27,12 +27,7 @@ import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
 public class FlyweightCharSequence extends AbstractCharSequence implements Mutable {
-    public static final ObjectFactory<FlyweightCharSequence> FACTORY = new ObjectFactory<FlyweightCharSequence>() {
-        @Override
-        public FlyweightCharSequence newInstance() {
-            return new FlyweightCharSequence();
-        }
-    };
+    public static final ObjectFactory<FlyweightCharSequence> FACTORY = FlyweightCharSequence::new;
 
     private CharSequence delegate;
     private int lo;

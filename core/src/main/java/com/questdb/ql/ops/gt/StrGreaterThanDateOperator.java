@@ -24,19 +24,13 @@
 package com.questdb.ql.ops.gt;
 
 import com.questdb.misc.Numbers;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 
 public class StrGreaterThanDateOperator extends StrToDateCmpBaseOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new StrGreaterThanDateOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new StrGreaterThanDateOperator(position);
 
     private StrGreaterThanDateOperator(int position) {
         super(position);

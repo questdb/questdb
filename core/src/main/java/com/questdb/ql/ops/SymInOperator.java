@@ -24,7 +24,6 @@
 package com.questdb.ql.ops;
 
 import com.questdb.ex.ParserException;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSequenceHashSet;
@@ -34,12 +33,7 @@ import com.questdb.store.SymbolTable;
 
 public class SymInOperator extends AbstractVirtualColumn implements Function {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new SymInOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new SymInOperator(position);
 
     private final IntHashSet set = new IntHashSet(10, .5f, -10);
     private final CharSequenceHashSet values = new CharSequenceHashSet();

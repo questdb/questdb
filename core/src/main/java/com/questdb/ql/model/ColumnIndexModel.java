@@ -27,12 +27,7 @@ import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
 public class ColumnIndexModel implements Mutable {
-    public static final ObjectFactory<ColumnIndexModel> FACTORY = new ObjectFactory<ColumnIndexModel>() {
-        @Override
-        public ColumnIndexModel newInstance() {
-            return new ColumnIndexModel();
-        }
-    };
+    public static final ObjectFactory<ColumnIndexModel> FACTORY = ColumnIndexModel::new;
 
     private ExprNode name;
     private int buckets;

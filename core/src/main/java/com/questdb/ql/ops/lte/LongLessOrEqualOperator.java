@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.lte;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -31,12 +30,7 @@ import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
 public class LongLessOrEqualOperator extends AbstractBinaryOperator {
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new LongLessOrEqualOperator(position);
-        }
-    };
+    public static final VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new LongLessOrEqualOperator(position);
 
     private LongLessOrEqualOperator(int position) {
         super(ColumnType.BOOLEAN, position);

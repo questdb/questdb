@@ -24,7 +24,6 @@
 package com.questdb.ql.ops.conv;
 
 import com.questdb.ex.ParserException;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
@@ -35,12 +34,7 @@ import com.questdb.store.SymbolTable;
 
 public class TypeOfFunction extends AbstractUnaryOperator implements SymbolTable {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new TypeOfFunction(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new TypeOfFunction(position);
 
     private int valueType;
     private String typeName;

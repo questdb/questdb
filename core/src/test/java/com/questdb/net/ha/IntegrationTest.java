@@ -85,12 +85,9 @@ public class IntegrationTest extends AbstractTest {
             server.start();
             try {
                 final CountDownLatch terminated = new CountDownLatch(1);
-                JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, new JournalClient.Callback() {
-                    @Override
-                    public void onEvent(int evt) {
-                        if (evt == JournalClientEvents.EVT_TERMINATED) {
-                            terminated.countDown();
-                        }
+                JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+                    if (evt == JournalClientEvents.EVT_TERMINATED) {
+                        terminated.countDown();
                     }
                 });
 
@@ -139,27 +136,24 @@ public class IntegrationTest extends AbstractTest {
                         final CyclicBarrier barrier = new CyclicBarrier(2);
                         final AtomicInteger publisherErrors = new AtomicInteger();
 
-                        new Thread() {
-                            @Override
-                            public void run() {
-                                try {
-                                    barrier.await();
+                        new Thread(() -> {
+                            try {
+                                barrier.await();
 
-                                    long timestamp = Dates.parseDateTime("2013-09-04T10:00:00.000Z");
-                                    long increment = 1000L;
+                                long timestamp = Dates.parseDateTime("2013-09-04T10:00:00.000Z");
+                                long increment = 1000L;
 
-                                    for (int i = 0; i < batchCount; i++) {
-                                        TestUtils.generateQuoteData(origin, batchSize, timestamp, increment);
-                                        timestamp += increment * (batchSize);
-                                        origin.commit();
-                                    }
-                                } catch (Throwable e) {
-                                    e.printStackTrace();
-                                    publisherErrors.incrementAndGet();
+                                for (int i = 0; i < batchCount; i++) {
+                                    TestUtils.generateQuoteData(origin, batchSize, timestamp, increment);
+                                    timestamp += increment * (batchSize);
+                                    origin.commit();
                                 }
-                                published.countDown();
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                publisherErrors.incrementAndGet();
                             }
-                        }.start();
+                            published.countDown();
+                        }).start();
 
                         Assert.assertTrue(localSubscribed.await(10, TimeUnit.SECONDS));
                         barrier.await();
@@ -209,12 +203,9 @@ public class IntegrationTest extends AbstractTest {
     @Test
     public void testClientConnect() throws Exception {
         final CountDownLatch error = new CountDownLatch(1);
-        client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, new JournalClient.Callback() {
-            @Override
-            public void onEvent(int evt) {
-                if (evt == JournalClientEvents.EVT_SERVER_ERROR) {
-                    error.countDown();
-                }
+        client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+            if (evt == JournalClientEvents.EVT_SERVER_ERROR) {
+                error.countDown();
             }
         });
 
@@ -336,12 +327,9 @@ public class IntegrationTest extends AbstractTest {
 
                 final AtomicInteger serverErrors = new AtomicInteger();
                 final AtomicInteger commits = new AtomicInteger();
-                client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, new JournalClient.Callback() {
-                    @Override
-                    public void onEvent(int evt) {
-                        if (evt == JournalClientEvents.EVT_SERVER_DIED) {
-                            serverErrors.incrementAndGet();
-                        }
+                client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+                    if (evt == JournalClientEvents.EVT_SERVER_DIED) {
+                        serverErrors.incrementAndGet();
                     }
                 });
                 client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
@@ -386,12 +374,9 @@ public class IntegrationTest extends AbstractTest {
                 }
 
                 final AtomicInteger errorCounter = new AtomicInteger();
-                client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, new JournalClient.Callback() {
-                    @Override
-                    public void onEvent(int evt) {
-                        if (evt == JournalClientEvents.EVT_SERVER_DIED) {
-                            serverErrors.incrementAndGet();
-                        }
+                client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+                    if (evt == JournalClientEvents.EVT_SERVER_DIED) {
+                        serverErrors.incrementAndGet();
                     }
                 });
                 client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
@@ -438,19 +423,16 @@ public class IntegrationTest extends AbstractTest {
 
                 final CountDownLatch terminated = new CountDownLatch(1);
                 final AtomicInteger serverDied = new AtomicInteger();
-                JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, new JournalClient.Callback() {
-                    @Override
-                    public void onEvent(int evt) {
-                        switch (evt) {
-                            case JournalClientEvents.EVT_TERMINATED:
-                                terminated.countDown();
-                                break;
-                            case JournalClientEvents.EVT_SERVER_DIED:
-                                serverDied.incrementAndGet();
-                                break;
-                            default:
-                                break;
-                        }
+                JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+                    switch (evt) {
+                        case JournalClientEvents.EVT_TERMINATED:
+                            terminated.countDown();
+                            break;
+                        case JournalClientEvents.EVT_SERVER_DIED:
+                            serverDied.incrementAndGet();
+                            break;
+                        default:
+                            break;
                     }
                 });
 
@@ -606,13 +588,10 @@ public class IntegrationTest extends AbstractTest {
                     factoryContainer.getFactory().writer(new JournalConfigurationBuilder().$("local").$int("x").$()).close();
 
                     final CountDownLatch terminated = new CountDownLatch(1);
-                    JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, new JournalClient.Callback() {
-                        @Override
-                        public void onEvent(int evt) {
+                    JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
 
-                            if (evt == JournalClientEvents.EVT_TERMINATED) {
-                                terminated.countDown();
-                            }
+                        if (evt == JournalClientEvents.EVT_TERMINATED) {
+                            terminated.countDown();
                         }
                     });
 
@@ -676,17 +655,14 @@ public class IntegrationTest extends AbstractTest {
 
                         final CountDownLatch terminated = new CountDownLatch(1);
                         final AtomicInteger serverErrors = new AtomicInteger();
-                        JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, new JournalClient.Callback() {
-                            @Override
-                            public void onEvent(int evt) {
+                        JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
 
-                                if (evt == JournalClientEvents.EVT_TERMINATED) {
-                                    terminated.countDown();
-                                }
+                            if (evt == JournalClientEvents.EVT_TERMINATED) {
+                                terminated.countDown();
+                            }
 
-                                if (evt == JournalClientEvents.EVT_SERVER_DIED) {
-                                    serverErrors.incrementAndGet();
-                                }
+                            if (evt == JournalClientEvents.EVT_SERVER_DIED) {
+                                serverErrors.incrementAndGet();
                             }
                         });
 

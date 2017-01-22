@@ -202,7 +202,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
             COMPILER.set(new QueryCompiler(configuration));
         }
         if (CACHE.get() == null) {
-            CACHE.set(new AssociativeCache<RecordSource>(8, 128));
+            CACHE.set(new AssociativeCache<>(8, 128));
         }
     }
 

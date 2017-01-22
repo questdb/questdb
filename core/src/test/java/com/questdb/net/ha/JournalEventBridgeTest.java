@@ -53,25 +53,22 @@ public class JournalEventBridgeTest {
 
         for (int i = 0; i < publishers.length; i++) {
             final int index = i;
-            publishers[i] = service.submit(new Callable<Integer>() {
-                @Override
-                public Integer call() throws Exception {
-                    int count = 0;
-                    try {
-                        barrier.await();
-                        for (int k = 0; k < batchSize; k++) {
-                            long ts = System.nanoTime();
-                            bridge.publish(index, ts);
-                            count++;
-                        }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    } finally {
-                        latch.countDown();
+            publishers[i] = service.submit(() -> {
+                int count = 0;
+                try {
+                    barrier.await();
+                    for (int k = 0; k < batchSize; k++) {
+                        long ts = System.nanoTime();
+                        bridge.publish(index, ts);
+                        count++;
                     }
-
-                    return count;
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } finally {
+                    latch.countDown();
                 }
+
+                return count;
             });
         }
 
@@ -80,21 +77,18 @@ public class JournalEventBridgeTest {
             final JournalEventProcessor processor = new JournalEventProcessor(bridge);
             final Handler handler = new Handler(i);
             consumers[i] = handler;
-            service.submit(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        barrier.await();
-                        while (true) {
-                            if (!processor.process(handler, true)) {
-                                break;
-                            }
+            service.submit(() -> {
+                try {
+                    barrier.await();
+                    while (true) {
+                        if (!processor.process(handler, true)) {
+                            break;
                         }
-                    } catch (InterruptedException | BrokenBarrierException e) {
-                        e.printStackTrace();
-                    } finally {
-                        latch.countDown();
                     }
+                } catch (InterruptedException | BrokenBarrierException e) {
+                    e.printStackTrace();
+                } finally {
+                    latch.countDown();
                 }
             });
         }

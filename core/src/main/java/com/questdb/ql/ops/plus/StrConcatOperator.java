@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.plus;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -34,12 +33,7 @@ import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
 
 public class StrConcatOperator extends AbstractBinaryOperator {
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new StrConcatOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new StrConcatOperator(position);
 
     private final SplitCharSequence csA = new SplitCharSequence();
     private final SplitCharSequence csB = new SplitCharSequence();

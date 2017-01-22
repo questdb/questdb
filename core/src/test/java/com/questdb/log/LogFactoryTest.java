@@ -26,8 +26,6 @@ package com.questdb.log;
 import com.questdb.ex.LogError;
 import com.questdb.misc.Files;
 import com.questdb.misc.Misc;
-import com.questdb.mp.RingQueue;
-import com.questdb.mp.Sequence;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -53,12 +51,7 @@ public class LogFactoryTest {
     @Test
     public void testDefaultLevel() throws Exception {
         try (LogFactory factory = new LogFactory()) {
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_ALL, new LogWriterFactory() {
-                @Override
-                public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                    return new LogConsoleWriter(ring, seq, level);
-                }
-            }));
+            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_ALL, LogConsoleWriter::new));
 
             factory.bind();
 
@@ -76,22 +69,16 @@ public class LogFactoryTest {
 
         try (LogFactory factory = new LogFactory()) {
 
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, new LogWriterFactory() {
-                @Override
-                public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                    LogFileWriter w = new LogFileWriter(ring, seq, level);
-                    w.setLocation(x.getAbsolutePath());
-                    return w;
-                }
+            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
             }));
 
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, new LogWriterFactory() {
-                @Override
-                public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                    LogFileWriter w = new LogFileWriter(ring, seq, level);
-                    w.setLocation(y.getAbsolutePath());
-                    return w;
-                }
+            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(y.getAbsolutePath());
+                return w;
             }));
 
             factory.bind();
@@ -152,22 +139,16 @@ public class LogFactoryTest {
 
         try (LogFactory factory = new LogFactory()) {
 
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_DEBUG, new LogWriterFactory() {
-                @Override
-                public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                    LogFileWriter w = new LogFileWriter(ring, seq, level);
-                    w.setLocation(x.getAbsolutePath());
-                    return w;
-                }
+            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_DEBUG, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
             }));
 
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_DEBUG | LogLevel.LOG_LEVEL_ERROR, new LogWriterFactory() {
-                @Override
-                public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                    LogFileWriter w = new LogFileWriter(ring, seq, level);
-                    w.setLocation(y.getAbsolutePath());
-                    return w;
-                }
+            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_DEBUG | LogLevel.LOG_LEVEL_ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(y.getAbsolutePath());
+                return w;
             }));
 
             factory.bind();
@@ -205,22 +186,16 @@ public class LogFactoryTest {
         final File b = temp.newFile();
 
         try (LogFactory factory = new LogFactory()) {
-            factory.add(new LogWriterConfig("com.questdb", LogLevel.LOG_LEVEL_INFO, new LogWriterFactory() {
-                @Override
-                public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                    LogFileWriter w = new LogFileWriter(ring, seq, level);
-                    w.setLocation(a.getAbsolutePath());
-                    return w;
-                }
+            factory.add(new LogWriterConfig("com.questdb", LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(a.getAbsolutePath());
+                return w;
             }));
 
-            factory.add(new LogWriterConfig("com.questdb.std", LogLevel.LOG_LEVEL_INFO, new LogWriterFactory() {
-                @Override
-                public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                    LogFileWriter w = new LogFileWriter(ring, seq, level);
-                    w.setLocation(b.getAbsolutePath());
-                    return w;
-                }
+            factory.add(new LogWriterConfig("com.questdb.std", LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(b.getAbsolutePath());
+                return w;
             }));
 
             factory.bind();
@@ -243,12 +218,7 @@ public class LogFactoryTest {
     @Test
     public void testProgrammaticConfig() throws Exception {
         try (LogFactory factory = new LogFactory()) {
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_DEBUG, new LogWriterFactory() {
-                @Override
-                public LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level) {
-                    return new LogConsoleWriter(ring, seq, level);
-                }
-            }));
+            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_DEBUG, LogConsoleWriter::new));
 
             factory.bind();
 

@@ -23,18 +23,12 @@
 
 package com.questdb.std.str;
 
-import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
 
 public class FileNameExtractorCharSequence extends AbstractCharSequence {
 
     private final static ThreadLocal<FileNameExtractorCharSequence> SINGLETON =
-            new ThreadLocal<>(new ObjectFactory<FileNameExtractorCharSequence>() {
-                @Override
-                public FileNameExtractorCharSequence newInstance() {
-                    return new FileNameExtractorCharSequence();
-                }
-            });
+            new ThreadLocal<>(FileNameExtractorCharSequence::new);
 
     private static final char separator;
     private CharSequence base;

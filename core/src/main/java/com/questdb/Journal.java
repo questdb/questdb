@@ -43,7 +43,6 @@ import com.questdb.store.*;
 
 import java.io.Closeable;
 import java.io.File;
-import java.io.FileFilter;
 import java.lang.reflect.Array;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -579,11 +578,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
     }
 
     private void configurePartitions() {
-        File[] files = getLocation().listFiles(new FileFilter() {
-            public boolean accept(File f) {
-                return f.isDirectory() && !f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX);
-            }
-        });
+        File[] files = getLocation().listFiles(f -> f.isDirectory() && !f.getName().startsWith(Constants.TEMP_DIRECTORY_PREFIX));
 
         int partitionIndex = 0;
         if (files != null && tx.journalMaxRowID > 0) {

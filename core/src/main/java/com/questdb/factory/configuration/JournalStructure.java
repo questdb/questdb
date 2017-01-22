@@ -274,7 +274,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
     @SuppressWarnings("unchecked")
     public JournalMetadata map(Class clazz) {
         if (clazz != null) {
-            List<Field> classFields = getAllFields(new ArrayList<Field>(), clazz);
+            List<Field> classFields = getAllFields(new ArrayList<>(), clazz);
 
             for (int i = 0; i < classFields.size(); i++) {
                 Field f = classFields.get(i);

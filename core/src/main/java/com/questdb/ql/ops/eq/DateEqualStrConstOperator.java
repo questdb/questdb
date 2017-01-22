@@ -24,7 +24,6 @@
 package com.questdb.ql.ops.eq;
 
 import com.questdb.ex.ParserException;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -36,12 +35,7 @@ import com.questdb.store.ColumnType;
 
 public class DateEqualStrConstOperator extends AbstractBinaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new DateEqualStrConstOperator(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new DateEqualStrConstOperator(position);
 
     private final LongList intervals = new LongList();
     private int intervalCount;

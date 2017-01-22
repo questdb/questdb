@@ -57,49 +57,43 @@ public class CachingReaderFactoryTest extends AbstractTest {
             final AtomicInteger errors = new AtomicInteger();
             final AtomicInteger readerCount = new AtomicInteger();
 
-            new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        for (int i = 0; i < 1000; i++) {
-                            try (Journal ignored = rf.reader(m)) {
-                                readerCount.incrementAndGet();
-                            } catch (FactoryFullException ignored) {
-                            }
-
-                            if (i == 1) {
-                                barrier.await();
-                            }
-                            LockSupport.parkNanos(10L);
-                        }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                        errors.incrementAndGet();
-                    } finally {
-                        halt.countDown();
-                    }
-                }
-            }.start();
-
-            new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        barrier.await();
-
-                        for (int i = 0; i < 1000; i++) {
-                            rf.releaseInactive();
-                            LockSupport.parkNanos(10L);
+            new Thread(() -> {
+                try {
+                    for (int i = 0; i < 1000; i++) {
+                        try (Journal ignored = rf.reader(m)) {
+                            readerCount.incrementAndGet();
+                        } catch (FactoryFullException ignored) {
                         }
 
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                        errors.incrementAndGet();
-                    } finally {
-                        halt.countDown();
+                        if (i == 1) {
+                            barrier.await();
+                        }
+                        LockSupport.parkNanos(10L);
                     }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    halt.countDown();
                 }
-            }.start();
+            }).start();
+
+            new Thread(() -> {
+                try {
+                    barrier.await();
+
+                    for (int i = 0; i < 1000; i++) {
+                        rf.releaseInactive();
+                        LockSupport.parkNanos(10L);
+                    }
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    halt.countDown();
+                }
+            }).start();
 
             halt.await();
 
@@ -163,29 +157,26 @@ public class CachingReaderFactoryTest extends AbstractTest {
 
             for (int i = 0; i < threadCount; i++) {
                 final int x = i;
-                new Thread() {
-                    @Override
-                    public void run() {
-                        Rnd rnd = new Rnd(x, -x);
-                        try {
-                            barrier.await();
+                new Thread(() -> {
+                    Rnd rnd = new Rnd(x, -x);
+                    try {
+                        barrier.await();
 
-                            for (int i = 0; i < iterations; i++) {
-                                JournalMetadata<?> m = meta[rnd.nextPositiveInt() % readerCount];
+                        for (int i1 = 0; i1 < iterations; i1++) {
+                            JournalMetadata<?> m = meta[rnd.nextPositiveInt() % readerCount];
 
-                                try (Journal ignored = rf.reader(m)) {
-                                    LockSupport.parkNanos(100);
-                                }
+                            try (Journal ignored = rf.reader(m)) {
+                                LockSupport.parkNanos(100);
                             }
-
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                            errors.incrementAndGet();
-                        } finally {
-                            halt.countDown();
                         }
+
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        errors.incrementAndGet();
+                    } finally {
+                        halt.countDown();
                     }
-                }.start();
+                }).start();
             }
 
             halt.await();
@@ -240,66 +231,60 @@ public class CachingReaderFactoryTest extends AbstractTest {
                 final LongList lockTimes = new LongList();
                 final LongList workerTimes = new LongList();
 
-                new Thread() {
-                    @Override
-                    public void run() {
-                        Rnd rnd = new Rnd();
-                        try {
-                            barrier.await();
-                            String name = null;
-                            for (int i = 0; i < iterations; i++) {
-                                if (name == null) {
-                                    name = meta[rnd.nextPositiveInt() % readerCount].getName();
-                                }
-                                while (true) {
-                                    try {
-                                        rf.lock(name);
-                                        lockTimes.add(System.currentTimeMillis());
-                                        LockSupport.parkNanos(100L);
-                                        rf.unlock(name);
-                                        name = null;
+                new Thread(() -> {
+                    Rnd rnd = new Rnd();
+                    try {
+                        barrier.await();
+                        String name = null;
+                        for (int i = 0; i < iterations; i++) {
+                            if (name == null) {
+                                name = meta[rnd.nextPositiveInt() % readerCount].getName();
+                            }
+                            while (true) {
+                                try {
+                                    rf.lock(name);
+                                    lockTimes.add(System.currentTimeMillis());
+                                    LockSupport.parkNanos(100L);
+                                    rf.unlock(name);
+                                    name = null;
+                                    break;
+                                } catch (JournalException e) {
+                                    if (!(e instanceof RetryLockException)) {
+                                        e.printStackTrace();
+                                        errors.incrementAndGet();
                                         break;
-                                    } catch (JournalException e) {
-                                        if (!(e instanceof RetryLockException)) {
-                                            e.printStackTrace();
-                                            errors.incrementAndGet();
-                                            break;
-                                        }
                                     }
                                 }
                             }
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        errors.incrementAndGet();
+                    }
+                    halt.countDown();
+                }).start();
+
+                new Thread(() -> {
+                    Rnd rnd = new Rnd();
+
+                    workerTimes.add(System.currentTimeMillis());
+                    for (int i = 0; i < iterations; i++) {
+                        JournalMetadata<?> metadata = meta[rnd.nextPositiveInt() % readerCount];
+                        try (Journal<?> ignored = rf.reader(metadata)) {
+                            if (metadata == meta[readerCount - 1] && barrier.getNumberWaiting() > 0) {
+                                barrier.await();
+                            }
+                            LockSupport.parkNanos(10L);
+                        } catch (JournalLockedException ignored) {
                         } catch (Exception e) {
                             e.printStackTrace();
                             errors.incrementAndGet();
                         }
-                        halt.countDown();
                     }
-                }.start();
+                    workerTimes.add(System.currentTimeMillis());
 
-                new Thread() {
-                    @Override
-                    public void run() {
-                        Rnd rnd = new Rnd();
-
-                        workerTimes.add(System.currentTimeMillis());
-                        for (int i = 0; i < iterations; i++) {
-                            JournalMetadata<?> metadata = meta[rnd.nextPositiveInt() % readerCount];
-                            try (Journal<?> ignored = rf.reader(metadata)) {
-                                if (metadata == meta[readerCount - 1] && barrier.getNumberWaiting() > 0) {
-                                    barrier.await();
-                                }
-                                LockSupport.parkNanos(10L);
-                            } catch (JournalLockedException ignored) {
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                                errors.incrementAndGet();
-                            }
-                        }
-                        workerTimes.add(System.currentTimeMillis());
-
-                        halt.countDown();
-                    }
-                }.start();
+                    halt.countDown();
+                }).start();
 
                 halt.await();
                 Assert.assertEquals(0, errors.get());

@@ -101,12 +101,7 @@ public class QueryCompiler {
     private final IntHashSet postFilterRemoved = new IntHashSet();
     private final IntHashSet journalsSoFar = new IntHashSet();
     private final ObjList<IntList> postFilterJournalRefs = new ObjList<>();
-    private final ObjectPool<IntList> intListPool = new ObjectPool<>(new ObjectFactory<IntList>() {
-        @Override
-        public IntList newInstance() {
-            return new IntList();
-        }
-    }, 16);
+    private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 16);
     private final ArrayDeque<ExprNode> exprNodeStack = new ArrayDeque<>();
     private final IntList nullCounts = new IntList();
     private final ObjList<CharSequence> selectedColumns = new ObjList<>();

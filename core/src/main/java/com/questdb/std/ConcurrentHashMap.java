@@ -603,12 +603,7 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
     private static final int ASHIFT;
     private static final long SEED;
     private static final long PROBE;
-    private final java.lang.ThreadLocal<Traverser<K, V>> tlTraverser = new ThreadLocal<Traverser<K, V>>() {
-        @Override
-        protected Traverser<K, V> initialValue() {
-            return new Traverser<>();
-        }
-    };
+    private final java.lang.ThreadLocal<Traverser<K, V>> tlTraverser = ThreadLocal.withInitial(Traverser::new);
     /**
      * The array of bins. Lazily initialized upon first insertion.
      * Size is always a power of two. Accessed directly by iterators.
@@ -2269,40 +2264,6 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             }
         }
 
-        /**
-         * Returns matching node or null if none. Tries to search
-         * using tree comparisons from root, but continues linear
-         * search when lock not available.
-         */
-        final Node<K, V> find(int h, Object k) {
-            if (k != null) {
-                for (Node<K, V> e = first; e != null; ) {
-                    int s;
-                    K ek;
-                    if (((s = lockState) & (WAITER | WRITER)) != 0) {
-                        if (e.hash == h &&
-                                ((ek = e.key) == k || (ek != null && k.equals(ek))))
-                            return e;
-                        e = e.next;
-                    } else if (U.compareAndSwapInt(this, LOCKSTATE, s,
-                            s + READER)) {
-                        TreeNode<K, V> r, p;
-                        try {
-                            p = ((r = root) == null ? null :
-                                    r.findTreeNode(h, k, null));
-                        } finally {
-                            Thread w;
-                            if (U.getAndAddInt(this, LOCKSTATE, -READER) ==
-                                    (READER | WAITER) && (w = waiter) != null)
-                                LockSupport.unpark(w);
-                        }
-                        return p;
-                    }
-                }
-            }
-            return null;
-        }
-
         static <K, V> TreeNode<K, V> balanceDeletion(TreeNode<K, V> root,
                                                      TreeNode<K, V> x) {
             for (TreeNode<K, V> xp, xpl, xpr; ; ) {
@@ -2412,8 +2373,39 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             return !(tr != null && !checkInvariants(tr));
         }
 
-        /* ------------------------------------------------------------ */
-        // Red-black tree methods, all adapted from CLR
+        /**
+         * Returns matching node or null if none. Tries to search
+         * using tree comparisons from root, but continues linear
+         * search when lock not available.
+         */
+        final Node<K, V> find(int h, Object k) {
+            if (k != null) {
+                for (Node<K, V> e = first; e != null; ) {
+                    int s;
+                    K ek;
+                    if (((s = lockState) & (WAITER | WRITER)) != 0) {
+                        if (e.hash == h &&
+                                ((ek = e.key) == k || (ek != null && k.equals(ek))))
+                            return e;
+                        e = e.next;
+                    } else if (U.compareAndSwapInt(this, LOCKSTATE, s,
+                            s + READER)) {
+                        TreeNode<K, V> r, p;
+                        try {
+                            p = ((r = root) == null ? null :
+                                    r.findTreeNode(h, k, null));
+                        } finally {
+                            Thread w;
+                            if (U.getAndAddInt(this, LOCKSTATE, -READER) ==
+                                    (READER | WAITER) && (w = waiter) != null)
+                                LockSupport.unpark(w);
+                        }
+                        return p;
+                    }
+                }
+            }
+            return null;
+        }
 
         /**
          * Possibly blocks awaiting root lock.
@@ -2444,6 +2436,9 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             if (!U.compareAndSwapInt(this, LOCKSTATE, 0, WRITER))
                 contendedLock(); // offload to separate method
         }
+
+        /* ------------------------------------------------------------ */
+        // Red-black tree methods, all adapted from CLR
 
         /**
          * Finds or adds a node.
@@ -2910,6 +2905,12 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             return map.size();
         }
 
+        public final boolean isEmpty() {
+            return map.isEmpty();
+        }
+
+        public abstract boolean contains(Object o);
+
         /**
          * Removes all of the elements from this view, by removing all
          * the mappings from the map backing this view.
@@ -2917,15 +2918,6 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
         public final void clear() {
             map.clear();
         }
-
-        public final boolean isEmpty() {
-            return map.isEmpty();
-        }
-
-        public abstract boolean contains(Object o);
-
-        // implementations below rely on concrete classes supplying these
-        // abstract methods
 
         /**
          * Returns an iterator over the elements in this collection.
@@ -2961,6 +2953,9 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             return (i == n) ? r : Arrays.copyOf(r, i);
         }
 
+        // implementations below rely on concrete classes supplying these
+        // abstract methods
+
         @NotNull
         @SuppressWarnings("unchecked")
         public final <T> T[] toArray(@NotNull T[] a) {
@@ -2991,6 +2986,7 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             }
             return (i == n) ? r : Arrays.copyOf(r, i);
         }
+
 
         public abstract boolean remove(Object o);
 
@@ -3072,12 +3068,7 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
         private static final long serialVersionUID = 7249069246763182397L;
         private final V value;
 
-        private final ThreadLocal<KeyIterator<K, V>> tlKeyIterator = new ThreadLocal<KeyIterator<K, V>>() {
-            @Override
-            protected KeyIterator<K, V> initialValue() {
-                return new KeyIterator<>();
-            }
-        };
+        private final ThreadLocal<KeyIterator<K, V>> tlKeyIterator = ThreadLocal.withInitial(KeyIterator::new);
 
         KeySetView(ConcurrentHashMap<K, V> map, V value) {  // non-public
             super(map);
@@ -3192,12 +3183,7 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
     static final class ValuesView<K, V> extends CollectionView<K, V, V>
             implements Collection<V>, java.io.Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
-        private final ThreadLocal<ValueIterator<K, V>> tlValueIterator = new ThreadLocal<ValueIterator<K, V>>() {
-            @Override
-            protected ValueIterator<K, V> initialValue() {
-                return new ValueIterator<>();
-            }
-        };
+        private final ThreadLocal<ValueIterator<K, V>> tlValueIterator = ThreadLocal.withInitial(ValueIterator::new);
 
         ValuesView(ConcurrentHashMap<K, V> map) {
             super(map);
@@ -3244,12 +3230,7 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             implements Set<Map.Entry<K, V>>, java.io.Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
 
-        private final ThreadLocal<EntryIterator<K, V>> tlEntryIterator = new ThreadLocal<EntryIterator<K, V>>() {
-            @Override
-            protected EntryIterator<K, V> initialValue() {
-                return new EntryIterator<>();
-            }
-        };
+        private final ThreadLocal<EntryIterator<K, V>> tlEntryIterator = ThreadLocal.withInitial(EntryIterator::new);
 
         EntrySetView(ConcurrentHashMap<K, V> map) {
             super(map);

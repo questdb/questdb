@@ -27,7 +27,6 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.ParserException;
 import com.questdb.misc.Chars;
 import com.questdb.model.Quote;
-import com.questdb.ql.model.AliasTranslator;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.IntrinsicModel;
 import com.questdb.ql.model.IntrinsicValue;
@@ -48,12 +47,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     private final ExprAstBuilder ast = new ExprAstBuilder();
     private final QueryFilterAnalyser e = new QueryFilterAnalyser();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
-    private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = new PostOrderTreeTraversalAlgo.Visitor() {
-        @Override
-        public void visit(ExprNode node) {
-            rpn.onNode(node);
-        }
-    };
+    private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = rpn::onNode;
     private JournalWriter<Quote> w;
 
     @Before
@@ -860,12 +854,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws ParserException {
         lexer.setContent(seq);
         p.parseExpr(lexer, ast);
-        return e.extract(new AliasTranslator() {
-            @Override
-            public CharSequence translateAlias(CharSequence column) {
-                return column;
-            }
-        }, ast.poll(), w.getMetadata(), preferredColumn, w.getMetadata().getTimestampIndex());
+        return e.extract(column -> column, ast.poll(), w.getMetadata(), preferredColumn, w.getMetadata().getTimestampIndex());
     }
 
     private void testBadOperator(String op) {

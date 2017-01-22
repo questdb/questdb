@@ -80,12 +80,7 @@ public abstract class AbstractOnDemandSender {
         if (!running) {
             running = true;
             latch = new CountDownLatch(1);
-            Thread thread = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    start0();
-                }
-            });
+            Thread thread = new Thread(this::start0);
             thread.setName(threadName);
             thread.start();
         }

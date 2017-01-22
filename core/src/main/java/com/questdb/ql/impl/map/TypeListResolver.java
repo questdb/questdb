@@ -24,7 +24,6 @@
 package com.questdb.ql.impl.map;
 
 import com.questdb.std.IntList;
-import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
 
 public class TypeListResolver implements ColumnTypeResolver {
@@ -47,12 +46,7 @@ public class TypeListResolver implements ColumnTypeResolver {
 
     public static final class TypeListResolverThreadLocal extends ThreadLocal<TypeListResolver> {
         public TypeListResolverThreadLocal() {
-            super(new ObjectFactory<TypeListResolver>() {
-                @Override
-                public TypeListResolver newInstance() {
-                    return new TypeListResolver();
-                }
-            });
+            super(TypeListResolver::new);
         }
     }
 }

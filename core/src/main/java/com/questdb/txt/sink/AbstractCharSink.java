@@ -35,12 +35,7 @@ import java.util.Set;
 
 public abstract class AbstractCharSink implements CharSink {
 
-    private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = new ThreadLocal<ObjHashSet<Throwable>>() {
-        @Override
-        protected ObjHashSet<Throwable> initialValue() {
-            return new ObjHashSet<>();
-        }
-    };
+    private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
 
     @Override
     public CharSink put(int value) {

@@ -24,7 +24,6 @@
 package com.questdb.ql.ops.regex;
 
 import com.questdb.ex.ParserException;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractBinaryOperator;
@@ -40,12 +39,7 @@ import com.questdb.store.ColumnType;
 
 public class PluckStrFunction extends AbstractBinaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new PluckStrFunction(position);
-        }
-    };
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new PluckStrFunction(position);
     private final FlyweightCharSequence csA = new FlyweightCharSequence();
     private final FlyweightCharSequence csB = new FlyweightCharSequence();
     private Matcher matcher;

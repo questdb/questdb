@@ -24,7 +24,6 @@
 package com.questdb.ql.ops.count;
 
 import com.questdb.misc.Numbers;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
@@ -34,12 +33,7 @@ import com.questdb.store.ColumnType;
 
 public final class CountIntAggregator extends AbstractUnaryAggregator {
 
-    public static final VirtualColumnFactory<Function> FACTORY = new VirtualColumnFactory<Function>() {
-        @Override
-        public Function newInstance(int position, ServerConfiguration configuration) {
-            return new CountIntAggregator(position);
-        }
-    };
+    public static final VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new CountIntAggregator(position);
 
     private CountIntAggregator(int position) {
         super(ColumnType.LONG, position);

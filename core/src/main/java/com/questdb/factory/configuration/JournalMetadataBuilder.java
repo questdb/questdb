@@ -245,7 +245,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
             throw new JournalConfigurationException("No default constructor declared on %s", modelClass.getName());
         }
 
-        List<Field> classFields = getAllFields(new ArrayList<Field>(), modelClass);
+        List<Field> classFields = getAllFields(new ArrayList<>(), modelClass);
 
         this.nameToIndexMap = new CharSequenceIntHashMap(classFields.size());
 
