@@ -46,37 +46,33 @@ public class FactoryEventLoggerTest extends AbstractTest {
         final CyclicBarrier barrier = new CyclicBarrier(2);
         final FactoryEventListener listener = factoryContainer.getFactory().getEventListener();
 
-        new Thread() {
-            @Override
-            public void run() {
-                try (Journal r = factoryContainer.getFactory().reader("$mon_factory")) {
-                    barrier.await();
-                    int i = 0;
-                    while (i < count) {
-                        if (logger.run()) {
-                            i++;
-                        } else {
-                            r.refresh();
-                            if (r.size() == count) {
-                                break;
-                            }
+        new Thread(() -> {
+            try (Journal r = factoryContainer.getFactory().reader("$mon_factory")) {
+                barrier.await();
+                int i = 0;
+                while (i < count) {
+                    if (logger.run()) {
+                        i++;
+                    } else {
+                        r.refresh();
+                        if (r.size() == count) {
+                            break;
                         }
                     }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                } finally {
-                    done.countDown();
                 }
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                done.countDown();
             }
-
-        }.start();
+        }).start();
 
         barrier.await();
 
 
         int i = 0;
         while (i < count) {
-            if (listener.onEvent((byte) 1, 1, "test", (short) 1)) {
+            if (listener.onEvent((byte) 1, 1, "test", (short) 1, (short) 0, (short) 5)) {
                 i++;
             } else {
                 LockSupport.parkNanos(1);

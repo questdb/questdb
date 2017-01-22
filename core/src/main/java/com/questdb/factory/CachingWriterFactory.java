@@ -319,7 +319,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
     private void notifyListener(long thread, String name, short event) {
         FactoryEventListener listener = getEventListener();
         if (listener != null) {
-            listener.onEvent(FactoryEventListener.SRC_WRITER, thread, name, event);
+            listener.onEvent(FactoryEventListener.SRC_WRITER, thread, name, event, (short) 0, (short) 0);
         }
     }
 

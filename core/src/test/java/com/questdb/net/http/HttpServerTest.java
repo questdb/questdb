@@ -32,7 +32,6 @@ import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.factory.FactoryEventListener;
 import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.iter.clock.Clock;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
@@ -65,15 +64,12 @@ import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.ssl.SSLContextBuilder;
-import org.apache.http.ssl.TrustStrategy;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSession;
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -81,8 +77,6 @@ import java.net.SocketException;
 import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
-import java.security.cert.CertificateException;
-import java.security.cert.X509Certificate;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -140,29 +134,23 @@ public class HttpServerTest extends AbstractJournalTest {
         final CountDownLatch latch = new CountDownLatch(2);
         try {
 
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        barrier.await();
-                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null, null));
-                        latch.countDown();
-                    } catch (Exception e) {
-                        Assert.fail(e.getMessage());
-                    }
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null, null));
+                    latch.countDown();
+                } catch (Exception e) {
+                    Assert.fail(e.getMessage());
                 }
             }).start();
 
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        barrier.await();
-                        Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-nan.csv", "http://localhost:9000/imp", null, null));
-                        latch.countDown();
-                    } catch (Exception e) {
-                        Assert.fail(e.getMessage());
-                    }
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-nan.csv", "http://localhost:9000/imp", null, null));
+                    latch.countDown();
+                } catch (Exception e) {
+                    Assert.fail(e.getMessage());
                 }
             }).start();
 
@@ -239,20 +227,16 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testFragmentedUrl() throws Exception {
         HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher());
-        server.setClock(new Clock() {
-
-            @Override
-            public long getTicks() {
-                try {
-                    return Dates.parseDateTime("2015-12-05T13:30:00.000Z");
-                } catch (NumericException ignore) {
-                    throw new FatalError(ignore);
-                }
+        server.setClock(() -> {
+            try {
+                return Dates.parseDateTime("2015-12-05T13:30:00.000Z");
+            } catch (NumericException ignore) {
+                throw new FatalError(ignore);
             }
         });
         server.start();
 
-        try (SocketChannel channel = openChannel("localhost", 9000, 5000)) {
+        try (SocketChannel channel = openChannel()) {
             ByteBuffer buf = ByteBuffer.allocate(1024);
             ByteBuffer out = ByteBuffer.allocate(1024);
 
@@ -335,14 +319,11 @@ public class HttpServerTest extends AbstractJournalTest {
         final ServerConfiguration configuration = new ServerConfiguration();
 
         final AtomicInteger errors = new AtomicInteger();
-        factoryContainer.getFactory().setEventListener(new FactoryEventListener() {
-            @Override
-            public boolean onEvent(byte factoryType, long thread, String name, short event) {
-                if (event == FactoryEventListener.EV_UNEXPECTED_CLOSE) {
-                    errors.incrementAndGet();
-                }
-                return true;
+        factoryContainer.getFactory().setEventListener((factoryType, thread, name, event, segment, position) -> {
+            if (event == FactoryEventListener.EV_UNEXPECTED_CLOSE) {
+                errors.incrementAndGet();
             }
+            return true;
         });
 
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
@@ -698,11 +679,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
         // setup a Trust Strategy that allows all certificates.
         //
-        SSLContext sslContext = new SSLContextBuilder().loadTrustMaterial(null, new TrustStrategy() {
-            public boolean isTrusted(X509Certificate[] arg0, String arg1) throws CertificateException {
-                return true;
-            }
-        }).build();
+        SSLContext sslContext = new SSLContextBuilder().loadTrustMaterial(null, (arg0, arg1) -> true).build();
 
         b.setSSLContext(sslContext);
 
@@ -710,12 +687,7 @@ public class HttpServerTest extends AbstractJournalTest {
         //      -- need to create an SSL Socket Factory, to use our weakened "trust strategy";
         //      -- and create a Registry, to register it.
         //
-        SSLConnectionSocketFactory sslSocketFactory = new SSLConnectionSocketFactory(sslContext, new HostnameVerifier() {
-            @Override
-            public boolean verify(String s, SSLSession sslSession) {
-                return true;
-            }
-        });
+        SSLConnectionSocketFactory sslSocketFactory = new SSLConnectionSocketFactory(sslContext, (s, sslSession) -> true);
         Registry<ConnectionSocketFactory> socketFactoryRegistry = RegistryBuilder.<ConnectionSocketFactory>create()
                 .register("http", PlainConnectionSocketFactory.getSocketFactory())
                 .register("https", sslSocketFactory)
@@ -757,51 +729,42 @@ public class HttpServerTest extends AbstractJournalTest {
 
             final AtomicInteger counter = new AtomicInteger(0);
 
-            new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        barrier.await();
-                        HttpTestUtils.download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/get.html", actual1);
-                    } catch (Exception e) {
-                        counter.incrementAndGet();
-                        e.printStackTrace();
-                    } finally {
-                        haltLatch.countDown();
-                    }
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    HttpTestUtils.download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/get.html", actual1);
+                } catch (Exception e) {
+                    counter.incrementAndGet();
+                    e.printStackTrace();
+                } finally {
+                    haltLatch.countDown();
                 }
-            }.start();
+            }).start();
 
 
-            new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        barrier.await();
-                        HttpTestUtils.download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/post.html", actual2);
-                    } catch (Exception e) {
-                        counter.incrementAndGet();
-                        e.printStackTrace();
-                    } finally {
-                        haltLatch.countDown();
-                    }
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    HttpTestUtils.download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/post.html", actual2);
+                } catch (Exception e) {
+                    counter.incrementAndGet();
+                    e.printStackTrace();
+                } finally {
+                    haltLatch.countDown();
                 }
-            }.start();
+            }).start();
 
-            new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        barrier.await();
-                        HttpTestUtils.download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/upload.html", actual3);
-                    } catch (Exception e) {
-                        counter.incrementAndGet();
-                        e.printStackTrace();
-                    } finally {
-                        haltLatch.countDown();
-                    }
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    HttpTestUtils.download(clientBuilder("https".equals(proto)), proto + "://localhost:9000/upload.html", actual3);
+                } catch (Exception e) {
+                    counter.incrementAndGet();
+                    e.printStackTrace();
+                } finally {
+                    haltLatch.countDown();
                 }
-            }.start();
+            }).start();
 
             haltLatch.await();
 
@@ -965,8 +928,8 @@ public class HttpServerTest extends AbstractJournalTest {
         return file;
     }
 
-    private SocketChannel openChannel(String host, int port, long timeout) throws IOException {
-        InetSocketAddress address = new InetSocketAddress(host, port);
+    private SocketChannel openChannel() throws IOException {
+        InetSocketAddress address = new InetSocketAddress("localhost", 9000);
         SocketChannel channel = SocketChannel.open()
                 .setOption(StandardSocketOptions.TCP_NODELAY, Boolean.TRUE);
 
@@ -977,7 +940,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
             while (!channel.finishConnect()) {
                 LockSupport.parkNanos(500000L);
-                if (System.currentTimeMillis() - t > timeout) {
+                if (System.currentTimeMillis() - t > (long) 5000) {
                     throw new IOException("Connection timeout");
                 }
             }

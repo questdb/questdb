@@ -47,9 +47,9 @@ public interface FactoryEventListener {
     short EV_LOCK_CLOSE = 19;
     short EV_LOCK_CLOSE_EX = 20;
     short EV_EX_RESEND = 21;
-    short EV_RELEASE_ALL = 22;
     short EV_POOL_OPEN = 23;
     short EV_POOL_CLOSED = 24;
+    short EV_FULL = 25;
 
-    boolean onEvent(byte factoryType, long thread, String name, short event);
+    boolean onEvent(byte factoryType, long thread, String name, short event, short segment, short position);
 }

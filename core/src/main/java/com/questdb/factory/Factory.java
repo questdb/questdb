@@ -151,6 +151,7 @@ public class Factory implements ReaderFactory, WriterFactory {
 
     public void setEventListener(FactoryEventListener eventListener) {
         this.writerFactory.setEventListener(eventListener);
+        this.readerFactory.setEventListener(eventListener);
     }
 
     public JournalMetadata getMetadata(String name) throws JournalException {

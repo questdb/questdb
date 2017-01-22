@@ -25,9 +25,9 @@ package com.questdb.mon;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
+import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.Factory;
-import com.questdb.factory.FactoryEventListener;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.iter.clock.Clock;
 import com.questdb.log.Log;
@@ -42,6 +42,18 @@ import java.io.Closeable;
 
 public class FactoryEventLogger extends SynchronizedJob implements Closeable {
     private final static Log LOG = LogFactory.getLog(FactoryEventLogger.class);
+
+    private static JournalStructure STRUCTURE = new JournalStructure("$mon_factory")
+            .$byte("factoryType")
+            .$long("thread")
+            .$sym("name")
+            .$short("event")
+            .$short("segment")
+            .$short("position")
+            .$ts()
+            .partitionBy(PartitionBy.DAY)
+            .$();
+
     private final Factory factory;
     private final JournalWriter writer;
     private final RingQueue<FactoryEvent> eventQueue = new RingQueue<>(FactoryEvent.FACTORY, 16);
@@ -57,34 +69,26 @@ public class FactoryEventLogger extends SynchronizedJob implements Closeable {
         this.commitBatchSize = commitBatchSize;
         this.commitInterval = commitInterval;
         this.clock = clock;
-        this.writer = factory.writer(new JournalStructure("$mon_factory")
-                .$byte("factoryType")
-                .$long("thread")
-                .$sym("name")
-                .$short("event")
-                .$ts()
-                .$()
-        );
+        this.writer = factory.writer(STRUCTURE);
 
         pubSeq.then(subSeq).then(pubSeq);
 
-        this.factory.setEventListener(new FactoryEventListener() {
-            @Override
-            public boolean onEvent(byte factoryType, long thread, String name, short event) {
-                long cursor = pubSeq.next();
-                if (cursor < 0) {
-                    return false;
-                }
-
-                FactoryEvent ev = eventQueue.get(cursor);
-                ev.factoryType = factoryType;
-                ev.thread = thread;
-                ev.name = name;
-                ev.event = event;
-
-                pubSeq.done(cursor);
-                return true;
+        this.factory.setEventListener((factoryType, thread, name, event, segment, position) -> {
+            long cursor = pubSeq.next();
+            if (cursor < 0) {
+                return false;
             }
+
+            FactoryEvent ev = eventQueue.get(cursor);
+            ev.factoryType = factoryType;
+            ev.thread = thread;
+            ev.name = name;
+            ev.event = event;
+            ev.segment = segment;
+            ev.position = position;
+
+            pubSeq.done(cursor);
+            return true;
         });
 
         LOG.info().$("FactoryEventLogger started").$();
@@ -121,6 +125,8 @@ public class FactoryEventLogger extends SynchronizedJob implements Closeable {
                     ew.putLong(1, ev.thread);
                     ew.putSym(2, ev.name);
                     ew.putShort(3, ev.event);
+                    ew.putShort(4, ev.segment);
+                    ew.putShort(5, ev.position);
                     ew.append();
                 }
 
@@ -141,15 +147,12 @@ public class FactoryEventLogger extends SynchronizedJob implements Closeable {
     }
 
     private static class FactoryEvent {
-        private final static ObjectFactory<FactoryEvent> FACTORY = new ObjectFactory<FactoryEvent>() {
-            @Override
-            public FactoryEvent newInstance() {
-                return new FactoryEvent();
-            }
-        };
+        private final static ObjectFactory<FactoryEvent> FACTORY = FactoryEvent::new;
         private byte factoryType;
         private long thread;
         private String name;
         private short event;
+        private short segment;
+        private short position;
     }
 }

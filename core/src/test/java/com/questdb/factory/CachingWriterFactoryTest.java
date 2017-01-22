@@ -67,49 +67,43 @@ public class CachingWriterFactoryTest extends AbstractTest {
         final AtomicInteger errors = new AtomicInteger();
         final AtomicInteger writerCount = new AtomicInteger();
 
-        new Thread() {
-            @Override
-            public void run() {
-                try {
-                    for (int i = 0; i < 1000; i++) {
-                        try (JournalWriter w = wf.writer(m)) {
-                            writerCount.incrementAndGet();
-                        } catch (WriterBusyException ignored) {
-                        }
-
-                        if (i == 1) {
-                            barrier.await();
-                        }
-                        LockSupport.parkNanos(10L);
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    errors.incrementAndGet();
-                } finally {
-                    halt.countDown();
-                }
-            }
-        }.start();
-
-        new Thread() {
-            @Override
-            public void run() {
-                try {
-                    barrier.await();
-
-                    for (int i = 0; i < 1000; i++) {
-                        wf.releaseInactive();
-                        LockSupport.parkNanos(10L);
+        new Thread(() -> {
+            try {
+                for (int i = 0; i < 1000; i++) {
+                    try (JournalWriter ignored = wf.writer(m)) {
+                        writerCount.incrementAndGet();
+                    } catch (WriterBusyException ignored) {
                     }
 
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    errors.incrementAndGet();
-                } finally {
-                    halt.countDown();
+                    if (i == 1) {
+                        barrier.await();
+                    }
+                    LockSupport.parkNanos(10L);
                 }
+            } catch (Exception e) {
+                e.printStackTrace();
+                errors.incrementAndGet();
+            } finally {
+                halt.countDown();
             }
-        }.start();
+        }).start();
+
+        new Thread(() -> {
+            try {
+                barrier.await();
+
+                for (int i = 0; i < 1000; i++) {
+                    wf.releaseInactive();
+                    LockSupport.parkNanos(10L);
+                }
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                errors.incrementAndGet();
+            } finally {
+                halt.countDown();
+            }
+        }).start();
 
         halt.await();
 
@@ -195,20 +189,17 @@ public class CachingWriterFactoryTest extends AbstractTest {
             final AtomicBoolean result = new AtomicBoolean();
 
             // have new thread try to allocated this writers
-            new Thread() {
-                @Override
-                public void run() {
-                    try (JournalWriter w = wf.writer(x)) {
-                        result.set(false);
-                    } catch (WriterBusyException ignored) {
-                        result.set(true);
-                    } catch (JournalException e) {
-                        e.printStackTrace();
-                        result.set(false);
-                    }
-                    done.countDown();
+            new Thread(() -> {
+                try (JournalWriter ignored = wf.writer(x)) {
+                    result.set(false);
+                } catch (WriterBusyException ignored) {
+                    result.set(true);
+                } catch (JournalException e) {
+                    e.printStackTrace();
+                    result.set(false);
                 }
-            }.start();
+                done.countDown();
+            }).start();
 
             Assert.assertTrue(done.await(1, TimeUnit.SECONDS));
             Assert.assertTrue(result.get());
@@ -233,6 +224,22 @@ public class CachingWriterFactoryTest extends AbstractTest {
             wx.close();
             wy.close();
         }
+    }
+
+    @Test
+    public void testNewLock() throws Exception {
+
+        final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
+
+
+        wf.lock("x");
+        try {
+            wf.writer(m);
+            Assert.fail();
+        } catch (JournalException ignored) {
+        }
+
+        wf.unlock("x");
     }
 
     @Test
@@ -278,25 +285,22 @@ public class CachingWriterFactoryTest extends AbstractTest {
         final AtomicInteger writerCount = new AtomicInteger();
 
         for (int i = 0; i < n; i++) {
-            new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        barrier.await();
+            new Thread(() -> {
+                try {
+                    barrier.await();
 
 
-                        try (JournalWriter w = wf.writer(m)) {
-                            writerCount.incrementAndGet();
-                        } catch (WriterBusyException ignored) {
-                        }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                        errors.incrementAndGet();
-                    } finally {
-                        halt.countDown();
+                    try (JournalWriter ignored = wf.writer(m)) {
+                        writerCount.incrementAndGet();
+                    } catch (WriterBusyException ignored) {
                     }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    halt.countDown();
                 }
-            }.start();
+            }).start();
         }
 
         halt.await();
