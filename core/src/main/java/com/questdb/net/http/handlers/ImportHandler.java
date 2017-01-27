@@ -128,7 +128,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                     analyseFormat(h, lo, len);
                     if (h.state == ImportHandlerContext.STATE_OK) {
                         try {
-                            h.textParser.analyseStructure(lo, len, 100, h.importer);
+                            h.textParser.analyseStructure(lo, len, 100, h.importer, h.forceHeader);
                             h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
                         } catch (JournalRuntimeException e) {
 
@@ -144,7 +144,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                 }
                 break;
             case MESSAGE_SCHEMA:
-                h.textParser.putSchema((DirectByteCharSequence) data);
+                h.textParser.setSchemaText((DirectByteCharSequence) data);
                 break;
             default:
                 break;
@@ -172,6 +172,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                     Chars.equalsNc("true", context.request.getUrlParam("durable")),
                     getAtomicity(context.request.getUrlParam("atomicity"))
             );
+            h.forceHeader = Chars.equalsNc("true", context.request.getUrlParam("forceHeader"));
             h.messagePart = MESSAGE_DATA;
         } else if (Chars.equals("schema", hb.getContentDispositionName())) {
             h.messagePart = MESSAGE_SCHEMA;
@@ -432,6 +433,7 @@ public class ImportHandler extends AbstractMultipartHandler {
         private int messagePart = MESSAGE_UNKNOWN;
         private int responseState = RESPONSE_PREFIX;
         private boolean json = false;
+        private boolean forceHeader = false;
 
         private ImportHandlerContext(Factory factory) {
             this.importer = new JournalImportListener(factory);

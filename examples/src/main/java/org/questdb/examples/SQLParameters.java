@@ -50,7 +50,7 @@ public class SQLParameters {
 
 
             // import movies data to query
-            ImportManager.importFile(factory, SQLParameters.class.getResource("/movies.csv").getFile(), ',', null);
+            ImportManager.importFile(factory, SQLParameters.class.getResource("/movies.csv").getFile(), ',', null, false);
 
             // Create SQL engine instance.
             QueryCompiler compiler = new QueryCompiler();

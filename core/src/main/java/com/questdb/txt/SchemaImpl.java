@@ -90,7 +90,7 @@ public class SchemaImpl implements Schema, Closeable, Mutable {
         }
     }
 
-    public void put(CharSequence cs) {
+    public void setText(CharSequence cs) {
         int l = cs.length();
         if (wptr + l >= hi) {
             long old_address = this.address;

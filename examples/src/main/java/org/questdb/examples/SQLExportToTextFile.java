@@ -45,7 +45,7 @@ public class SQLExportToTextFile {
         try (Factory factory = new Factory(args[0], 1000, 1, 0)) {
 
             // import movies data to query
-            ImportManager.importFile(factory, SQLExamples.class.getResource("/movies.csv").getFile(), ',', null);
+            ImportManager.importFile(factory, SQLExamples.class.getResource("/movies.csv").getFile(), ',', null, false);
 
             // Create SQL engine instance.
             QueryCompiler compiler = new QueryCompiler();

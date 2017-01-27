@@ -64,9 +64,9 @@ public class DelimitedTextParser implements Closeable, Mutable {
     private boolean header;
     private long lastQuotePos = -1;
 
-    public void analyseStructure(long addr, int len, int sampleSize, InputAnalysisListener ial) {
+    public void analyseStructure(long addr, int len, int sampleSize, InputAnalysisListener ial, boolean forceHeader) {
         this.schema.parse();
-        mel.of(schema);
+        mel.of(schema, forceHeader);
         parse(addr, len, sampleSize, mel);
         mel.onLineCount(lineCount);
         ial.onMetadata(mel.getMetadata());
@@ -121,12 +121,6 @@ public class DelimitedTextParser implements Closeable, Mutable {
         }
     }
 
-    public void putSchema(CharSequence schema) {
-        if (schema != null) {
-            this.schema.put(schema);
-        }
-    }
-
     public final void restart() {
         this.fieldLo = 0;
         this.eol = false;
@@ -140,6 +134,12 @@ public class DelimitedTextParser implements Closeable, Mutable {
 
     public void setHeader(boolean header) {
         this.header = header;
+    }
+
+    public void setSchemaText(CharSequence schema) {
+        if (schema != null) {
+            this.schema.setText(schema);
+        }
     }
 
     private void calcField() {

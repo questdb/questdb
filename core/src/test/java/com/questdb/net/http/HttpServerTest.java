@@ -347,6 +347,28 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testImportForcedHeader() throws Exception {
+        final ServerConfiguration configuration = new ServerConfiguration();
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
+        }});
+        server.start();
+
+        try {
+            StringSink sink = new StringSink();
+            RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+            QueryCompiler qc = new QueryCompiler(configuration);
+
+            Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-explicit-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true&forceHeader=true", null, null));
+            printer.print(qc.compile(factoryContainer.getFactory(), "select count() from 'test-import.csv'"), factoryContainer.getFactory());
+            // expect first line to be treated as header
+            TestUtils.assertEquals("2\n", sink);
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
     public void testImportIntoBusyJournal() throws Exception {
         try (JournalWriter ignored = getWriterFactory().writer(new JournalStructure("test-import.csv").$int("x").$())) {
             final ServerConfiguration configuration = new ServerConfiguration();
@@ -397,6 +419,27 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testImportNoHeader() throws Exception {
+        final ServerConfiguration configuration = new ServerConfiguration();
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(configuration, factoryContainer.getFactory()));
+        }});
+        server.start();
+
+        try {
+            StringSink sink = new StringSink();
+            RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+            QueryCompiler qc = new QueryCompiler(configuration);
+
+            Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-explicit-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true", null, null));
+            printer.print(qc.compile(factoryContainer.getFactory(), "select count() from 'test-import.csv'"), factoryContainer.getFactory());
+            TestUtils.assertEquals("3\n", sink);
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
     public void testImportNumberPrefixedColumn() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
@@ -434,8 +477,6 @@ public class HttpServerTest extends AbstractJournalTest {
             printer.print(qc.compile(factoryContainer.getFactory(), "select count() from 'test-import.csv'"), factoryContainer.getFactory());
             TestUtils.assertEquals("129\n", sink);
             sink.clear();
-
-//                f.closeJournal("test-import.csv");
 
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true", null, null));
             printer.print(qc.compile(factoryContainer.getFactory(), "select count() from 'test-import.csv'"), factoryContainer.getFactory());

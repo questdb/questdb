@@ -86,11 +86,11 @@ public final class ImportManager {
      * @param schema    optional instance of ImportSchema
      * @throws IOException in case imported file cannot be read
      */
-    public static void importFile(Factory factory, String fileName, char delimiter, @Nullable CharSequence schema) throws IOException {
-        importFile(factory, fileName, delimiter, schema, SAMPLE_SIZE);
+    public static void importFile(Factory factory, String fileName, char delimiter, @Nullable CharSequence schema, boolean forceHeader) throws IOException {
+        importFile(factory, fileName, delimiter, schema, SAMPLE_SIZE, forceHeader);
     }
 
-    public static void importFile(Factory factory, String fileName, char delimiter, CharSequence schema, int sampleSize) throws IOException {
+    public static void importFile(Factory factory, String fileName, char delimiter, CharSequence schema, int sampleSize, boolean forceHeader) throws IOException {
 
         try (DelimitedTextParser parser = new DelimitedTextParser().of(delimiter)) {
             File file = new File(fileName);
@@ -101,7 +101,7 @@ public final class ImportManager {
                     throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
                 default:
                     try (JournalImportListener l = new JournalImportListener(factory).of(location, false, false, JournalImportListener.ATOMICITY_RELAXED)) {
-                        analyzeAndParse(file, parser, l, schema, sampleSize);
+                        analyzeAndParse(file, parser, l, schema, sampleSize, forceHeader);
                     }
                     break;
             }
@@ -131,7 +131,13 @@ public final class ImportManager {
         }
     }
 
-    private static void analyzeAndParse(File file, DelimitedTextParser parser, InputAnalysisListener listener, CharSequence schema, int sampleSize) throws IOException {
+    private static void analyzeAndParse(
+            File file,
+            DelimitedTextParser parser,
+            InputAnalysisListener listener,
+            CharSequence schema,
+            int sampleSize,
+            boolean forceHeader) throws IOException {
         parser.clear();
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             try (FileChannel channel = raf.getChannel()) {
@@ -142,8 +148,8 @@ public final class ImportManager {
                     MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSize ? size - p : bufSize);
                     try {
                         if (p == 0) {
-                            parser.putSchema(schema);
-                            parser.analyseStructure(ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener);
+                            parser.setSchemaText(schema);
+                            parser.analyseStructure(ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener, forceHeader);
                         }
                         p += buf.remaining();
                         parser.parse(ByteBuffers.getAddress(buf), buf.remaining(), Integer.MAX_VALUE, listener);

@@ -53,6 +53,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
     private final ObjectPool<ImportedColumnMetadata> mPool;
     private int fieldCount;
     private boolean header = false;
+    private boolean forceHeader = false;
 
     public MetadataExtractorListener(ObjectPool<ImportedColumnMetadata> mPool) {
         this.mPool = mPool;
@@ -68,6 +69,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
         header = false;
         _metadata.clear();
         schemaColumns.clear();
+        forceHeader = false;
     }
 
     public ObjList<ImportedColumnMetadata> getMetadata() {
@@ -78,7 +80,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
         return header;
     }
 
-    public void of(Schema schema) {
+    public void of(Schema schema, boolean forceHeader) {
         clear();
         if (schema != null) {
             ObjList<ImportedColumnMetadata> list = schema.getMetadata();
@@ -87,6 +89,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
                 schemaColumns.put(m.name, m);
             }
         }
+        this.forceHeader = forceHeader;
     }
 
     @Override
@@ -134,7 +137,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
         // try calculate types counting all rows
         // if all types come up as strings, reduce count by one and retry
         // if some fields come up as non-string after subtracting row - we have a header
-        if (calcTypes(count, true) && !calcTypes(count - 1, false)) {
+        if (calcTypes(count, true) && (forceHeader || !calcTypes(count - 1, false))) {
             // copy headers
             for (int i = 0; i < fieldCount; i++) {
                 _metadata.getQuick(i).name = _headers.getQuick(i);

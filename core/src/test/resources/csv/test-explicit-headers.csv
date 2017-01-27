@@ -1,0 +1,4 @@
+type,value,active,desc,grp
+ABC,xy,a,brown fox jumped over the fence,GROUP1
+CDE,bb,b,"sentence 1
+sentence 2",GROUP1

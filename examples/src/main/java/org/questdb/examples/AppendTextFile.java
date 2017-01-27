@@ -41,7 +41,7 @@ public class AppendTextFile {
 
         try (Factory factory = new Factory(args[0], 1000, 1, 0)) {
             // import manager will determine file structure automatically
-            ImportManager.importFile(factory, AppendTextFile.class.getResource("/movies.csv").getFile(), ',', null);
+            ImportManager.importFile(factory, AppendTextFile.class.getResource("/movies.csv").getFile(), ',', null, false);
         }
     }
 }

@@ -38,9 +38,20 @@ import java.io.File;
 public class DelimitedTextParserTest extends AbstractTest {
 
     @Test
+    public void testForcedHeader() throws Exception {
+        String file = this.getClass().getResource("/csv/test-explicit-headers.csv").getFile();
+        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, null, 20, true);
+
+        final String expected = "ABC\txy\ta\tbrown fox jumped over the fence\tGROUP1\n" +
+                "CDE\tbb\tb\tsentence 1\n" +
+                "sentence 2\tGROUP1\n   ";
+        assertThat(expected, "'test-explicit-headers.csv'", false);
+    }
+
+    @Test
     public void testImport() throws Exception {
         String file = this.getClass().getResource("/csv/test-import.csv").getFile();
-        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, null);
+        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, null, false);
 
         String location = "test-import.csv";
 
@@ -74,7 +85,7 @@ public class DelimitedTextParserTest extends AbstractTest {
     @Test
     public void testImportMalformedQuote() throws Exception {
         String file = this.getClass().getResource("/csv/test-import-malformed.csv").getFile();
-        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, null);
+        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, null, false);
 
         String location = "test-import-malformed.csv";
 
@@ -106,7 +117,7 @@ public class DelimitedTextParserTest extends AbstractTest {
     @Test
     public void testImportNan() throws Exception {
         String file = this.getClass().getResource("/csv/test-import-nan.csv").getFile();
-        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, null, 20);
+        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, null, 20, false);
 
         final String expected = "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\n" +
                 "CMP2\t8\t5256\tNaN\t2015-05-05T19:15:09.000Z\n" +
@@ -117,7 +128,7 @@ public class DelimitedTextParserTest extends AbstractTest {
     @Test
     public void testImportSchema() throws Exception {
         String file = this.getClass().getResource("/csv/test-import.csv").getFile();
-        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, "IntSym=INT&Fmt2Date=STRING");
+        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, "IntSym=INT&Fmt2Date=STRING", false);
         String location = "test-import.csv";
 
         Assert.assertEquals(JournalConfiguration.EXISTS, factoryContainer.getFactory().getConfiguration().exists(location));
