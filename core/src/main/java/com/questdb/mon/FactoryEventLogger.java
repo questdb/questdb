@@ -32,6 +32,7 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.iter.clock.Clock;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.misc.Os;
 import com.questdb.mp.MPSequence;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.SCSequence;
@@ -42,8 +43,9 @@ import java.io.Closeable;
 
 public class FactoryEventLogger extends SynchronizedJob implements Closeable {
     private final static Log LOG = LogFactory.getLog(FactoryEventLogger.class);
-
+    private final static int PID = Os.getPid();
     private static JournalStructure STRUCTURE = new JournalStructure("$mon_factory")
+            .$int("pid")
             .$byte("factoryType")
             .$long("thread")
             .$sym("name")
@@ -53,7 +55,6 @@ public class FactoryEventLogger extends SynchronizedJob implements Closeable {
             .$ts()
             .partitionBy(PartitionBy.DAY)
             .$();
-
     private final Factory factory;
     private final JournalWriter writer;
     private final RingQueue<FactoryEvent> eventQueue = new RingQueue<>(FactoryEvent.FACTORY, 16);
@@ -121,12 +122,13 @@ public class FactoryEventLogger extends SynchronizedJob implements Closeable {
                 while (cursor < available) {
                     FactoryEvent ev = eventQueue.get(cursor++);
                     JournalEntryWriter ew = writer.entryWriter(clock.getTicks());
-                    ew.put(0, ev.factoryType);
-                    ew.putLong(1, ev.thread);
-                    ew.putSym(2, ev.name);
-                    ew.putShort(3, ev.event);
-                    ew.putShort(4, ev.segment);
-                    ew.putShort(5, ev.position);
+                    ew.putInt(0, PID);
+                    ew.put(1, ev.factoryType);
+                    ew.putLong(2, ev.thread);
+                    ew.putSym(3, ev.name);
+                    ew.putShort(4, ev.event);
+                    ew.putShort(5, ev.segment);
+                    ew.putShort(6, ev.position);
                     ew.append();
                 }
 

@@ -44,6 +44,10 @@ public abstract class AbstractGenericMetadataBuilder {
         return parent.$bool(name);
     }
 
+    public JournalStructure $byte(String name) {
+        return parent.$byte(name);
+    }
+
     public JournalStructure $date(String name) {
         return parent.$date(name);
     }

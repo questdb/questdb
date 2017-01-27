@@ -80,7 +80,7 @@ final class QueryFilterAnalyser {
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } else {
-                String column = translator.translateAlias(a.token).toString();
+                CharSequence column = translator.translateAlias(a.token);
                 int index = m.getColumnIndexQuiet(column);
                 if (index == -1) {
                     throw QueryError.invalidColumn(a.position, a.token);
@@ -109,7 +109,7 @@ final class QueryFilterAnalyser {
 
                             String value = Chars.equals("null", b.token) ? null : Chars.stripQuotes(b.token);
                             if (newColumn) {
-                                model.keyColumn = column;
+                                model.keyColumn = column.toString();
                                 model.keyValues.clear();
                                 model.keyValuePositions.clear();
                                 model.keyValues.add(value);
