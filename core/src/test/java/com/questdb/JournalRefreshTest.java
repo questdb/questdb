@@ -42,7 +42,7 @@ public class JournalRefreshTest extends AbstractTest {
 
     @Before
     public void before() throws JournalException {
-        rw = factoryContainer.getFactory().writer(Quote.class);
+        rw = getFactory().writer(Quote.class);
     }
 
     @After
@@ -57,10 +57,10 @@ public class JournalRefreshTest extends AbstractTest {
         rw.commit();
         rw.close();
 
-        try (Journal<Quote> reader = factoryContainer.getFactory().reader(Quote.class)) {
+        try (Journal<Quote> reader = getFactory().reader(Quote.class)) {
             reader.query().all().asResultSet().read();
 
-            try (JournalWriter<Quote> writer = factoryContainer.getFactory().writer(Quote.class)) {
+            try (JournalWriter<Quote> writer = getFactory().writer(Quote.class)) {
                 writer.append(new Quote().setMode("A").setSym("B").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis()));
 
                 Quote expected = new Quote().setMode("A").setSym("B22").setEx("E1").setAsk(10).setAskSize(1000).setBid(9).setBidSize(900).setTimestamp(System.currentTimeMillis());
@@ -79,8 +79,8 @@ public class JournalRefreshTest extends AbstractTest {
 
     @Test
     public void testLagDetach() throws Exception {
-        try (JournalWriter<Quote> origin = factoryContainer.getFactory().writer(Quote.class, "origin")) {
-            try (Journal<Quote> reader = factoryContainer.getFactory().reader(Quote.class)) {
+        try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
+            try (Journal<Quote> reader = getFactory().reader(Quote.class)) {
 
                 TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T02:00:00.000Z"));
                 TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
@@ -110,7 +110,7 @@ public class JournalRefreshTest extends AbstractTest {
 
     @Test
     public void testPartitionRescan() throws Exception {
-        try (Journal<Quote> reader = factoryContainer.getFactory().reader(Quote.class)) {
+        try (Journal<Quote> reader = getFactory().reader(Quote.class)) {
 
             Assert.assertEquals(0, reader.size());
             TestUtils.generateQuoteData(rw, 1001);
@@ -136,9 +136,9 @@ public class JournalRefreshTest extends AbstractTest {
         rw.append(q1);
         rw.close();
 
-        rw = factoryContainer.getFactory().writer(Quote.class);
+        rw = getFactory().writer(Quote.class);
 
-        try (Journal<Quote> r = factoryContainer.getFactory().reader(Quote.class)) {
+        try (Journal<Quote> r = getFactory().reader(Quote.class)) {
             for (Quote v : r) {
                 Assert.assertEquals(q1, v);
             }
@@ -158,7 +158,7 @@ public class JournalRefreshTest extends AbstractTest {
         rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.toMillis(2013, 1, 10, 14, 0)));
         rw.commit();
 
-        try (Journal<Quote> r = factoryContainer.getFactory().reader(Quote.class)) {
+        try (Journal<Quote> r = getFactory().reader(Quote.class)) {
             Assert.assertEquals(2, r.size());
 
             // append data to same partition
@@ -208,7 +208,7 @@ public class JournalRefreshTest extends AbstractTest {
         TestUtils.generateQuoteData(rw, 1000, Dates.parseDateTime("2013-09-04T10:00:00.000Z"));
         rw.commit();
 
-        try (Journal<Quote> r = factoryContainer.getFactory().reader(Quote.class)) {
+        try (Journal<Quote> r = getFactory().reader(Quote.class)) {
 
             Assert.assertEquals(10, r.getSymbolTable("sym").size());
             r.getSymbolTable("sym").preLoad();

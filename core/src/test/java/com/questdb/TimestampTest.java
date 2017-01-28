@@ -39,7 +39,7 @@ public class TimestampTest extends AbstractTest {
 
     @Test
     public void testHardAndSoftTimestamps() throws JournalException, NumericException {
-        try (JournalWriter<Quote> journal = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> journal = getFactory().writer(Quote.class)) {
             // make sure initial timestamp is zero
             // also, prime cache with values if there is caching going on
             Assert.assertEquals(0, journal.getAppendTimestampLo());
@@ -60,7 +60,7 @@ public class TimestampTest extends AbstractTest {
         List<Quote> data = new ArrayList<>();
 
         // open journal again and check that timestamps are ok
-        try (JournalWriter<Quote> journal = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> journal = getFactory().writer(Quote.class)) {
             Assert.assertEquals(Dates.parseDateTime("2011-09-11T10:00:00Z"), journal.getAppendTimestampLo());
             Assert.assertEquals(journal.getMaxTimestamp(), journal.getAppendTimestampLo());
 
@@ -85,7 +85,7 @@ public class TimestampTest extends AbstractTest {
         }
 
         // reopen journal and check timestamps
-        try (JournalWriter<Quote> journal = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> journal = getFactory().writer(Quote.class)) {
             Assert.assertEquals(Dates.parseDateTime("2012-08-11T10:00:00Z"), journal.getAppendTimestampLo());
             Assert.assertEquals(Dates.parseDateTime("2012-08-11T15:00:00Z"), journal.getMaxTimestamp());
 
@@ -116,7 +116,7 @@ public class TimestampTest extends AbstractTest {
         data.add(quote21);
         data.add(quote22);
 
-        try (JournalWriter<Quote> journal = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> journal = getFactory().writer(Quote.class)) {
             journal.mergeAppend(data);
             journal.mergeAppend(data);
         }

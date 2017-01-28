@@ -65,12 +65,12 @@ public class PerformanceTest extends AbstractTest {
     @Test
     public void testAllBySymbolValueOverInterval() throws JournalException, NumericException {
 
-        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = getFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
             TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
 
-        try (Journal<Quote> journal = factoryContainer.getFactory().reader(Quote.class)) {
+        try (Journal<Quote> journal = getFactory().reader(Quote.class)) {
             int count = 1000;
             Interval interval = new Interval(Dates.parseDateTime("2013-10-15T10:00:00.000Z"), Dates.parseDateTime("2013-10-05T10:00:00.000Z"));
             long t = 0;
@@ -89,14 +89,14 @@ public class PerformanceTest extends AbstractTest {
     @Test
     public void testAllBySymbolValueOverIntervalNew() throws JournalException, ParserException, InterruptedException, NumericException {
 
-        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
             TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
 
         QueryCompiler compiler = new QueryCompiler();
 
-        Factory factory = factoryContainer.getFactory();
+        Factory factory = getFactory();
         try (RecordSource src = compiler.compile(factory, "quote where timestamp = '2013-10-05T10:00:00.000Z;10d' and sym = 'LLOY.L'")) {
             int count = 1000;
             long t = 0;
@@ -119,7 +119,7 @@ public class PerformanceTest extends AbstractTest {
 
     @Test
     public void testIndexAppendAndReadSpeed() throws JournalException {
-        File indexFile = new File(factoryContainer.getFactory().getConfiguration().getJournalBase(), "index-test");
+        File indexFile = new File(getFactory().getConfiguration().getJournalBase(), "index-test");
         int totalKeys = 30000;
         int totalValues = 20000000;
         try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
@@ -175,7 +175,7 @@ public class PerformanceTest extends AbstractTest {
         long t = 0;
         long result;
 
-        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
             for (int i = -count; i < count; i++) {
                 w.truncate();
                 if (i == 0) {
@@ -211,7 +211,7 @@ public class PerformanceTest extends AbstractTest {
             }
         }
 
-        ReaderFactory readerFactory = factoryContainer.getFactory();
+        ReaderFactory readerFactory = getFactory();
         try (RecordSource rs = compile("quote")) {
             for (int i = -count; i < count; i++) {
                 if (i == 0) {
@@ -247,12 +247,12 @@ public class PerformanceTest extends AbstractTest {
     @Test
     public void testLatestBySymbol() throws JournalException, NumericException {
 
-        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = getFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
             TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
 
-        try (Journal<Quote> journal = factoryContainer.getFactory().reader(Quote.class)) {
+        try (Journal<Quote> journal = getFactory().reader(Quote.class)) {
             int count = 1000000;
             long t = 0;
             QueryHeadBuilder qhb = journal.query().head().withKeys();
@@ -268,7 +268,7 @@ public class PerformanceTest extends AbstractTest {
 
     @Test
     public void testRawAppendPerformance() throws JournalException, ParserException, NumericException {
-        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
+        try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
             long t = 0;
             int count = 10;
             for (int i = -count; i < count; i++) {

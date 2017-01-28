@@ -201,7 +201,7 @@ public class MMappedSymbolTableTest extends AbstractTest {
 
     private void createTestTable(String data[]) throws JournalException {
         if (tab == null) {
-            tab = new MMappedSymbolTable(DATA_SIZE, 256, 1, factoryContainer.getFactory().getConfiguration().getJournalBase(), "test", JournalMode.APPEND, 0, 0, false, false);
+            tab = new MMappedSymbolTable(DATA_SIZE, 256, 1, getFactory().getConfiguration().getJournalBase(), "test", JournalMode.APPEND, 0, 0, false, false);
         }
 
         for (String s : data) {
@@ -211,10 +211,10 @@ public class MMappedSymbolTableTest extends AbstractTest {
     }
 
     private MMappedSymbolTable getReader() throws JournalException {
-        return new MMappedSymbolTable(DATA_SIZE, 256, 1, factoryContainer.getFactory().getConfiguration().getJournalBase(), "test", JournalMode.READ, tab.size(), tab.getIndexTxAddress(), false, false);
+        return new MMappedSymbolTable(DATA_SIZE, 256, 1, getFactory().getConfiguration().getJournalBase(), "test", JournalMode.READ, tab.size(), tab.getIndexTxAddress(), false, false);
     }
 
     private MMappedSymbolTable getWriter() throws JournalException {
-        return new MMappedSymbolTable(DATA_SIZE, 256, 1, factoryContainer.getFactory().getConfiguration().getJournalBase(), "test", JournalMode.APPEND, tab.size(), tab.getIndexTxAddress(), false, false);
+        return new MMappedSymbolTable(DATA_SIZE, 256, 1, getFactory().getConfiguration().getJournalBase(), "test", JournalMode.APPEND, tab.size(), tab.getIndexTxAddress(), false, false);
     }
 }

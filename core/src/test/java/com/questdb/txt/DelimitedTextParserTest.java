@@ -40,25 +40,25 @@ public class DelimitedTextParserTest extends AbstractTest {
     @Test
     public void testForcedHeader() throws Exception {
         String file = this.getClass().getResource("/csv/test-explicit-headers.csv").getFile();
-        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, null, 20, true);
+        ImportManager.importFile(getFactory(), file, TextFileDelimiter.CSV, null, 20, true);
 
         final String expected = "ABC\txy\ta\tbrown fox jumped over the fence\tGROUP1\n" +
                 "CDE\tbb\tb\tsentence 1\n" +
-                "sentence 2\tGROUP1\n   ";
+                "sentence 2\tGROUP1\n";
         assertThat(expected, "'test-explicit-headers.csv'", false);
     }
 
     @Test
     public void testImport() throws Exception {
         String file = this.getClass().getResource("/csv/test-import.csv").getFile();
-        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, null, false);
+        ImportManager.importFile(getFactory(), file, TextFileDelimiter.CSV, null, false);
 
         String location = "test-import.csv";
 
 
-        Assert.assertEquals(JournalConfiguration.EXISTS, factoryContainer.getFactory().getConfiguration().exists(location));
+        Assert.assertEquals(JournalConfiguration.EXISTS, getFactory().getConfiguration().exists(location));
 
-        try (Journal r = factoryContainer.getFactory().reader(location)) {
+        try (Journal r = getFactory().reader(location)) {
             JournalMetadata m = r.getMetadata();
             Assert.assertEquals(10, m.getColumnCount());
             Assert.assertEquals(ColumnType.STRING, m.getColumn(0).type);
@@ -73,11 +73,11 @@ public class DelimitedTextParserTest extends AbstractTest {
             Assert.assertEquals(ColumnType.LONG, m.getColumn(9).type);
         }
 
-        File actual = new File(factoryContainer.getFactory().getConfiguration().getJournalBase(), "exp.csv");
+        File actual = new File(getFactory().getConfiguration().getJournalBase(), "exp.csv");
         File expected = new File(this.getClass().getResource("/csv/test-export-expected.csv").getFile());
 
         try (RecordSource rs = compile("'" + location + "'")) {
-            ExportManager.export(rs, factoryContainer.getFactory(), actual, TextFileDelimiter.CSV);
+            ExportManager.export(rs, getFactory(), actual, TextFileDelimiter.CSV);
             TestUtils.assertEquals(expected, actual);
         }
     }
@@ -85,13 +85,13 @@ public class DelimitedTextParserTest extends AbstractTest {
     @Test
     public void testImportMalformedQuote() throws Exception {
         String file = this.getClass().getResource("/csv/test-import-malformed.csv").getFile();
-        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, null, false);
+        ImportManager.importFile(getFactory(), file, TextFileDelimiter.CSV, null, false);
 
         String location = "test-import-malformed.csv";
 
         Assert.assertEquals(JournalConfiguration.EXISTS, factoryContainer.getConfiguration().exists(location));
 
-        try (Journal r = factoryContainer.getFactory().reader(location)) {
+        try (Journal r = getFactory().reader(location)) {
             JournalMetadata m = r.getMetadata();
             Assert.assertEquals(10, m.getColumnCount());
             Assert.assertEquals(ColumnType.STRING, m.getColumn(0).type);
@@ -109,7 +109,7 @@ public class DelimitedTextParserTest extends AbstractTest {
         File expected = new File(this.getClass().getResource("/csv/test-import-malformed-expected.csv").getFile());
 
         try (RecordSource rs = compile("'" + location + "'")) {
-            ExportManager.export(rs, factoryContainer.getFactory(), actual, TextFileDelimiter.CSV);
+            ExportManager.export(rs, getFactory(), actual, TextFileDelimiter.CSV);
             TestUtils.assertEquals(expected, actual);
         }
     }
@@ -117,7 +117,7 @@ public class DelimitedTextParserTest extends AbstractTest {
     @Test
     public void testImportNan() throws Exception {
         String file = this.getClass().getResource("/csv/test-import-nan.csv").getFile();
-        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, null, 20, false);
+        ImportManager.importFile(getFactory(), file, TextFileDelimiter.CSV, null, 20, false);
 
         final String expected = "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\n" +
                 "CMP2\t8\t5256\tNaN\t2015-05-05T19:15:09.000Z\n" +
@@ -128,12 +128,12 @@ public class DelimitedTextParserTest extends AbstractTest {
     @Test
     public void testImportSchema() throws Exception {
         String file = this.getClass().getResource("/csv/test-import.csv").getFile();
-        ImportManager.importFile(factoryContainer.getFactory(), file, TextFileDelimiter.CSV, "IntSym=INT&Fmt2Date=STRING", false);
+        ImportManager.importFile(getFactory(), file, TextFileDelimiter.CSV, "IntSym=INT&Fmt2Date=STRING", false);
         String location = "test-import.csv";
 
-        Assert.assertEquals(JournalConfiguration.EXISTS, factoryContainer.getFactory().getConfiguration().exists(location));
+        Assert.assertEquals(JournalConfiguration.EXISTS, getFactory().getConfiguration().exists(location));
 
-        try (Journal r = factoryContainer.getFactory().reader(location)) {
+        try (Journal r = getFactory().reader(location)) {
             JournalMetadata m = r.getMetadata();
             Assert.assertEquals(ColumnType.INT, m.getColumn(1).type);
             Assert.assertEquals(ColumnType.STRING, m.getColumn(6).type);

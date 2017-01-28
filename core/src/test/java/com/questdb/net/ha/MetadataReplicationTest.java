@@ -39,7 +39,7 @@ public class MetadataReplicationTest extends AbstractTest {
     @Test
     public void testReplication() throws Exception {
 
-        try (JournalWriter w = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter w = getFactory().writer(Quote.class)) {
 
             MockByteChannel channel = new MockByteChannel();
             HugeBufferProducer p = new HugeBufferProducer(new File(w.getLocation(), JournalConfiguration.FILE_NAME));
@@ -47,7 +47,7 @@ public class MetadataReplicationTest extends AbstractTest {
             p.write(channel);
             c.read(channel);
 
-            try (JournalWriter w2 = factoryContainer.getFactory().writer(
+            try (JournalWriter w2 = getFactory().writer(
                     new JournalMetadata<>(c.getHb(), "xyz")
             )) {
 

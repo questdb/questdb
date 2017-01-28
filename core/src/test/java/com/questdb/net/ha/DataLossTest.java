@@ -45,7 +45,7 @@ public class DataLossTest extends AbstractTest {
     public void testDiscardFile() throws Exception {
 
         // create master journal
-        try (JournalWriter<Quote> master = factoryContainer.getFactory().writer(Quote.class, "master")) {
+        try (JournalWriter<Quote> master = getFactory().writer(Quote.class, "master")) {
             TestUtils.generateQuoteData(master, 300, master.getMaxTimestamp());
             master.commit();
 
@@ -56,7 +56,7 @@ public class DataLossTest extends AbstractTest {
                         setEnableMultiCast(false);
                         setHeartbeatFrequency(50);
                     }}
-                    , factoryContainer.getFactory());
+                    , getFactory());
             server.publish(master);
             server.start();
 
@@ -66,7 +66,7 @@ public class DataLossTest extends AbstractTest {
             // equalize slave
             JournalClient client = new JournalClient(new ClientConfig("localhost") {{
                 setEnableMultiCast(false);
-            }}, factoryContainer.getFactory());
+            }}, getFactory());
             client.subscribe(Quote.class, "master", "slave", new JournalListener() {
                 @Override
                 public void onCommit() {
@@ -88,13 +88,13 @@ public class DataLossTest extends AbstractTest {
             System.out.println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
 
             // add more data to slave
-            try (JournalWriter<Quote> slave = factoryContainer.getFactory().writer(Quote.class, "slave")) {
+            try (JournalWriter<Quote> slave = getFactory().writer(Quote.class, "slave")) {
                 TestUtils.generateQuoteData(slave, 200, slave.getMaxTimestamp());
                 slave.commit();
             }
 
             // synchronise slave again
-            client = new JournalClient(new ClientConfig("localhost"), factoryContainer.getFactory());
+            client = new JournalClient(new ClientConfig("localhost"), getFactory());
             client.subscribe(Quote.class, "master", "slave", new JournalListener() {
                 @Override
                 public void onCommit() {
@@ -115,7 +115,7 @@ public class DataLossTest extends AbstractTest {
 
             // assert that slave journal is closed
 
-            try (JournalWriter w = factoryContainer.getFactory().writer(Quote.class, "slave")) {
+            try (JournalWriter w = getFactory().writer(Quote.class, "slave")) {
                 Assert.assertNotNull(w);
             }
 

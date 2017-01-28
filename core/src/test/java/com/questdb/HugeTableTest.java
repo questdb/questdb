@@ -23,6 +23,7 @@
 
 package com.questdb;
 
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -48,13 +49,13 @@ public class HugeTableTest {
 
     @After
     public void tearDown() throws Exception {
-        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
-        Assert.assertEquals(0, factoryContainer.getFactory().getBusyWriterCount());
+        Assert.assertEquals(0, getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, getFactory().getBusyWriterCount());
     }
 
     @Test
     public void testLargeSymbolTable() throws Exception {
-        try (JournalWriter<Name> w = factoryContainer.getFactory().writer(Name.class, "name")) {
+        try (JournalWriter<Name> w = getFactory().writer(Name.class, "name")) {
             Name name = new Name();
             Rnd rnd = new Rnd();
 
@@ -69,6 +70,10 @@ public class HugeTableTest {
             w.commit();
             LOG.info().$("Appended 2M symbols in ").$(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t)).$("ms").$();
         }
+    }
+
+    private static Factory getFactory() {
+        return factoryContainer.getFactory();
     }
 
     public static class Name {

@@ -68,14 +68,14 @@ public class JournalServerAgentTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         channel = new MockByteChannel();
-        quoteWriter = factoryContainer.getFactory().writer(Quote.class);
-        tradeWriter = factoryContainer.getFactory().writer(Trade.class);
+        quoteWriter = getFactory().writer(Quote.class);
+        tradeWriter = getFactory().writer(Trade.class);
         ServerConfig config = new ServerConfig() {{
             setHeartbeatFrequency(100);
             setEnableMultiCast(false);
         }};
 
-        server = new JournalServer(config, factoryContainer.getFactory());
+        server = new JournalServer(config, getFactory());
         server.publish(quoteWriter);
         agent = new JournalServerAgent(server, new InetSocketAddress(NetworkConfig.DEFAULT_DATA_PORT), null);
         hugeBufferConsumer = new HugeBufferConsumer(temp.newFile());
@@ -92,11 +92,11 @@ public class JournalServerAgentTest extends AbstractTest {
 
     @Test
     public void testIncrementalInteraction() throws Exception {
-        try (JournalWriter<Quote> origin = factoryContainer.getFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, 200);
 
             server.start();
-            try (JournalWriter<Quote> quoteClientWriter = factoryContainer.getFactory().writer(Quote.class, "client")) {
+            try (JournalWriter<Quote> quoteClientWriter = getFactory().writer(Quote.class, "client")) {
 
                 JournalDeltaConsumer quoteDeltaConsumer = new JournalDeltaConsumer(quoteClientWriter);
 
@@ -162,7 +162,7 @@ public class JournalServerAgentTest extends AbstractTest {
         server.publish(tradeWriter);
         server.start();
 
-        try (Journal<Quote> quoteClientWriter = factoryContainer.getFactory().writer(Quote.class, "client")) {
+        try (Journal<Quote> quoteClientWriter = getFactory().writer(Quote.class, "client")) {
 
             // send quote journal key
 //        commandProducer.write(channel, Command.ADD_KEY_CMD);

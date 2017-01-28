@@ -36,14 +36,14 @@ public class ResultSetTest extends AbstractTest {
     @Test
     public void testReadColumns() throws Exception {
 
-        try (JournalWriter<TestEntity> w = factoryContainer.getFactory().writer(TestEntity.class)) {
+        try (JournalWriter<TestEntity> w = getFactory().writer(TestEntity.class)) {
             w.append(new TestEntity().setBStr("test1").setAnInt(10));
             w.append(new TestEntity().setDStr("test2").setADouble(55d));
             w.append(new TestEntity().setDwStr("test3").setSym("xyz"));
             w.commit();
         }
 
-        try (Journal<TestEntity> r = factoryContainer.getFactory().reader(TestEntity.class)) {
+        try (Journal<TestEntity> r = getFactory().reader(TestEntity.class)) {
             ResultSet<TestEntity> rs = r.query().all().asResultSet();
             Assert.assertEquals(3, rs.size());
             Assert.assertNull(rs.getSymbol(0, 4));
@@ -52,7 +52,7 @@ public class ResultSetTest extends AbstractTest {
 
     @Test
     public void testReadPrimitive() throws Exception {
-        try (JournalWriter<TestEntity> w = factoryContainer.getFactory().writer(TestEntity.class)) {
+        try (JournalWriter<TestEntity> w = getFactory().writer(TestEntity.class)) {
             TestUtils.generateTestEntityData(w, 10000, Dates.parseDateTime("2012-05-15T10:55:00.000Z"), 100000);
 
             ResultSet<TestEntity> rs = w.query().all().asResultSet();

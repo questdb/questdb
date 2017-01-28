@@ -37,7 +37,7 @@ public class ClientRecoveryTest extends AbstractTest {
     @Test
     public void testClientWriterRelease() throws Exception {
         final CountDownLatch serverError = new CountDownLatch(1);
-        JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+        JournalClient client = new JournalClient(new ClientConfig("localhost"), getFactory(), null, evt -> {
             if (evt == JournalClientEvents.EVT_TERMINATED) {
                 serverError.countDown();
             }
@@ -50,7 +50,7 @@ public class ClientRecoveryTest extends AbstractTest {
         Assert.assertFalse(client.isRunning());
 
         // should be able to get writer after client failure.
-        try (JournalWriter<Quote> w = getWriterFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
             Assert.assertNotNull(w);
         }
     }

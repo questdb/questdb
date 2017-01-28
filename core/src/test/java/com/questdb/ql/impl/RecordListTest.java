@@ -46,7 +46,7 @@ public class RecordListTest extends AbstractTest {
 
     @Test
     public void testAllFieldTypesField() throws JournalException, IOException, ParserException {
-        writeAndReadRecords(factoryContainer.getFactory().writer(AllFieldTypes.class), 1000, 64 * 1024,
+        writeAndReadRecords(getFactory().writer(AllFieldTypes.class), 1000, 64 * 1024,
                 new RecordGenerator<AllFieldTypes>() {
                     @Override
                     public void assertRecord(Record value, int i) throws IOException {
@@ -96,7 +96,7 @@ public class RecordListTest extends AbstractTest {
 
     @Test
     public void testBlankList() throws Exception {
-        writeAndReadRecords(factoryContainer.getFactory().writer(LongValue.class), 0, 450,
+        writeAndReadRecords(getFactory().writer(LongValue.class), 0, 450,
                 new RecordGenerator<LongValue>() {
                     @Override
                     public void assertRecord(Record value, int i) {
@@ -112,7 +112,7 @@ public class RecordListTest extends AbstractTest {
     @Test
     public void testCopyBinToAddress() throws JournalException, IOException, ParserException {
         final int pageLen = 1024 * 1024;
-        writeAndReadRecords(factoryContainer.getFactory().writer(Binary.class), 1, pageLen,
+        writeAndReadRecords(getFactory().writer(Binary.class), 1, pageLen,
                 new RecordGenerator<Binary>() {
 
                     @Override
@@ -139,7 +139,7 @@ public class RecordListTest extends AbstractTest {
     @Test
     public void testSaveBinOverPageEdge() throws JournalException, IOException, ParserException {
         final int pageLen = 100;
-        writeAndReadRecords(factoryContainer.getFactory().writer(Binary.class), 1, pageLen,
+        writeAndReadRecords(getFactory().writer(Binary.class), 1, pageLen,
                 new RecordGenerator<Binary>() {
 
                     @Override
@@ -168,7 +168,7 @@ public class RecordListTest extends AbstractTest {
 
     @Test
     public void testSaveLongField() throws JournalException, IOException, ParserException {
-        writeAndReadRecords(factoryContainer.getFactory().writer(LongValue.class), 100, 450,
+        writeAndReadRecords(getFactory().writer(LongValue.class), 100, 450,
                 new RecordGenerator<LongValue>() {
 
                     @Override
@@ -186,7 +186,7 @@ public class RecordListTest extends AbstractTest {
     @Test
     public void testSaveNullBinAndStrings() throws JournalException, IOException, ParserException {
         final int pageLen = 100;
-        writeAndReadRecords(factoryContainer.getFactory().writer(StringLongBinary.class), 3, pageLen,
+        writeAndReadRecords(getFactory().writer(StringLongBinary.class), 3, pageLen,
                 new RecordGenerator<StringLongBinary>() {
 
                     @Override
@@ -242,9 +242,9 @@ public class RecordListTest extends AbstractTest {
             try (RecordList records = new RecordList(journal.getMetadata(), pageSize)) {
                 LongList offsets = new LongList();
 
-                try (RecordSource rs = compiler.compile(factoryContainer.getFactory(), journal.getLocation().getName())) {
+                try (RecordSource rs = compiler.compile(getFactory(), journal.getLocation().getName())) {
                     long o = -1;
-                    RecordCursor cursor = rs.prepareCursor(factoryContainer.getFactory());
+                    RecordCursor cursor = rs.prepareCursor(getFactory());
                     try {
                         for (Record rec : cursor) {
                             offsets.add(o = records.append(rec, o));

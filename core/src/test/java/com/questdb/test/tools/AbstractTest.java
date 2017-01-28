@@ -24,6 +24,7 @@
 package com.questdb.test.tools;
 
 import com.questdb.ex.ParserException;
+import com.questdb.factory.Factory;
 import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
 import com.questdb.ql.Record;
@@ -50,8 +51,8 @@ public abstract class AbstractTest {
     private final QueryCompiler compiler = new QueryCompiler();
 
     public void assertSymbol(String query) throws ParserException {
-        try (RecordSource src = compiler.compile(factoryContainer.getFactory(), query)) {
-            RecordCursor cursor = src.prepareCursor(factoryContainer.getFactory());
+        try (RecordSource src = compiler.compile(getFactory(), query)) {
+            RecordCursor cursor = src.prepareCursor(getFactory());
             try {
                 SymbolTable tab = cursor.getStorageFacade().getSymbolTable(0);
                 while (cursor.hasNext()) {
@@ -64,6 +65,10 @@ public abstract class AbstractTest {
         }
     }
 
+    public Factory getFactory() {
+        return factoryContainer.getFactory();
+    }
+
     @Before
     public void setUp2() throws Exception {
         factoryContainer.getConfiguration().exists("none");
@@ -71,13 +76,13 @@ public abstract class AbstractTest {
 
     @After
     public void tearDown() throws Exception {
-        Assert.assertEquals(0, factoryContainer.getFactory().getBusyWriterCount());
-        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, getFactory().getBusyWriterCount());
+        Assert.assertEquals(0, getFactory().getBusyReaderCount());
     }
 
     protected void assertEmpty(String query) throws ParserException {
-        try (RecordSource src = compiler.compile(factoryContainer.getFactory(), query)) {
-            RecordCursor cursor = src.prepareCursor(factoryContainer.getFactory());
+        try (RecordSource src = compiler.compile(getFactory(), query)) {
+            RecordCursor cursor = src.prepareCursor(getFactory());
             try {
                 Assert.assertFalse(cursor.hasNext());
             } finally {
@@ -98,8 +103,8 @@ public abstract class AbstractTest {
 
     protected void assertThat(String expected, String query, boolean header) throws ParserException, IOException {
         long memUsed = Unsafe.getMemUsed();
-        try (RecordSource src = compiler.compile(factoryContainer.getFactory(), query)) {
-            RecordCursor cursor = src.prepareCursor(factoryContainer.getFactory());
+        try (RecordSource src = compiler.compile(getFactory(), query)) {
+            RecordCursor cursor = src.prepareCursor(getFactory());
             try {
 
                 sink.clear();
@@ -115,7 +120,7 @@ public abstract class AbstractTest {
                 cursor.releaseCursor();
             }
 
-            TestUtils.assertStrings(src, factoryContainer.getFactory());
+            TestUtils.assertStrings(src, getFactory());
         } catch (ParserException e) {
             System.out.println(QueryError.getMessage());
             System.out.println(QueryError.getPosition());
@@ -130,7 +135,7 @@ public abstract class AbstractTest {
     }
 
     protected RecordSource compile(CharSequence query) throws ParserException {
-        return compiler.compile(factoryContainer.getFactory(), query);
+        return compiler.compile(getFactory(), query);
     }
 
     protected void expectFailure(CharSequence query) throws ParserException {

@@ -55,14 +55,14 @@ public abstract class AbstractJournalTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        origin = factoryContainer.getFactory().writer(Quote.class, "origin");
-        slave = factoryContainer.getFactory().writer(Quote.class, "slave");
-        master = factoryContainer.getFactory().writer(Quote.class, "master");
+        origin = getFactory().writer(Quote.class, "origin");
+        slave = getFactory().writer(Quote.class, "slave");
+        master = getFactory().writer(Quote.class, "master");
 
         journalClientStateProducer = new JournalClientStateProducer();
         journalClientStateConsumer = new JournalClientStateConsumer();
 
-        this.masterReader = factoryContainer.getFactory().reader(Quote.class, "master");
+        this.masterReader = getFactory().reader(Quote.class, "master");
         journalDeltaProducer = new JournalDeltaProducer(masterReader);
         journalDeltaConsumer = new JournalDeltaConsumer(slave);
         channel = new MockByteChannel();

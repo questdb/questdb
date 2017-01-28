@@ -44,7 +44,7 @@ public class SortTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        w = factoryContainer.getFactory().writer(TestEntity.class);
+        w = getFactory().writer(TestEntity.class);
         TestUtils.generateTestEntityData(w, 1000, Dates.parseDateTime("2012-05-15T10:55:00.000Z"), 100000);
         q = w.query();
     }

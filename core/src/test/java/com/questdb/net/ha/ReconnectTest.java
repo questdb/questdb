@@ -46,7 +46,7 @@ public class ReconnectTest extends AbstractTest {
     @Ignore
     public void testServerRestart() throws Exception {
         final int size = 10000;
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote", 2 * size)) {
+        try (JournalWriter<Quote> remote = getFactory().writer(Quote.class, "remote", 2 * size)) {
 
             // start server #1
             JournalServer server = newServer();
@@ -59,7 +59,7 @@ public class ReconnectTest extends AbstractTest {
                         getReconnectPolicy().setLoginRetryCount(3);
                         getReconnectPolicy().setRetryCount(5);
                         getReconnectPolicy().setSleepBetweenRetriesMillis(TimeUnit.SECONDS.toMillis(1));
-                    }}, getWriterFactory(), null,
+                    }}, getFactory(), null,
                     evt -> {
                         if (evt == JournalClientEvents.EVT_CONNECTED) {
                             connectedLatch.countDown();
@@ -71,8 +71,8 @@ public class ReconnectTest extends AbstractTest {
             // when data arrives client triggers latch
             final CountDownLatch latch = new CountDownLatch(1);
             // create empty "local"
-            getWriterFactory().writer(Quote.class, "local").close();
-            try (final Journal<Quote> local = factoryContainer.getFactory().reader(Quote.class, "local")) {
+            getFactory().writer(Quote.class, "local").close();
+            try (final Journal<Quote> local = getFactory().reader(Quote.class, "local")) {
                 client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
                     @Override
                     public void onCommit() {
@@ -128,6 +128,6 @@ public class ReconnectTest extends AbstractTest {
         return new JournalServer(new ServerConfig() {{
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
             setEnableMultiCast(false);
-        }}, factoryContainer.getFactory());
+        }}, getFactory());
     }
 }

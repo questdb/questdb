@@ -24,6 +24,7 @@
 package com.questdb.ql;
 
 import com.questdb.JournalWriter;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.model.Album;
 import com.questdb.model.Band;
@@ -53,15 +54,13 @@ public class JoinStringToSymbolTest {
                 .$ts("releaseDate");
 
     }});
-
     private JournalWriter<Band> bw;
     private JournalWriter<Album> aw;
 
-
     @Before
     public void setUp() throws Exception {
-        bw = factoryContainer.getFactory().writer(Band.class);
-        aw = factoryContainer.getFactory().writer(Album.class);
+        bw = getFactory().writer(Band.class);
+        aw = getFactory().writer(Album.class);
     }
 
     @After
@@ -69,8 +68,8 @@ public class JoinStringToSymbolTest {
         aw.close();
         bw.close();
 
-        Assert.assertEquals(0, factoryContainer.getFactory().getBusyWriterCount());
-        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, getFactory().getBusyWriterCount());
+        Assert.assertEquals(0, getFactory().getBusyReaderCount());
     }
 
     @Test
@@ -93,7 +92,7 @@ public class JoinStringToSymbolTest {
         try (RecordSource rs = new CrossJoinRecordSource(new JournalRecordSource(
                 new JournalPartitionSource(aw.getMetadata(), false), new AllRowSource()), new JournalRecordSource(
                 new JournalPartitionSource(bw.getMetadata(), false), new AllRowSource()))) {
-            p.print(rs, factoryContainer.getFactory());
+            p.print(rs, getFactory());
         }
 
         final String expected = "band1\talbum X\tpop\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://band1.com\trock\t\n" +
@@ -110,5 +109,9 @@ public class JoinStringToSymbolTest {
                 "band3\talbum Y\tmetal\t1970-01-01T00:00:00.000Z\t1970-01-01T00:00:00.000Z\tband1\thttp://new.band1.com\tjazz\t\n";
 
         TestUtils.assertEquals(expected, sink);
+    }
+
+    private Factory getFactory() {
+        return factoryContainer.getFactory();
     }
 }

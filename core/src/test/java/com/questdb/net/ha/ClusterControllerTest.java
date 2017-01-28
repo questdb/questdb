@@ -87,7 +87,7 @@ public class ClusterControllerTest extends AbstractTest {
     @Ignore
     public void testBusyFailOver() throws Exception {
 
-        try (JournalWriter<Quote> writer1 = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> writer1 = getFactory().writer(Quote.class)) {
             try (final JournalWriter<Quote> writer2 = tf.getFactory().writer(Quote.class)) {
 
                 final CountDownLatch active1 = new CountDownLatch(1);
@@ -108,7 +108,7 @@ public class ClusterControllerTest extends AbstractTest {
                         new ClientConfig() {{
                             setEnableMultiCast(false);
                         }},
-                        factoryContainer.getFactory(),
+                        getFactory(),
                         0,
                         new ArrayList<JournalWriter>() {{
                             add(writer1);
@@ -311,11 +311,11 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        try (JournalWriter writer1 = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter writer1 = getFactory().writer(Quote.class)) {
 
             try (JournalWriter writer2 = tf.getFactory().writer(Quote.class)) {
 
-                ClusterController controller1 = createControllerX(writer1, 0, factoryContainer.getFactory(), active1Latch, standby1Latch, shutdown1);
+                ClusterController controller1 = createControllerX(writer1, 0, getFactory(), active1Latch, standby1Latch, shutdown1);
                 controller1.start();
 
                 Assert.assertTrue(active1Latch.await(5, TimeUnit.SECONDS));
@@ -354,11 +354,11 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        try (JournalWriter writer1 = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter writer1 = getFactory().writer(Quote.class)) {
 
             try (JournalWriter writer2 = tf.getFactory().writer(Quote.class)) {
 
-                ClusterController controller1 = createControllerX(writer1, 0, factoryContainer.getFactory(), active1Latch, standby1Latch, shutdown1);
+                ClusterController controller1 = createControllerX(writer1, 0, getFactory(), active1Latch, standby1Latch, shutdown1);
                 controller1.start();
 
                 Assert.assertTrue(active1Latch.await(5, TimeUnit.SECONDS));
@@ -391,8 +391,8 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch standby = new CountDownLatch(1);
         final CountDownLatch shutdown = new CountDownLatch(1);
 
-        try (JournalWriter writer = factoryContainer.getFactory().writer(Quote.class)) {
-            ClusterController controller = createControllerX(writer, 1, factoryContainer.getFactory(), active, standby, shutdown);
+        try (JournalWriter writer = getFactory().writer(Quote.class)) {
+            ClusterController controller = createControllerX(writer, 1, getFactory(), active, standby, shutdown);
 
             controller.start();
             Assert.assertTrue(active.await(5, TimeUnit.SECONDS));
@@ -417,17 +417,17 @@ public class ClusterControllerTest extends AbstractTest {
         final CountDownLatch shutdown1 = new CountDownLatch(1);
         final CountDownLatch shutdown2 = new CountDownLatch(1);
 
-        try (JournalWriter writer1 = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter writer1 = getFactory().writer(Quote.class)) {
 
             try (JournalWriter writer2 = tf.getFactory().writer(Quote.class)) {
-                ClusterController controller1 = createControllerX(writer1, 0, factoryContainer.getFactory(), active1Latch, standby1Latch, shutdown1);
+                ClusterController controller1 = createControllerX(writer1, 0, getFactory(), active1Latch, standby1Latch, shutdown1);
                 ClusterController controller2 = createControllerX(writer2, 1, tf.getFactory(), active2Latch, standby2Latch, shutdown2);
 
                 // start two controller without pause
                 controller2.start();
                 controller1.start();
 
-                factoryContainer.getFactory().close();
+                getFactory().close();
 
                 long t = System.currentTimeMillis();
                 do {

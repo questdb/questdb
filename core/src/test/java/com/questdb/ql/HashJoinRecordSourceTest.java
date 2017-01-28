@@ -24,6 +24,7 @@
 package com.questdb.ql;
 
 import com.questdb.JournalWriter;
+import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.model.Album;
@@ -52,11 +53,10 @@ public class HashJoinRecordSourceTest {
     private JournalWriter<Band> bw;
     private JournalWriter<Album> aw;
 
-
     @Before
     public void setUp() throws Exception {
-        bw = factoryContainer.getFactory().writer(Band.class);
-        aw = factoryContainer.getFactory().writer(Album.class);
+        bw = getFactory().writer(Band.class);
+        aw = getFactory().writer(Album.class);
     }
 
     @After
@@ -64,8 +64,8 @@ public class HashJoinRecordSourceTest {
         bw.close();
         aw.close();
 
-        Assert.assertEquals(0, factoryContainer.getFactory().getBusyWriterCount());
-        Assert.assertEquals(0, factoryContainer.getFactory().getBusyReaderCount());
+        Assert.assertEquals(0, getFactory().getBusyWriterCount());
+        Assert.assertEquals(0, getFactory().getBusyReaderCount());
     }
 
     @Test
@@ -105,7 +105,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.print(joinResult, factoryContainer.getFactory());
+        p.print(joinResult, getFactory());
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -150,7 +150,7 @@ public class HashJoinRecordSourceTest {
                     add("genre");
                 }}
         );
-        p.print(joinResult, factoryContainer.getFactory());
+        p.print(joinResult, getFactory());
         Assert.assertEquals("pop\n" +
                 "rock\n" +
                 "metal\n" +
@@ -197,7 +197,7 @@ public class HashJoinRecordSourceTest {
                     add("url");
                 }}
         );
-        p.print(joinResult, factoryContainer.getFactory());
+        p.print(joinResult, getFactory());
         Assert.assertEquals("pop\thttp://band1.com\n" +
                 "rock\thttp://band1.com\n" +
                 "\thttp://band2.com\n" +
@@ -205,5 +205,9 @@ public class HashJoinRecordSourceTest {
                 "pop\thttp://new.band1.com\n" +
                 "rock\thttp://new.band1.com\n" +
                 "\thttp://new.band5.com\n", sink.toString());
+    }
+
+    private Factory getFactory() {
+        return factoryContainer.getFactory();
     }
 }

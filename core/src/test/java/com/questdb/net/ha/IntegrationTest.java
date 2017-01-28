@@ -61,8 +61,8 @@ public class IntegrationTest extends AbstractTest {
         server = new JournalServer(new ServerConfig() {{
             setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
             setEnableMultiCast(false);
-        }}, factoryContainer.getFactory());
-        client = new JournalClient(new ClientConfig("localhost"), getWriterFactory());
+        }}, getFactory());
+        client = new JournalClient(new ClientConfig("localhost"), getFactory());
     }
 
     @Test
@@ -76,7 +76,7 @@ public class IntegrationTest extends AbstractTest {
     public void testBadSubscriptionOnTheFlyFollowedByReconnect() throws Exception {
         //todo: check that bad subscription doesn't interrupt data flow on good subscription
 
-        try (final JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+        try (final JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
             final int batchSize = 1000;
             final int batchCount = 100;
 
@@ -85,7 +85,7 @@ public class IntegrationTest extends AbstractTest {
             server.start();
             try {
                 final CountDownLatch terminated = new CountDownLatch(1);
-                JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+                JournalClient client = new JournalClient(new ClientConfig("localhost"), getFactory(), null, evt -> {
                     if (evt == JournalClientEvents.EVT_TERMINATED) {
                         terminated.countDown();
                     }
@@ -101,9 +101,9 @@ public class IntegrationTest extends AbstractTest {
                 try {
 
                     // create empty journal
-                    getWriterFactory().writer(Quote.class, "local").close();
+                    getFactory().writer(Quote.class, "local").close();
 
-                    try (final Journal local = factoryContainer.getFactory().reader("local")) {
+                    try (final Journal local = getFactory().reader("local")) {
                         client.subscribe(Quote.class, "origin", "local", new JournalListener() {
                             @Override
                             public void onCommit() {
@@ -203,7 +203,7 @@ public class IntegrationTest extends AbstractTest {
     @Test
     public void testClientConnect() throws Exception {
         final CountDownLatch error = new CountDownLatch(1);
-        client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+        client = new JournalClient(new ClientConfig("localhost"), getFactory(), null, evt -> {
             if (evt == JournalClientEvents.EVT_SERVER_ERROR) {
                 error.countDown();
             }
@@ -249,7 +249,7 @@ public class IntegrationTest extends AbstractTest {
     @Test
     public void testOutOfSyncClient() throws Exception {
         int size = 10000;
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote", 2 * size)) {
+        try (JournalWriter<Quote> remote = getFactory().writer(Quote.class, "remote", 2 * size)) {
             server.publish(remote);
             server.start();
 
@@ -275,14 +275,14 @@ public class IntegrationTest extends AbstractTest {
 
                 client.halt();
 
-                try (Journal<Quote> local = factoryContainer.getFactory().reader(Quote.class, "local")) {
+                try (Journal<Quote> local = getFactory().reader(Quote.class, "local")) {
                     TestUtils.assertDataEquals(remote, local);
                 }
 
                 TestUtils.generateQuoteData(remote, 10000, remote.getMaxTimestamp());
                 remote.commit();
 
-                try (JournalWriter<Quote> localW = getWriterFactory().writer(Quote.class, "local")) {
+                try (JournalWriter<Quote> localW = getFactory().writer(Quote.class, "local")) {
                     TestUtils.generateQuoteData(localW, 10000, localW.getMaxTimestamp());
                     localW.commit();
 
@@ -292,7 +292,7 @@ public class IntegrationTest extends AbstractTest {
 
                 final CountDownLatch errorCountDown = new CountDownLatch(1);
 
-                client = new JournalClient(new ClientConfig("localhost"), getWriterFactory());
+                client = new JournalClient(new ClientConfig("localhost"), getFactory());
                 client.subscribe(Quote.class, "remote", "local", 2 * size, new JournalListener() {
                     @Override
                     public void onCommit() {
@@ -319,7 +319,7 @@ public class IntegrationTest extends AbstractTest {
     // this is failing intermittently, replication is up for rewrite, cant be bothered fixing badly designed code
     public void testOutOfSyncServerSide() throws Exception {
         int size = 10000;
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote", 2 * size)) {
+        try (JournalWriter<Quote> remote = getFactory().writer(Quote.class, "remote", 2 * size)) {
             server.publish(remote);
             server.start();
 
@@ -327,7 +327,7 @@ public class IntegrationTest extends AbstractTest {
 
                 final AtomicInteger serverErrors = new AtomicInteger();
                 final AtomicInteger commits = new AtomicInteger();
-                client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+                client = new JournalClient(new ClientConfig("localhost"), getFactory(), null, evt -> {
                     if (evt == JournalClientEvents.EVT_SERVER_DIED) {
                         serverErrors.incrementAndGet();
                     }
@@ -351,7 +351,7 @@ public class IntegrationTest extends AbstractTest {
 
                 client.halt();
 
-                try (Journal<Quote> local = factoryContainer.getFactory().reader(Quote.class, "local")) {
+                try (Journal<Quote> local = getFactory().reader(Quote.class, "local")) {
                     TestUtils.assertDataEquals(remote, local);
                 }
 
@@ -364,7 +364,7 @@ public class IntegrationTest extends AbstractTest {
                 TestUtils.generateQuoteData(remote, 10000, remote.getMaxTimestamp());
                 remote.commit();
 
-                try (JournalWriter<Quote> localW = getWriterFactory().writer(Quote.class, "local")) {
+                try (JournalWriter<Quote> localW = getFactory().writer(Quote.class, "local")) {
 
                     TestUtils.generateQuoteData(localW, 10000, localW.getMaxTimestamp());
                     localW.commit();
@@ -374,7 +374,7 @@ public class IntegrationTest extends AbstractTest {
                 }
 
                 final AtomicInteger errorCounter = new AtomicInteger();
-                client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+                client = new JournalClient(new ClientConfig("localhost"), getFactory(), null, evt -> {
                     if (evt == JournalClientEvents.EVT_SERVER_DIED) {
                         serverErrors.incrementAndGet();
                     }
@@ -412,18 +412,18 @@ public class IntegrationTest extends AbstractTest {
 
         int size = 1000;
 
-        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, size);
             server.publish(origin);
 
             server.start();
             try {
 
-                getWriterFactory().writer(new JournalConfigurationBuilder().$("local").$int("x").$()).close();
+                getFactory().writer(new JournalConfigurationBuilder().$("local").$int("x").$()).close();
 
                 final CountDownLatch terminated = new CountDownLatch(1);
                 final AtomicInteger serverDied = new AtomicInteger();
-                JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+                JournalClient client = new JournalClient(new ClientConfig("localhost"), getFactory(), null, evt -> {
                     switch (evt) {
                         case JournalClientEvents.EVT_TERMINATED:
                             terminated.countDown();
@@ -457,7 +457,7 @@ public class IntegrationTest extends AbstractTest {
                     Assert.assertTrue(incompatible.await(500, TimeUnit.SECONDS));
 
                     // delete incompatible journal
-                    factoryContainer.getFactory().delete("local");
+                    getFactory().delete("local");
 
 
                     // subscribe again and have client create compatible journal from server's metadata
@@ -486,7 +486,7 @@ public class IntegrationTest extends AbstractTest {
                 Assert.assertTrue(terminated.await(5, TimeUnit.SECONDS));
                 Assert.assertEquals(0, serverDied.get());
 
-                try (Journal r = factoryContainer.getFactory().reader("local")) {
+                try (Journal r = getFactory().reader("local")) {
                     Assert.assertEquals(size, r.size());
                 }
             } finally {
@@ -504,7 +504,7 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     public void testServerIdleStartStop() throws Exception {
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+        try (JournalWriter<Quote> remote = getFactory().writer(Quote.class, "remote")) {
             server.publish(remote);
             server.start();
             client.subscribe(Quote.class, "remote", "local");
@@ -525,7 +525,7 @@ public class IntegrationTest extends AbstractTest {
     @Test
     public void testSingleJournalSync() throws Exception {
         int size = 100000;
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote", 2 * size)) {
+        try (JournalWriter<Quote> remote = getFactory().writer(Quote.class, "remote", 2 * size)) {
             server.publish(remote);
             server.start();
 
@@ -553,7 +553,7 @@ public class IntegrationTest extends AbstractTest {
                 server.halt();
             }
 
-            try (Journal<Quote> local = factoryContainer.getFactory().reader(Quote.class, "local")) {
+            try (Journal<Quote> local = getFactory().reader(Quote.class, "local")) {
                 TestUtils.assertDataEquals(remote, local);
             }
         }
@@ -570,10 +570,10 @@ public class IntegrationTest extends AbstractTest {
     public void testSubscribeIncompatible() throws Exception {
         int size = 10000;
 
-        try (JournalWriter<Quote> origin = factoryContainer.getFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, size);
 
-            try (JournalWriter<Quote> remote = factoryContainer.getFactory().writer(Quote.class, "remote")) {
+            try (JournalWriter<Quote> remote = getFactory().writer(Quote.class, "remote")) {
 
                 server.publish(remote);
 
@@ -585,10 +585,10 @@ public class IntegrationTest extends AbstractTest {
                     remote.commit();
 
 
-                    factoryContainer.getFactory().writer(new JournalConfigurationBuilder().$("local").$int("x").$()).close();
+                    getFactory().writer(new JournalConfigurationBuilder().$("local").$int("x").$()).close();
 
                     final CountDownLatch terminated = new CountDownLatch(1);
-                    JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+                    JournalClient client = new JournalClient(new ClientConfig("localhost"), getFactory(), null, evt -> {
 
                         if (evt == JournalClientEvents.EVT_TERMINATED) {
                             terminated.countDown();
@@ -638,10 +638,10 @@ public class IntegrationTest extends AbstractTest {
     public void testSubscribeIncompatibleWriter() throws Exception {
         int size = 10000;
 
-        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, size);
 
-            try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+            try (JournalWriter<Quote> remote = getFactory().writer(Quote.class, "remote")) {
 
                 server.publish(remote);
 
@@ -651,11 +651,11 @@ public class IntegrationTest extends AbstractTest {
                     remote.commit();
 
 
-                    try (JournalWriter writer = getWriterFactory().writer(new JournalConfigurationBuilder().$("local").$int("x").$())) {
+                    try (JournalWriter writer = getFactory().writer(new JournalConfigurationBuilder().$("local").$int("x").$())) {
 
                         final CountDownLatch terminated = new CountDownLatch(1);
                         final AtomicInteger serverErrors = new AtomicInteger();
-                        JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory(), null, evt -> {
+                        JournalClient client = new JournalClient(new ClientConfig("localhost"), getFactory(), null, evt -> {
 
                             if (evt == JournalClientEvents.EVT_TERMINATED) {
                                 terminated.countDown();
@@ -709,11 +709,11 @@ public class IntegrationTest extends AbstractTest {
     public void testSubscribeOnTheFly() throws Exception {
         int size = 5000;
 
-        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, size);
 
-            try (JournalWriter<Quote> remote1 = getWriterFactory().writer(Quote.class, "remote1")) {
-                try (JournalWriter<Quote> remote2 = getWriterFactory().writer(Quote.class, "remote2")) {
+            try (JournalWriter<Quote> remote1 = getFactory().writer(Quote.class, "remote1")) {
+                try (JournalWriter<Quote> remote2 = getFactory().writer(Quote.class, "remote2")) {
 
                     server.publish(remote1);
                     server.publish(remote2);
@@ -727,7 +727,7 @@ public class IntegrationTest extends AbstractTest {
                         remote2.commit();
 
                         final AtomicInteger counter = new AtomicInteger();
-                        JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory());
+                        JournalClient client = new JournalClient(new ClientConfig("localhost"), getFactory());
                         client.start();
 
                         try {
@@ -746,7 +746,7 @@ public class IntegrationTest extends AbstractTest {
 
                             TestUtils.assertCounter(counter, 1, 2, TimeUnit.SECONDS);
 
-                            try (Journal r = factoryContainer.getFactory().reader("local1")) {
+                            try (Journal r = getFactory().reader("local1")) {
                                 Assert.assertEquals(1000, r.size());
                             }
 
@@ -764,7 +764,7 @@ public class IntegrationTest extends AbstractTest {
 
                             TestUtils.assertCounter(counter, 2, 2, TimeUnit.SECONDS);
 
-                            try (Journal r = factoryContainer.getFactory().reader("local2")) {
+                            try (Journal r = getFactory().reader("local2")) {
                                 Assert.assertEquals(1000, r.size());
                             }
 
@@ -784,11 +784,11 @@ public class IntegrationTest extends AbstractTest {
     public void testSubscribeTwice() throws Exception {
         int size = 10000;
 
-        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, size);
 
-            try (JournalWriter<Quote> remote1 = getWriterFactory().writer(Quote.class, "remote1")) {
-                try (JournalWriter<Quote> remote2 = getWriterFactory().writer(Quote.class, "remote2")) {
+            try (JournalWriter<Quote> remote1 = getFactory().writer(Quote.class, "remote1")) {
+                try (JournalWriter<Quote> remote2 = getFactory().writer(Quote.class, "remote2")) {
 
                     server.publish(remote1);
                     server.publish(remote2);
@@ -805,7 +805,7 @@ public class IntegrationTest extends AbstractTest {
 
                         final AtomicInteger counter = new AtomicInteger();
                         final AtomicInteger errors = new AtomicInteger();
-                        JournalClient client = new JournalClient(new ClientConfig("localhost"), getWriterFactory());
+                        JournalClient client = new JournalClient(new ClientConfig("localhost"), getFactory());
                         client.start();
 
                         try {
@@ -824,7 +824,7 @@ public class IntegrationTest extends AbstractTest {
 
                             TestUtils.assertCounter(counter, 1, 2, TimeUnit.SECONDS);
 
-                            try (Journal r = factoryContainer.getFactory().reader("local1")) {
+                            try (Journal r = getFactory().reader("local1")) {
                                 Assert.assertEquals(1000, r.size());
                             }
 
@@ -843,7 +843,7 @@ public class IntegrationTest extends AbstractTest {
                             TestUtils.assertCounter(counter, 1, 2, TimeUnit.SECONDS);
                             TestUtils.assertCounter(errors, 1, 2, TimeUnit.SECONDS);
 
-                            try (Journal r = factoryContainer.getFactory().reader("local1")) {
+                            try (Journal r = getFactory().reader("local1")) {
                                 Assert.assertEquals(1000, r.size());
                             }
 
@@ -862,10 +862,10 @@ public class IntegrationTest extends AbstractTest {
     @Test
     public void testTwoClientSync() throws Exception {
         int size = 10000;
-        try (JournalWriter<Quote> origin = getWriterFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, size);
 
-            try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote")) {
+            try (JournalWriter<Quote> remote = getFactory().writer(Quote.class, "remote")) {
                 remote.append(origin.query().all().asResultSet().subset(0, 1000));
                 remote.commit();
 
@@ -873,7 +873,7 @@ public class IntegrationTest extends AbstractTest {
                 server.start();
 
                 final AtomicInteger counter = new AtomicInteger();
-                JournalClient client1 = new JournalClient(new ClientConfig("localhost"), getWriterFactory());
+                JournalClient client1 = new JournalClient(new ClientConfig("localhost"), getFactory());
                 client1.subscribe(Quote.class, "remote", "local1", new JournalListener() {
                     @Override
                     public void onCommit() {
@@ -887,7 +887,7 @@ public class IntegrationTest extends AbstractTest {
                 });
                 client1.start();
 
-                JournalClient client2 = new JournalClient(new ClientConfig("localhost"), getWriterFactory());
+                JournalClient client2 = new JournalClient(new ClientConfig("localhost"), getFactory());
                 client2.subscribe(Quote.class, "remote", "local2", new JournalListener() {
                     @Override
                     public void onCommit() {
@@ -917,7 +917,7 @@ public class IntegrationTest extends AbstractTest {
 
                 final CountDownLatch waitForUpdate = new CountDownLatch(1);
 
-                client1 = new JournalClient(new ClientConfig("localhost"), getWriterFactory());
+                client1 = new JournalClient(new ClientConfig("localhost"), getFactory());
                 client1.subscribe(Quote.class, "remote", "local1", new JournalListener() {
                     @Override
                     public void onCommit() {
@@ -939,11 +939,11 @@ public class IntegrationTest extends AbstractTest {
 
                 TestUtils.assertCounter(counter, 6, 2, TimeUnit.SECONDS);
 
-                try (Journal<Quote> local1r = factoryContainer.getFactory().reader(Quote.class, "local1")) {
+                try (Journal<Quote> local1r = getFactory().reader(Quote.class, "local1")) {
                     Assert.assertEquals(size, local1r.size());
                 }
 
-                try (Journal<Quote> local2r = factoryContainer.getFactory().reader(Quote.class, "local2")) {
+                try (Journal<Quote> local2r = getFactory().reader(Quote.class, "local2")) {
                     Assert.assertEquals(size, local2r.size());
                 }
 
@@ -957,8 +957,8 @@ public class IntegrationTest extends AbstractTest {
     @Test
     public void testTwoJournalsSync() throws Exception {
         int size = 10000;
-        try (JournalWriter<Quote> remote1 = getWriterFactory().writer(Quote.class, "remote1", 2 * size)) {
-            try (JournalWriter<TestEntity> remote2 = getWriterFactory().writer(TestEntity.class, "remote2", 2 * size)) {
+        try (JournalWriter<Quote> remote1 = getFactory().writer(Quote.class, "remote1", 2 * size)) {
+            try (JournalWriter<TestEntity> remote2 = getFactory().writer(TestEntity.class, "remote2", 2 * size)) {
                 server.publish(remote1);
                 server.publish(remote2);
                 server.start();
@@ -997,11 +997,11 @@ public class IntegrationTest extends AbstractTest {
                 client.halt();
                 server.halt();
 
-                try (Journal<Quote> local1 = factoryContainer.getFactory().reader(Quote.class, "local1")) {
+                try (Journal<Quote> local1 = getFactory().reader(Quote.class, "local1")) {
                     Assert.assertEquals("Local1 has wrong size", size, local1.size());
                 }
 
-                try (Journal<TestEntity> local2 = factoryContainer.getFactory().reader(TestEntity.class, "local2")) {
+                try (Journal<TestEntity> local2 = getFactory().reader(TestEntity.class, "local2")) {
                     Assert.assertEquals("Remote2 has wrong size", size, remote2.size());
                     Assert.assertEquals("Local2 has wrong size", size, local2.size());
                 }
@@ -1033,7 +1033,7 @@ public class IntegrationTest extends AbstractTest {
     @Test
     public void testWriterShutdown() throws Exception {
         int size = 10000;
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote", 2 * size)) {
+        try (JournalWriter<Quote> remote = getFactory().writer(Quote.class, "remote", 2 * size)) {
             server.publish(remote);
             server.start();
 

@@ -59,12 +59,12 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(100));
                     setEnableMultiCast(false);
                 }}
-                , factoryContainer.getFactory()
+                , getFactory()
                 ,
                 (token, requestedKeys) -> "SECRET".equals(new String(token)));
 
 
-        JournalClient client = new JournalClient(local, getWriterFactory(), "SECRET"::getBytes);
+        JournalClient client = new JournalClient(local, getFactory(), "SECRET"::getBytes);
         beginSync(server, client);
     }
 
@@ -75,7 +75,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , factoryContainer.getFactory()
+                , getFactory()
                 ,
                 (token, requestedKeys) -> "SECRET".equals(new String(token)));
 
@@ -84,7 +84,7 @@ public class AuthorizationTest extends AbstractTest {
 
             final AtomicInteger authErrors = new AtomicInteger();
             final CountDownLatch error = new CountDownLatch(1);
-            JournalClient client = new JournalClient(local, getWriterFactory(), null, evt -> {
+            JournalClient client = new JournalClient(local, getFactory(), null, evt -> {
                 switch (evt) {
                     case JournalClientEvents.EVT_AUTH_CONFIG_ERROR:
                         authErrors.incrementAndGet();
@@ -112,7 +112,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , factoryContainer.getFactory()
+                , getFactory()
                 ,
                 (token, requestedKeys) -> "SECRET".equals(new String(token)));
 
@@ -122,7 +122,7 @@ public class AuthorizationTest extends AbstractTest {
 
         JournalClient client = new JournalClient(
                 local,
-                getWriterFactory(),
+                getFactory(),
                 "NON_SECRET"::getBytes,
                 evt -> {
                     switch (evt) {
@@ -156,14 +156,14 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , factoryContainer.getFactory()
+                , getFactory()
                 ,
                 (token, requestedKeys) -> "SECRET".equals(new String(token)));
 
 
         final AtomicInteger authErrorCount = new AtomicInteger();
         final CountDownLatch terminated = new CountDownLatch(1);
-        JournalClient client = new JournalClient(local, getWriterFactory(), new SSOCredentialProvider("HOST/test"),
+        JournalClient client = new JournalClient(local, getFactory(), new SSOCredentialProvider("HOST/test"),
                 evt -> {
                     switch (evt) {
                         case JournalClientEvents.EVT_AUTH_CONFIG_ERROR:
@@ -195,7 +195,7 @@ public class AuthorizationTest extends AbstractTest {
                     setHeartbeatFrequency(TimeUnit.MILLISECONDS.toMillis(500));
                     setEnableMultiCast(false);
                 }}
-                , factoryContainer.getFactory()
+                , getFactory()
                 ,
                 (token, requestedKeys) -> {
                     throw new FatalError("BANG!");
@@ -204,7 +204,7 @@ public class AuthorizationTest extends AbstractTest {
         final AtomicInteger authErrorCount = new AtomicInteger();
         final CountDownLatch serverError = new CountDownLatch(1);
 
-        JournalClient client = new JournalClient(local, getWriterFactory(), "SECRET"::getBytes, evt -> {
+        JournalClient client = new JournalClient(local, getFactory(), "SECRET"::getBytes, evt -> {
             switch (evt) {
                 case JournalClientEvents.EVT_AUTH_ERROR:
                     authErrorCount.incrementAndGet();
@@ -232,7 +232,7 @@ public class AuthorizationTest extends AbstractTest {
 
     private void beginSync(JournalServer server, JournalClient client) throws JournalException, JournalNetworkException, InterruptedException, NumericException {
         int size = 100000;
-        try (JournalWriter<Quote> remote = getWriterFactory().writer(Quote.class, "remote", 2 * size)) {
+        try (JournalWriter<Quote> remote = getFactory().writer(Quote.class, "remote", 2 * size)) {
             server.publish(remote);
             server.start();
             try {
@@ -256,7 +256,7 @@ public class AuthorizationTest extends AbstractTest {
 
                     latch.await();
 
-                    try (Journal<Quote> local = factoryContainer.getFactory().reader(Quote.class, "local")) {
+                    try (Journal<Quote> local = getFactory().reader(Quote.class, "local")) {
                         TestUtils.assertDataEquals(remote, local);
                     }
 

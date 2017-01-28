@@ -58,9 +58,9 @@ public class PartitionTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        origin = factoryContainer.getFactory().writer(Quote.class, "origin");
-        master = factoryContainer.getFactory().writer(Quote.class, "master");
-        slave = factoryContainer.getFactory().writer(Quote.class, "slave");
+        origin = getFactory().writer(Quote.class, "origin");
+        master = getFactory().writer(Quote.class, "master");
+        slave = getFactory().writer(Quote.class, "slave");
 
         masterPartition = master.getAppendPartition(timestamp);
         slavePartition = slave.getAppendPartition(timestamp);

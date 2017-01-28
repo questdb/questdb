@@ -31,7 +31,7 @@ import org.junit.Test;
 public class WriterDoubleCloseTest extends AbstractTest {
     @Test
     public void testDoubleClose() throws Exception {
-        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
             TestUtils.generateQuoteData(w, 100);
             w.close();
         }

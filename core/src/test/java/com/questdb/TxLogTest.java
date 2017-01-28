@@ -91,7 +91,7 @@ public class TxLogTest extends AbstractTest {
 
     @Test
     public void testTxLogIterator() throws Exception {
-        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
             for (int i = 0; i < 10; i++) {
                 TestUtils.generateQuoteData(w, 100, w.getMaxTimestamp());
                 w.commit();

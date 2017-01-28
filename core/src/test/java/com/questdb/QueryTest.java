@@ -51,7 +51,7 @@ public class QueryTest extends AbstractTest {
 
     @Before
     public void setUp() throws Exception {
-        w = factoryContainer.getFactory().writer(Quote.class);
+        w = getFactory().writer(Quote.class);
         q = w.query();
         TestData.appendQuoteData2(w);
     }
@@ -536,7 +536,7 @@ public class QueryTest extends AbstractTest {
 
     @Test
     public void testLatestByKeyNewerThanRowid() throws Exception {
-        try (JournalWriter<Quote> w2 = factoryContainer.getFactory().writer(Quote.class, "W2")) {
+        try (JournalWriter<Quote> w2 = getFactory().writer(Quote.class, "W2")) {
             TestData.appendQuoteData1(w2);
             TestData.appendQuoteData2(w2);
 
@@ -612,7 +612,7 @@ public class QueryTest extends AbstractTest {
         long max = w.getAppendTimestampLo();
         long inc = System.currentTimeMillis() - max;
 
-        try (JournalWriter<Quote> w2 = factoryContainer.getFactory().writer(Quote.class, "w2")) {
+        try (JournalWriter<Quote> w2 = getFactory().writer(Quote.class, "w2")) {
             for (Quote a : JournalIterators.bufferedIterator(q.getJournal())) {
                 a.setTimestamp(a.getTimestamp() + inc);
                 w2.append(a);
@@ -632,7 +632,7 @@ public class QueryTest extends AbstractTest {
                 "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
 
 
-        try (Journal<Quote> r = factoryContainer.getFactory().reader(Quote.class)) {
+        try (Journal<Quote> r = getFactory().reader(Quote.class)) {
             Query<Quote> qq = r.query();
             UnorderedResultSet<Quote> rs = qq.head().withSymValues("ex").asResultSet();
             TestUtils.assertEquals(expected, rs.sort());
@@ -643,7 +643,7 @@ public class QueryTest extends AbstractTest {
     public void testLatestBySymbolFilter() throws Exception {
         String expected = "2013-02-10T11:22:30.000Z\tHSBA.L\t0.30903524429086027\t0.10792189935863805\t954532266\t632039501\tFast trading\tLN";
 
-        try (JournalWriter<Quote> w2 = factoryContainer.getFactory().writer(Quote.class, "W2")) {
+        try (JournalWriter<Quote> w2 = getFactory().writer(Quote.class, "W2")) {
             TestData.appendQuoteData1(w2);
             TestData.appendQuoteData2(w2);
 
@@ -673,7 +673,7 @@ public class QueryTest extends AbstractTest {
 
     @Test
     public void testLatestBySymbolValues() throws Exception {
-        try (JournalWriter<Quote> w2 = factoryContainer.getFactory().writer(Quote.class, "W2")) {
+        try (JournalWriter<Quote> w2 = getFactory().writer(Quote.class, "W2")) {
             TestData.appendQuoteData1(w2);
             TestData.appendQuoteData2(w2);
 
@@ -688,7 +688,7 @@ public class QueryTest extends AbstractTest {
 
     @Test
     public void testLatestBySymbolValuesFilter() throws Exception {
-        try (JournalWriter<Quote> w2 = factoryContainer.getFactory().writer(Quote.class, "W2")) {
+        try (JournalWriter<Quote> w2 = getFactory().writer(Quote.class, "W2")) {
             TestData.appendQuoteData1(w2);
             TestData.appendQuoteData2(w2);
 
@@ -703,7 +703,7 @@ public class QueryTest extends AbstractTest {
     @Test
     public void testParallelIteratorInterval() throws Exception {
         Interval interval = new Interval("2013-05-04T06:40:00.000Z", "2013-05-05T17:23:20.000Z");
-        try (Journal<Quote> r = factoryContainer.getFactory().reader(Quote.class)) {
+        try (Journal<Quote> r = getFactory().reader(Quote.class)) {
             Query<Quote> q2 = r.query();
             JournalIterator<Quote> expected = q.all().iterator(interval);
             try (ConcurrentIterator<Quote> actual = q2.all().concurrentIterator(interval)) {
@@ -1244,7 +1244,7 @@ public class QueryTest extends AbstractTest {
                 "2013-05-07T04:06:40.000Z\tADM.L\t0.861499400556018\t0.5243336208514339\t648366676\t698699955\tFast trading\tSK\n" +
                 "2013-05-07T05:30:00.000Z\tTLW.L\t0.5405954330001682\t0.23821846687340553\t1057951361\t1833806187\tFast trading\tLXE\n";
 
-        try (JournalWriter<Quote> w2 = factoryContainer.getFactory().writer(Quote.class, "W2")) {
+        try (JournalWriter<Quote> w2 = getFactory().writer(Quote.class, "W2")) {
             TestData.appendQuoteData1(w2);
             TestData.appendQuoteData2(w2);
 

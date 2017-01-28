@@ -84,7 +84,7 @@ public class GenericInteropTest extends AbstractTest {
         }
 
         try (RecordSource rs = compile("test")) {
-            RecordCursor cursor = rs.prepareCursor(factoryContainer.getFactory());
+            RecordCursor cursor = rs.prepareCursor(getFactory());
 
             try {
                 Record e;
@@ -158,7 +158,7 @@ public class GenericInteropTest extends AbstractTest {
         }
 
         try {
-            factoryContainer.getFactory().writer(new JournalStructure("test") {{
+            getFactory().writer(new JournalStructure("test") {{
                 $str("sym");
                 $date("created");
             }});
@@ -193,7 +193,7 @@ public class GenericInteropTest extends AbstractTest {
             writer.commit();
         }
 
-        try (Journal<Data> reader = factoryContainer.getFactory().reader(Data.class, "test")) {
+        try (Journal<Data> reader = getFactory().reader(Data.class, "test")) {
 
             Iterator<Data> src = JournalIterators.bufferedIterator(reader);
             Assert.assertTrue(src.hasNext());
@@ -222,7 +222,7 @@ public class GenericInteropTest extends AbstractTest {
 
         File location = null;
 
-        try (JournalWriter w = factoryContainer.getFactory().writer(new JournalStructure("test") {{
+        try (JournalWriter w = getFactory().writer(new JournalStructure("test") {{
             $int("id").index();
             $str("status?\0x");
         }})) {
@@ -236,7 +236,7 @@ public class GenericInteropTest extends AbstractTest {
 
         Files.deleteOrException(location);
 
-        try (JournalWriter w = factoryContainer.getFactory().writer(new JournalStructure("test") {{
+        try (JournalWriter w = getFactory().writer(new JournalStructure("test") {{
             $int("id").index();
             $str("status");
         }})) {
@@ -246,7 +246,7 @@ public class GenericInteropTest extends AbstractTest {
 
     @Test
     public void testObjectGenericObjectWriteSequence() throws Exception {
-        JournalWriter<Data> writer = factoryContainer.getFactory().writer(new JournalMetadataBuilder<Data>(Data.class, "test") {{
+        JournalWriter<Data> writer = getFactory().writer(new JournalMetadataBuilder<Data>(Data.class, "test") {{
             $date("created");
             $sym("sym").index();
             $int("id").index();
@@ -296,7 +296,7 @@ public class GenericInteropTest extends AbstractTest {
             writer2.commit();
         }
 
-        writer = factoryContainer.getFactory().writer(Data.class, "test");
+        writer = getFactory().writer(Data.class, "test");
 
         d.sym = "HKDUSD";
         d.created = 40000;
@@ -316,7 +316,7 @@ public class GenericInteropTest extends AbstractTest {
         writer.append(d);
         writer.commit();
 
-        try (Journal<Data> reader = factoryContainer.getFactory().reader(Data.class, "test")) {
+        try (Journal<Data> reader = getFactory().reader(Data.class, "test")) {
             String expected = "Data{sym='GBPUSD', created=30000, bid=0.65, ask=0.66, bidSize=1000, askSize=1100, id=1, status='OK', user='system', rateId='GBPUSD:GLOBAL', active=true, nullable='null', ticks=12345678, modulo=425}\n" +
                     "Data{sym='EURUSD', created=19999, bid=1.24, ask=1.25, bidSize=10000, askSize=12000, id=2, status='OK', user='system', rateId='EURUSD:GLOBAL', active=true, nullable='null', ticks=1234567, modulo=11000}\n" +
                     "Data{sym='HKDUSD', created=40000, bid=2.88, ask=2.89, bidSize=1000, askSize=1100, id=3, status='OK', user='system', rateId='HKDUSD:GLOBAL', active=true, nullable='null', ticks=989931, modulo=398}\n";
@@ -333,7 +333,7 @@ public class GenericInteropTest extends AbstractTest {
 
     @Test
     public void testObjectWriteGenericRead() throws Exception {
-        try (JournalWriter<Data> writer = factoryContainer.getFactory().writer(new JournalMetadataBuilder<Data>(Data.class, "test") {{
+        try (JournalWriter<Data> writer = getFactory().writer(new JournalMetadataBuilder<Data>(Data.class, "test") {{
             $sym("sym").index();
             $int("id").index();
             $str("rateId").index();
@@ -360,7 +360,7 @@ public class GenericInteropTest extends AbstractTest {
         }
 
         try (RecordSource rs = compile("test")) {
-            RecordCursor cursor = rs.prepareCursor(factoryContainer.getFactory());
+            RecordCursor cursor = rs.prepareCursor(getFactory());
 
             try {
                 Record e;
@@ -415,7 +415,7 @@ public class GenericInteropTest extends AbstractTest {
         }
 
 
-        try (Journal<Partial> reader = factoryContainer.getFactory().reader(Partial.class, "test")) {
+        try (Journal<Partial> reader = getFactory().reader(Partial.class, "test")) {
 
             String expected = "Partial{sym='EURUSD', created=19999, bid=1.24, ask=1.25, bidSize=10000, askSize=12000}";
 
@@ -431,7 +431,7 @@ public class GenericInteropTest extends AbstractTest {
     public void testPartialObjectWriter() throws Exception {
         makeGenericWriter().close();
         try {
-            factoryContainer.getFactory().writer(Partial.class, "test");
+            getFactory().writer(Partial.class, "test");
             Assert.fail("Expected exception");
         } catch (JournalException ignore) {
             // ignore exception
@@ -439,7 +439,7 @@ public class GenericInteropTest extends AbstractTest {
     }
 
     private JournalWriter makeGenericWriter() throws JournalException {
-        return factoryContainer.getFactory().writer(new JournalStructure("test") {{
+        return getFactory().writer(new JournalStructure("test") {{
             $sym("sym").index();
             $date("created");
             $double("bid");

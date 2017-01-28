@@ -51,13 +51,13 @@ public class GenericTest extends AbstractTest {
 
     @Test
     public void testClassToGenericPublish() throws Exception {
-        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class, "quote")) {
+        try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote")) {
 
             JournalServer server = new JournalServer(new ServerConfig() {{
                 addNode(new ServerNode(1, "localhost"));
                 setHeartbeatFrequency(100);
                 setEnableMultiCast(false);
-            }}, factoryContainer.getFactory());
+            }}, getFactory());
 
             server.publish(w);
             server.start();
@@ -66,7 +66,7 @@ public class GenericTest extends AbstractTest {
 
             JournalClient client = new JournalClient(new ClientConfig("localhost") {{
                 setEnableMultiCast(false);
-            }}, factoryContainer.getFactory());
+            }}, getFactory());
 
             client.subscribe(new JournalKey("quote"), new JournalKey("abc"), new JournalListener() {
                 @Override
@@ -89,7 +89,7 @@ public class GenericTest extends AbstractTest {
             StringSink sink = new StringSink();
             RecordSourcePrinter p = new RecordSourcePrinter(sink);
             try (RecordSource rs = compile("abc")) {
-                p.print(rs, factoryContainer.getFactory());
+                p.print(rs, getFactory());
 
                 final String expected = "2015-01-10T12:00:00.000Z\tAGK.L\t0.000001189157\t1.050231933594\t1326447242\t948263339\tFast trading\tLXE\n" +
                         "2015-01-10T12:00:00.000Z\tBP.L\t104.021850585938\t0.006688738358\t1575378703\t1436881714\tFast trading\tLXE\n" +
@@ -203,7 +203,7 @@ public class GenericTest extends AbstractTest {
     @Test
     public void testDuplicateTimestamp() throws Exception {
         try {
-            factoryContainer.getFactory().writer(new JournalStructure("xyz") {{
+            getFactory().writer(new JournalStructure("xyz") {{
                 $sym("x").index();
                 $int("y");
                 $double("z");
@@ -220,7 +220,7 @@ public class GenericTest extends AbstractTest {
     @Test
     public void testGenericPublish() throws Exception {
 
-        try (JournalWriter w = factoryContainer.getFactory().writer(new JournalStructure("xyz") {{
+        try (JournalWriter w = getFactory().writer(new JournalStructure("xyz") {{
             $sym("x").index();
             $int("y");
             $double("z");
@@ -232,7 +232,7 @@ public class GenericTest extends AbstractTest {
                 addNode(new ServerNode(1, "localhost"));
                 setHeartbeatFrequency(100);
                 setEnableMultiCast(false);
-            }}, factoryContainer.getFactory());
+            }}, getFactory());
             server.publish(w);
             server.start();
 
@@ -240,7 +240,7 @@ public class GenericTest extends AbstractTest {
 
             JournalClient client = new JournalClient(new ClientConfig("localhost") {{
                 setEnableMultiCast(false);
-            }}, factoryContainer.getFactory());
+            }}, getFactory());
             client.subscribe(new JournalKey("xyz"), new JournalKey("abc"), new JournalListener() {
                 @Override
                 public void onCommit() {
@@ -269,7 +269,7 @@ public class GenericTest extends AbstractTest {
             StringSink sink = new StringSink();
             RecordSourcePrinter p = new RecordSourcePrinter(sink);
             try (RecordSource rs = compile("abc")) {
-                p.print(rs, factoryContainer.getFactory());
+                p.print(rs, getFactory());
 
                 final String expected = "VTJWCPSWHY\t-1191262516\t0.024494420737\t1970-01-01T00:00:00.000Z\n" +
                         "EHNRXGZSXU\t-1458132197\t768.000000000000\t1970-01-01T00:00:00.000Z\n" +

@@ -57,7 +57,7 @@ public class RenameJournalTest extends AbstractTest {
     public void testJournalAlreadyOpenButIdle() throws Exception {
         createX();
 
-        Factory factory = factoryContainer.getFactory();
+        Factory factory = getFactory();
         assertJournal(factory, "x");
         sink.clear();
 
@@ -89,7 +89,7 @@ public class RenameJournalTest extends AbstractTest {
     @Test
     public void testNonLiteralFrom() throws Exception {
         try {
-            compiler.execute(factoryContainer.getFactory(), "rename table 1+2 to 'c d'");
+            compiler.execute(getFactory(), "rename table 1+2 to 'c d'");
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(14, QueryError.getPosition());
@@ -99,7 +99,7 @@ public class RenameJournalTest extends AbstractTest {
     @Test
     public void testNonLiteralTo() throws Exception {
         try {
-            compiler.execute(factoryContainer.getFactory(), "rename table x to 5+5");
+            compiler.execute(getFactory(), "rename table x to 5+5");
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(19, QueryError.getPosition());
@@ -110,7 +110,7 @@ public class RenameJournalTest extends AbstractTest {
     public void testReleaseOfJournalInPool() throws Exception {
         createX();
 
-        Factory f = factoryContainer.getFactory();
+        Factory f = getFactory();
 
         assertJournal(f, "x");
 
@@ -127,13 +127,13 @@ public class RenameJournalTest extends AbstractTest {
     @Test
     public void testRenameQuoted() throws Exception {
         create("'a b'");
-        compiler.execute(factoryContainer.getFactory(), "rename table 'a b' to 'c d'");
+        compiler.execute(getFactory(), "rename table 'a b' to 'c d'");
     }
 
     @Test
     public void testSimpleNonExisting() throws Exception {
         try {
-            compiler.execute(factoryContainer.getFactory(), "rename table x to y");
+            compiler.execute(getFactory(), "rename table x to y");
             Assert.fail();
         } catch (ParserException e) {
             Assert.assertEquals(13, QueryError.getPosition());
@@ -144,8 +144,8 @@ public class RenameJournalTest extends AbstractTest {
     @Test
     public void testSimpleRename() throws Exception {
         createX();
-        compiler.execute(factoryContainer.getFactory(), "rename table x to y");
-        assertJournal(factoryContainer.getFactory(), "y");
+        compiler.execute(getFactory(), "rename table x to y");
+        assertJournal(getFactory(), "y");
     }
 
     private void assertJournal(Factory f, String dest) throws IOException, ParserException {
@@ -156,7 +156,7 @@ public class RenameJournalTest extends AbstractTest {
     }
 
     private void create(String name) throws JournalException, ParserException {
-        try (JournalWriter w = compiler.createWriter(factoryContainer.getFactory(), "create table " + name + "(a int) record hint 100")) {
+        try (JournalWriter w = compiler.createWriter(getFactory(), "create table " + name + "(a int) record hint 100")) {
             JournalEntryWriter ew = w.entryWriter();
             ew.putInt(0, 999);
             ew.append();

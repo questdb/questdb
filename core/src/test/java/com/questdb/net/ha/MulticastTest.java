@@ -85,10 +85,10 @@ public class MulticastTest extends AbstractTest {
         JournalServer server = new JournalServer(new ServerConfig() {{
             addNode(new ServerNode(0, "[0:0:0:0:0:0:0:0]"));
             setHeartbeatFrequency(100);
-        }}, factoryContainer.getFactory(), null, 0);
+        }}, getFactory(), null, 0);
 
         final CountDownLatch connected = new CountDownLatch(1);
-        JournalClient client = new JournalClient(new ClientConfig(), getWriterFactory(), null, evt -> {
+        JournalClient client = new JournalClient(new ClientConfig(), getFactory(), null, evt -> {
             if (evt == JournalClientEvents.EVT_CONNECTED) {
                 connected.countDown();
             }

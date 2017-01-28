@@ -39,15 +39,15 @@ public class FactoryEventLoggerTest extends AbstractTest {
     @Test
     @Ignore
     public void testThroughput() throws Exception {
-        final FactoryEventLogger logger = new FactoryEventLogger(factoryContainer.getFactory(), 1000, 1000, MilliClock.INSTANCE);
+        final FactoryEventLogger logger = new FactoryEventLogger(getFactory(), 1000, 1000, MilliClock.INSTANCE);
 
         final int count = 1000;
         final CountDownLatch done = new CountDownLatch(1);
         final CyclicBarrier barrier = new CyclicBarrier(2);
-        final FactoryEventListener listener = factoryContainer.getFactory().getEventListener();
+        final FactoryEventListener listener = getFactory().getEventListener();
 
         new Thread(() -> {
-            try (Journal r = factoryContainer.getFactory().reader("$mon_factory")) {
+            try (Journal r = getFactory().reader("$mon_factory")) {
                 barrier.await();
                 int i = 0;
                 while (i < count) {
@@ -83,7 +83,7 @@ public class FactoryEventLoggerTest extends AbstractTest {
 
         logger.close();
 
-        try (Journal r = factoryContainer.getFactory().reader("$mon_factory")) {
+        try (Journal r = getFactory().reader("$mon_factory")) {
             System.out.println(r.size());
         }
 

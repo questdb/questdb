@@ -40,7 +40,7 @@ public class GenericAppendPerfTest extends AbstractTest {
 
     @Test
     public void testAppend() throws Exception {
-        try (JournalWriter wg = factoryContainer.getFactory().writer(
+        try (JournalWriter wg = getFactory().writer(
                 new JournalStructure("qq") {{
                     $sym("sym").index().buckets(20);
                     $double("bid");

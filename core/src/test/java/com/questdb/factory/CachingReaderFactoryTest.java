@@ -47,7 +47,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
     @Test
     public void testAllocateAndClear() throws Exception {
         final JournalMetadata<?> m = new JournalStructure("z").$date("ts").$().build();
-        factoryContainer.getFactory().writer(m).close();
+        getFactory().writer(m).close();
 
         try (CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 1, 2)) {
 
@@ -106,7 +106,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
     public void testCloseWithActiveReader() throws Exception {
         // create journal
         final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
-        ((WriterFactory) factoryContainer.getFactory()).writer(m).close();
+        ((WriterFactory) getFactory()).writer(m).close();
 
         try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 1000, 2)) {
             Journal reader = rf.reader(m);
@@ -122,7 +122,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
     public void testCloseWithInactiveReader() throws Exception {
         // create journal
         final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
-        ((WriterFactory) factoryContainer.getFactory()).writer(m).close();
+        ((WriterFactory) getFactory()).writer(m).close();
 
         try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 1000, 2)) {
             Journal reader = rf.reader(m);
@@ -145,7 +145,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
         final JournalMetadata<?>[] meta = new JournalMetadata[readerCount];
         for (int i = 0; i < readerCount; i++) {
             final JournalMetadata<?> m = new JournalStructure("x" + i).$date("ts").$().build();
-            ((WriterFactory) factoryContainer.getFactory()).writer(m).close();
+            ((WriterFactory) getFactory()).writer(m).close();
             meta[i] = m;
         }
 
@@ -189,7 +189,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
     public void testGetReadersBeforeFailure() throws Exception {
         // create journal
         final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
-        ((WriterFactory) factoryContainer.getFactory()).writer(m).close();
+        ((WriterFactory) getFactory()).writer(m).close();
 
         try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 1000, 2)) {
 
@@ -218,7 +218,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
         final JournalMetadata<?>[] meta = new JournalMetadata[readerCount];
         for (int i = 0; i < readerCount; i++) {
             final JournalMetadata<?> m = new JournalStructure("x" + i).$date("ts").$().build();
-            ((WriterFactory) factoryContainer.getFactory()).writer(m).close();
+            ((WriterFactory) getFactory()).writer(m).close();
             meta[i] = m;
         }
 
@@ -318,10 +318,10 @@ public class CachingReaderFactoryTest extends AbstractTest {
     public void testLockUnlock() throws Exception {
         // create journals
         final JournalMetadata<?> m1 = new JournalStructure("x").$date("ts").$().build();
-        ((WriterFactory) factoryContainer.getFactory()).writer(m1).close();
+        ((WriterFactory) getFactory()).writer(m1).close();
 
         final JournalMetadata<?> m2 = new JournalStructure("y").$date("ts").$().build();
-        ((WriterFactory) factoryContainer.getFactory()).writer(m2).close();
+        ((WriterFactory) getFactory()).writer(m2).close();
 
 
         Journal x, y;
@@ -374,7 +374,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
     @Test
     public void testLockUnlockMultiple() throws Exception {
         final JournalMetadata<?> m1 = new JournalStructure("x").$date("ts").$().build();
-        getWriterFactory().writer(m1).close();
+        getFactory().writer(m1).close();
 
         try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 1000, 2)) {
             Journal r1 = rf.reader(m1);
@@ -397,7 +397,7 @@ public class CachingReaderFactoryTest extends AbstractTest {
     public void testSerialOpenClose() throws Exception {
         // create journal
         final JournalMetadata<?> m = new JournalStructure("x").$date("ts").$().build();
-        ((WriterFactory) factoryContainer.getFactory()).writer(m).close();
+        ((WriterFactory) getFactory()).writer(m).close();
 
         try (final CachingReaderFactory rf = new CachingReaderFactory(factoryContainer.getConfiguration(), 1000, 2)) {
             Journal firstReader = null;

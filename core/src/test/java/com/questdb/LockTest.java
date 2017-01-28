@@ -44,11 +44,11 @@ public class LockTest extends AbstractTest {
     public void testLockAcrossClassLoaders() throws JournalException, ClassNotFoundException, IllegalAccessException, InstantiationException, NoSuchMethodException, InvocationTargetException {
         URLClassLoader classLoader = new URLClassLoader(((URLClassLoader) this.getClass().getClassLoader()).getURLs(), null);
 
-        JournalWriter<Quote> rw = factoryContainer.getFactory().writer(Quote.class);
+        JournalWriter<Quote> rw = getFactory().writer(Quote.class);
         rw.close();
-        factoryContainer.getFactory().delete(Quote.class.getName());
+        getFactory().delete(Quote.class.getName());
 
-        rw = factoryContainer.getFactory().writer(Quote.class);
+        rw = getFactory().writer(Quote.class);
 
         List<Quote> data = new ArrayList<>();
         data.add(new Quote().setSym("S1").setTimestamp(Dates.toMillis(2013, 3, 10, 15, 0)));
@@ -61,7 +61,7 @@ public class LockTest extends AbstractTest {
                 .newInstance(factoryContainer.getConfiguration().getJournalBase());
 
         rw.close();
-        factoryContainer.getFactory().delete(Quote.class.getName());
+        getFactory().delete(Quote.class.getName());
     }
 
     public static class TestAccessor {

@@ -34,15 +34,15 @@ public class JournalRecoveryTest extends AbstractTest {
 
     @Test
     public void testLagRecovery() throws Exception {
-        try (JournalWriter<Quote> origin = factoryContainer.getFactory().writer(Quote.class, "origin")) {
+        try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
             TestUtils.generateQuoteData(origin, 100000, new Interval("2013-01-01T00:00:00.000Z", "2013-05-30T12:55:00.000Z"));
 
-            try (Journal<Quote> r = factoryContainer.getFactory().reader(Quote.class, "origin")) {
+            try (Journal<Quote> r = getFactory().reader(Quote.class, "origin")) {
                 Assert.assertEquals(100000, r.size());
             }
 
             long ts;
-            try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
+            try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
                 w.disableCommitOnClose();
                 w.append(origin.query().all().asResultSet().subset(0, 15000));
                 w.mergeAppend(origin.query().all().asResultSet().subset(15000, 17000));
@@ -56,15 +56,15 @@ public class JournalRecoveryTest extends AbstractTest {
             }
 
             // make sure journal is closed in pool
-            factoryContainer.getFactory().lock(Quote.class.getName());
-            factoryContainer.getFactory().unlock(Quote.class.getName());
+            getFactory().lock(Quote.class.getName());
+            getFactory().unlock(Quote.class.getName());
 
-            try (Journal<Quote> w = factoryContainer.getFactory().reader(Quote.class)) {
+            try (Journal<Quote> w = getFactory().reader(Quote.class)) {
                 Assert.assertEquals(ts, w.getMaxTimestamp());
                 Assert.assertEquals(17000, w.size());
             }
 
-            try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
+            try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
                 Assert.assertEquals(ts, w.getMaxTimestamp());
                 Assert.assertEquals(17000, w.size());
             }
@@ -74,7 +74,7 @@ public class JournalRecoveryTest extends AbstractTest {
     @Test
     public void testRecovery() throws Exception {
         long ts;
-        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
             w.disableCommitOnClose();
             Assert.assertFalse(w.isCommitOnClose());
             TestUtils.generateQuoteData(w, 10000, new Interval("2013-01-01T00:00:00.000Z", "2013-02-28T12:55:00.000Z"));
@@ -84,15 +84,15 @@ public class JournalRecoveryTest extends AbstractTest {
         }
 
         // make sure journal is closed in pool
-        factoryContainer.getFactory().lock(Quote.class.getName());
-        factoryContainer.getFactory().unlock(Quote.class.getName());
+        getFactory().lock(Quote.class.getName());
+        getFactory().unlock(Quote.class.getName());
 
-        try (Journal<Quote> w = factoryContainer.getFactory().reader(Quote.class)) {
+        try (Journal<Quote> w = getFactory().reader(Quote.class)) {
             Assert.assertEquals(ts, w.getMaxTimestamp());
             Assert.assertEquals(10000, w.size());
         }
 
-        try (JournalWriter<Quote> w = factoryContainer.getFactory().writer(Quote.class)) {
+        try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
             w.disableCommitOnClose();
             Assert.assertEquals(ts, w.getMaxTimestamp());
             Assert.assertEquals(10000, w.size());
