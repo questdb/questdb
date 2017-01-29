@@ -58,6 +58,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     private final LongList errors = new LongList();
     private String name;
     private ObjList<ImportedColumnMetadata> metadata;
+    private boolean header;
     private JournalWriter writer;
     private long _size;
     private boolean overwrite;
@@ -108,6 +109,10 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
 
     public JournalMetadata getMetadata() {
         return writer.getMetadata();
+    }
+
+    public boolean isHeader() {
+        return header;
     }
 
     public JournalImportListener of(String name, boolean overwrite, boolean durable, int atomicity) {
@@ -204,16 +209,16 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     }
 
     @Override
-    public void onMetadata(ObjList<ImportedColumnMetadata> metadata) {
+    public void onMetadata(ObjList<ImportedColumnMetadata> metadata, boolean header) {
         if (writer == null) {
+            this.metadata = metadata;
+            this.header = header;
             try {
                 switch (factory.getConfiguration().exists(name)) {
                     case DOES_NOT_EXIST:
-                        this.metadata = metadata;
                         writer = factory.writer(createStructure());
                         break;
                     case EXISTS:
-                        this.metadata = metadata;
                         if (overwrite) {
                             factory.delete(name);
                             writer = factory.writer(createStructure());

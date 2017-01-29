@@ -224,6 +224,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                         .putQuoted("location").put(':').putUtf8EscapedAndQuoted(FileNameExtractorCharSequence.get(m.getName())).put(',')
                         .putQuoted("rowsRejected").put(':').put(totalRows - importedRows).put(',')
                         .putQuoted("rowsImported").put(':').put(importedRows).put(',')
+                        .putQuoted("header").put(':').put(ctx.importer.isHeader()).put(',')
                         .putQuoted("columns").put(':').put('[');
                 ctx.responseState = RESPONSE_COLUMN;
                 // fall through

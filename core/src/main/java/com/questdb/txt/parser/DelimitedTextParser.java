@@ -69,7 +69,7 @@ public class DelimitedTextParser implements Closeable, Mutable {
         mel.of(schema, forceHeader);
         parse(addr, len, sampleSize, mel);
         mel.onLineCount(lineCount);
-        ial.onMetadata(mel.getMetadata());
+        ial.onMetadata(mel.getMetadata(), mel.isHeader());
         setHeader(mel.isHeader());
         restart();
     }

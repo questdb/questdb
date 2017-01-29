@@ -27,5 +27,5 @@ import com.questdb.std.ObjList;
 import com.questdb.txt.ImportedColumnMetadata;
 
 public interface InputAnalysisListener extends Listener {
-    void onMetadata(ObjList<ImportedColumnMetadata> metadata);
+    void onMetadata(ObjList<ImportedColumnMetadata> metadata, boolean header);
 }
