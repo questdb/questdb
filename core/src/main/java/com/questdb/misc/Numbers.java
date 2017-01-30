@@ -539,7 +539,7 @@ public final class Numbers {
                     break out;
                 case 'D':
                 case 'd':
-                    if (i + 1 < lim) {
+                    if (i + 1 < lim || i == 0) {
                         throw NumericException.INSTANCE;
                     }
                     if (dpe == lim) {
@@ -623,7 +623,7 @@ public final class Numbers {
                     break out;
                 case 'F':
                 case 'f':
-                    if (i + 1 < lim) {
+                    if (i == 0 || i + 1 < lim) {
                         throw NumericException.INSTANCE;
                     }
 
@@ -1045,7 +1045,7 @@ public final class Numbers {
         for (; i < lim; i++) {
             int c = sequence.charAt(i);
             if (c == 'L' || c == 'l') {
-                if (i + 1 < lim) {
+                if (i == 0 || i + 1 < lim) {
                     throw NumericException.INSTANCE;
                 }
                 break;

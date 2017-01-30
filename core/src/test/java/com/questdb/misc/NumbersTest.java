@@ -64,6 +64,21 @@ public class NumbersTest {
         Assert.assertEquals(32, Numbers.ceilPow2(17));
     }
 
+    @Test(expected = NumericException.class)
+    public void testEmptyDouble() throws Exception {
+        Numbers.parseDouble("D");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testEmptyFloat() throws Exception {
+        Numbers.parseFloat("f");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testEmptyLong() throws Exception {
+        Numbers.parseLong("L");
+    }
+
     @Test
     public void testFormatByte() throws Exception {
         for (int i = 0; i < 1000; i++) {

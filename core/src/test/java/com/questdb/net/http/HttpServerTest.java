@@ -462,6 +462,28 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    public void testImportNumericHeader() throws Exception {
+        final ServerConfiguration configuration = new ServerConfiguration();
+        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(configuration, getFactory()));
+        }});
+        server.start();
+
+        try {
+            StringSink sink = new StringSink();
+            RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+            QueryCompiler qc = new QueryCompiler(configuration);
+
+            Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-numeric-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true&forceHeader=true", null, null));
+            printer.print(qc.compile(getFactory(), "select count() from 'test-import.csv'"), getFactory());
+            // expect first line to be treated as header
+            TestUtils.assertEquals("2\n", sink);
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
     public void testImportOverwrite() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
