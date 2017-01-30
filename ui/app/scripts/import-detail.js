@@ -34,24 +34,24 @@
     'use strict';
 
     $.fn.importEditor = function (ebus) {
-        var container = $(this);
-        var statsSwitcher = $('.stats-switcher');
-        var divEditor = $(this).find('.js-import-editor');
-        var msgPanel = $(this).find('.js-import-error');
-        var divMessage = $(this).find('.js-message');
-        var divTabName = $(this).find('.js-import-tab-name');
-        var divRejectedPct = $(this).find('.import-rejected');
-        var divImportedPct = $(this).find('.import-imported');
-        var divRejectedCount = $(this).find('.js-rejected-row-count');
-        var divImportedCount = $(this).find('.js-imported-row-count');
-        var divCanvas = $(this).find('.ud-canvas');
-        var footerHeight = $('.footer')[0].offsetHeight;
-        var divBtnGroup = $(this).find('.js-import-error-btn-group');
-        var btnRadio = $('input:radio[name="importAction"]');
-        var lineHeight = 35;
-        var select;
-        var location;
-        var types = [
+        const container = $(this);
+        const statsSwitcher = $('.stats-switcher');
+        const divEditor = $(this).find('.js-import-editor');
+        const msgPanel = $(this).find('.js-import-error');
+        const divMessage = $(this).find('.js-message');
+        const divTabName = $(this).find('.js-import-tab-name');
+        const divRejectedPct = $(this).find('.import-rejected');
+        const divImportedPct = $(this).find('.import-imported');
+        const divRejectedCount = $(this).find('.js-rejected-row-count');
+        const divImportedCount = $(this).find('.js-imported-row-count');
+        const divCanvas = $(this).find('.ud-canvas');
+        const footerHeight = $('.footer')[0].offsetHeight;
+        const divBtnGroup = $(this).find('.js-import-error-btn-group');
+        const btnRadio = $('input:radio[name="importAction"]');
+        const lineHeight = 35;
+        let select;
+        let location;
+        const types = [
             {text: 'AUTO', value: null},
             {text: 'BOOLEAN', value: 'BOOLEAN'},
             {text: 'BYTE', value: 'BYTE'},
@@ -68,12 +68,12 @@
             {text: 'DATE (DD/MM/YYYY)', value: 'DATE_3'}
         ];
 
-        var current = null;
-        var editorBus = ebus;
+        let current = null;
+        const editorBus = ebus;
 
         function resizeCanvas() {
-            var top = divCanvas[0].getBoundingClientRect().top;
-            var h = Math.round((window.innerHeight - top));
+            const top = divCanvas[0].getBoundingClientRect().top;
+            let h = Math.round((window.innerHeight - top));
             h = h - footerHeight - 45;
             divCanvas[0].style.height = h + 'px';
         }

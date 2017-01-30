@@ -29,6 +29,8 @@
  ******************************************************************************/
 
 /*globals jQuery:false */
+/*eslint no-use-before-define: 0*/
+
 
 /**
  * @return {string}
@@ -41,6 +43,13 @@ function s4() {
 function guid() {
     'use strict';
     return (s4() + s4() + '-' + s4() + '-' + s4() + '-' + s4() + '-' + s4() + s4() + s4());
+}
+
+function fmtNumber(n) {
+    'use strict';
+    return n.toFixed(0).replace(/./g, function (c, i, a) {
+        return i && c !== '.' && ((a.length - i) % 3 === 0) ? ',' + c : c;
+    });
 }
 
 function toSize(x) {
@@ -72,30 +81,36 @@ function nopropagation(e) {
 (function ($) {
     'use strict';
 
-    $.fn.importManager = function () {
-        var dict = {};
-        var container = this;
-        var canvas;
-        var top = 0;
-        var uploadQueue = [];
-        var current = null;
-        var rowHeight = 35;
-        var xhr = null;
+    $.fn.importManager = function (editorBus) {
+        const ACTION_DEFAULT = 0;
+        const ACTION_APPEND = 1;
+        const ACTTION_OVERWRITE = 2;
+
+        const dict = {};
+        const container = this;
+        const ebus = editorBus;
+        let canvas;
+        let top = 0;
+        let uploadQueue = [];
+        let current = null;
+        let currentHtml = null;
+        const rowHeight = 35;
+        let xhr = null;
 
         function updateProgress(event) {
             if (event.lengthComputable) {
-                var pos = event.loaded || event.position;
-                $('#' + current.id).find(' > .ud-progress').css('width', (pos * 100 / current.size) + '%');
+                const pos = event.loaded || event.position;
+                currentHtml.find(' > .ud-progress').css('width', (pos * 100 / current.size) + '%');
             }
         }
 
         function updateButtons() {
-            var selected = false;
-            var retry = false;
+            let selected = false;
+            let retry = false;
 
-            for (var id in dict) {
+            for (let id in dict) {
                 if (dict.hasOwnProperty(id)) {
-                    var e = dict[id];
+                    const e = dict[id];
                     if (e.selected) {
                         selected = true;
                         if (e.retry) {
@@ -109,36 +124,64 @@ function nopropagation(e) {
             $('#btnRetry').attr('disabled', !retry);
         }
 
+        function renderActions(e, element) {
+            switch (e.retry) {
+                case ACTION_APPEND:
+                    element.find('.js-row-append').addClass('label-danger');
+                    element.find('.js-row-overwrite').removeClass('label-danger');
+                    break;
+                case ACTTION_OVERWRITE:
+                    element.find('.js-row-append').removeClass('label-danger');
+                    element.find('.js-row-overwrite').addClass('label-danger');
+                    break;
+                default:
+                    element.find('.js-row-append').removeClass('label-danger');
+                    element.find('.js-row-overwrite').removeClass('label-danger');
+                    break;
+            }
+
+            if (e.selected) {
+                element.find('.js-row-toggle').removeClass('fa-square-o').addClass('fa-check-square-o');
+            } else {
+                element.find('.js-row-toggle').removeClass('fa-check-square-o').addClass('fa-square-o');
+            }
+
+            if (e.forceHeader) {
+                element.find('.js-row-toggle-header').addClass('label-success');
+            } else {
+                element.find('.js-row-toggle-header').removeClass('label-success');
+            }
+
+            updateButtons();
+        }
+
         //noinspection JSUnusedLocalSymbols
         function renderRowAsOverwrite(x, e) {
-            e.retry = 2; // overwrite
-            $('#' + e.id + ' > .ud-c1').html(e.name + '<span class="label label-danger m-l-lg">overwrite</span>');
-            updateButtons();
+            e.retry = ACTTION_OVERWRITE;
+            renderActions(e, $('#' + e.id + ' > .ud-c0'));
         }
 
         //noinspection JSUnusedLocalSymbols
         function renderRowAsAppend(x, e) {
-            e.retry = 1; // append
-            $('#' + e.id + ' > .ud-c1').html(e.name + '<span class="label label-primary m-l-lg">append</span>');
-            updateButtons();
+            e.retry = ACTION_APPEND;
+            renderActions(e, $('#' + e.id + ' > .ud-c0'));
         }
 
         //noinspection JSUnusedLocalSymbols
         function renderRowAsCancel(x, e) {
-            e.retry = 0; // cancel
-            $('#' + e.id + ' > .ud-c1').html(e.name);
-            updateButtons();
+            e.retry = ACTION_DEFAULT;
+            renderActions(e, $('#' + e.id + ' > .ud-c0'));
         }
 
         function setupUploadProgressCallback() {
-            var xhrobj = $.ajaxSettings.xhr();
+            const xhrobj = $.ajaxSettings.xhr();
             if (xhrobj.upload) {
                 xhrobj.upload.addEventListener('progress', updateProgress, false);
             }
             return xhrobj;
         }
 
-        var importRequest = {
+        const importRequest = {
             xhr: setupUploadProgressCallback,
             url: '/imp?fmt=json',
             type: 'POST',
@@ -147,7 +190,7 @@ function nopropagation(e) {
             cache: false
         };
 
-        var existenceCheckRequest = {
+        const existenceCheckRequest = {
             type: 'GET',
             contentType: false,
             processData: false,
@@ -159,23 +202,69 @@ function nopropagation(e) {
         }
 
         function toggleRow() {
-            var id = $(this).parent().attr('id');
-            var btn = $('#' + id).find('.fa');
-            var e = dict[id];
-
+            const btn = $(this);
+            const e = dict[btn.parent().parent().attr('id')];
             e.selected = !e.selected;
+            renderActions(e, btn.parent());
+        }
 
-            if (e.selected) {
-                btn.removeClass('fa-square-o').addClass('fa-check-square-o');
-            } else {
-                btn.removeClass('fa-check-square-o').addClass('fa-square-o');
+        function toggleRowAppend() {
+            const btn = $(this);
+            const e = dict[btn.parent().parent().attr('id')];
+
+            switch (e.retry) {
+                case 1:
+                    e.retry = 0;
+                    e.selected = false;
+                    break;
+                default:
+                    e.retry = 1;
+                    e.selected = true;
+                    break;
             }
 
-            updateButtons();
+            renderActions(e, btn.parent());
+        }
+
+        function toggleRowOverwrite() {
+            const btn = $(this);
+            const e = dict[btn.parent().parent().attr('id')];
+
+            switch (e.retry) {
+                case 2:
+                    e.retry = 0;
+                    e.selected = false;
+                    break;
+                default:
+                    e.retry = 2;
+                    e.selected = true;
+                    break;
+            }
+
+            renderActions(e, btn.parent());
+        }
+
+        function toggleRowHeader() {
+            const btn = $(this);
+            const e = dict[btn.parent().parent().attr('id')];
+            e.forceHeader = !e.forceHeader;
+            renderActions(e, btn.parent());
+        }
+
+        function uploadRow() {
+            const btn = $(this);
+            const e = dict[btn.parent().parent().attr('id')];
+            submitUploadTask(e);
+        }
+
+        function viewRow() {
+            const btn = $(this);
+            const e = dict[btn.parent().parent().attr('id')];
+            ebus.trigger('query.build.execute', e.name);
         }
 
         function showDetail(e) {
-            var item = dict[$(this).parent().attr('id')];
+            const item = dict[$(this).parent().attr('id')];
             if (item.importState > -1) {
                 $(document).trigger('import.detail', item);
             }
@@ -183,26 +272,54 @@ function nopropagation(e) {
         }
 
         function render(e) {
-            canvas.append('<div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;"><div class="ud-cell ud-c0"><i class="fa fa-square-o ud-checkbox"></i></div><div class="ud-cell ud-c1">' + e.name + '</div><div class="ud-cell ud-c2">' + e.sizeFmt + '</div><div class="ud-cell ud-c3"><span class="label">pending</span></div></div>');
-            var row = $('#' + e.id);
-            row.find('.ud-c0').click(toggleRow);
-            row.find('.ud-c1').click(showDetail);
-            row.find('.ud-c2').click(showDetail);
-            row.find('.ud-c3').click(showDetail);
+            const html = $(`
+                        <div id="${e.id}" class="ud-row" style="top: ${top}px;">
+                            <div class="ud-cell ud-c0">
+                                <i class="fa fa-square-o ud-checkbox js-row-toggle"></i>
+                                <span class="label js-row-append">A</span>
+                                <span class="label js-row-overwrite">O</span>
+                                <span class="label js-row-toggle-header">H</span>
+                                <i class="fa fa-upload js-row-upload"></i>
+                            </div>
+                            <div class="ud-cell ud-c1">${e.name}</div>
+                            <div class="ud-cell ud-c2"><i class="fa fa-eye js-row-query"></i></div>
+                            <div class="ud-cell ud-c3">${e.sizeFmt}</div>
+                            <div class="ud-cell ud-c4 js-row-imported">?</div>
+                            <div class="ud-cell ud-c5 js-row-rejected">?</div>
+                            <div class="ud-cell ud-c6 js-row-header">?</div>
+                            <div class="ud-cell ud-c7 ud-status">
+                                <span class="label">pending</span>
+                            </div>
+                        </div>
+            `);
+
+            canvas.append(html);
+            html.find('.js-row-toggle').click(toggleRow);
+            html.find('.js-row-append').click(toggleRowAppend);
+            html.find('.js-row-overwrite').click(toggleRowOverwrite);
+            html.find('.js-row-toggle-header').click(toggleRowHeader);
+            html.find('.js-row-upload').click(uploadRow);
+            html.find('.js-row-query').click(viewRow);
+
+            html.find('.ud-c1').click(showDetail);
+            html.find('.ud-c2').click(showDetail);
+            html.find('.ud-c3').click(showDetail);
             top += rowHeight;
         }
 
         function status(e, html, processNext) {
-            var row = $('#' + e.id);
-            row.find(' > .ud-c3').html(html);
+            const row = currentHtml;
+            row.find(' > .ud-status').html(html);
             row.find(' > .ud-progress').remove();
 
+            current.selected = false;
             if (processNext) {
-                var next = uploadQueue.shift();
+                const next = uploadQueue.shift();
                 if (next) {
                     retryOrCheckExistence(next);
                 } else {
                     current = null;
+                    currentHtml = null;
                     xhr = null;
                 }
             }
@@ -216,7 +333,12 @@ function nopropagation(e) {
                 current.response = data;
                 current.importState = 0; // ok
                 renderRowAsCancel(null, current);
-                var type = data.rowsRejected > 0 ? 'label-warning' : 'label-success';
+
+                currentHtml.find('.js-row-imported').html(fmtNumber(data.rowsImported));
+                currentHtml.find('.js-row-rejected').html(fmtNumber(data.rowsRejected));
+                currentHtml.find('.js-row-header').html(data.header ? 'Yes' : 'No');
+
+                const type = data.rowsRejected > 0 ? 'label-warning' : 'label-success';
                 status(current, '<span class="label ' + type + '">imported in ' + (current.delta / 1000) + 's</span>', true);
             } else {
                 current.importState = 4; // error with journal, status has error message
@@ -250,17 +372,25 @@ function nopropagation(e) {
 
         function setupImportRequest() {
             importRequest.url = '/imp?fmt=json';
-            if (current.retry === 2) {
+
+            console.log(current);
+
+            if (current.retry === ACTTION_OVERWRITE) {
                 importRequest.url += '&overwrite=true';
             }
+
+            if (current.forceHeader) {
+                importRequest.url += '&forceHeader=true';
+            }
+
             importRequest.xhr = setupUploadProgressCallback;
             importRequest.data = new FormData();
 
             // encode type overrides
             if (current.response && current.response.columns) {
-                var schema = '';
-                for (var i = 0; i < current.response.columns.length; i++) {
-                    var c = current.response.columns[i];
+                let schema = '';
+                for (let i = 0; i < current.response.columns.length; i++) {
+                    const c = current.response.columns[i];
                     if (c.altType && c.type !== c.altType.text && c.altType.text !== 'AUTO') {
                         schema += c.name + '=' + c.altType.value + '&';
                     } else if (c.errors === 0 && c.type !== 'DATE' && (c.altType === undefined || c.altType.text !== 'AUTO')) {
@@ -282,9 +412,9 @@ function nopropagation(e) {
 
         function sendImportRequest() {
             status(current, '<span class="label label-info">importing</span>', false);
-            $('#' + current.id).append('<div class="ud-progress"></div>');
+            currentHtml.append(`<div class="ud-progress"></div>`);
             xhr = $.ajax(setupImportRequest()).done(importDone).fail(importFailed);
-            updateBtnImportCancel();
+            // updateBtnImportCancel();
         }
 
         function existenceCheckFork(e) {
@@ -310,6 +440,7 @@ function nopropagation(e) {
 
         function retryOrCheckExistence(e) {
             current = e;
+            currentHtml = $('#' + e.id);
             if (e.retry) {
                 current.importState = 0;
                 sendImportRequest();
@@ -319,20 +450,25 @@ function nopropagation(e) {
             }
         }
 
+        function submitUploadTask(item) {
+            if (current == null) {
+                retryOrCheckExistence(item);
+            } else if (current !== item) {
+                uploadQueue.push(item);
+            }
+
+        }
+
         function enqueueImportItem(item) {
             dict[item.id] = item;
             render(item);
-            if (current != null) {
-                uploadQueue.push(item);
-            } else {
-                retryOrCheckExistence(item);
-            }
+            submitUploadTask(item);
         }
 
         //noinspection JSUnusedLocalSymbols
         function addFiles(x, e) {
-            for (var i = 0; i < e.files.length; i++) {
-                var f = e.files[i];
+            for (let i = 0; i < e.files.length; i++) {
+                const f = e.files[i];
                 enqueueImportItem({
                     id: guid(),
                     name: f.name,
@@ -341,32 +477,33 @@ function nopropagation(e) {
                     type: 'file',
                     sizeFmt: toSize(f.size),
                     selected: false,
-                    imported: false
+                    imported: false,
+                    forceHeader: false
                 });
             }
         }
 
         //noinspection JSUnusedLocalSymbols
         function addClipboard(x, content) {
-            var date = new Date();
             enqueueImportItem({
                 id: guid(),
-                name: 'clipboard-' + date.getTime(),
+                name: 'clipboard-' + new Date().getTime(),
                 size: content.length,
                 type: 'clipboard',
                 content: content,
                 sizeFmt: toSize(content.length),
                 selected: false,
-                imported: false
+                imported: false,
+                forceHeader: false
             });
         }
 
         function clearSelected() {
-            for (var id in dict) {
+            for (let id in dict) {
                 if (dict.hasOwnProperty(id)) {
-                    var e = dict[id];
+                    const e = dict[id];
                     if (e.selected && e !== current) {
-                        var uploadQueueIndex = uploadQueue.indexOf(e);
+                        const uploadQueueIndex = uploadQueue.indexOf(e);
                         if (uploadQueueIndex > -1) {
                             delete uploadQueue[uploadQueueIndex];
                         }
@@ -379,8 +516,8 @@ function nopropagation(e) {
 
             // rejig remaining rows
             top = 0;
-            var rows = canvas.find('.ud-row');
-            for (var i = 0; i < rows.length; i++) {
+            const rows = canvas.find('.ud-row');
+            for (let i = 0; i < rows.length; i++) {
                 $(rows[i]).css('top', top);
                 top += rowHeight;
             }
@@ -388,15 +525,11 @@ function nopropagation(e) {
         }
 
         function retrySelected() {
-            for (var id in dict) {
+            for (let id in dict) {
                 if (dict.hasOwnProperty(id)) {
-                    var e = dict[id];
+                    const e = dict[id];
                     if (e.selected && e.retry) {
-                        if (current === null) {
-                            retryOrCheckExistence(e);
-                        } else {
-                            uploadQueue.push(e);
-                        }
+                        submitUploadTask(e);
                     }
                 }
             }
@@ -427,9 +560,8 @@ function nopropagation(e) {
         }
 
         function init() {
-            container.append('<div class="ud-header-row"><div class="ud-header ud-h0">&nbsp;</div><div class="ud-header ud-h1">File name</div><div class="ud-header ud-h2">Size</div><div class="ud-header ud-h3">Status</div></div>');
-            container.append('<div class="ud-canvas"></div>');
             canvas = container.find('> .ud-canvas');
+            console.log('SUBSCRIBED');
             subscribe();
         }
 

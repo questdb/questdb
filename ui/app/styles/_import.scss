@@ -97,25 +97,60 @@ $transparent-border: 1px solid transparent;
   transition: 0.05s ease-in-out;
 }
 
-.ud-c0 {
-  left: 0;
-  width: 5%;
+.ud-c0, .ud-h0 {
+  width: 10%;
+  -webkit-user-select: none; /* webkit (safari, chrome) browsers */
+  -moz-user-select: none; /* mozilla browsers */
+  -khtml-user-select: none; /* webkit (konqueror) browsers */
+  -ms-user-select: none; /* IE10+ */
 }
 
-.ud-c1 {
-  left: 5%;
-  width: 65%;
+.ud-c1, .ud-h1 {
+  left: 10%;
+  width: 25%;
+}
+
+.ud-c1,
+.js-row-append,
+.js-row-overwrite,
+.js-row-toggle-header,
+.js-row-upload,
+.js-row-query {
   cursor: pointer;
 }
 
-.ud-c2 {
-  left: 70%;
+.js-row-overwrite, .js-row-toggle-header {
+  margin-right: 10px;
+}
+
+.ud-c2, .ud-h2 {
+  left: 35%;
+  width: 5%;
+}
+
+.ud-c3, .ud-h3 {
+  left: 40%;
   width: 15%;
 }
 
-.ud-c3 {
-  left: 85%;
-  width: 15%;
+.ud-c4, .ud-h4 {
+  left: 55%;
+  width: 8%;
+}
+
+.ud-c5, .ud-h5 {
+  left: 63%;
+  width: 7%;
+}
+
+.ud-c6, .ud-h6 {
+  left: 70%;
+  width: 10%;
+}
+
+.ud-c7, .ud-h7 {
+  left: 80%;
+  width: 20%;
 }
 
 .ud-header {
@@ -125,26 +160,14 @@ $transparent-border: 1px solid transparent;
   border-bottom: $grid-border;
 }
 
-.ud-h0 {
-  width: 5%;
-}
-
-.ud-h1 {
-  width: 65%;
-}
-
-.ud-h2 {
-  width: 15%;
-}
-
-.ud-h3 {
-  width: 15%;
-}
-
 .ud-checkbox {
   font-size: 160%;
   vertical-align: middle;
   cursor: pointer;
+}
+
+.ud-checkbox.fa-square-o {
+  padding-right: 3px;
 }
 
 .ud-btn-group {

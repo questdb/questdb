@@ -174,7 +174,7 @@ $(document).ready(function () {
     $('#sqlEditor').editor(bus);
     $('#grid').grid(bus);
     $('#dragTarget').dropbox();
-    $('#import-file-list').importManager();
+    $('#import-file-list').importManager(bus);
     $('#import-detail').importEditor(bus);
     $('#chart').chart(document);
     qdb.switchToGrid();
