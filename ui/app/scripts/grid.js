@@ -529,7 +529,7 @@
         }
 
         function resize() {
-            var wh = window.innerHeight - $(window).scrollTop();
+            const wh = window.innerHeight - $(window).scrollTop();
             vp = Math.round((wh - viewport.getBoundingClientRect().top)) - defaults.bottomMargin;
             vp = Math.max(vp, defaults.minVpHeight);
             rowsInView = Math.floor(vp / rh);
@@ -723,6 +723,7 @@
             bus.on('grid.focus', focusCell);
             bus.on('grid.refresh', refreshQuery);
             bus.on('grid.publish.query', publishQuery);
+            bus.on('active.panel', resize);
         }
 
         bind();

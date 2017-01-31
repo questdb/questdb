@@ -36,24 +36,25 @@
 (function ($) {
     'use strict';
 
-    var divSqlPanel = $('.js-sql-panel');
-    var divImportPanel = $('.js-import-panel');
-    var divExportUrl = $('.js-export-url');
-    var editor = $('#editor');
-    var sqlEditor = $('#sqlEditor');
-    var chart = $('#chart');
-    var consoleTop = $('#console-top');
-    var wrapper = $('#page-wrapper');
-    var navbar = $('nav.navbar-default');
-    var msgPanel = editor.find('.js-query-message-panel');
-    var topHeight = 350;
-    var bottomHeight = 350;
+    const divSqlPanel = $('.js-sql-panel');
+    const divImportPanel = $('.js-import-panel');
+    const divExportUrl = $('.js-export-url');
+    const editor = $('#editor');
+    const sqlEditor = $('#sqlEditor');
+    const chart = $('#chart');
+    const consoleTop = $('#console-top');
+    const wrapper = $('#page-wrapper');
+    const navbar = $('nav.navbar-default');
+    const msgPanel = editor.find('.js-query-message-panel');
+    let topHeight = 350;
+    const bottomHeight = 350;
+    let ebus;
 
     function resize() {
-        var navbarHeight = navbar.height();
-        var wrapperHeight = wrapper.height();
-        var msgPanelHeight = msgPanel.height();
-        var h;
+        const navbarHeight = navbar.height();
+        const wrapperHeight = wrapper.height();
+        const msgPanelHeight = msgPanel.height();
+        let h;
 
         if (navbarHeight > wrapperHeight) {
             h = navbarHeight;
@@ -86,13 +87,13 @@
     function switchToEditor() {
         divSqlPanel.show();
         divImportPanel.hide();
-        $(document).trigger('active.panel', 'console');
+        ebus.trigger('active.panel', 'console');
     }
 
     function switchToImport() {
         divSqlPanel.hide();
         divImportPanel.show();
-        $(document).trigger('active.panel', 'import');
+        ebus.trigger('active.panel', 'import');
     }
 
     function switchToGrid() {
@@ -112,7 +113,7 @@
 
     function loadSplitterPosition() {
         if (typeof (Storage) !== 'undefined') {
-            var n = localStorage.getItem('splitter.position');
+            const n = localStorage.getItem('splitter.position');
             if (n) {
                 topHeight = parseInt(n);
             }
@@ -126,6 +127,8 @@
     }
 
     function setup(b) {
+        ebus = b;
+
         $('#side-menu').metisMenu();
         $(window).bind('resize', resize);
         $('a#sql-editor').click(switchToEditor);
@@ -145,6 +148,7 @@
         });
         $('#js-toggle-chart').click(switchToChart);
         $('#js-toggle-grid').click(switchToGrid);
+
         b.on('splitter.resize', function (x, e) {
             topHeight += e;
             $(window).trigger('resize');
@@ -163,20 +167,23 @@
     });
 }(jQuery));
 
-var bus;
+let bus;
 
 $(document).ready(function () {
     'use strict';
     bus = $({});
     qdb.setup(bus);
+
     bus.query();
     bus.domController();
+
     $('#sqlEditor').editor(bus);
     $('#grid').grid(bus);
-    $('#dragTarget').dropbox();
+    $('#dragTarget').dropbox(bus);
     $('#import-file-list').importManager(bus);
     $('#import-detail').importEditor(bus);
     $('#chart').chart(document);
+
     qdb.switchToGrid();
     $('#sp1').splitter(bus, 200, 0);
     bus.trigger('preferences.load');

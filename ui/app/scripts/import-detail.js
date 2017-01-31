@@ -291,5 +291,6 @@
         });
 
         $(window).resize(resizeCanvas);
+        editorBus.on('active.panel', resizeCanvas);
     };
 }(jQuery));

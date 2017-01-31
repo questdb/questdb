@@ -160,7 +160,6 @@
 
         //noinspection JSUnusedLocalSymbols
         function error(x, m) {
-            console.log(m);
             stop();
             divMsg.removeClass('query-message-ok').addClass('query-message-error');
             divTime.html('failed after <strong>' + (m.delta / 1000) + 's</strong>');

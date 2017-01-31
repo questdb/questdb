@@ -373,8 +373,6 @@ function nopropagation(e) {
         function setupImportRequest() {
             importRequest.url = '/imp?fmt=json';
 
-            console.log(current);
-
             if (current.retry === ACTTION_OVERWRITE) {
                 importRequest.url += '&overwrite=true';
             }
@@ -561,7 +559,6 @@ function nopropagation(e) {
 
         function init() {
             canvas = container.find('> .ud-canvas');
-            console.log('SUBSCRIBED');
             subscribe();
         }
 
@@ -572,7 +569,7 @@ function nopropagation(e) {
 
     // this class will manage drag&drop into dropbox element and
     // broadcast file readiness to document via custom event 'dropbox.files'
-    $.fn.dropbox = function () {
+    $.fn.dropbox = function (bus) {
 
         var collection = $();
         var target = this;
@@ -641,9 +638,9 @@ function nopropagation(e) {
         }
 
         function init() {
-            $(document).on('active.panel', handleActivation);
+            bus.on('active.panel', handleActivation);
 
-            var input = $('#js-browse-files-input')[0];
+            const input = $('#js-browse-files-input')[0];
 
             $('#js-browse-files').click(function () {
                 input.click();
