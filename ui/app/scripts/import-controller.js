@@ -28,51 +28,56 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
+/*globals qdb:false */
 /*globals jQuery:false */
+
 
 (function ($) {
     'use strict';
-    $.fn.splitter = function (msgBus, pName, pMinTop, pMinBottom) {
-        const bus = $(msgBus);
-        const div = $(this);
-        const busMsgName = 'splitter.' + pName + '.resize';
-        let ghost;
-        let start;
-        let end;
-        let styleMain;
-        const minTop = pMinTop;
-        const minBottom = pMinBottom;
 
-        function drag(e) {
-            e.preventDefault();
-            if (e.pageY > minTop && e.pageY < ((window.innerHeight + $(window).scrollTop()) - minBottom)) {
-                end = e.pageY;
-                ghost[0].style = styleMain + 'top: ' + e.pageY + 'px;';
-            }
+    const divImportPanel = $('.js-import-panel');
+    const importTopPanel = $('#import-top');
+    const canvasPanel = importTopPanel.find('.ud-canvas');
+    const w = $(window);
+
+    let upperHalfHeight = 450;
+
+    function hide() {
+        divImportPanel.hide();
+    }
+
+    function show() {
+        divImportPanel.show();
+        w.trigger('resize');
+    }
+
+    function resize() {
+        let r1 = importTopPanel[0].getBoundingClientRect();
+        let r2 = canvasPanel[0].getBoundingClientRect();
+        qdb.setHeight(importTopPanel, upperHalfHeight);
+        qdb.setHeight(canvasPanel, upperHalfHeight - (r2.top - r1.top) - 10);
+    }
+
+    function setup(b) {
+        w.bind('resize', resize);
+        $('#dragTarget').dropbox(b);
+        $('#import-file-list').importManager(b);
+        $('#import-detail').importEditor(b);
+        $('#sp2').splitter(b, 'import', 470, 300);
+        // upperHalfHeight = importTopPanel.height();
+
+        b.on('splitter.import.resize', function (x, p) {
+            upperHalfHeight += p;
+            w.trigger('resize');
+        });
+
+    }
+
+    $.extend(true, window, {
+        qdb: {
+            setupImportController: setup,
+            showImport: show,
+            hideImport: hide
         }
-
-        function endDrag() {
-            $(document).off('mousemove', drag);
-            $(document).off('mouseup', endDrag);
-            ghost[0].style = 'display: none';
-            div.removeClass('qs-dragging');
-            bus.trigger(busMsgName, (end - start));
-        }
-
-        function beginDrag() {
-            const rect = div[0].getBoundingClientRect();
-            start = rect.top + $(window).scrollTop();
-            styleMain = 'position: absolute; left: ' + rect.left + 'px; width: ' + rect.width + 'px; height: ' + rect.height + 'px;';
-            if (!ghost) {
-                ghost = $('<div class="qs-ghost"></div>');
-                ghost.appendTo('body');
-            }
-            ghost[0].style = styleMain + 'top: ' + start + 'px;';
-            div.addClass('qs-dragging');
-            $(document).mousemove(drag);
-            $(document).mouseup(endDrag);
-        }
-
-        $(this).mousedown(beginDrag);
-    };
+    });
 }(jQuery));

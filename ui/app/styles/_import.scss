@@ -158,6 +158,9 @@ $transparent-border: 1px solid transparent;
   padding: 5px 4px 7px 4px;
   font-weight: bold;
   border-bottom: $grid-border;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ud-checkbox {
@@ -180,4 +183,8 @@ $transparent-border: 1px solid transparent;
 
 .js-import-panel {
   display: none;
+}
+
+#import-detail {
+  margin-top: 10px;
 }

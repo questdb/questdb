@@ -33,16 +33,21 @@
 (function ($) {
     'use strict';
 
-    var queryBatchSize = 1000;
-    var MSG_QUERY_EXEC = 'query.in.exec';
-    var MSG_QUERY_CANCEL = 'query.in.cancel';
-    var MSG_QUERY_RUNNING = 'query.out.running';
-    var MSG_QUERY_OK = 'query.out.ok';
-    var MSG_QUERY_ERROR = 'query.out.error';
-    var MSG_QUERY_DATASET = 'query.out.dataset';
+    const queryBatchSize = 1000;
+    const MSG_QUERY_EXEC = 'query.in.exec';
+    const MSG_QUERY_CANCEL = 'query.in.cancel';
+    const MSG_QUERY_RUNNING = 'query.out.running';
+    const MSG_QUERY_OK = 'query.out.ok';
+    const MSG_QUERY_ERROR = 'query.out.error';
+    const MSG_QUERY_DATASET = 'query.out.dataset';
 
     function toExportUrl(query) {
         return window.location.protocol + '//' + window.location.host + '/exp?query=' + encodeURIComponent(query);
+    }
+
+    function setHeight(element, height) {
+        element.css('height', height + 'px');
+        element.css('min-height', height + 'px');
     }
 
     $.extend(true, window, {
@@ -54,7 +59,8 @@
             MSG_QUERY_OK,
             MSG_QUERY_ERROR,
             MSG_QUERY_DATASET,
-            toExportUrl
+            toExportUrl,
+            setHeight
         }
     });
 }(jQuery));
