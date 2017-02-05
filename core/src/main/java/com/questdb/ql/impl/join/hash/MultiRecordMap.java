@@ -59,8 +59,8 @@ public class MultiRecordMap implements Closeable, Mutable {
         records = new RecordList(valueMetadata, valuePageSize);
     }
 
-    public void add(DirectMap.KeyWriter key, Record record) {
-        DirectMapValues values = map.getOrCreateValues(key);
+    public void add(Record record) {
+        DirectMapValues values = map.getOrCreateValues();
         if (values.isNew()) {
             long offset = records.append(record, -1);
             values.putLong(0, offset);
@@ -85,8 +85,8 @@ public class MultiRecordMap implements Closeable, Mutable {
         records.close();
     }
 
-    public RecordCursor get(DirectMap.KeyWriter key) {
-        DirectMapValues values = map.getValues(key);
+    public RecordCursor get() {
+        DirectMapValues values = map.getValues();
         records.of(values == null ? -1 : values.getLong(0));
         return records;
     }

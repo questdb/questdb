@@ -57,9 +57,8 @@ public class PrevOrderedPartitionedAnalyticFunction extends AbstractOrderedAnaly
         }
 
         prevValues.putLong(0, row);
-        DirectMap.KeyWriter kw2 = map.keyWriter();
-        kw2.putLong(row);
-        map.getOrCreateValues(kw2).putLong(0, prevRow);
+        map.locate(row);
+        map.getOrCreateValues().putLong(0, prevRow);
     }
 
     @Override

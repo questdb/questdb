@@ -130,7 +130,7 @@ public class DirectMapTest {
             p = put(p, by);
 
             MapValue v = new MapValue();
-            DirectMapValues values = map.getOrCreateValues(w);
+            DirectMapValues values = map.getOrCreateValues();
             values.putInt(0, v.i = rnd.nextPositiveInt());
             values.putLong(1, v.l = rnd.nextPositiveLong());
             values.putShort(2, v.s = (short) rnd.nextInt());
@@ -231,7 +231,7 @@ public class DirectMapTest {
             String s = rnd.nextString(rnd.nextPositiveInt() % 32);
             w.putStr(s);
             MapValue v = new MapValue();
-            DirectMapValues values = map.getOrCreateValues(w);
+            DirectMapValues values = map.getOrCreateValues();
             values.putInt(0, v.i = rnd.nextPositiveInt());
             values.putLong(1, v.l = rnd.nextPositiveLong());
             values.putShort(2, v.s = (short) rnd.nextInt());
@@ -244,7 +244,7 @@ public class DirectMapTest {
         for (Map.Entry<String, MapValue> me : hashMap.entrySet()) {
             DirectMap.KeyWriter kw = map.keyWriter();
             kw.putStr(me.getKey());
-            DirectMapValues values = map.getValues(kw);
+            DirectMapValues values = map.getValues();
             Assert.assertNotNull(values);
 
             MapValue v = me.getValue();

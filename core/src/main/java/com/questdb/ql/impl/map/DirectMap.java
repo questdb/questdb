@@ -27,6 +27,7 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.misc.Hash;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import com.questdb.ql.Record;
 import com.questdb.std.*;
 import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
@@ -127,7 +128,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         return entry.init(rowid);
     }
 
-    public DirectMapValues getOrCreateValues(KeyWriter keyWriter) {
+    public DirectMapValues getOrCreateValues() {
         keyWriter.commit();
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
@@ -135,12 +136,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         long offset = offsets.get(index);
 
         if (offset == -1) {
-            offsets.set(index, keyWriter.startAddr - kStart);
-            if (--free == 0) {
-                rehash();
-            }
-            size++;
-            return values.of(keyWriter.startAddr, true);
+            return asNew(keyWriter, index);
         } else if (eq(keyWriter, offset)) {
             // rollback added key
             kPos = keyWriter.startAddr;
@@ -150,7 +146,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         }
     }
 
-    public DirectMapValues getValues(KeyWriter keyWriter) {
+    public DirectMapValues getValues() {
         keyWriter.commit();
         // rollback key right away
         kPos = keyWriter.startAddr;
@@ -175,8 +171,32 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
         return keyWriter.init();
     }
 
+    public void locate(RecordKeyCopier copier, Record record) {
+        keyWriter.init();
+        copier.copy(record, keyWriter);
+    }
+
+    public void locate(long rowid) {
+        keyWriter.startAddr = kPos;
+        keyWriter.appendAddr = keyWriter.startAddr + keyDataOffset;
+        if (keyWriter.appendAddr + 8 > kLimit) {
+            resize();
+        }
+        Unsafe.getUnsafe().putLong(keyWriter.appendAddr, rowid);
+        keyWriter.appendAddr += 8;
+    }
+
     public int size() {
         return size;
+    }
+
+    private DirectMapValues asNew(KeyWriter keyWriter, int index) {
+        offsets.set(index, keyWriter.startAddr - kStart);
+        if (--free == 0) {
+            rehash();
+        }
+        size++;
+        return values.of(keyWriter.startAddr, true);
     }
 
     private boolean eq(KeyWriter keyWriter, long offset) {

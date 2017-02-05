@@ -50,10 +50,10 @@ public class NextOrderedPartitionedAnalyticFunction extends AbstractOrderedAnaly
         long row = record.getRowId();
         DirectMapValues prevValues = MapUtils.getMapValues(prevMap, record, partitionBy);
         if (!prevValues.isNew()) {
-            DirectMap.KeyWriter kw2 = map.keyWriter();
-            kw2.putLong(prevValues.getLong(0));
-            DirectMapValues values = map.getOrCreateValues(kw2);
-            values.putLong(0, row);
+//            DirectMap.KeyWriter kw2 = map.keyWriter();
+//            kw2.putLong(prevValues.getLong(0));
+            map.locate(prevValues.getLong(0));
+            map.getOrCreateValues().putLong(0, row);
         }
         prevValues.putLong(0, row);
     }

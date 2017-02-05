@@ -201,9 +201,8 @@ public class AggregatedRecordSource extends AbstractCombinedRecordSource impleme
         while (cursor.hasNext()) {
             cancellationHandler.check();
             Record r = cursor.next();
-            DirectMap.KeyWriter kw = map.keyWriter();
-            copier.copy(r, kw);
-            DirectMapValues values = map.getOrCreateValues(kw);
+            map.locate(copier, r);
+            DirectMapValues values = map.getOrCreateValues();
             for (int i = 0; i < sz; i++) {
                 aggregators.getQuick(i).calculate(r, values);
             }

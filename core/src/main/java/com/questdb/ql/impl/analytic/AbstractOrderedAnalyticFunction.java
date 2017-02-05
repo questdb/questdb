@@ -150,9 +150,8 @@ public abstract class AbstractOrderedAnalyticFunction implements AnalyticFunctio
 
     @Override
     public void prepareFor(Record record) {
-        DirectMap.KeyWriter kw = map.keyWriter();
-        kw.putLong(record.getRowId());
-        DirectMapValues values = map.getValues(kw);
+        map.locate(record.getRowId());
+        DirectMapValues values = map.getValues();
         long row;
         if (values == null || (row = values.getLong(0)) == -1) {
             out = NullRecord.INSTANCE;

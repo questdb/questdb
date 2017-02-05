@@ -192,9 +192,9 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             final DirectMap.KeyWriter key = recordMap.claimKey();
             slaveCopier.copy(r, key);
             if (byRowId) {
-                recordMap.add(key, fakeRecord.of(r.getRowId()));
+                recordMap.add(fakeRecord.of(r.getRowId()));
             } else {
-                recordMap.add(key, r);
+                recordMap.add(r);
             }
         }
     }
@@ -204,7 +204,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
             Record r = masterCursor.next();
             DirectMap.KeyWriter kw = recordMap.claimKey();
             masterCopier.copy(r, kw);
-            hashTableCursor = recordMap.get(kw);
+            hashTableCursor = recordMap.get();
             if (hashTableCursor.hasNext()) {
                 advanceSlaveCursor();
                 return true;

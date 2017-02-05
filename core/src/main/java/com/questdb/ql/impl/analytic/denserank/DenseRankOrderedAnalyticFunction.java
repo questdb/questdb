@@ -24,8 +24,6 @@
 package com.questdb.ql.impl.analytic.denserank;
 
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.DirectMapValues;
 
 public class DenseRankOrderedAnalyticFunction extends AbstractRankOrderedAnalyticFunction {
     public DenseRankOrderedAnalyticFunction(int pageSize, String name) {
@@ -34,9 +32,9 @@ public class DenseRankOrderedAnalyticFunction extends AbstractRankOrderedAnalyti
 
     @Override
     public void add(Record record) {
-        DirectMap.KeyWriter kw = map.keyWriter();
-        kw.putLong(record.getRowId());
-        DirectMapValues values = map.getOrCreateValues(kw);
-        values.putLong(0, ++rank);
+//        DirectMap.KeyWriter kw = map.keyWriter();
+//        kw.putLong(record.getRowId());
+        map.locate(record.getRowId());
+        map.getOrCreateValues().putLong(0, ++rank);
     }
 }

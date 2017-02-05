@@ -51,7 +51,7 @@ public class ServerConfiguration {
     private int httpSoRcvSmall = 8 * 1024;
     private int httpSoRcvLarge = 4 * 1024 * 1024;
     private int httpSoRetries = 1024;
-    private int httpSoConsecutiveBadReadLimit = 10;
+    private int httpSoConsecutiveBadReadLimit = 1000;
     private boolean httpAbortBrokenUploads = true;
     private String httpIndexFile = "index.html";
     private int dbAsOfDataPage = 4 * 1024 * 1024;

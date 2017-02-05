@@ -25,7 +25,6 @@ package com.questdb.ql.impl.analytic.prev;
 
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.analytic.AbstractOrderedAnalyticFunction;
-import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.ops.VirtualColumn;
 
 public class PrevOrderedAnalyticFunction extends AbstractOrderedAnalyticFunction {
@@ -39,9 +38,10 @@ public class PrevOrderedAnalyticFunction extends AbstractOrderedAnalyticFunction
     @Override
     public void add(Record record) {
         long row = record.getRowId();
-        DirectMap.KeyWriter kw = map.keyWriter();
-        kw.putLong(row);
-        map.getOrCreateValues(kw).putLong(0, prevRow);
+//        DirectMap.KeyWriter kw = map.keyWriter();
+//        kw.putLong(row);
+        map.locate(row);
+        map.getOrCreateValues().putLong(0, prevRow);
         prevRow = row;
     }
 

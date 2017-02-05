@@ -54,9 +54,10 @@ public class DenseRankOPAnalyticFunction extends AbstractRankOrderedAnalyticFunc
             rank = values.getLong(0) + 1;
             values.putLong(0, rank);
         }
-        DirectMap.KeyWriter kw2 = map.keyWriter();
-        kw2.putLong(row);
-        map.getOrCreateValues(kw2).putLong(0, rank);
+//        DirectMap.KeyWriter kw = map.keyWriter();
+//        kw.putLong(row);
+        map.locate(row);
+        map.getOrCreateValues().putLong(0, rank);
     }
 
     @Override

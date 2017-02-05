@@ -58,9 +58,8 @@ public abstract class AbstractRankOrderedAnalyticFunction extends AbstractRankAn
 
     @Override
     public void prepareFor(Record record) {
-        DirectMap.KeyWriter kw = map.keyWriter();
-        kw.putLong(record.getRowId());
-        rank = map.getValues(kw).getLong(0);
+        map.locate(record.getRowId());
+        rank = map.getValues().getLong(0);
     }
 
     @Override

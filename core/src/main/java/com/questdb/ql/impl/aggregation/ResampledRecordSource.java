@@ -216,7 +216,7 @@ public class ResampledRecordSource extends AbstractCombinedRecordSource {
             DirectMap.KeyWriter kw = map.keyWriter();
             kw.putLong(sample);
             copier.copy(rec, kw);
-            DirectMapValues values = map.getOrCreateValues(kw);
+            DirectMapValues values = map.getOrCreateValues();
             for (int i = 0; i < sz; i++) {
                 aggregators.getQuick(i).calculate(rec, values);
             }

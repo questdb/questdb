@@ -118,10 +118,12 @@ public class LastRowIdRecordMap implements LastRecordMap {
     }
 
     private DirectMapValues getByMaster(Record record) {
-        return map.getValues(RecordUtils.createKey(map, record, masterKeyIndexes, masterKeyTypes));
+        RecordUtils.createKey(map, record, masterKeyIndexes, masterKeyTypes);
+        return map.getValues();
     }
 
     private DirectMapValues getBySlave(Record record) {
-        return map.getOrCreateValues(RecordUtils.createKey(map, record, slaveKeyIndexes, slaveKeyTypes));
+        RecordUtils.createKey(map, record, slaveKeyIndexes, slaveKeyTypes);
+        return map.getOrCreateValues();
     }
 }

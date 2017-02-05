@@ -35,7 +35,6 @@ import com.questdb.store.ColumnType;
 public class MapUtils {
     public static final IntList ROWID_MAP_VALUES = new IntList(1);
     public static final CollectionRecordMetadata ROWID_RECORD_METADATA = new CollectionRecordMetadata().add(LongMetadata.INSTANCE);
-    private static final ThreadLocal<IntList> tlTypeList = ThreadLocal.withInitial(() -> new IntList(1));
 
     private MapUtils() {
     }
@@ -45,7 +44,7 @@ public class MapUtils {
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             writeVirtualColumn(kw, rec, partitionBy.getQuick(i));
         }
-        return map.getOrCreateValues(kw);
+        return map.getOrCreateValues();
     }
 
     public static void writeVirtualColumn(DirectMap.KeyWriter w, Record r, VirtualColumn vc) {

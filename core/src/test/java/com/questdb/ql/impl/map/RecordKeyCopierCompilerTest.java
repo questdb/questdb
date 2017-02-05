@@ -93,7 +93,7 @@ public class RecordKeyCopierCompilerTest extends AbstractOptimiserTest {
                             Record r = cursor.next();
                             DirectMap.KeyWriter kw = map.keyWriter();
                             copier.copy(r, kw);
-                            DirectMapValues val = map.getOrCreateValues(kw);
+                            DirectMapValues val = map.getOrCreateValues();
                             val.putDouble(0, 5000.01);
                         }
 
@@ -102,7 +102,7 @@ public class RecordKeyCopierCompilerTest extends AbstractOptimiserTest {
                             Record r = cursor.next();
                             DirectMap.KeyWriter kw = map.keyWriter();
                             copier.copy(r, kw);
-                            Assert.assertEquals(map.getValues(kw).getDouble(0), 5000.01, 0.00000001);
+                            Assert.assertEquals(map.getValues().getDouble(0), 5000.01, 0.00000001);
                         }
                     } finally {
                         cursor.releaseCursor();
