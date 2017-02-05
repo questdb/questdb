@@ -30,24 +30,18 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.impl.map.LongResolver;
-import com.questdb.ql.impl.map.TypeListResolver;
-import com.questdb.std.*;
+import com.questdb.ql.impl.map.*;
+import com.questdb.std.IntList;
+import com.questdb.std.LongList;
+import com.questdb.std.Transient;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 public class LastFixRecordMap implements LastRecordMap {
-    private final static TypeListResolver.TypeListResolverThreadLocal tlTypeListResolver = new TypeListResolver.TypeListResolverThreadLocal();
     private final DirectMap map;
     private final LongList pages = new LongList();
     private final int pageSize;
-    private final IntHashSet slaveKeyIndexes;
-    private final IntHashSet masterKeyIndexes;
     private final IntList slaveValueIndexes;
-    private final IntList slaveKeyTypes;
-    private final IntList masterKeyTypes;
     private final IntList slaveValueTypes;
     private final IntList fixedOffsets;
     private final int recordLen;
@@ -55,36 +49,23 @@ public class LastFixRecordMap implements LastRecordMap {
     private final MapRecord record = new MapRecord();
     private final int bits;
     private final int mask;
+    private final RecordKeyCopier masterCopier;
+    private final RecordKeyCopier slaveCopier;
     private StorageFacade storageFacade;
     private long appendOffset;
 
     public LastFixRecordMap(
-            RecordMetadata masterMetadata,
+            @Transient ColumnTypeResolver masterResolver,
             RecordMetadata slaveMetadata,
-            @Transient CharSequenceHashSet masterKeyColumns,
-            @Transient CharSequenceHashSet slaveKeyColumns,
+            RecordKeyCopier masterCopier,
+            RecordKeyCopier slaveCopier,
             int dataPageSize,
             int offsetPageSize) {
         this.pageSize = Numbers.ceilPow2(dataPageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
-
-        final int ksz = masterKeyColumns.size();
-        this.masterKeyTypes = new IntList(ksz);
-        this.slaveKeyTypes = new IntList(ksz);
-        this.masterKeyIndexes = new IntHashSet(ksz);
-        this.slaveKeyIndexes = new IntHashSet(ksz);
-
-        for (int i = 0; i < ksz; i++) {
-            int idx;
-            idx = masterMetadata.getColumnIndex(masterKeyColumns.get(i));
-            masterKeyTypes.add(masterMetadata.getColumnQuick(idx).getType());
-            masterKeyIndexes.add(idx);
-
-            idx = slaveMetadata.getColumnIndex(slaveKeyColumns.get(i));
-            slaveKeyIndexes.add(idx);
-            slaveKeyTypes.add(slaveMetadata.getColumnQuick(idx).getType());
-        }
+        this.masterCopier = masterCopier;
+        this.slaveCopier = slaveCopier;
 
         this.fixedOffsets = new IntList();
         this.slaveValueIndexes = new IntList();
@@ -105,7 +86,7 @@ public class LastFixRecordMap implements LastRecordMap {
         }
 
         this.recordLen = varOffset;
-        this.map = new DirectMap(offsetPageSize, tlTypeListResolver.get().of(masterKeyTypes), LongResolver.INSTANCE);
+        this.map = new DirectMap(offsetPageSize, masterResolver, LongResolver.INSTANCE);
         this.metadata = slaveMetadata;
     }
 
@@ -184,12 +165,12 @@ public class LastFixRecordMap implements LastRecordMap {
     }
 
     private DirectMapValues getByMaster(Record record) {
-        RecordUtils.createKey(map, record, masterKeyIndexes, masterKeyTypes);
+        map.locate(masterCopier, record);
         return map.getValues();
     }
 
     private DirectMapValues getBySlave(Record record) {
-        RecordUtils.createKey(map, record, slaveKeyIndexes, slaveKeyTypes);
+        map.locate(slaveCopier, record);
         return map.getOrCreateValues();
     }
 

@@ -1399,7 +1399,10 @@ public class QueryCompiler {
                     slaveKeys,
                     configuration.getDbAsOfDataPage(),
                     configuration.getDbAsOfIndexPage(),
-                    configuration.getDbAsOfRowPage());
+                    configuration.getDbAsOfRowPage(),
+                    recordKeyCopierCompiler
+
+            );
         }
     }
 

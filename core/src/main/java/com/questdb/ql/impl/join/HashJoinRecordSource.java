@@ -31,7 +31,10 @@ import com.questdb.ql.impl.NullableRecord;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.join.hash.MultiRecordMap;
-import com.questdb.ql.impl.map.*;
+import com.questdb.ql.impl.map.MapUtils;
+import com.questdb.ql.impl.map.MetadataTypeResolver;
+import com.questdb.ql.impl.map.RecordKeyCopier;
+import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.IntList;
 import com.questdb.std.str.CharSink;
@@ -189,8 +192,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private void buildHashTable(CancellationHandler cancellationHandler) {
         for (Record r : slaveCursor) {
             cancellationHandler.check();
-            final DirectMap.KeyWriter key = recordMap.claimKey();
-            slaveCopier.copy(r, key);
+            recordMap.locate(slaveCopier, r);
             if (byRowId) {
                 recordMap.add(fakeRecord.of(r.getRowId()));
             } else {
@@ -202,8 +204,7 @@ public class HashJoinRecordSource extends AbstractCombinedRecordSource implement
     private boolean hasNext0() {
         while (masterCursor.hasNext()) {
             Record r = masterCursor.next();
-            DirectMap.KeyWriter kw = recordMap.claimKey();
-            masterCopier.copy(r, kw);
+            recordMap.locate(masterCopier, r);
             hashTableCursor = recordMap.get();
             if (hashTableCursor.hasNext()) {
                 advanceSlaveCursor();

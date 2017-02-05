@@ -31,6 +31,7 @@ import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.map.ColumnTypeResolver;
 import com.questdb.ql.impl.map.DirectMap;
 import com.questdb.ql.impl.map.DirectMapValues;
+import com.questdb.ql.impl.map.RecordKeyCopier;
 import com.questdb.std.Mutable;
 import com.questdb.store.ColumnType;
 
@@ -70,10 +71,6 @@ public class MultiRecordMap implements Closeable, Mutable {
         }
     }
 
-    public DirectMap.KeyWriter claimKey() {
-        return map.keyWriter();
-    }
-
     public void clear() {
         map.clear();
         records.clear();
@@ -93,6 +90,10 @@ public class MultiRecordMap implements Closeable, Mutable {
 
     public Record getRecord() {
         return records.getRecord();
+    }
+
+    public void locate(RecordKeyCopier copier, Record record) {
+        map.locate(copier, record);
     }
 
     public void setStorageFacade(StorageFacade storageFacade) {

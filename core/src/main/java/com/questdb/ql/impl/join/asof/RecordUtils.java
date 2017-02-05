@@ -25,58 +25,10 @@ package com.questdb.ql.impl.join.asof;
 
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.std.IntHashSet;
-import com.questdb.std.IntList;
 import com.questdb.store.ColumnType;
 
 final class RecordUtils {
     private RecordUtils() {
-    }
-
-    static DirectMap.KeyWriter createKey(DirectMap map, Record record, IntHashSet indices, IntList types) {
-        DirectMap.KeyWriter kw = map.keyWriter();
-        for (int i = 0, n = indices.size(); i < n; i++) {
-            int idx = indices.get(i);
-            switch (types.getQuick(i)) {
-                case ColumnType.INT:
-                    kw.putInt(record.getInt(idx));
-                    break;
-                case ColumnType.LONG:
-                    kw.putLong(record.getLong(idx));
-                    break;
-                case ColumnType.FLOAT:
-                    kw.putFloat(record.getFloat(idx));
-                    break;
-                case ColumnType.DOUBLE:
-                    kw.putDouble(record.getDouble(idx));
-                    break;
-                case ColumnType.BOOLEAN:
-                    kw.putBool(record.getBool(idx));
-                    break;
-                case ColumnType.BYTE:
-                    kw.putByte(record.get(idx));
-                    break;
-                case ColumnType.SHORT:
-                    kw.putShort(record.getShort(idx));
-                    break;
-                case ColumnType.DATE:
-                    kw.putLong(record.getDate(idx));
-                    break;
-                case ColumnType.STRING:
-                    kw.putStr(record.getFlyweightStr(idx));
-                    break;
-                case ColumnType.SYMBOL:
-                    // this is key field
-                    // we have to write out string rather than int
-                    // because master int values for same strings can be different
-                    kw.putStr(record.getSym(idx));
-                    break;
-                default:
-                    break;
-            }
-        }
-        return kw;
     }
 
     static void copyFixed(int columnType, Record record, int column, long address) {

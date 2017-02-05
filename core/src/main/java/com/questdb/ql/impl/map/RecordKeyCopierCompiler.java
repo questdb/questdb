@@ -39,6 +39,10 @@ public class RecordKeyCopierCompiler {
     }
 
     public RecordKeyCopier compile(RecordMetadata meta, @Transient IntList columns) {
+        return compile(meta, columns, false);
+    }
+
+    public RecordKeyCopier compile(RecordMetadata meta, @Transient IntList columns, boolean symAsString) {
         asm.clear();
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
@@ -58,6 +62,7 @@ public class RecordKeyCopierCompiler {
         int rGetFloat = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getFloat"), asm.poolUtf8("(I)F")));
         int rGetDouble = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getDouble"), asm.poolUtf8("(I)D")));
         int rGetStr = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getFlyweightStr"), asm.poolUtf8("(I)Ljava/lang/CharSequence;")));
+        int rGetSym = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getSym"), asm.poolUtf8("(I)Ljava/lang/String;")));
 
         //
         int wPutInt = asm.poolMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putInt"), asm.poolUtf8("(I)V")));
@@ -97,9 +102,17 @@ public class RecordKeyCopierCompiler {
 
             switch (meta.getColumnQuick(index).getType()) {
                 case ColumnType.INT:
-                case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetInt, 1);
                     asm.invokeVirtual(wPutInt);
+                    break;
+                case ColumnType.SYMBOL:
+                    if (symAsString) {
+                        asm.invokeInterface(rGetSym, 1);
+                        asm.invokeVirtual(wPutStr);
+                    } else {
+                        asm.invokeInterface(rGetInt, 1);
+                        asm.invokeVirtual(wPutInt);
+                    }
                     break;
                 case ColumnType.LONG:
                     asm.invokeInterface(rGetLong, 1);

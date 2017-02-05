@@ -27,50 +27,28 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.map.DirectMap;
-import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.impl.map.LongByteResolver;
-import com.questdb.ql.impl.map.TypeListResolver;
-import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.IntHashSet;
-import com.questdb.std.IntList;
+import com.questdb.ql.impl.map.*;
+import com.questdb.std.Transient;
 
 public class LastRowIdRecordMap implements LastRecordMap {
-    private static final TypeListResolver.TypeListResolverThreadLocal tlTypeListResolver = new TypeListResolver.TypeListResolverThreadLocal();
     private final DirectMap map;
-    private final IntHashSet slaveKeyIndexes;
-    private final IntHashSet masterKeyIndexes;
-    private final IntList slaveKeyTypes;
-    private final IntList masterKeyTypes;
+    private final RecordKeyCopier masterCopier;
+    private final RecordKeyCopier slaveCopier;
     private final RecordMetadata metadata;
     private final Record passThruRecord;
     private RecordCursor slaveCursor;
 
     public LastRowIdRecordMap(
-            RecordMetadata masterMetadata,
+            @Transient ColumnTypeResolver masterResolver,
             RecordMetadata slaveMetadata,
-            CharSequenceHashSet masterKeyColumns,
-            CharSequenceHashSet slaveKeyColumns,
+            RecordKeyCopier masterCopier,
+            RecordKeyCopier slaveCopier,
             int pageSize,
             Record passThruRecord) {
-        final int ksz = masterKeyColumns.size();
-        this.masterKeyTypes = new IntList(ksz);
-        this.slaveKeyTypes = new IntList(ksz);
-        this.masterKeyIndexes = new IntHashSet(ksz);
-        this.slaveKeyIndexes = new IntHashSet(ksz);
+        this.masterCopier = masterCopier;
+        this.slaveCopier = slaveCopier;
         this.passThruRecord = passThruRecord;
-
-        for (int i = 0; i < ksz; i++) {
-            int idx;
-            idx = masterMetadata.getColumnIndex(masterKeyColumns.get(i));
-            masterKeyTypes.add(masterMetadata.getColumnQuick(idx).getType());
-            masterKeyIndexes.add(idx);
-
-            idx = slaveMetadata.getColumnIndex(slaveKeyColumns.get(i));
-            slaveKeyIndexes.add(idx);
-            slaveKeyTypes.add(slaveMetadata.getColumnQuick(idx).getType());
-        }
-        this.map = new DirectMap(pageSize, tlTypeListResolver.get().of(masterKeyTypes), LongByteResolver.INSTANCE);
+        this.map = new DirectMap(pageSize, masterResolver, LongByteResolver.INSTANCE);
         this.metadata = slaveMetadata;
     }
 
@@ -118,12 +96,12 @@ public class LastRowIdRecordMap implements LastRecordMap {
     }
 
     private DirectMapValues getByMaster(Record record) {
-        RecordUtils.createKey(map, record, masterKeyIndexes, masterKeyTypes);
+        map.locate(masterCopier, record);
         return map.getValues();
     }
 
     private DirectMapValues getBySlave(Record record) {
-        RecordUtils.createKey(map, record, slaveKeyIndexes, slaveKeyTypes);
+        map.locate(slaveCopier, record);
         return map.getOrCreateValues();
     }
 }

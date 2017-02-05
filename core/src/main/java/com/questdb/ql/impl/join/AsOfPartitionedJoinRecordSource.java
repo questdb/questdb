@@ -31,14 +31,19 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.NullableRecord;
 import com.questdb.ql.impl.SplitRecordMetadata;
 import com.questdb.ql.impl.join.asof.*;
+import com.questdb.ql.impl.map.RecordKeyCopier;
+import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
+import com.questdb.ql.impl.map.TypeListResolver;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.IntList;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 
 public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSource implements Closeable {
+    private static final TypeListResolver.TypeListResolverThreadLocal tlTypeListResolver = new TypeListResolver.TypeListResolverThreadLocal();
     private final LastRecordMap map;
     private final RecordHolder holder;
     private final RecordSource master;
@@ -62,14 +67,41 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
             CharSequenceHashSet slaveKeyColumns,
             int dataPageSize,
             int offsetPageSize,
-            int rowIdPageSize
+            int rowIdPageSize,
+            RecordKeyCopierCompiler compiler
     ) {
         this.master = master;
         this.masterTimestampIndex = masterTimestampIndex;
         this.slave = slave;
         this.slaveTimestampIndex = slaveTimestampIndex;
+
+        IntList indices = new IntList();
+        IntList types = new IntList();
+
+        RecordMetadata m = master.getMetadata();
+        for (int i = 0, n = masterKeyColumns.size(); i < n; i++) {
+            int index = m.getColumnIndex(masterKeyColumns.get(i));
+            indices.add(index);
+            types.add(m.getColumn(index).getType());
+        }
+
+        RecordKeyCopier masterCopier = compiler.compile(m, indices, true);
+        indices.clear();
+
+        m = slave.getMetadata();
+        for (int i = 0, n = slaveKeyColumns.size(); i < n; i++) {
+            indices.add(m.getColumnIndex(slaveKeyColumns.get(i)));
+        }
+        RecordKeyCopier slaveCopier = compiler.compile(m, indices, true);
+
         if (slave.supportsRowIdAccess()) {
-            map = new LastRowIdRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, rowIdPageSize, slave.getRecord());
+            map = new LastRowIdRecordMap(
+                    tlTypeListResolver.get().of(types),
+                    slave.getMetadata(),
+                    masterCopier,
+                    slaveCopier,
+                    rowIdPageSize,
+                    slave.getRecord());
             holder = new RowidRecordHolder();
         } else {
             // check if slave has variable length columns
@@ -89,10 +121,22 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
                 }
             }
             if (var) {
-                this.map = new LastVarRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, dataPageSize, offsetPageSize);
+                this.map = new LastVarRecordMap(
+                        tlTypeListResolver.get().of(types),
+                        slave.getMetadata(),
+                        masterCopier,
+                        slaveCopier,
+                        dataPageSize, offsetPageSize);
                 this.holder = new VarRecordHolder(slave.getMetadata());
             } else {
-                this.map = new LastFixRecordMap(master.getMetadata(), slave.getMetadata(), masterKeyColumns, slaveKeyColumns, dataPageSize, offsetPageSize);
+                this.map = new LastFixRecordMap(
+                        tlTypeListResolver.get().of(types),
+                        slave.getMetadata(),
+                        masterCopier,
+                        slaveCopier,
+                        dataPageSize,
+                        offsetPageSize
+                );
                 this.holder = new FixRecordHolder(slave.getMetadata());
             }
         }

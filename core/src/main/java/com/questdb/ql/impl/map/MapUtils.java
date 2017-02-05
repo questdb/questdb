@@ -47,7 +47,7 @@ public class MapUtils {
         return map.getOrCreateValues();
     }
 
-    public static void writeVirtualColumn(DirectMap.KeyWriter w, Record r, VirtualColumn vc) {
+    private static void writeVirtualColumn(DirectMap.KeyWriter w, Record r, VirtualColumn vc) {
         switch (vc.getType()) {
             case ColumnType.BOOLEAN:
                 w.putBool(vc.getBool(r));

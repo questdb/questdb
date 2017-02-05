@@ -27,13 +27,11 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Dates;
-import com.questdb.misc.Rnd;
-import com.questdb.misc.Unsafe;
+import com.questdb.misc.*;
 import com.questdb.ql.impl.NoRowIdRecordSource;
 import com.questdb.ql.impl.join.AsOfJoinRecordSource;
 import com.questdb.ql.impl.join.AsOfPartitionedJoinRecordSource;
+import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.CharSequenceHashSet;
@@ -49,6 +47,8 @@ import java.io.IOException;
 public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
 
     private static final CharSequenceHashSet keys = new CharSequenceHashSet();
+    private static final RecordKeyCopierCompiler cc = new RecordKeyCopierCompiler(new BytecodeAssembler());
+
 
     @BeforeClass
     public static void setUpClass() throws Exception {
@@ -289,6 +289,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 128
                 , 128
                 , 128
+                , cc
         )) {
             assertThat(expected, source);
         }
@@ -390,6 +391,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 512
                 , 512
                 , 512
+                , cc
         )) {
             assertThat(expected, source, true);
         }
@@ -430,6 +432,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 512
                 , 512
                 , 512
+                , cc
         )) {
             StringSink testSink = new StringSink();
             int idx = source.getMetadata().getColumnIndex("trader");
@@ -476,6 +479,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 , 512
                 , 512
                 , 512
+                , cc
         )) {
             assertThat(expected, source, true);
         }
