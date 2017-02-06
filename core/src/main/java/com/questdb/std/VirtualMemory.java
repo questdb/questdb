@@ -97,7 +97,7 @@ public class VirtualMemory implements Closeable {
     }
 
     public long getLong(long offset) {
-        if (roOffsetLo < offset && offset < roOffsetHi + 8) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
             return Unsafe.getUnsafe().getLong(roPtr + offset);
         }
         return getLong0(offset);
@@ -127,7 +127,6 @@ public class VirtualMemory implements Closeable {
             buf.position(pos + len);
             return putBin(ByteBuffers.getAddress(buf) + pos, len);
         }
-
         return putBin0(buf);
     }
 
@@ -211,7 +210,7 @@ public class VirtualMemory implements Closeable {
         putInt(l);
 
         if (pageHi - appendPointer < l * 2) {
-            putStrSplit(value, 0, l);
+            putStrSplit(value, l);
         } else {
             copyStrChars(value, 0, l, appendPointer);
             appendPointer += l * 2;
@@ -271,7 +270,7 @@ public class VirtualMemory implements Closeable {
         int pageOffset = pageOffset(offset);
         computeHotPage(page);
 
-        if (pageSize - page > 3) {
+        if (pageSize - pageOffset > 3) {
             return Unsafe.getUnsafe().getFloat(pages.getQuick(page) + pageOffset);
         }
         return getFloatBytes(page, pageOffset);
@@ -384,17 +383,17 @@ public class VirtualMemory implements Closeable {
             return offset;
         }
 
-        int len = buf.remaining();
         int pos = buf.position();
+        int len = buf.remaining();
+        buf.position(pos + len);
 
         putLong(len);
 
         if (len < pageHi - appendPointer) {
             copyBufBytes(buf, pos, len);
             appendPointer += len;
-            buf.position(pos + len);
         } else {
-            putBinSplit(buf, len);
+            putBinSplit(buf, pos, len);
         }
 
         return offset;
@@ -416,9 +415,9 @@ public class VirtualMemory implements Closeable {
         } while (true);
     }
 
-    private void putBinSplit(ByteBuffer buf, int len) {
+    private void putBinSplit(ByteBuffer buf, int pos, int len) {
         // todo: this doesn't seem to adjust buf position correctly
-        int start = buf.position();
+        int start = pos;
         do {
             int half = (int) (pageHi - appendPointer);
 
@@ -451,14 +450,14 @@ public class VirtualMemory implements Closeable {
     }
 
     void putLongBytes(long value) {
-        putByte((byte) (value & 0xff));
-        putByte((byte) ((value >> 8) & 0xff));
-        putByte((byte) ((value >> 16) & 0xff));
-        putByte((byte) ((value >> 24) & 0xff));
-        putByte((byte) ((value >> 32) & 0xff));
-        putByte((byte) ((value >> 40) & 0xff));
-        putByte((byte) ((value >> 48) & 0xff));
-        putByte((byte) ((value >> 56) & 0xff));
+        putByte((byte) (value & 0xffL));
+        putByte((byte) ((value >> 8) & 0xffL));
+        putByte((byte) ((value >> 16) & 0xffL));
+        putByte((byte) ((value >> 24) & 0xffL));
+        putByte((byte) ((value >> 32) & 0xffL));
+        putByte((byte) ((value >> 40) & 0xffL));
+        putByte((byte) ((value >> 48) & 0xffL));
+        putByte((byte) ((value >> 56) & 0xffL));
     }
 
     void putShortBytes(short value) {
@@ -472,7 +471,8 @@ public class VirtualMemory implements Closeable {
         Unsafe.getUnsafe().putByte(appendPointer++, (byte) c);
     }
 
-    private void putStrSplit(CharSequence value, int start, int len) {
+    private void putStrSplit(CharSequence value, int len) {
+        int start = 0;
         do {
             int half = (int) ((pageHi - appendPointer) / 2);
 
