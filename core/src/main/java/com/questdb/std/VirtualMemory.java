@@ -1,3 +1,26 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.std;
 
 import com.questdb.misc.ByteBuffers;
@@ -24,7 +47,7 @@ public class VirtualMemory implements Closeable {
 
     public VirtualMemory(int pageSize) {
         this.pageSize = Numbers.ceilPow2(pageSize);
-        this.bits = Numbers.msb(pageSize);
+        this.bits = Numbers.msb(this.pageSize);
         this.mod = this.pageSize - 1;
     }
 
@@ -199,7 +222,7 @@ public class VirtualMemory implements Closeable {
 
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
         for (int i = 0; i < len; i++) {
-            char c = value.charAt(i);
+            char c = value.charAt(i + pos);
             Unsafe.getUnsafe().putChar(address + 2 * i, c);
         }
     }
@@ -223,14 +246,14 @@ public class VirtualMemory implements Closeable {
 
     private byte getByte0(long offset) {
         int page = pageIndex(offset);
-        int pageOffset = pageOffset(page);
+        int pageOffset = pageOffset(offset);
         computeHotPage(page);
         return Unsafe.getUnsafe().getByte(pages.getQuick(page) + pageOffset);
     }
 
     private double getDouble0(long offset) {
         int page = pageIndex(offset);
-        int pageOffset = pageOffset(page);
+        int pageOffset = pageOffset(offset);
         computeHotPage(page);
 
         if (pageSize - pageOffset > 7) {
@@ -245,7 +268,7 @@ public class VirtualMemory implements Closeable {
 
     private float getFloat0(long offset) {
         int page = pageIndex(offset);
-        int pageOffset = pageOffset(page);
+        int pageOffset = pageOffset(offset);
         computeHotPage(page);
 
         if (pageSize - page > 3) {
@@ -260,7 +283,7 @@ public class VirtualMemory implements Closeable {
 
     private int getInt0(long offset) {
         int page = pageIndex(offset);
-        int pageOffset = pageOffset(page);
+        int pageOffset = pageOffset(offset);
         computeHotPage(page);
 
         if (pageSize - pageOffset > 3) {
@@ -312,7 +335,7 @@ public class VirtualMemory implements Closeable {
 
     private short getShort0(long offset) {
         int page = pageIndex(offset);
-        int pageOffset = pageOffset(page);
+        int pageOffset = pageOffset(offset);
         computeHotPage(page);
 
         if (pageSize - pageOffset > 1) {
