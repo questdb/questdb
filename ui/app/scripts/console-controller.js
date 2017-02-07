@@ -66,7 +66,7 @@
             if (h < topHeight + bottomHeight) {
                 h = topHeight + bottomHeight;
             }
-            qdb.setHeight(wrapper, h);
+            qdb.setHeight(wrapper, h - 1);
         }
 
         qdb.setHeight(consoleTop, topHeight);

@@ -46,8 +46,6 @@
         const divImportedCount = $(this).find('.js-imported-row-count');
         const divCanvas = $(this).find('.ud-canvas');
         const footerHeight = $('.footer')[0].offsetHeight;
-        const divBtnGroup = $(this).find('.js-import-error-btn-group');
-        const btnRadio = $('input:radio[name="importAction"]');
         const lineHeight = 35;
         let select;
         let location;
@@ -191,41 +189,34 @@
                 switch (e.importState) {
                     case 1:
                         divMessage.html('Journal <strong>' + e.name + '</strong> already exists on server');
-                        divBtnGroup.show();
                         break;
                     case 2:
                         divMessage.html('Journal name <strong>' + e.name + '</strong> is reserved');
-                        divBtnGroup.hide();
                         break;
                     case 3:
                         divMessage.html('Server is not responding...');
-                        divBtnGroup.hide();
                         break;
                     case 4:
                         divMessage.html(e.response);
-                        divBtnGroup.hide();
                         break;
                     case 5:
                         divMessage.html('Server encountered internal problem. Check server logs for more details.');
-                        divBtnGroup.hide();
                         break;
                     default:
                         divMessage.html('Unknown error: ' + e.responseStatus);
-                        divBtnGroup.hide();
                         break;
                 }
                 divEditor.hide();
                 msgPanel.show();
                 // reset button group option
-                btnRadio.iCheck('uncheck');
             }
             container.show();
         }
 
         function setupSelect() {
             select = $('<select class="g-dynamic-select form-control m-b"/>');
-            for (var i = 0; i < types.length; i++) {
-                var val = types[i];
+            for (let i = 0; i < types.length; i++) {
+                const val = types[i];
                 $('<option />', {value: val.value, text: val.text}).appendTo(select);
             }
         }
@@ -259,22 +250,6 @@
             }
         });
 
-        btnRadio.on('ifClicked', function () {
-            var msg;
-            switch (this.value) {
-                case 'append':
-                    msg = 'import.line.append';
-                    break;
-                case 'overwrite':
-                    msg = 'import.line.overwrite';
-                    break;
-                default:
-                    msg = 'import.line.abort';
-                    break;
-            }
-            $(document).trigger(msg, current);
-        });
-
         divTabName.mouseover(function () {
             divTabName.addClass('animated tada').one('webkitAnimationEnd mozAnimationEnd MSAnimationEnd oanimationend animationend', function () {
                 $(this).removeClass('animated').removeClass('tada');
@@ -283,11 +258,6 @@
 
         divTabName.click(function () {
             editorBus.trigger('query.build.execute', location);
-        });
-
-        $('input').iCheck({
-            checkboxClass: 'icheckbox_square-red',
-            radioClass: 'iradio_square-red'
         });
 
         $(window).resize(resizeCanvas);
