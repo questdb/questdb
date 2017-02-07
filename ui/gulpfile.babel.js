@@ -27,7 +27,6 @@
  * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
-
 // generated on 2016-03-23 using generator-webapp 2.0.0
 import gulp from "gulp";
 import gulpLoadPlugins from "gulp-load-plugins";
@@ -86,9 +85,18 @@ gulp.task('lint:test', lint('test/spec/**/*.js', testLintOptions));
 gulp.task('html', ['styles', 'scripts'], () => {
     return gulp.src('app/*.html')
         .pipe($.useref({searchPath: ['.tmp', 'app', '.']}))
-        .pipe($.if('*.js', $.uglify()))
-        .pipe($.if('*.css', $.cssnano()))
-        .pipe($.if('*.html', $.htmlmin({collapseWhitespace: true})))
+        .pipe($.if('/\.js$/', $.uglify({compress: {drop_console: true}})))
+        .pipe($.if('/\.css$/b', $.cssnano({safe: true, autoprefixer: false})))
+        .pipe($.if('/\.html$/', $.htmlmin({
+            collapseWhitespace: true,
+            minifyCSS: true,
+            minifyJS: {compress: {drop_console: true}},
+            processConditionalComments: true,
+            removeComments: true,
+            removeEmptyAttributes: true,
+            removeScriptTypeAttributes: true,
+            removeStyleLinkTypeAttributes: true
+        })))
         .pipe(gulp.dest(dist));
 });
 
