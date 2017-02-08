@@ -31,7 +31,6 @@
 .nav > li > a {
   color: $nav-text-color;
   font-weight: 600;
-  padding: 14px 20px 14px 25px;
 }
 
 .nav.navbar-right > li > a {
@@ -43,7 +42,7 @@
 }
 
 .navbar-default .nav > li > a:hover, .navbar-default .nav > li > a:focus {
-  background-color: darken($nav-bg, 3%);
+  //background-color: darken($nav-bg, 3%);
   color: white;
 }
 
@@ -57,6 +56,15 @@
 
 .nav > li > a i {
   margin-right: 6px;
+}
+
+.nav > li > a:hover {
+  background: darken($nav-bg, 3%);
+}
+
+.nav > li > a.selected, a.selected:hover {
+  background-color: #36c6d3;
+  color: white;
 }
 
 .navbar {
@@ -172,9 +180,8 @@
 }
 
 .nav-header {
-  padding: 33px 25px;
+  width: 45px;
   background: $nav-profil-pattern;
-
 }
 
 .pace-done .nav-header {
@@ -346,7 +353,7 @@ body.mini-navbar .navbar-default .nav > li > .nav-second-level li a {
   font-weight: 600;
   color: white;
   display: none;
-  padding: 18px 0;
+  padding: 10px 0 10px 5px;
 }
 
 .pace-done .navbar-static-side, .pace-done .nav-header, .pace-done li.active, .pace-done #page-wrapper, .pace-done .footer {
@@ -413,7 +420,7 @@ body.fixed-nav.fixed-nav-basic.fixed-sidebar.mini-navbar.body-small .navbar-fixe
 }
 
 body.mini-navbar .navbar-static-side {
-  width: 70px;
+  width: 45px;
 }
 
 body.mini-navbar .profile-element, body.mini-navbar .nav-label, body.mini-navbar .navbar-default .nav li a span {
@@ -450,7 +457,7 @@ body.canvas-menu .nav-header {
 }
 
 body.mini-navbar #page-wrapper {
-  margin: 0 0 0 70px;
+  margin: 0 0 0 45px;
 }
 
 body.fixed-sidebar.mini-navbar .footer,

@@ -70,21 +70,19 @@
         <div class="sidebar-collapse">
             <ul class="nav metismenu" id="side-menu">
                 <li class="nav-header">
-                    <div class="dropdown profile-element">
-                        <a data-toggle="dropdown" class="dropdown-toggle" href="#"><span class="clear"
-                                                                                         style="margin-left: -16px;"><img
-                                src="images/logo-toolbar-white.png"></span> </a>
-                    </div>
                     <div class="logo-element">
                         <img src="images/favicon@76x-8.png" style="max-height: 30px; margin-left: -7px;">
                     </div>
                 </li>
                 <li>
-                    <a id="sql-editor" href="#"><i class="fa fa-bars"></i> <span
+                    <a id="nav-console" href="#"><i class="fa fa-bars"></i> <span
                             class="nav-label">SQL Console</span></a>
                 </li>
                 <li>
-                    <a id="file-upload" href="#"><i class="fa fa-upload"></i> <span class="nav-label">Data import</span></a>
+                    <a id="nav-visualisation" href="#"><i class="fa fa-pie-chart"></i> <span class="nav-label">Visualisation</span></a>
+                </li>
+                <li>
+                    <a id="nav-import" href="#"><i class="fa fa-upload"></i> <span class="nav-label">Data import</span></a>
                 </li>
             </ul>
         </div>
@@ -145,9 +143,6 @@
                                     <div class="js-query-message-text"></div>
                                 </div>
                             </div>
-                            <div id="chart">
-
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -168,11 +163,12 @@
                 </div>
             </div>
         </div>
+
         <div class="row wrapper border-bottom white-bg page-heading js-import-panel">
             <div class="col-lg-12">
                 <div class="section-title"><i class="fa fa-upload"></i> import</div>
                 <div class="m-b-sm m-t-sm section-nav">
-                    <button id="btnImportClearSelected" class="btn btn-white btn-sm" disabled><i
+                    <button id="btnImportClearSelected" class="btn btn-white btn-sm btn-icon" disabled><i
                             class="fa fa-remove"></i>Clear
                     </button>
                     <button id="btnRetry" class="btn btn-white btn-sm" title disabled><i
@@ -285,9 +281,52 @@
                 </div>
             </div>
         </div>
+
+        <div class="row wrapper border-bottom white-bg page-heading js-vis-panel">
+            <div class="col-lg-12">
+                <div class="section-title"><i class="fa fa-pie-chart"></i> Visualisation</div>
+                <div class="m-b-sm m-t-sm section-nav">
+                    <button id="btnVisRefresh" class="btn btn-white btn-sm btn-icon"><i
+                            class="fa fa-refresh"></i>Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="wrapper wrapper-content js-vis-panel">
+            <div class="row">
+                <div class="col-lg-12">
+                    <div id="visualisation-top">
+                        <div class="row full-height">
+                            <div class="col-lg-3 full-height">
+                                <div class="ibox float-e-margins">
+                                    <div class="ibox-content">
+                                        <h2>Available columns</h2>
+                                        <ul class="vis-columns">
+                                            <li>x</li>
+                                            <li>y</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-lg-9 full-height">
+                                <div class="ibox float-e-margins">
+                                    <div class="ibox-title">
+                                        <h5>Your visualisation</h5>
+                                    </div>
+                                    <div class="ibox-content">
+                                        <div id="vis-canvas"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="footer">
             <div>
-                <strong>Copyright</strong> Appsicle Ltd. &copy; 2014-2016
+                <strong>Copyright</strong> Appsicle Ltd. &copy; 2014-2017
             </div>
         </div>
 
@@ -303,7 +342,6 @@
 <script src="../bower_components/ace-builds/src-noconflict/ace.js"></script>
 <script src="../bower_components/ace-builds/src-noconflict/theme-merbivore_soft.js"></script>
 <script src="../bower_components/clipboard/dist/clipboard.min.js"></script>
-<script src="../bower_components/echarts/dist/echarts.js"></script>
 <!-- endbower -->
 <script src="thirdparty/mode-questdb.js"></script>
 <script src="scripts/globals.js"></script>
@@ -311,11 +349,14 @@
 <script src="scripts/import.js"></script>
 <script src="scripts/import-detail.js"></script>
 <script src="scripts/query.js"></script>
-<script src="scripts/chart.js"></script>
 <script src="scripts/splitter.js"></script>
 <script src="scripts/console-controller.js"></script>
 <script src="scripts/import-controller.js"></script>
+<script src="scripts/vis-controller.js"></script>
 <script src="scripts/main.js"></script>
+<!-- bower:js -->
+<script src="../bower_components/echarts/dist/echarts.js"></script>
+<!-- endbower -->
 <!-- endbuild -->
 
 </body>

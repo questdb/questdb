@@ -48,12 +48,13 @@ public class FactoryEventLogger extends SynchronizedJob implements Closeable {
             .$int("pid")
             .$byte("factoryType")
             .$long("thread")
-            .$sym("name")
+            .$sym("name").buckets(64)
             .$short("event")
             .$short("segment")
             .$short("position")
             .$ts()
             .partitionBy(PartitionBy.DAY)
+            .recordCountHint(10000)
             .$();
     private final Factory factory;
     private final JournalWriter writer;

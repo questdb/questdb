@@ -43,59 +43,44 @@
     const wrapper = $('#page-wrapper');
     const msgPanel = editor.find('.js-query-message-panel');
     const navbar = $('nav.navbar-default');
-    const chart = $('#chart');
+    const win = $(window);
 
     let topHeight = 350;
     const bottomHeight = 350;
+    let visible = false;
 
     function resize() {
-        const navbarHeight = navbar.height();
-        const wrapperHeight = wrapper.height();
-        const msgPanelHeight = msgPanel.height();
-        let h;
+        if (visible) {
+            const navbarHeight = navbar.height();
+            const wrapperHeight = wrapper.height();
+            const msgPanelHeight = msgPanel.height();
+            let h;
 
-        if (navbarHeight > wrapperHeight) {
-            h = navbarHeight;
-        }
-
-        if (navbarHeight < wrapperHeight) {
-            h = $(window).height();
-        }
-
-        if (h) {
-            if (h < topHeight + bottomHeight) {
-                h = topHeight + bottomHeight;
+            if (navbarHeight > wrapperHeight) {
+                h = navbarHeight;
             }
-            qdb.setHeight(wrapper, h - 1);
+
+            if (navbarHeight < wrapperHeight) {
+                h = win.height();
+            }
+
+            if (h) {
+                if (h < topHeight + bottomHeight) {
+                    h = topHeight + bottomHeight;
+                }
+                qdb.setHeight(wrapper, h - 1);
+            }
+
+            qdb.setHeight(consoleTop, topHeight);
+            qdb.setHeight(editor, topHeight);
+            qdb.setHeight(sqlEditor, topHeight - msgPanelHeight - 60);
         }
-
-        qdb.setHeight(consoleTop, topHeight);
-        qdb.setHeight(editor, topHeight);
-        qdb.setHeight(sqlEditor, topHeight - msgPanelHeight - 60);
-        qdb.setHeight(chart, topHeight);
-    }
-
-    function show() {
-        divSqlPanel.show();
-    }
-
-    function hide() {
-        divSqlPanel.hide();
     }
 
     function switchToGrid() {
-        chart.hide();
-        $('#editor').show();
+        // $('#editor').show();
         $('#js-toggle-chart').removeClass('active');
         $('#js-toggle-grid').addClass('active');
-    }
-
-    function switchToChart() {
-        chart.show();
-        $('#editor').hide();
-        $('#js-toggle-chart').addClass('active');
-        $('#js-toggle-grid').removeClass('active');
-        $(document).trigger('chart.draw');
     }
 
     function loadSplitterPosition() {
@@ -113,8 +98,19 @@
         }
     }
 
+    function toggleVisibility(x, name) {
+        if (name === 'console') {
+            visible = true;
+            divSqlPanel.show();
+        } else {
+            visible = false;
+            divSqlPanel.hide();
+        }
+    }
+
+
     function setup(bus) {
-        $(window).bind('resize', resize);
+        win.bind('resize', resize);
         bus.on(qdb.MSG_QUERY_DATASET, function (e, m) {
             divExportUrl.val(qdb.toExportUrl(m.query));
         });
@@ -129,18 +125,16 @@
             bus.trigger('grid.refresh');
         });
 
-        $('#js-toggle-chart').click(switchToChart);
-        $('#js-toggle-grid').click(switchToGrid);
-
         // named splitter
         bus.on('splitter.console.resize', function (x, e) {
             topHeight += e;
-            $(window).trigger('resize');
+            win.trigger('resize');
             bus.trigger('preferences.save');
         });
 
         bus.on('preferences.save', saveSplitterPosition);
         bus.on('preferences.load', loadSplitterPosition);
+        bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
 
         bus.query();
         bus.domController();
@@ -148,16 +142,15 @@
         sqlEditor.editor(bus);
 
         $('#grid').grid(bus);
-        chart.chart(document);
         $('#sp1').splitter(bus, 'console', 200, 0);
+
+        switchToGrid();
     }
 
     $.extend(true, window, {
         qdb: {
             setupConsoleController: setup,
-            switchToGrid,
-            showConsole: show,
-            hideConsole: hide
+            switchToGrid
         }
     });
 }(jQuery));

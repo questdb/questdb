@@ -105,12 +105,7 @@ gulp.task('css_patterns', () => {
         .pipe(gulp.dest(path.join(dist, 'styles/patterns')));
 });
 
-gulp.task('icheck_images', () => {
-    return gulp.src('bower_components/iCheck/skins/square/red*.png')
-        .pipe(gulp.dest(path.join(dist, 'styles')));
-});
-
-gulp.task('images', ['css_patterns', 'icheck_images'], () => {
+gulp.task('images', ['css_patterns'], () => {
     return gulp.src('app/images/**/*')
         .pipe($.cache($.imagemin({
             progressive: true,

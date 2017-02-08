@@ -42,15 +42,6 @@
 
     let upperHalfHeight = 450;
 
-    function hide() {
-        divImportPanel.hide();
-    }
-
-    function show() {
-        divImportPanel.show();
-        w.trigger('resize');
-    }
-
     function resize() {
         let r1 = importTopPanel[0].getBoundingClientRect();
         let r2 = canvasPanel[0].getBoundingClientRect();
@@ -58,26 +49,35 @@
         qdb.setHeight(canvasPanel, upperHalfHeight - (r2.top - r1.top) - 10);
     }
 
-    function setup(b) {
-        w.bind('resize', resize);
-        $('#dragTarget').dropbox(b);
-        $('#import-file-list').importManager(b);
-        $('#import-detail').importEditor(b);
-        $('#sp2').splitter(b, 'import', 470, 300);
-        // upperHalfHeight = importTopPanel.height();
-
-        b.on('splitter.import.resize', function (x, p) {
-            upperHalfHeight += p;
+    function toggleVisibility(x, name) {
+        if (name === 'import') {
+            divImportPanel.show();
             w.trigger('resize');
-        });
+        } else {
+            divImportPanel.hide();
+        }
+    }
 
+    function splitterResize(x, p) {
+        upperHalfHeight += p;
+        w.trigger('resize');
+    }
+
+    function setup(bus) {
+        w.bind('resize', resize);
+
+        $('#dragTarget').dropbox(bus);
+        $('#import-file-list').importManager(bus);
+        $('#import-detail').importEditor(bus);
+        $('#sp2').splitter(bus, 'import', 470, 300);
+
+        bus.on('splitter.import.resize', splitterResize);
+        bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
     }
 
     $.extend(true, window, {
         qdb: {
-            setupImportController: setup,
-            showImport: show,
-            hideImport: hide
+            setupImportController: setup
         }
     });
 }(jQuery));

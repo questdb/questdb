@@ -29,6 +29,7 @@
  ******************************************************************************/
 
 /*globals jQuery:false */
+/*globals qdb:false */
 
 (function ($) {
     'use strict';
@@ -77,16 +78,16 @@
         }
 
         function selectClick() {
-            var div = $(this);
+            const div = $(this);
             select.appendTo(div.parent());
             select.css('left', div.css('left'));
             select.css('width', div.css('width'));
 
             // find column index
-            var colIndex = parseInt($(this).parent().find('.js-g-row').text()) - 1;
+            const colIndex = parseInt($(this).parent().find('.js-g-row').text()) - 1;
 
             // get column
-            var col = current.response.columns[colIndex];
+            const col = current.response.columns[colIndex];
 
             // set option
             if (col.altType) {
@@ -115,9 +116,9 @@
         }
 
         function calcModifiedFlag() {
-            var modified = false;
-            for (var i = 0; i < current.response.columns.length; i++) {
-                var col = current.response.columns[i];
+            let modified = false;
+            for (let i = 0; i < current.response.columns.length; i++) {
+                const col = current.response.columns[i];
                 if (col.altType && col.type !== col.altType.text) {
                     modified = true;
                     break;
@@ -128,7 +129,7 @@
         }
 
         function selectChange() {
-            var sel = $(this).find('option:selected');
+            const sel = $(this).find('option:selected');
             select.changeTargetCol.altType = {text: sel.text(), value: sel.val()};
             select.changeTargetDiv.html(getTypeHtml(select.changeTargetCol));
             calcModifiedFlag();
@@ -151,9 +152,9 @@
                 divTabName.html(location = e.response.location);
 
                 // update "chart"
-                var importedRows = e.response.rowsImported;
-                var rejectedRows = e.response.rowsRejected;
-                var totalRows = importedRows + rejectedRows;
+                const importedRows = e.response.rowsImported;
+                const rejectedRows = e.response.rowsRejected;
+                const totalRows = importedRows + rejectedRows;
                 divRejectedPct.css('width', Math.round(rejectedRows * 100 / totalRows) + '%');
                 divImportedPct.css('width', Math.round(importedRows * 100 / totalRows) + '%');
 
@@ -165,9 +166,9 @@
 
                 // records
                 if (e.response.columns) {
-                    var top = 0;
-                    for (var k = 0; k < e.response.columns.length; k++) {
-                        var col = e.response.columns[k];
+                    let top = 0;
+                    for (let k = 0; k < e.response.columns.length; k++) {
+                        const col = e.response.columns[k];
                         divCanvas.append('<div class="ud-row" style="top: ' + top + 'px">' +
                             '<div class="ud-cell gc-1 g-other js-g-row">' + (k + 1) + '</div>' +
                             '<div class="ud-cell gc-2 g-other">' + (col.errors > 0 ? '<i class="fa fa-exclamation-triangle g-warning"></i>' : '') + col.name + '</div>' +
@@ -257,7 +258,7 @@
         });
 
         divTabName.click(function () {
-            editorBus.trigger('query.build.execute', location);
+            editorBus.trigger(qdb.MSG_QUERY_FIND_N_EXEC, location);
         });
 
         $(window).resize(resizeCanvas);

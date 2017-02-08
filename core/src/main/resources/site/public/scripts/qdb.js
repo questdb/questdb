@@ -23612,6 +23612,2808 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
         }, {"./clipboard-action": 7, "good-listener": 4, "tiny-emitter": 6}]
     }, {}, [8])(8)
 });
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+ace.define(
+    "ace/mode/sql_highlight_rules",
+    ["require", "exports", "module", "ace/lib/oop", "ace/mode/text_highlight_rules"],
+    function (e, t, n) {
+        "use strict";
+        var r = e("../lib/oop"), i = e("./text_highlight_rules").TextHighlightRules, s = function () {
+            var e = "select|insert|update|delete|from|where|and|or|by|order|limit|as|case|when|else|end|type|left|right|join|on|outer|desc|asc|union|create|table|primary|key|if|foreign|not|references|default|null|inner|cross|natural|database|drop|grant|over|sample|partition|latest|NaN|with|rename";
+            var t = "true|false";
+            var n = "avg|count|first|last|max|min|sum|ucase|lcase|mid|len|round|rank|now|format|coalesce|ifnull|isnull|nvl";
+            var r = "int|date|string|symbol|float|double|binary|timestamp";
+            i = this.createKeywordMapper({
+                "support.function": n,
+                keyword: e,
+                "constant.language": t,
+                "storage.type": r
+            }, "identifier", !0);
+            this.$rules = {
+                start: [{token: "comment", regex: "--.*$"}, {
+                    token: "comment",
+                    start: "/\\*",
+                    end: "\\*/"
+                }, {token: "string", regex: '".*?"'}, {token: "string", regex: "'.*?'"}, {
+                    token: "constant.numeric",
+                    regex: "[+-]?\\d+(?:(?:\\.\\d*)?(?:[eE][+-]?\\d+)?)?\\b"
+                }, {token: i, regex: "[a-zA-Z_$][a-zA-Z0-9_$]*\\b"}, {
+                    token: "keyword.operator",
+                    regex: "\\+|\\-|\\/|\\/\\/|%|<@>|@>|<@|&|\\^|~|<|>|<=|=>|==|!=|<>|="
+                }, {token: "paren.lparen", regex: "[\\(]"}, {token: "paren.rparen", regex: "[\\)]"}, {
+                    token: "text",
+                    regex: "\\s+"
+                }]
+            };
+            this.normalizeRules()
+        };
+        r.inherits(s, i);
+        t.SqlHighlightRules = s
+    });
+
+
+ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "ace/mode/text", "ace/mode/sql_highlight_rules", "ace/range"], function (e, t, n) {
+    "use strict";
+    var r = e("../lib/oop"), i = e("./text").Mode, s = e("./sql_highlight_rules").SqlHighlightRules, o = e("../range").Range, u = function () {
+        this.HighlightRules = s
+    };
+    r.inherits(u, i), function () {
+        this.lineCommentStart = "--";
+        this.$id = "ace/mode/questdb"
+    }.call(u.prototype);
+    t.Mode = u
+});
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
+
+(function ($) {
+    'use strict';
+
+    var queryBatchSize = 1000;
+    var MSG_QUERY_EXEC = 'query.in.exec';
+    var MSG_QUERY_CANCEL = 'query.in.cancel';
+    var MSG_QUERY_RUNNING = 'query.out.running';
+    var MSG_QUERY_OK = 'query.out.ok';
+    var MSG_QUERY_ERROR = 'query.out.error';
+    var MSG_QUERY_DATASET = 'query.out.dataset';
+    var MSG_QUERY_FIND_N_EXEC = 'query.build.execute';
+    var MSG_ACTIVE_PANEL = 'active.panel';
+
+    function toExportUrl(query) {
+        return window.location.protocol + '//' + window.location.host + '/exp?query=' + encodeURIComponent(query);
+    }
+
+    function setHeight(element, height) {
+        element.css('height', height + 'px');
+        element.css('min-height', height + 'px');
+    }
+
+    $.extend(true, window, {
+        qdb: {
+            queryBatchSize: queryBatchSize,
+            MSG_QUERY_EXEC: MSG_QUERY_EXEC,
+            MSG_QUERY_CANCEL: MSG_QUERY_CANCEL,
+            MSG_QUERY_RUNNING: MSG_QUERY_RUNNING,
+            MSG_QUERY_OK: MSG_QUERY_OK,
+            MSG_QUERY_ERROR: MSG_QUERY_ERROR,
+            MSG_QUERY_DATASET: MSG_QUERY_DATASET,
+            MSG_ACTIVE_PANEL: MSG_ACTIVE_PANEL,
+            MSG_QUERY_FIND_N_EXEC: MSG_QUERY_FIND_N_EXEC,
+            toExportUrl: toExportUrl,
+            setHeight: setHeight
+        }
+    });
+})(jQuery);
+//# sourceMappingURL=globals.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
+/*globals qdb:false */
+
+(function ($) {
+    'use strict';
+
+    $.fn.grid = function (msgBus) {
+        var defaults = {
+            minColumnWidth: 60,
+            rowHeight: 28,
+            divCacheSize: 128,
+            viewportHeight: 400,
+            yMaxThreshold: 10000000,
+            maxRowsToAnalyze: 100,
+            bottomMargin: 75,
+            minVpHeight: 120,
+            minDivHeight: 160
+        };
+        var bus = msgBus;
+        var $style;
+        var div = $(this);
+        var viewport;
+        var canvas;
+        var header;
+        var colMax;
+        var columns = [];
+        var data = [];
+        var totalWidth = -1;
+        var stretched = 0;
+        // number of divs in "rows" cache, has to be power of two
+        var dc = defaults.divCacheSize;
+        var dcn = dc - 1;
+        var pageSize = qdb.queryBatchSize;
+        var oneThirdPage = Math.floor(pageSize / 3);
+        var twoThirdsPage = oneThirdPage * 2;
+        var loPage;
+        var hiPage;
+        var query;
+        var queryTimer;
+        var dbg;
+        var downKey = [];
+
+        // viewport height
+        var vp = defaults.viewportHeight;
+        // row height in px
+        var rh = defaults.rowHeight;
+        // virtual row count in grid
+        var r;
+        // max virtual y (height) of grid canvas
+        var yMax;
+        // current virtual y of grid canvas
+        var y;
+        // actual height of grid canvas
+        var h;
+        // last scroll top
+        var top;
+        // yMax / h - ratio between virtual and actual height
+        var M;
+        // offset to bring virtual y inline with actual y
+        var o;
+        // row div cache
+        var rows = [];
+        // active (highlighted) row
+        var activeRow = -1;
+        // div that is highlighted
+        var activeRowContainer;
+        // active cell
+        var activeCell = -1;
+        var activeCellContainer;
+        // rows in current view
+        var rowsInView;
+
+        function addRows(n) {
+            r += n;
+            yMax = r * rh;
+            if (yMax < defaults.yMaxThreshold) {
+                h = yMax;
+            } else {
+                h = defaults.yMaxThreshold;
+            }
+            M = yMax / h;
+            canvas.css('height', h === 0 ? 1 : h);
+        }
+
+        function renderRow(rowContainer, n) {
+            if (rowContainer.questIndex !== n) {
+                var rowData = data[Math.floor(n / pageSize)];
+                var offset = n % pageSize;
+                var k;
+                if (rowData) {
+                    var d = rowData[offset];
+                    if (d) {
+                        for (k = 0; k < columns.length; k++) {
+                            rowContainer.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
+                        }
+                    }
+                    rowContainer.questIndex = n;
+                } else {
+                    for (k = 0; k < columns.length; k++) {
+                        rowContainer.childNodes[k].innerHTML = '';
+                    }
+                    rowContainer.questIndex = -1;
+                }
+                rowContainer.style.top = n * rh - o + 'px';
+                if (rowContainer === activeRowContainer) {
+                    if (n === activeRow) {
+                        rowContainer.className = 'qg-r qg-r-active';
+                        rowContainer.childNodes[activeCell].className += ' qg-c-active';
+                    } else {
+                        rowContainer.className = 'qg-r';
+                        rowContainer.childNodes[activeCell].className = 'qg-c qg-w' + activeCell;
+                    }
+                }
+            }
+        }
+
+        function renderViewportNoCompute() {
+            // calculate the viewport + buffer
+            var t = Math.max(0, Math.floor((y - vp) / rh));
+            var b = Math.min(yMax / rh, Math.ceil((y + vp + vp) / rh));
+
+            for (var i = t; i < b; i++) {
+                renderRow(rows[i & dcn], i);
+            }
+        }
+
+        function purgeOutlierPages() {
+            for (var i = 0; i < data.length; i++) {
+                if ((i < loPage || i > hiPage) && data[i]) {
+                    delete data[i];
+                }
+            }
+        }
+
+        function empty(x) {
+            return data[x] === null || data[x] === undefined || data[x].length === 0;
+        }
+
+        function loadPages(p1, p2) {
+            purgeOutlierPages();
+
+            var lo;
+            var hi;
+            var f;
+
+            if (p1 !== p2 && empty(p1) && empty(p2)) {
+                lo = p1 * pageSize;
+                hi = lo + pageSize * (p2 - p1 + 1);
+                f = function f(response) {
+                    data[p1] = response.dataset.splice(0, pageSize);
+                    data[p2] = response.dataset;
+                    renderViewportNoCompute();
+                };
+            } else if (empty(p1) && (!empty(p2) || p1 === p2)) {
+                lo = p1 * pageSize;
+                hi = lo + pageSize;
+                f = function f(response) {
+                    data[p1] = response.dataset;
+                    renderViewportNoCompute();
+                };
+            } else if ((!empty(p1) || p1 === p2) && empty(p2)) {
+                lo = p2 * pageSize;
+                hi = lo + pageSize;
+                f = function f(response) {
+                    data[p2] = response.dataset;
+                    renderViewportNoCompute();
+                };
+            } else {
+                renderViewportNoCompute();
+                return;
+            }
+            $.get('/exec', {query: query, limit: lo + ',' + hi, nm: true}).done(f);
+        }
+
+        function loadPagesDelayed(p1, p2) {
+            if (queryTimer) {
+                clearTimeout(queryTimer);
+            }
+            queryTimer = setTimeout(function () {
+                loadPages(p1, p2);
+            }, 75);
+        }
+
+        function computePages(direction, t, b) {
+
+            if (t !== t || b !== b) {
+                return;
+            }
+
+            var tp; // top page
+            var tr; // top remaining
+            var bp; // bottom page
+            var br; // bottom remaining
+
+            tp = Math.floor(t / pageSize);
+            bp = Math.floor(b / pageSize);
+
+            if (direction > 0) {
+                br = b % pageSize;
+
+                if (tp >= loPage && bp < hiPage) {
+                    return;
+                }
+
+                if (bp === hiPage) {
+                    if (br > twoThirdsPage) {
+                        hiPage = bp + 1;
+                        loPage = bp;
+                        loadPagesDelayed(bp, bp + 1);
+                    }
+                    return;
+                }
+
+                if (tp < bp) {
+                    loadPagesDelayed(tp, bp);
+                    loPage = tp;
+                    hiPage = bp;
+                } else if (br > twoThirdsPage) {
+                    loadPagesDelayed(bp, bp + 1);
+                    loPage = bp;
+                    hiPage = bp + 1;
+                } else {
+                    hiPage = tp;
+                    loPage = tp;
+                    loadPagesDelayed(tp, tp);
+                }
+            } else {
+                tr = t % pageSize;
+
+                if (tp > loPage && bp <= hiPage) {
+                    return;
+                }
+
+                if (tp === loPage) {
+                    if (tr < oneThirdPage && loPage > 0) {
+                        loPage = Math.max(0, tp - 1);
+                        hiPage = tp;
+                        loadPagesDelayed(tp - 1, tp);
+                    }
+                    return;
+                }
+
+                if (tp < bp) {
+                    loadPagesDelayed(tp, bp);
+                    loPage = tp;
+                    hiPage = bp;
+                } else if (tr < oneThirdPage && tp > 0) {
+                    loadPagesDelayed(tp - 1, tp);
+                    loPage = Math.max(0, tp - 1);
+                    hiPage = tp;
+                } else {
+                    loPage = tp;
+                    hiPage = tp;
+                    loadPagesDelayed(tp, tp);
+                }
+            }
+        }
+
+        function renderViewport(direction) {
+            // calculate the viewport + buffer
+            var t = Math.max(0, Math.floor((y - vp) / rh));
+            var b = Math.min(yMax / rh, Math.ceil((y + vp + vp) / rh));
+
+            if (direction !== 0) {
+                computePages(direction, t, b);
+            }
+
+            if (t === 0) {
+                b = dc;
+            } else if (b > r - 2) {
+                t = Math.max(0, b - dc);
+            }
+
+            for (var i = t; i < b; i++) {
+                var row = rows[i & dcn];
+                if (row) {
+                    renderRow(row, i);
+                }
+            }
+        }
+
+        function getColumnAlignment(i) {
+            switch (columns[i].type) {
+                case 'STRING':
+                case 'SYMBOL':
+                    return 'text-align: left;';
+                default:
+                    return '';
+            }
+        }
+
+        function generatePxWidth(rules) {
+            for (var i = 0; i < colMax.length; i++) {
+                rules.push('.qg-w' + i + '{width:' + colMax[i] + 'px;' + getColumnAlignment(i) + '}');
+            }
+            rules.push('.qg-r{width:' + totalWidth + 'px;}');
+            rules.push('.qg-canvas{width:' + totalWidth + 'px;}');
+            stretched = 2;
+        }
+
+        function generatePctWidth(rules) {
+            for (var i = 0; i < colMax.length; i++) {
+                rules.push('.qg-w' + i + '{width:' + colMax[i] * 100 / totalWidth + '%;' + getColumnAlignment(i) + '}');
+            }
+            rules.push('.qg-r{width:100%;}');
+            rules.push('.qg-canvas{width:100%;}');
+            stretched = 1;
+        }
+
+        function createCss() {
+            if (data.length > 0) {
+                var viewportWidth = viewport.offsetWidth;
+                var f = null;
+                if (totalWidth < viewportWidth && stretched !== 1) {
+                    f = generatePctWidth;
+                } else if (totalWidth > viewportWidth && stretched !== 2) {
+                    f = generatePxWidth;
+                }
+
+                if (f) {
+                    if ($style) {
+                        $style.remove();
+                    }
+                    $style = $('<style type="text/css" rel="stylesheet"/>').appendTo($('head'));
+                    var rules = [];
+
+                    f(rules);
+
+                    rules.push('.qg-c{height:' + rh + 'px;}');
+                    if ($style[0].styleSheet) {
+                        // IE
+                        $style[0].styleSheet.cssText = rules.join(' ');
+                    } else {
+                        $style[0].appendChild(document.createTextNode(rules.join(' ')));
+                    }
+                }
+            }
+        }
+
+        function computeColumnWidths() {
+            colMax = [];
+            var i, k, w;
+            totalWidth = 0;
+            for (i = 0; i < columns.length; i++) {
+                var c = columns[i];
+                var col = $('<div class="qg-header qg-w' + i + '">' + c.name + '</div>').appendTo(header);
+                switch (c.type) {
+                    case 'STRING':
+                    case 'SYMBOL':
+                        col.addClass('qg-header-l');
+                        break;
+                }
+                w = Math.max(defaults.minColumnWidth, Math.ceil(c.name.length * 8 * 1.2 + 8));
+                colMax.push(w);
+                totalWidth += w;
+            }
+
+            var max = data[0].length > defaults.maxRowsToAnalyze ? defaults.maxRowsToAnalyze : data[0].length;
+            for (i = 0; i < max; i++) {
+                var row = data[0][i];
+                var sum = 0;
+                for (k = 0; k < row.length; k++) {
+                    var cell = row[k];
+                    var str = cell !== null ? cell.toString() : 'null';
+                    w = Math.max(defaults.minColumnWidth, str.length * 8 + 8);
+                    colMax[k] = Math.max(w, colMax[k]);
+                    sum += colMax[k];
+                }
+                totalWidth = Math.max(totalWidth, sum);
+            }
+        }
+
+        function clear() {
+            top = 0;
+            y = 0;
+            o = 0;
+            r = 0;
+
+            if ($style) {
+                $style.remove();
+            }
+            header.empty();
+            canvas.empty();
+            rows = [];
+            stretched = 0;
+            data = [];
+            query = null;
+            loPage = 0;
+            hiPage = 0;
+            downKey = [];
+            activeRowContainer = null;
+            activeCellContainer = null;
+            activeRow = 0;
+            activeCell = 0;
+        }
+
+        function logDebug() {
+            if (dbg) {
+                dbg.empty();
+                dbg.append('time = ' + new Date() + '<br>');
+                dbg.append('y = ' + y + '<br>');
+                dbg.append('M = ' + M + '<br>');
+                dbg.append('o = ' + o + '<br>');
+                dbg.append('h = ' + h + '<br>');
+                dbg.append('vp = ' + vp + '<br>');
+                dbg.append('yMax = ' + yMax + '<br>');
+                dbg.append('top = ' + top + '<br>');
+                dbg.append('activeRow = ' + activeRow + '<br>');
+            }
+        }
+
+        function activeCellOff() {
+            activeCellContainer.className = 'qg-c qg-w' + activeCell;
+        }
+
+        function activeCellOn(focus) {
+            activeCellContainer = activeRowContainer.childNodes[activeCell];
+            activeCellContainer.className += ' qg-c-active';
+
+            if (focus) {
+                var w;
+                w = Math.max(0, activeCellContainer.offsetLeft - 5);
+                if (w < viewport.scrollLeft) {
+                    viewport.scrollLeft = w;
+                } else {
+                    w = activeCellContainer.offsetLeft + activeCellContainer.clientWidth + 5;
+                    if (w > viewport.scrollLeft + viewport.clientWidth) {
+                        viewport.scrollLeft = w - viewport.clientWidth;
+                    }
+                }
+            }
+        }
+
+        function activeRowUp(n) {
+            if (activeRow > 0) {
+                activeRow = Math.max(0, activeRow - n);
+                activeRowContainer.className = 'qg-r';
+                activeCellOff();
+                activeRowContainer = rows[activeRow & dcn];
+                activeRowContainer.className = 'qg-r qg-r-active';
+                activeCellOn();
+                var scrollTop = activeRow * rh - o;
+                if (scrollTop < viewport.scrollTop) {
+                    viewport.scrollTop = Math.max(0, scrollTop);
+                }
+            }
+        }
+
+        function activeRowDown(n) {
+            if (activeRow > -1 && activeRow < r - 1) {
+                activeRow = Math.min(r - 1, activeRow + n);
+                activeRowContainer.className = 'qg-r';
+                activeCellOff();
+                activeRowContainer = rows[activeRow & dcn];
+                activeRowContainer.className = 'qg-r qg-r-active';
+                activeCellOn();
+                var scrollTop = activeRow * rh - vp + rh - o;
+                if (scrollTop > viewport.scrollTop) {
+                    viewport.scrollTop = scrollTop;
+                }
+            }
+        }
+
+        function viewportScroll(force) {
+            header.scrollLeft(viewport.scrollLeft);
+
+            var scrollTop = viewport.scrollTop;
+            if (scrollTop !== top || force) {
+                var oldY = y;
+                if (Math.abs(scrollTop - top) > 4 * vp) {
+                    y = scrollTop === 0 ? 0 : Math.min(Math.ceil((scrollTop + vp) * M - vp), yMax - vp);
+                    top = scrollTop;
+                    o = y - top;
+                } else if (h - vp > 0) {
+                    // if grid content fits in viewport we don't need to adjust activeRow
+                    if (scrollTop >= h - vp) {
+                        // final leap to bottom of grid
+                        // this happens when container div runs out of vertical height
+                        // and we artificially force leap to bottom
+                        y = Math.max(0, yMax - vp);
+                        top = scrollTop;
+                        o = y - top;
+                        activeRowDown(r - activeRow);
+                    } else {
+                        if (scrollTop === 0 && top > 0) {
+                            // this happens when grid is coming slowly back up after being scrolled down harshly
+                            // because 'y' is much greater than top, we have to jump to top artificially.
+                            y = 0;
+                            o = 0;
+                            activeRowUp(activeRow);
+                        } else {
+                            y += scrollTop - top;
+                        }
+                        top = scrollTop;
+                    }
+                }
+                renderViewport(y - oldY);
+            }
+            logDebug();
+        }
+
+        function resize() {
+            var wh = window.innerHeight - $(window).scrollTop();
+            vp = Math.round(wh - viewport.getBoundingClientRect().top) - defaults.bottomMargin;
+            vp = Math.max(vp, defaults.minVpHeight);
+            rowsInView = Math.floor(vp / rh);
+            viewport.style.height = vp + 'px';
+            div.css('height', Math.max(Math.round(wh - div[0].getBoundingClientRect().top) - defaults.bottomMargin, defaults.minDivHeight) + 'px');
+            createCss();
+            viewportScroll(true);
+        }
+
+        function rowClick() {
+            if (activeRowContainer) {
+                activeRowContainer.className = 'qg-r';
+            }
+            this.focus();
+            activeRowContainer = this.parentElement;
+            activeRowContainer.className += ' qg-r-active';
+            activeRow = activeRowContainer.questIndex;
+
+            if (activeCellContainer) {
+                activeCellContainer.className = 'qg-c qg-w' + activeCell;
+            }
+            activeCellContainer = this;
+            activeCell = this.cellIndex;
+            activeCellContainer.className += ' qg-c-active';
+        }
+
+        function activeCellRight() {
+            if (activeCell > -1 && activeCell < columns.length - 1) {
+                activeCellOff();
+                activeCell++;
+                activeCellOn(true);
+            }
+        }
+
+        function activeCellLeft() {
+            if (activeCell > 0) {
+                activeCellOff();
+                activeCell--;
+                activeCellOn(true);
+            }
+        }
+
+        function activeCellHome() {
+            if (activeCell > 0) {
+                activeCellOff();
+                activeCell = 0;
+                activeCellOn(true);
+            }
+        }
+
+        function activeCellEnd() {
+            if (activeCell > -1 && activeCell !== columns.length - 1) {
+                activeCellOff();
+                activeCell = columns.length - 1;
+                activeCellOn(true);
+            }
+        }
+
+        function onKeyUp(e) {
+            delete downKey['which' in e ? e.which : e.keyCode];
+        }
+
+        function onKeyDown(e) {
+            var keyCode = 'which' in e ? e.which : e.keyCode;
+            var preventDefault = true;
+            switch (keyCode) {
+                case 33:
+                    // page up
+                    activeRowUp(rowsInView);
+                    break;
+                case 38:
+                    // arrow up
+                    if (downKey[91]) {
+                        activeRowUp(activeRow);
+                    } else {
+                        activeRowUp(1);
+                    }
+                    break;
+                case 40:
+                    // arrow down
+                    if (downKey[91]) {
+                        activeRowDown(r - activeRow);
+                    } else {
+                        activeRowDown(1);
+                    }
+                    break;
+                case 34:
+                    // arrow down
+                    activeRowDown(rowsInView);
+                    break;
+                case 39:
+                    // arrow right
+                    activeCellRight();
+                    break;
+                case 37:
+                    // arrow left
+                    activeCellLeft();
+                    break;
+                case 35:
+                    // end? Fn+arrow right on mac
+                    if (downKey[17]) {
+                        activeRowDown(r - activeRow);
+                    } else {
+                        activeCellEnd();
+                    }
+                    break;
+                case 36:
+                    // home ? Fn + arrow left on mac
+                    if (downKey[17]) {
+                        activeRowUp(activeRow);
+                    } else {
+                        activeCellHome();
+                    }
+                    break;
+                case 113:
+                    unfocusCell();
+                    bus.trigger('editor.focus');
+                    break;
+                default:
+                    downKey[keyCode] = true;
+                    preventDefault = false;
+                    break;
+            }
+
+            if (preventDefault) {
+                e.preventDefault();
+            }
+        }
+
+        function addColumns() {
+            for (var i = 0; i < dc; i++) {
+                var rowDiv = $('<div class="qg-r" tabindex="' + i + '"/>');
+                if (i === 0) {
+                    activeRowContainer = rowDiv;
+                }
+                for (var k = 0; k < columns.length; k++) {
+                    var cell = $('<div class="qg-c qg-w' + k + '"/>').click(rowClick).appendTo(rowDiv)[0];
+                    if (i === 0 && k === 0) {
+                        activeCellContainer = cell;
+                    }
+                    cell.cellIndex = k;
+                }
+                rowDiv.css({top: -100, height: rh}).appendTo(canvas);
+                rows.push(rowDiv[0]);
+            }
+        }
+
+        function focusCell() {
+            if (activeCellContainer && activeRowContainer) {
+                activeCellContainer.click();
+                activeRowContainer.focus();
+            }
+        }
+
+        function unfocusCell() {
+            if (activeCellContainer) {
+                activeCellOff();
+            }
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function update(x, m) {
+            clear();
+            query = m.query;
+            data.push(m.dataset);
+            columns = m.columns;
+            addColumns();
+            addRows(m.count);
+            computeColumnWidths();
+            viewport.scrollTop = 0;
+            resize();
+            focusCell();
+        }
+
+        function publishQuery() {
+            if (query) {
+                bus.trigger('grid.query', encodeURIComponent(query));
+            }
+        }
+
+        function refreshQuery() {
+            if (query) {
+                bus.trigger(qdb.MSG_QUERY_EXEC, {q: query});
+            }
+        }
+
+        function bind() {
+            dbg = $('#debug');
+            header = div.find('.qg-header-row');
+            viewport = div.find('.qg-viewport')[0];
+            viewport.onscroll = viewportScroll;
+            canvas = div.find('.qg-canvas');
+            canvas.bind('keydown', onKeyDown);
+            canvas.bind('keyup', onKeyUp);
+            $(window).resize(resize);
+            bus.on(qdb.MSG_QUERY_DATASET, update);
+            bus.on('grid.focus', focusCell);
+            bus.on('grid.refresh', refreshQuery);
+            bus.on('grid.publish.query', publishQuery);
+            bus.on('active.panel', resize);
+        }
+
+        bind();
+        resize();
+    };
+})(jQuery);
+//# sourceMappingURL=grid.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
+/*globals qdb:false */
+/*eslint no-use-before-define: 0*/
+
+/**
+ * @return {string}
+ */
+function s4() {
+    'use strict';
+
+    return ((1 + Math.random()) * 0x10000 | 0).toString(16).substring(1);
+}
+
+function guid() {
+    'use strict';
+
+    return s4() + s4() + '-' + s4() + '-' + s4() + '-' + s4() + '-' + s4() + s4() + s4();
+}
+
+function fmtNumber(n) {
+    'use strict';
+
+    return n.toFixed(0).replace(/./g, function (c, i, a) {
+        return i && c !== '.' && (a.length - i) % 3 === 0 ? ',' + c : c;
+    });
+}
+
+function toSize(x) {
+    'use strict';
+
+    if (x < 1024) {
+        return x;
+    }
+
+    if (x < 1024 * 1024) {
+        return Math.round(x / 1024) + 'KB';
+    }
+
+    if (x < 1024 * 1024 * 1024) {
+        return Math.round(x / 1024 / 1024) + 'MB';
+    }
+
+    return Math.round(x / 1024 / 1024 / 1024) + 'GB';
+}
+
+function nopropagation(e) {
+    'use strict';
+
+    e.stopPropagation();
+    if (e.preventDefault) {
+        e.preventDefault();
+    }
+}
+
+(function ($) {
+    'use strict';
+
+    $.fn.importManager = function (editorBus) {
+        var ACTION_DEFAULT = 0;
+        var ACTION_APPEND = 1;
+        var ACTTION_OVERWRITE = 2;
+
+        var dict = {};
+        var container = this;
+        var ebus = editorBus;
+        var canvas = void 0;
+        var top = 0;
+        var uploadQueue = [];
+        var current = null;
+        var currentHtml = null;
+        var rowHeight = 35;
+        var xhr = null;
+
+        function updateProgress(event) {
+            if (event.lengthComputable) {
+                var pos = event.loaded || event.position;
+                currentHtml.find(' > .ud-progress').css('width', pos * 100 / current.size + '%');
+            }
+        }
+
+        function updateButtons() {
+            var selected = false;
+            var retry = false;
+
+            for (var id in dict) {
+                if (dict.hasOwnProperty(id)) {
+                    var e = dict[id];
+                    if (e.selected) {
+                        selected = true;
+                        if (e.retry) {
+                            retry = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            $('#btnImportClearSelected').attr('disabled', !selected);
+            $('#btnRetry').attr('disabled', !retry);
+        }
+
+        function renderActions(e, element) {
+            switch (e.retry) {
+                case ACTION_APPEND:
+                    element.find('.js-row-append').addClass('label-danger');
+                    element.find('.js-row-overwrite').removeClass('label-danger');
+                    break;
+                case ACTTION_OVERWRITE:
+                    element.find('.js-row-append').removeClass('label-danger');
+                    element.find('.js-row-overwrite').addClass('label-danger');
+                    break;
+                default:
+                    element.find('.js-row-append').removeClass('label-danger');
+                    element.find('.js-row-overwrite').removeClass('label-danger');
+                    break;
+            }
+
+            if (e.selected) {
+                element.find('.js-row-toggle').removeClass('fa-square-o').addClass('fa-check-square-o');
+            } else {
+                element.find('.js-row-toggle').removeClass('fa-check-square-o').addClass('fa-square-o');
+            }
+
+            if (e.forceHeader) {
+                element.find('.js-row-toggle-header').addClass('label-success');
+            } else {
+                element.find('.js-row-toggle-header').removeClass('label-success');
+            }
+
+            updateButtons();
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function renderRowAsOverwrite(x, e) {
+            e.retry = ACTTION_OVERWRITE;
+            renderActions(e, $('#' + e.id + ' > .ud-c0'));
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function renderRowAsAppend(x, e) {
+            e.retry = ACTION_APPEND;
+            renderActions(e, $('#' + e.id + ' > .ud-c0'));
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function renderRowAsCancel(x, e) {
+            e.retry = ACTION_DEFAULT;
+            renderActions(e, $('#' + e.id + ' > .ud-c0'));
+        }
+
+        function setupUploadProgressCallback() {
+            var xhrobj = $.ajaxSettings.xhr();
+            if (xhrobj.upload) {
+                xhrobj.upload.addEventListener('progress', updateProgress, false);
+            }
+            return xhrobj;
+        }
+
+        var importRequest = {
+            xhr: setupUploadProgressCallback,
+            url: '/imp?fmt=json',
+            type: 'POST',
+            contentType: false,
+            processData: false,
+            cache: false
+        };
+
+        var existenceCheckRequest = {
+            type: 'GET',
+            contentType: false,
+            processData: false,
+            cache: false
+        };
+
+        function updateBtnImportCancel() {
+            $('#btnImportCancel').attr('disabled', current === null);
+        }
+
+        function toggleRow() {
+            var btn = $(this);
+            var e = dict[btn.parent().parent().attr('id')];
+            e.selected = !e.selected;
+            renderActions(e, btn.parent());
+        }
+
+        function toggleRowAppend() {
+            var btn = $(this);
+            var e = dict[btn.parent().parent().attr('id')];
+
+            switch (e.retry) {
+                case 1:
+                    e.retry = 0;
+                    e.selected = false;
+                    break;
+                default:
+                    e.retry = 1;
+                    e.selected = true;
+                    break;
+            }
+
+            renderActions(e, btn.parent());
+        }
+
+        function toggleRowOverwrite() {
+            var btn = $(this);
+            var e = dict[btn.parent().parent().attr('id')];
+
+            switch (e.retry) {
+                case 2:
+                    e.retry = 0;
+                    e.selected = false;
+                    break;
+                default:
+                    e.retry = 2;
+                    e.selected = true;
+                    break;
+            }
+
+            renderActions(e, btn.parent());
+        }
+
+        function toggleRowHeader() {
+            var btn = $(this);
+            var e = dict[btn.parent().parent().attr('id')];
+            e.forceHeader = !e.forceHeader;
+            renderActions(e, btn.parent());
+        }
+
+        function uploadRow() {
+            var btn = $(this);
+            var e = dict[btn.parent().parent().attr('id')];
+            submitUploadTask(e);
+        }
+
+        function viewRow() {
+            var btn = $(this);
+            var e = dict[btn.parent().parent().attr('id')];
+            ebus.trigger(qdb.MSG_QUERY_FIND_N_EXEC, e.name);
+        }
+
+        function showDetail(e) {
+            var item = dict[$(this).parent().attr('id')];
+            if (item.importState > -1) {
+                $(document).trigger('import.detail', item);
+            }
+            nopropagation(e);
+        }
+
+        function render(e) {
+            var html = $('\n                        <div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;">\n                            <div class="ud-cell ud-c0">\n                                <i class="fa fa-square-o ud-checkbox js-row-toggle"></i>\n                                <span class="label js-row-append">A</span>\n                                <span class="label js-row-overwrite">O</span>\n                                <span class="label js-row-toggle-header">H</span>\n                                <i class="fa fa-upload js-row-upload"></i>\n                            </div>\n                            <div class="ud-cell ud-c1">' + e.name + '</div>\n                            <div class="ud-cell ud-c2"><i class="fa fa-eye js-row-query"></i></div>\n                            <div class="ud-cell ud-c3">' + e.sizeFmt + '</div>\n                            <div class="ud-cell ud-c4 js-row-imported">?</div>\n                            <div class="ud-cell ud-c5 js-row-rejected">?</div>\n                            <div class="ud-cell ud-c6 js-row-header">?</div>\n                            <div class="ud-cell ud-c7 ud-status">\n                                <span class="label">pending</span>\n                            </div>\n                        </div>\n            ');
+
+            canvas.append(html);
+            html.find('.js-row-toggle').click(toggleRow);
+            html.find('.js-row-append').click(toggleRowAppend);
+            html.find('.js-row-overwrite').click(toggleRowOverwrite);
+            html.find('.js-row-toggle-header').click(toggleRowHeader);
+            html.find('.js-row-upload').click(uploadRow);
+            html.find('.js-row-query').click(viewRow);
+
+            html.find('.ud-c1').click(showDetail);
+            html.find('.ud-c2').click(showDetail);
+            html.find('.ud-c3').click(showDetail);
+            top += rowHeight;
+        }
+
+        function status(e, html, processNext) {
+            var row = currentHtml;
+            row.find(' > .ud-status').html(html);
+            row.find(' > .ud-progress').remove();
+
+            current.selected = false;
+            if (processNext) {
+                var next = uploadQueue.shift();
+                if (next) {
+                    retryOrCheckExistence(next);
+                } else {
+                    current = null;
+                    currentHtml = null;
+                    xhr = null;
+                }
+            }
+            updateBtnImportCancel();
+            $(document).trigger('import.detail.updated', e);
+        }
+
+        function importDone(data) {
+            current.delta = new Date().getTime() - current.time;
+            if (data.status === 'OK') {
+                current.response = data;
+                current.importState = 0; // ok
+                renderRowAsCancel(null, current);
+
+                currentHtml.find('.js-row-imported').html(fmtNumber(data.rowsImported));
+                currentHtml.find('.js-row-rejected').html(fmtNumber(data.rowsRejected));
+                currentHtml.find('.js-row-header').html(data.header ? 'Yes' : 'No');
+
+                var type = data.rowsRejected > 0 ? 'label-warning' : 'label-success';
+                status(current, '<span class="label ' + type + '">imported in ' + current.delta / 1000 + 's</span>', true);
+            } else {
+                current.importState = 4; // error with journal, status has error message
+                current.response = data.status;
+                status(current, '<span class="label label-danger">failed</span>', true);
+            }
+        }
+
+        function httpStatusToImportState(s) {
+            switch (s) {
+                case 0:
+                    return 3; // server not responding
+                case 500:
+                    return 5; // internal error
+                default:
+                    return 101; // unknown
+            }
+        }
+
+        function importFailed(r) {
+            renderRowAsCancel(null, current);
+            if (r.statusText !== 'abort') {
+                current.response = r.responseText;
+                current.importState = httpStatusToImportState(r.status);
+                status(current, '<span class="label label-danger">failed</span>', true);
+            } else {
+                // current.importState = -1; // abort
+                status(current, '<span class="label label-warning">aborted</span>', true);
+            }
+        }
+
+        function setupImportRequest() {
+            importRequest.url = '/imp?fmt=json';
+
+            if (current.retry === ACTTION_OVERWRITE) {
+                importRequest.url += '&overwrite=true';
+            }
+
+            if (current.forceHeader) {
+                importRequest.url += '&forceHeader=true';
+            }
+
+            importRequest.xhr = setupUploadProgressCallback;
+            importRequest.data = new FormData();
+
+            // encode type overrides
+            if (current.response && current.response.columns) {
+                var schema = '';
+                for (var i = 0; i < current.response.columns.length; i++) {
+                    var c = current.response.columns[i];
+                    if (c.altType && c.type !== c.altType.text && c.altType.text !== 'AUTO') {
+                        schema += c.name + '=' + c.altType.value + '&';
+                    } else if (c.errors === 0 && c.type !== 'DATE' && (c.altType === undefined || c.altType.text !== 'AUTO')) {
+                        schema += c.name + '=' + c.type + '&';
+                    }
+                }
+                importRequest.data.append('schema', schema);
+            }
+
+            if (current.type === 'file') {
+                importRequest.data.append('data', current.file);
+            } else if (current.type === 'clipboard') {
+                importRequest.url = importRequest.url + '&name=' + encodeURIComponent(current.name);
+                importRequest.data.append('data', current.content);
+            }
+            current.time = new Date().getTime();
+            return importRequest;
+        }
+
+        function sendImportRequest() {
+            status(current, '<span class="label label-info">importing</span>', false);
+            currentHtml.append('<div class="ud-progress"></div>');
+            xhr = $.ajax(setupImportRequest()).done(importDone).fail(importFailed);
+            // updateBtnImportCancel();
+        }
+
+        function existenceCheckFork(e) {
+            switch (e.status) {
+                case 'Exists':
+                    current.importState = 1; // exists
+                    status(current, '<span class="label label-danger">exists</span>', true);
+                    break;
+                case 'Does not exist':
+                    current.importState = 0; // ok
+                    sendImportRequest();
+                    break;
+                case 'Reserved name':
+                    current.importState = 2; // exists foreign (reserved)
+                    status(current, '<span class="label label-danger">reserved</span>', true);
+                    break;
+                default:
+                    current.importState = 101; // unknown
+                    status(current, '<span class="label label-danger">failed</span>', true);
+                    break;
+            }
+        }
+
+        function retryOrCheckExistence(e) {
+            current = e;
+            currentHtml = $('#' + e.id);
+            if (e.retry) {
+                current.importState = 0;
+                sendImportRequest();
+            } else {
+                existenceCheckRequest.url = '/chk?f=json&j=' + encodeURIComponent(e.name);
+                $.ajax(existenceCheckRequest).then(existenceCheckFork).fail(importFailed);
+            }
+        }
+
+        function submitUploadTask(item) {
+            if (current == null) {
+                retryOrCheckExistence(item);
+            } else if (current !== item) {
+                uploadQueue.push(item);
+            }
+        }
+
+        function enqueueImportItem(item) {
+            dict[item.id] = item;
+            render(item);
+            submitUploadTask(item);
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function addFiles(x, e) {
+            for (var i = 0; i < e.files.length; i++) {
+                var f = e.files[i];
+                enqueueImportItem({
+                    id: guid(),
+                    name: f.name,
+                    size: f.size,
+                    file: f,
+                    type: 'file',
+                    sizeFmt: toSize(f.size),
+                    selected: false,
+                    imported: false,
+                    forceHeader: false
+                });
+            }
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function addClipboard(x, content) {
+            enqueueImportItem({
+                id: guid(),
+                name: 'clipboard-' + new Date().getTime(),
+                size: content.length,
+                type: 'clipboard',
+                content: content,
+                sizeFmt: toSize(content.length),
+                selected: false,
+                imported: false,
+                forceHeader: false
+            });
+        }
+
+        function clearSelected() {
+            for (var id in dict) {
+                if (dict.hasOwnProperty(id)) {
+                    var e = dict[id];
+                    if (e.selected && e !== current) {
+                        var uploadQueueIndex = uploadQueue.indexOf(e);
+                        if (uploadQueueIndex > -1) {
+                            delete uploadQueue[uploadQueueIndex];
+                        }
+                        $('#' + id).remove();
+                        delete dict[id];
+                        $(document).trigger('import.cleared', e);
+                    }
+                }
+            }
+
+            // rejig remaining rows
+            top = 0;
+            var rows = canvas.find('.ud-row');
+            for (var i = 0; i < rows.length; i++) {
+                $(rows[i]).css('top', top);
+                top += rowHeight;
+            }
+            updateButtons();
+        }
+
+        function retrySelected() {
+            for (var id in dict) {
+                if (dict.hasOwnProperty(id)) {
+                    var e = dict[id];
+                    if (e.selected && e.retry) {
+                        submitUploadTask(e);
+                    }
+                }
+            }
+        }
+
+        function abortImport() {
+            if (xhr !== null) {
+                xhr.abort();
+            }
+        }
+
+        function subscribe() {
+            // subscribe to document event
+            $(document).on('dropbox.files', addFiles);
+            $(document).on('dropbox.clipboard', addClipboard);
+            // $(document).on('import.clearSelected', clearSelected);
+            // $(document).on('import.cancel', abortImport);
+            // $(document).on('import.retry', retrySelected);
+
+            $(document).on('import.line.overwrite', renderRowAsOverwrite);
+            $(document).on('import.line.append', renderRowAsAppend);
+            $(document).on('import.line.abort', renderRowAsCancel);
+
+            $('#btnImportClearSelected').click(clearSelected);
+            $('#btnImportCancel').click(abortImport);
+            $('#btnRetry').click(retrySelected);
+        }
+
+        function init() {
+            canvas = container.find('> .ud-canvas');
+            subscribe();
+        }
+
+        init();
+
+        return this;
+    };
+
+    // this class will manage drag&drop into dropbox element and
+    // broadcast file readiness to document via custom event 'dropbox.files'
+    $.fn.dropbox = function (bus) {
+
+        var collection = $();
+        var target = this;
+
+        function startDrag() {
+            target.addClass('drag-drop').removeClass('drag-idle');
+        }
+
+        function endDrag() {
+            target.removeClass('drag-drop').addClass('drag-idle');
+        }
+
+        function handleDrop(evt) {
+            nopropagation(evt);
+            endDrag();
+            collection = $();
+            $(document).trigger('dropbox.files', evt.originalEvent.dataTransfer);
+        }
+
+        function handlePaste(evt) {
+            var pastedText = void 0;
+            if (window.clipboardData && window.clipboardData.getData) {
+                // IE
+                pastedText = window.clipboardData.getData('Text');
+            } else if (evt.originalEvent.clipboardData && evt.originalEvent.clipboardData.getData) {
+                pastedText = evt.originalEvent.clipboardData.getData('text/plain');
+            }
+            $(document).trigger('dropbox.clipboard', pastedText);
+        }
+
+        function handleDragEnter(event) {
+            nopropagation(event);
+            if (collection.size() === 0) {
+                startDrag();
+            }
+            collection = collection.add(event.target);
+        }
+
+        function handleDragLeave(event) {
+            /*
+             * Firefox 3.6 fires the dragleave event on the previous element
+             * before firing dragenter on the next one so we introduce a delay
+             */
+            setTimeout(function () {
+                collection = collection.not(event.target);
+                if (collection.size() === 0) {
+                    endDrag();
+                }
+            }, 1);
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function handleActivation(evt, name) {
+            if (name === 'import') {
+                $(document).on('drop', handleDrop);
+                $(document).on('paste', handlePaste);
+                $(document).on('dragenter', handleDragEnter);
+                $(document).on('dragover', nopropagation);
+                $(document).on('dragleave', handleDragLeave);
+            } else {
+                $(document).unbind('drop', handleDrop);
+                $(document).unbind('paste', handlePaste);
+                $(document).unbind('dragenter', handleDragEnter);
+                $(document).unbind('dragover', nopropagation);
+                $(document).unbind('dragleave', handleDragLeave);
+            }
+        }
+
+        function init() {
+            bus.on('active.panel', handleActivation);
+
+            var input = $('#js-browse-files-input')[0];
+
+            $('#js-browse-files').click(function () {
+                input.click();
+            });
+
+            input.onchange = function () {
+                $(document).trigger('dropbox.files', input);
+                // reset to be able to browse same file again
+                input.value = '';
+            };
+        }
+
+        init();
+
+        return this;
+    };
+})(jQuery);
+//# sourceMappingURL=import.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
+/*globals qdb:false */
+
+(function ($) {
+    'use strict';
+
+    $.fn.importEditor = function (ebus) {
+        var container = $(this);
+        var statsSwitcher = $('.stats-switcher');
+        var divEditor = $(this).find('.js-import-editor');
+        var msgPanel = $(this).find('.js-import-error');
+        var divMessage = $(this).find('.js-message');
+        var divTabName = $(this).find('.js-import-tab-name');
+        var divRejectedPct = $(this).find('.import-rejected');
+        var divImportedPct = $(this).find('.import-imported');
+        var divRejectedCount = $(this).find('.js-rejected-row-count');
+        var divImportedCount = $(this).find('.js-imported-row-count');
+        var divCanvas = $(this).find('.ud-canvas');
+        var footerHeight = $('.footer')[0].offsetHeight;
+        var lineHeight = 35;
+        var select = void 0;
+        var location = void 0;
+        var types = [{text: 'AUTO', value: null}, {text: 'BOOLEAN', value: 'BOOLEAN'}, {
+            text: 'BYTE',
+            value: 'BYTE'
+        }, {text: 'DOUBLE', value: 'DOUBLE'}, {text: 'FLOAT', value: 'FLOAT'}, {
+            text: 'INT',
+            value: 'INT'
+        }, {text: 'LONG', value: 'LONG'}, {text: 'SHORT', value: 'SHORT'}, {
+            text: 'STRING',
+            value: 'STRING'
+        }, {text: 'SYMBOL', value: 'SYMBOL'}, {
+            text: 'DATE (ISO)',
+            value: 'DATE_ISO'
+        }, {text: 'DATE (YYYY-MM-DD hh:mm:ss)', value: 'DATE_1'}, {
+            text: 'DATE (MM/DD/YYYY)',
+            value: 'DATE_2'
+        }, {text: 'DATE (DD/MM/YYYY)', value: 'DATE_3'}];
+
+        var current = null;
+        var editorBus = ebus;
+
+        function resizeCanvas() {
+            var top = divCanvas[0].getBoundingClientRect().top;
+            var h = Math.round(window.innerHeight - top);
+            h = h - footerHeight - 45;
+            divCanvas[0].style.height = h + 'px';
+        }
+
+        function selectClick() {
+            var div = $(this);
+            select.appendTo(div.parent());
+            select.css('left', div.css('left'));
+            select.css('width', div.css('width'));
+
+            // find column index
+            var colIndex = parseInt($(this).parent().find('.js-g-row').text()) - 1;
+
+            // get column
+            var col = current.response.columns[colIndex];
+
+            // set option
+            if (col.altType) {
+                select.val(col.altType.value);
+            } else {
+                select.val(col.type);
+            }
+
+            select.changeTargetDiv = div;
+            select.changeTargetCol = col;
+
+            select.show();
+            select.focus();
+        }
+
+        function selectHide() {
+            select.hide();
+        }
+
+        function getTypeHtml(col) {
+            if (col.altType && col.altType.text !== col.type) {
+                return col.type + '<i class="fa fa-angle-double-right g-type-separator"></i>' + col.altType.text;
+            } else {
+                return col.type;
+            }
+        }
+
+        function calcModifiedFlag() {
+            var modified = false;
+            for (var i = 0; i < current.response.columns.length; i++) {
+                var col = current.response.columns[i];
+                if (col.altType && col.type !== col.altType.text) {
+                    modified = true;
+                    break;
+                }
+            }
+
+            $(document).trigger(modified ? 'import.line.overwrite' : 'import.line.cancel', current);
+        }
+
+        function selectChange() {
+            var sel = $(this).find('option:selected');
+            select.changeTargetCol.altType = {text: sel.text(), value: sel.val()};
+            select.changeTargetDiv.html(getTypeHtml(select.changeTargetCol));
+            calcModifiedFlag();
+            selectHide();
+        }
+
+        function attachSelect() {
+            $('.g-type').click(selectClick);
+            $('.g-other').click(selectHide);
+            select.change(selectChange);
+        }
+
+        function render(e) {
+            if (e.importState === 0 && !e.response) {
+                // aborted at start
+                return;
+            }
+
+            if (e.response && e.importState === 0) {
+                divTabName.html(location = e.response.location);
+
+                // update "chart"
+                var importedRows = e.response.rowsImported;
+                var rejectedRows = e.response.rowsRejected;
+                var totalRows = importedRows + rejectedRows;
+                divRejectedPct.css('width', Math.round(rejectedRows * 100 / totalRows) + '%');
+                divImportedPct.css('width', Math.round(importedRows * 100 / totalRows) + '%');
+
+                // update counts
+                divRejectedCount.html(rejectedRows);
+                divImportedCount.html(importedRows);
+
+                divCanvas.empty();
+
+                // records
+                if (e.response.columns) {
+                    var top = 0;
+                    for (var k = 0; k < e.response.columns.length; k++) {
+                        var col = e.response.columns[k];
+                        divCanvas.append('<div class="ud-row" style="top: ' + top + 'px">' + '<div class="ud-cell gc-1 g-other js-g-row">' + (k + 1) + '</div>' + '<div class="ud-cell gc-2 g-other">' + (col.errors > 0 ? '<i class="fa fa-exclamation-triangle g-warning"></i>' : '') + col.name + '</div>' + '<div class="ud-cell gc-3 g-type">' + getTypeHtml(col) + '</div>' + '<div class="ud-cell gc-4 g-other">' + col.errors + '</div>' + '</div>');
+
+                        top += lineHeight;
+                    }
+                }
+
+                attachSelect();
+
+                // display component
+                divEditor.show();
+                msgPanel.hide();
+                resizeCanvas();
+            } else {
+                switch (e.importState) {
+                    case 1:
+                        divMessage.html('Journal <strong>' + e.name + '</strong> already exists on server');
+                        break;
+                    case 2:
+                        divMessage.html('Journal name <strong>' + e.name + '</strong> is reserved');
+                        break;
+                    case 3:
+                        divMessage.html('Server is not responding...');
+                        break;
+                    case 4:
+                        divMessage.html(e.response);
+                        break;
+                    case 5:
+                        divMessage.html('Server encountered internal problem. Check server logs for more details.');
+                        break;
+                    default:
+                        divMessage.html('Unknown error: ' + e.responseStatus);
+                        break;
+                }
+                divEditor.hide();
+                msgPanel.show();
+                // reset button group option
+            }
+            container.show();
+        }
+
+        function setupSelect() {
+            select = $('<select class="g-dynamic-select form-control m-b"/>');
+            for (var i = 0; i < types.length; i++) {
+                var val = types[i];
+                $('<option />', {value: val.value, text: val.text}).appendTo(select);
+            }
+        }
+
+        $(document).on('import.detail', function (x, e) {
+            current = e;
+            render(e);
+        });
+
+        $(document).on('import.detail.updated', function (x, e) {
+            if (current === e && e.response) {
+                render(e);
+            }
+        });
+
+        $(document).on('import.cleared', function (x, e) {
+            if (e === current) {
+                current = null;
+                divEditor.hide();
+                msgPanel.hide();
+            }
+        });
+
+        setupSelect();
+
+        $('.import-stats-chart').click(function () {
+            if (statsSwitcher.hasClass('stats-visible')) {
+                statsSwitcher.removeClass('stats-visible');
+            } else {
+                statsSwitcher.addClass('stats-visible');
+            }
+        });
+
+        divTabName.mouseover(function () {
+            divTabName.addClass('animated tada').one('webkitAnimationEnd mozAnimationEnd MSAnimationEnd oanimationend animationend', function () {
+                $(this).removeClass('animated').removeClass('tada');
+            });
+        });
+
+        divTabName.click(function () {
+            editorBus.trigger(qdb.MSG_QUERY_FIND_N_EXEC, location);
+        });
+
+        $(window).resize(resizeCanvas);
+        editorBus.on('active.panel', resizeCanvas);
+    };
+})(jQuery);
+//# sourceMappingURL=import-detail.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
+/*globals qdb:false */
+/*globals ace:false */
+
+(function ($) {
+    'use strict';
+
+    $.fn.query = function () {
+        var bus = $(this);
+        var qry = void 0;
+        var hActiveRequest = null;
+        var hPendingRequest = null;
+        var time = void 0;
+        var batchSize = qdb.queryBatchSize;
+
+        var requestParams = {
+            'query': '',
+            'limit': ''
+        };
+
+        function cancelActiveQuery() {
+            if (hActiveRequest !== null) {
+                hActiveRequest.abort();
+                hActiveRequest = null;
+            }
+        }
+
+        function abortPending() {
+            if (hPendingRequest !== null) {
+                clearTimeout(hPendingRequest);
+                hPendingRequest = null;
+            }
+        }
+
+        function handleServerResponse(r) {
+            bus.trigger(qdb.MSG_QUERY_OK, {
+                delta: new Date().getTime() - time,
+                count: r.count
+            });
+
+            if (r.dataset) {
+                bus.trigger(qdb.MSG_QUERY_DATASET, r);
+            }
+
+            hActiveRequest = null;
+        }
+
+        function handleServerError(jqXHR) {
+            bus.trigger(qdb.MSG_QUERY_ERROR, {
+                query: qry,
+                r: jqXHR.responseJSON,
+                status: jqXHR.status,
+                statusText: jqXHR.statusText,
+                delta: new Date().getTime() - time
+            });
+            hActiveRequest = null;
+        }
+
+        function sendQueryDelayed() {
+            cancelActiveQuery();
+            requestParams.query = qry.q;
+            requestParams.limit = '0,' + batchSize;
+            requestParams.count = true;
+            time = new Date().getTime();
+            hActiveRequest = $.get('/exec', requestParams).done(handleServerResponse).fail(handleServerError);
+            bus.trigger(qdb.MSG_QUERY_RUNNING);
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function sendQuery(x, q) {
+            qry = q;
+            abortPending();
+            hPendingRequest = setTimeout(sendQueryDelayed, 50);
+        }
+
+        bus.on(qdb.MSG_QUERY_EXEC, sendQuery);
+        bus.on(qdb.MSG_QUERY_CANCEL, cancelActiveQuery);
+    };
+
+    $.fn.domController = function () {
+        var div = $('.js-query-spinner');
+        var divMsg = $('.js-query-message-panel');
+        var divTime = $('.js-query-message-panel .js-query-time');
+        var divMsgText = $('.js-query-message-panel .js-query-message-text');
+        var timer = void 0;
+        var runBtn = void 0;
+        var running = false;
+        var bus = $(this);
+
+        function delayedStart() {
+            div.addClass('query-progress-animated', 100);
+            divMsg.addClass('query-message-ok');
+            divTime.html('-');
+            divMsgText.html('Running...');
+        }
+
+        function start() {
+            running = true;
+            runBtn.html('<i class="fa fa-stop"></i>Cancel');
+            runBtn.removeClass('js-query-run').addClass('js-query-cancel');
+            timer = setTimeout(delayedStart, 500);
+        }
+
+        function stop() {
+            runBtn.html('<i class="fa fa-play"></i>Run');
+            runBtn.removeClass('js-query-cancel').addClass('js-query-run');
+            clearTimeout(timer);
+            div.removeClass('query-progress-animated');
+            running = false;
+        }
+
+        function toTextPosition(q, pos) {
+            var r = 0,
+                c = 0,
+                n = Math.min(pos, q.q.length);
+            for (var i = 0; i < n; i++) {
+                if (q.q.charAt(i) === '\n') {
+                    r++;
+                    c = 0;
+                } else {
+                    c++;
+                }
+            }
+
+            return {
+                r: r + 1 + q.r,
+                c: (r === 0 ? c + q.c : c) + 1
+            };
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function error(x, m) {
+            stop();
+            divMsg.removeClass('query-message-ok').addClass('query-message-error');
+            divTime.html('failed after <strong>' + m.delta / 1000 + 's</strong>');
+            if (m.statusText === 'abort') {
+                divMsgText.html('Cancelled by user');
+            } else if (m.r) {
+                var pos = toTextPosition(m.query, m.r.position);
+                divMsgText.html('<strong>' + pos.r + ':' + pos.c + '</strong>&nbsp;&nbsp;' + m.r.error);
+                bus.trigger('editor.show.error', pos);
+            } else if (m.status === 0) {
+                divMsgText.html('Server down?');
+            } else {
+                divMsgText.html('Server error: ' + m.status);
+            }
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function ok(x, m) {
+            stop();
+            divMsg.removeClass('query-message-error').addClass('query-message-ok');
+            divTime.html('read in <strong>' + m.delta / 1000 + 's</strong>');
+            if (m.count) {
+                divMsgText.html(m.count.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ' rows');
+            } else {
+                divMsgText.html('done');
+            }
+        }
+
+        function toggleRunBtn() {
+            if (running) {
+                bus.trigger(qdb.MSG_QUERY_CANCEL);
+            } else {
+                bus.trigger('editor.execute');
+            }
+        }
+
+        function exportClick(e) {
+            e.preventDefault();
+            bus.trigger('grid.publish.query');
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function exportQuery(x, query) {
+            if (query) {
+                window.location.href = '/exp?query=' + query;
+            }
+        }
+
+        function bind() {
+            runBtn = $('.js-query-run');
+            runBtn.click(toggleRunBtn);
+            bus.on(qdb.MSG_QUERY_ERROR, error);
+            bus.on(qdb.MSG_QUERY_OK, ok);
+            bus.on(qdb.MSG_QUERY_RUNNING, start);
+            bus.on('grid.query', exportQuery);
+
+            $('.js-editor-toggle-invisible').click(function () {
+                bus.trigger('editor.toggle.invisibles');
+            });
+            $('.js-query-export').click(exportClick);
+        }
+
+        bind();
+    };
+
+    $.fn.editor = function (msgBus) {
+        var edit = void 0;
+        var storeKeys = {
+            text: 'query.text',
+            line: 'editor.line',
+            col: 'editor.col'
+        };
+
+        var Range = ace.require('ace/range').Range;
+        var marker = void 0;
+        var searchOpts = {
+            wrap: true,
+            caseSensitive: true,
+            wholeWord: false,
+            regExp: false,
+            preventScroll: false
+        };
+        var bus = msgBus;
+        var element = this;
+
+        function clearMarker() {
+            if (marker) {
+                edit.session.removeMarker(marker);
+                marker = null;
+            }
+        }
+
+        function setup() {
+            edit = ace.edit(element[0]);
+            edit.getSession().setMode('ace/mode/questdb');
+            edit.setTheme('ace/theme/merbivore_soft');
+            edit.setShowPrintMargin(false);
+            edit.setDisplayIndentGuides(false);
+            edit.setHighlightActiveLine(false);
+            edit.session.on('change', clearMarker);
+            edit.$blockScrolling = Infinity;
+
+            $(window).on('resize', function () {
+                edit.resize();
+            });
+        }
+
+        function loadPreferences() {
+            if (typeof Storage !== 'undefined') {
+                var q = localStorage.getItem(storeKeys.text);
+                if (q) {
+                    edit.setValue(q);
+                }
+
+                var row = localStorage.getItem(storeKeys.line);
+                var col = localStorage.getItem(storeKeys.col);
+
+                if (row && col) {
+                    edit.gotoLine(row, col);
+                }
+            }
+        }
+
+        function savePreferences() {
+            if (typeof Storage !== 'undefined') {
+                localStorage.setItem(storeKeys.text, edit.getValue());
+                localStorage.setItem(storeKeys.line, edit.getCursorPosition().row + 1);
+                localStorage.setItem(storeKeys.col, edit.getCursorPosition().column);
+            }
+        }
+
+        function computeQueryTextFromCursor() {
+            var text = edit.getValue();
+            var pos = edit.getCursorPosition();
+            var r = 0;
+            var c = 0;
+
+            var startRow = 0;
+            var startCol = 0;
+            var startPos = -1;
+            var sql = null;
+            var inQuote = false;
+
+            for (var i = 0; i < text.length; i++) {
+                var char = text.charAt(i);
+
+                switch (char) {
+                    case ';':
+                        if (inQuote) {
+                            c++;
+                            continue;
+                        }
+
+                        if (r < pos.row || r === pos.row && c < pos.column) {
+                            startRow = r;
+                            startCol = c;
+                            startPos = i + 1;
+                            c++;
+                        } else {
+                            if (startPos === -1) {
+                                sql = text.substring(0, i);
+                            } else {
+                                sql = text.substring(startPos, i);
+                            }
+                        }
+                        break;
+                    case '\n':
+                        r++;
+                        c = 0;
+                        break;
+                    case '\'':
+                        inQuote = !inQuote;
+                        c++;
+                        break;
+                    default:
+                        c++;
+                        break;
+                }
+
+                if (sql !== null) {
+                    break;
+                }
+            }
+
+            if (sql === null) {
+                if (startPos === -1) {
+                    sql = text;
+                } else {
+                    sql = text.substring(startPos);
+                }
+            }
+
+            if (sql.length === 0) {
+                return null;
+            }
+
+            return {q: sql, r: startRow, c: startCol};
+        }
+
+        function computeQueryTextFromSelection() {
+            var q = edit.getSelectedText();
+            var n = q.length;
+            var c = void 0;
+            while (n > 0 && ((c = q.charAt(n)) === ' ' || c === '\n' || c === ';')) {
+                n--;
+            }
+
+            if (n > 0) {
+                q = q.substr(0, n + 1);
+                var range = edit.getSelectionRange();
+                return {q: q, r: range.start.row, c: range.start.column};
+            }
+
+            return null;
+        }
+
+        function submitQuery() {
+            bus.trigger('preferences.save');
+            clearMarker();
+            var q = void 0;
+            if (edit.getSelectedText() === '') {
+                q = computeQueryTextFromCursor();
+            } else {
+                q = computeQueryTextFromSelection();
+            }
+
+            if (q) {
+                bus.trigger(qdb.MSG_QUERY_EXEC, q);
+            }
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function showError(x, pos) {
+            var token = edit.session.getTokenAt(pos.r - 1, pos.c);
+            marker = edit.session.addMarker(new Range(pos.r - 1, pos.c - 1, pos.r - 1, pos.c + token.value.length - 1), 'js-syntax-error', 'text', true);
+
+            edit.gotoLine(pos.r, pos.c - 1);
+            edit.focus();
+        }
+
+        function toggleInvisibles() {
+            edit.renderer.setShowInvisibles(!edit.renderer.getShowInvisibles());
+        }
+
+        function focusGrid() {
+            bus.trigger('grid.focus');
+        }
+
+        //noinspection JSUnusedLocalSymbols
+        function findOrInsertQuery(e, q) {
+            // "select" existing query or append text of new one
+            // "find" will select text if anything is found, so we just
+            // execute whats there
+            if (!edit.find('\'' + q + '\'', searchOpts)) {
+                var row = edit.session.getLength();
+                var text = '\n\'' + q + '\';';
+                edit.session.insert({
+                    row: row,
+                    column: 0
+                }, text);
+                edit.selection.moveCursorToPosition({
+                    row: row + 1,
+                    column: 0
+                });
+                edit.selection.selectLine();
+            }
+            submitQuery();
+        }
+
+        function bind() {
+            bus.on('editor.execute', submitQuery);
+            bus.on('editor.show.error', showError);
+            bus.on('editor.toggle.invisibles', toggleInvisibles);
+            bus.on(qdb.MSG_QUERY_FIND_N_EXEC, findOrInsertQuery);
+            bus.on('editor.focus', function () {
+                edit.scrollToLine(edit.getCursorPosition().row + 1, true, true, function () {
+                });
+                edit.focus();
+            });
+
+            edit.commands.addCommand({
+                name: 'editor.execute',
+                bindKey: 'F9',
+                exec: submitQuery
+            });
+
+            edit.commands.addCommand({
+                name: 'editor.focus.grid',
+                bindKey: 'F2',
+                exec: focusGrid
+            });
+
+            bus.on('preferences.load', loadPreferences);
+            bus.on('preferences.save', savePreferences);
+        }
+
+        setup();
+        bind();
+    };
+})(jQuery);
+//# sourceMappingURL=query.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
+
+(function ($) {
+    'use strict';
+
+    $.fn.splitter = function (msgBus, pName, pMinTop, pMinBottom) {
+        var bus = $(msgBus);
+        var div = $(this);
+        var busMsgName = 'splitter.' + pName + '.resize';
+        var ghost = void 0;
+        var start = void 0;
+        var end = void 0;
+        var styleMain = void 0;
+        var minTop = pMinTop;
+        var minBottom = pMinBottom;
+
+        function drag(e) {
+            e.preventDefault();
+            if (e.pageY > minTop && e.pageY < window.innerHeight + $(window).scrollTop() - minBottom) {
+                end = e.pageY;
+                ghost[0].style = styleMain + 'top: ' + e.pageY + 'px;';
+            }
+        }
+
+        function endDrag() {
+            $(document).off('mousemove', drag);
+            $(document).off('mouseup', endDrag);
+            ghost[0].style = 'display: none';
+            div.removeClass('qs-dragging');
+            bus.trigger(busMsgName, end - start);
+        }
+
+        function beginDrag() {
+            var rect = div[0].getBoundingClientRect();
+            start = rect.top + $(window).scrollTop();
+            styleMain = 'position: absolute; left: ' + rect.left + 'px; width: ' + rect.width + 'px; height: ' + rect.height + 'px;';
+            if (!ghost) {
+                ghost = $('<div class="qs-ghost"></div>');
+                ghost.appendTo('body');
+            }
+            ghost[0].style = styleMain + 'top: ' + start + 'px;';
+            div.addClass('qs-dragging');
+            $(document).mousemove(drag);
+            $(document).mouseup(endDrag);
+        }
+
+        $(this).mousedown(beginDrag);
+    };
+})(jQuery);
+//# sourceMappingURL=splitter.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
+/*globals qdb:false */
+/*globals Clipboard:false */
+
+(function ($) {
+    'use strict';
+
+    var divSqlPanel = $('.js-sql-panel');
+    var divExportUrl = $('.js-export-url');
+    var editor = $('#editor');
+    var sqlEditor = $('#sqlEditor');
+    var consoleTop = $('#console-top');
+    var wrapper = $('#page-wrapper');
+    var msgPanel = editor.find('.js-query-message-panel');
+    var navbar = $('nav.navbar-default');
+    var win = $(window);
+
+    var topHeight = 350;
+    var bottomHeight = 350;
+    var visible = false;
+
+    function resize() {
+        if (visible) {
+            var navbarHeight = navbar.height();
+            var wrapperHeight = wrapper.height();
+            var msgPanelHeight = msgPanel.height();
+            var h = void 0;
+
+            if (navbarHeight > wrapperHeight) {
+                h = navbarHeight;
+            }
+
+            if (navbarHeight < wrapperHeight) {
+                h = win.height();
+            }
+
+            if (h) {
+                if (h < topHeight + bottomHeight) {
+                    h = topHeight + bottomHeight;
+                }
+                qdb.setHeight(wrapper, h - 1);
+            }
+
+            qdb.setHeight(consoleTop, topHeight);
+            qdb.setHeight(editor, topHeight);
+            qdb.setHeight(sqlEditor, topHeight - msgPanelHeight - 60);
+        }
+    }
+
+    function switchToGrid() {
+        // $('#editor').show();
+        $('#js-toggle-chart').removeClass('active');
+        $('#js-toggle-grid').addClass('active');
+    }
+
+    function loadSplitterPosition() {
+        if (typeof Storage !== 'undefined') {
+            var n = localStorage.getItem('splitter.position');
+            if (n) {
+                topHeight = parseInt(n);
+            }
+        }
+    }
+
+    function saveSplitterPosition() {
+        if (typeof Storage !== 'undefined') {
+            localStorage.setItem('splitter.position', topHeight);
+        }
+    }
+
+    function toggleVisibility(x, name) {
+        if (name === 'console') {
+            visible = true;
+            divSqlPanel.show();
+        } else {
+            visible = false;
+            divSqlPanel.hide();
+        }
+    }
+
+    function setup(bus) {
+        win.bind('resize', resize);
+        bus.on(qdb.MSG_QUERY_DATASET, function (e, m) {
+            divExportUrl.val(qdb.toExportUrl(m.query));
+        });
+
+        divExportUrl.click(function () {
+            this.select();
+        });
+
+        /* eslint-disable no-new */
+        new Clipboard('.js-export-copy-url');
+        $('.js-query-refresh').click(function () {
+            bus.trigger('grid.refresh');
+        });
+
+        // named splitter
+        bus.on('splitter.console.resize', function (x, e) {
+            topHeight += e;
+            win.trigger('resize');
+            bus.trigger('preferences.save');
+        });
+
+        bus.on('preferences.save', saveSplitterPosition);
+        bus.on('preferences.load', loadSplitterPosition);
+        bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
+
+        bus.query();
+        bus.domController();
+
+        sqlEditor.editor(bus);
+
+        $('#grid').grid(bus);
+        $('#sp1').splitter(bus, 'console', 200, 0);
+
+        switchToGrid();
+    }
+
+    $.extend(true, window, {
+        qdb: {
+            setupConsoleController: setup,
+            switchToGrid: switchToGrid
+        }
+    });
+})(jQuery);
+//# sourceMappingURL=console-controller.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals qdb:false */
+/*globals jQuery:false */
+
+(function ($) {
+    'use strict';
+
+    var divImportPanel = $('.js-import-panel');
+    var importTopPanel = $('#import-top');
+    var canvasPanel = importTopPanel.find('.ud-canvas');
+    var w = $(window);
+
+    var upperHalfHeight = 450;
+
+    function resize() {
+        var r1 = importTopPanel[0].getBoundingClientRect();
+        var r2 = canvasPanel[0].getBoundingClientRect();
+        qdb.setHeight(importTopPanel, upperHalfHeight);
+        qdb.setHeight(canvasPanel, upperHalfHeight - (r2.top - r1.top) - 10);
+    }
+
+    function toggleVisibility(x, name) {
+        if (name === 'import') {
+            divImportPanel.show();
+            w.trigger('resize');
+        } else {
+            divImportPanel.hide();
+        }
+    }
+
+    function splitterResize(x, p) {
+        upperHalfHeight += p;
+        w.trigger('resize');
+    }
+
+    function setup(bus) {
+        w.bind('resize', resize);
+
+        $('#dragTarget').dropbox(bus);
+        $('#import-file-list').importManager(bus);
+        $('#import-detail').importEditor(bus);
+        $('#sp2').splitter(bus, 'import', 470, 300);
+
+        bus.on('splitter.import.resize', splitterResize);
+        bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
+    }
+
+    $.extend(true, window, {
+        qdb: {
+            setupImportController: setup
+        }
+    });
+})(jQuery);
+//# sourceMappingURL=import-controller.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
+/*globals qdb:false */
+/*globals echarts:false */
+
+(function ($) {
+    'use strict';
+
+    var panels = $('.js-vis-panel');
+    var w = $(window);
+    var container = $('#visualisation-top');
+    var footerHeight = $('.footer')[0].offsetHeight;
+    var columnContainer = panels.find('.vis-columns');
+    var canvas = panels.find('#vis-canvas')[0];
+
+    var visible = true;
+
+    function toggleVisibility(x, name) {
+        if (name === 'visualisation') {
+            panels.show();
+            visible = true;
+            w.trigger('resize');
+        } else {
+            visible = false;
+            panels.hide();
+        }
+    }
+
+    function processDataSet(x, dataSet) {
+        console.log(dataSet);
+        var cols = dataSet.columns;
+        var html = '';
+        for (var i = 0, n = cols.length; i < n; i++) {
+            html += '<li>' + cols[i].name + '</li>';
+        }
+        columnContainer.html(html);
+    }
+
+    function resize() {
+        if (visible) {
+            qdb.setHeight(container, window.innerHeight - footerHeight - 80);
+        }
+    }
+
+    function setup(bus) {
+        $(window).bind('resize', resize);
+        bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
+        bus.on(qdb.MSG_QUERY_DATASET, processDataSet);
+
+        echarts.init(canvas);
+    }
+
+    $.extend(true, window, {
+        qdb: {
+            setupVisualisationController: setup
+        }
+    });
+})(jQuery);
+//# sourceMappingURL=vis-controller.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals $:false */
+/*globals qdb:false */
+/*globals jQuery:false */
+
+(function ($) {
+    'use strict';
+
+    var messageBus = void 0;
+    var menuItems = $('#side-menu').find('a');
+
+    function switchTo(name, index) {
+        messageBus.trigger(qdb.MSG_ACTIVE_PANEL, name);
+        var n = menuItems.length;
+        for (var i = 0; i < n; i++) {
+            if (i === index) {
+                menuItems[i].setAttribute('class', 'selected');
+            } else {
+                menuItems[i].setAttribute('class', '');
+            }
+        }
+    }
+
+    function switchToConsole() {
+        switchTo('console', 0);
+    }
+
+    function switchToVis() {
+        switchTo('visualisation', 1);
+    }
+
+    function switchToImport() {
+        switchTo('import', 2);
+    }
+
+    function setup(b) {
+        messageBus = b;
+        $('#side-menu').metisMenu();
+        $('a#nav-console').click(switchToConsole);
+        $('a#nav-import').click(switchToImport);
+        $('a#nav-visualisation').click(switchToVis);
+        b.on(qdb.MSG_QUERY_FIND_N_EXEC, switchToConsole);
+    }
+
+    $.extend(true, window, {
+        qdb: {
+            setup: setup,
+            switchToConsole: switchToConsole
+        }
+    });
+})(jQuery);
+
+var bus = void 0;
+
+$(document).ready(function () {
+    'use strict';
+
+    bus = $({});
+
+    qdb.setup(bus);
+    qdb.setupConsoleController(bus);
+    qdb.setupImportController(bus);
+    qdb.setupVisualisationController(bus);
+    qdb.switchToConsole();
+    bus.trigger('preferences.load');
+});
+
+$(window).load(function () {
+    'use strict';
+
+    $(window).trigger('resize');
+    bus.trigger('editor.focus');
+});
+//# sourceMappingURL=main.js.map
+
 (function webpackUniversalModuleDefinition(root, factory) {
     if (typeof exports === 'object' && typeof module === 'object')
         module.exports = factory();
@@ -91971,3117 +94773,3 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
         /******/])
 });
 ;
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
- * The MIT License (MIT)
- *
- * Copyright (C) 2016 Appsicle
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-
-ace.define(
-    "ace/mode/sql_highlight_rules",
-    ["require", "exports", "module", "ace/lib/oop", "ace/mode/text_highlight_rules"],
-    function (e, t, n) {
-        "use strict";
-        var r = e("../lib/oop"), i = e("./text_highlight_rules").TextHighlightRules, s = function () {
-            var e = "select|insert|update|delete|from|where|and|or|by|order|limit|as|case|when|else|end|type|left|right|join|on|outer|desc|asc|union|create|table|primary|key|if|foreign|not|references|default|null|inner|cross|natural|database|drop|grant|over|sample|partition|latest|NaN|with|rename";
-            var t = "true|false";
-            var n = "avg|count|first|last|max|min|sum|ucase|lcase|mid|len|round|rank|now|format|coalesce|ifnull|isnull|nvl";
-            var r = "int|date|string|symbol|float|double|binary|timestamp";
-            i = this.createKeywordMapper({
-                "support.function": n,
-                keyword: e,
-                "constant.language": t,
-                "storage.type": r
-            }, "identifier", !0);
-            this.$rules = {
-                start: [{token: "comment", regex: "--.*$"}, {
-                    token: "comment",
-                    start: "/\\*",
-                    end: "\\*/"
-                }, {token: "string", regex: '".*?"'}, {token: "string", regex: "'.*?'"}, {
-                    token: "constant.numeric",
-                    regex: "[+-]?\\d+(?:(?:\\.\\d*)?(?:[eE][+-]?\\d+)?)?\\b"
-                }, {token: i, regex: "[a-zA-Z_$][a-zA-Z0-9_$]*\\b"}, {
-                    token: "keyword.operator",
-                    regex: "\\+|\\-|\\/|\\/\\/|%|<@>|@>|<@|&|\\^|~|<|>|<=|=>|==|!=|<>|="
-                }, {token: "paren.lparen", regex: "[\\(]"}, {token: "paren.rparen", regex: "[\\)]"}, {
-                    token: "text",
-                    regex: "\\s+"
-                }]
-            };
-            this.normalizeRules()
-        };
-        r.inherits(s, i);
-        t.SqlHighlightRules = s
-    });
-
-
-ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "ace/mode/text", "ace/mode/sql_highlight_rules", "ace/range"], function (e, t, n) {
-    "use strict";
-    var r = e("../lib/oop"), i = e("./text").Mode, s = e("./sql_highlight_rules").SqlHighlightRules, o = e("../range").Range, u = function () {
-        this.HighlightRules = s
-    };
-    r.inherits(u, i), function () {
-        this.lineCommentStart = "--";
-        this.$id = "ace/mode/questdb"
-    }.call(u.prototype);
-    t.Mode = u
-});
-'use strict';
-
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
- * The MIT License (MIT)
- *
- * Copyright (C) 2016-2017 Appsicle
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-
-/*globals jQuery:false */
-
-(function ($) {
-    'use strict';
-
-    var queryBatchSize = 1000;
-    var MSG_QUERY_EXEC = 'query.in.exec';
-    var MSG_QUERY_CANCEL = 'query.in.cancel';
-    var MSG_QUERY_RUNNING = 'query.out.running';
-    var MSG_QUERY_OK = 'query.out.ok';
-    var MSG_QUERY_ERROR = 'query.out.error';
-    var MSG_QUERY_DATASET = 'query.out.dataset';
-
-    function toExportUrl(query) {
-        return window.location.protocol + '//' + window.location.host + '/exp?query=' + encodeURIComponent(query);
-    }
-
-    function setHeight(element, height) {
-        element.css('height', height + 'px');
-        element.css('min-height', height + 'px');
-    }
-
-    $.extend(true, window, {
-        qdb: {
-            queryBatchSize: queryBatchSize,
-            MSG_QUERY_EXEC: MSG_QUERY_EXEC,
-            MSG_QUERY_CANCEL: MSG_QUERY_CANCEL,
-            MSG_QUERY_RUNNING: MSG_QUERY_RUNNING,
-            MSG_QUERY_OK: MSG_QUERY_OK,
-            MSG_QUERY_ERROR: MSG_QUERY_ERROR,
-            MSG_QUERY_DATASET: MSG_QUERY_DATASET,
-            toExportUrl: toExportUrl,
-            setHeight: setHeight
-        }
-    });
-})(jQuery);
-//# sourceMappingURL=globals.js.map
-
-'use strict';
-
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
- * The MIT License (MIT)
- *
- * Copyright (C) 2016-2017 Appsicle
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-
-/*globals jQuery:false */
-/*globals qdb:false */
-
-(function ($) {
-    'use strict';
-
-    $.fn.grid = function (msgBus) {
-        var defaults = {
-            minColumnWidth: 60,
-            rowHeight: 28,
-            divCacheSize: 128,
-            viewportHeight: 400,
-            yMaxThreshold: 10000000,
-            maxRowsToAnalyze: 100,
-            bottomMargin: 75,
-            minVpHeight: 120,
-            minDivHeight: 160
-        };
-        var bus = msgBus;
-        var $style;
-        var div = $(this);
-        var viewport;
-        var canvas;
-        var header;
-        var colMax;
-        var columns = [];
-        var data = [];
-        var totalWidth = -1;
-        var stretched = 0;
-        // number of divs in "rows" cache, has to be power of two
-        var dc = defaults.divCacheSize;
-        var dcn = dc - 1;
-        var pageSize = qdb.queryBatchSize;
-        var oneThirdPage = Math.floor(pageSize / 3);
-        var twoThirdsPage = oneThirdPage * 2;
-        var loPage;
-        var hiPage;
-        var query;
-        var queryTimer;
-        var dbg;
-        var downKey = [];
-
-        // viewport height
-        var vp = defaults.viewportHeight;
-        // row height in px
-        var rh = defaults.rowHeight;
-        // virtual row count in grid
-        var r;
-        // max virtual y (height) of grid canvas
-        var yMax;
-        // current virtual y of grid canvas
-        var y;
-        // actual height of grid canvas
-        var h;
-        // last scroll top
-        var top;
-        // yMax / h - ratio between virtual and actual height
-        var M;
-        // offset to bring virtual y inline with actual y
-        var o;
-        // row div cache
-        var rows = [];
-        // active (highlighted) row
-        var activeRow = -1;
-        // div that is highlighted
-        var activeRowContainer;
-        // active cell
-        var activeCell = -1;
-        var activeCellContainer;
-        // rows in current view
-        var rowsInView;
-
-        function addRows(n) {
-            r += n;
-            yMax = r * rh;
-            if (yMax < defaults.yMaxThreshold) {
-                h = yMax;
-            } else {
-                h = defaults.yMaxThreshold;
-            }
-            M = yMax / h;
-            canvas.css('height', h === 0 ? 1 : h);
-        }
-
-        function renderRow(rowContainer, n) {
-            if (rowContainer.questIndex !== n) {
-                var rowData = data[Math.floor(n / pageSize)];
-                var offset = n % pageSize;
-                var k;
-                if (rowData) {
-                    var d = rowData[offset];
-                    if (d) {
-                        for (k = 0; k < columns.length; k++) {
-                            rowContainer.childNodes[k].innerHTML = d[k] !== null ? d[k].toString() : 'null';
-                        }
-                    }
-                    rowContainer.questIndex = n;
-                } else {
-                    for (k = 0; k < columns.length; k++) {
-                        rowContainer.childNodes[k].innerHTML = '';
-                    }
-                    rowContainer.questIndex = -1;
-                }
-                rowContainer.style.top = n * rh - o + 'px';
-                if (rowContainer === activeRowContainer) {
-                    if (n === activeRow) {
-                        rowContainer.className = 'qg-r qg-r-active';
-                        rowContainer.childNodes[activeCell].className += ' qg-c-active';
-                    } else {
-                        rowContainer.className = 'qg-r';
-                        rowContainer.childNodes[activeCell].className = 'qg-c qg-w' + activeCell;
-                    }
-                }
-            }
-        }
-
-        function renderViewportNoCompute() {
-            // calculate the viewport + buffer
-            var t = Math.max(0, Math.floor((y - vp) / rh));
-            var b = Math.min(yMax / rh, Math.ceil((y + vp + vp) / rh));
-
-            for (var i = t; i < b; i++) {
-                renderRow(rows[i & dcn], i);
-            }
-        }
-
-        function purgeOutlierPages() {
-            for (var i = 0; i < data.length; i++) {
-                if ((i < loPage || i > hiPage) && data[i]) {
-                    delete data[i];
-                }
-            }
-        }
-
-        function empty(x) {
-            return data[x] === null || data[x] === undefined || data[x].length === 0;
-        }
-
-        function loadPages(p1, p2) {
-            purgeOutlierPages();
-
-            var lo;
-            var hi;
-            var f;
-
-            if (p1 !== p2 && empty(p1) && empty(p2)) {
-                lo = p1 * pageSize;
-                hi = lo + pageSize * (p2 - p1 + 1);
-                f = function f(response) {
-                    data[p1] = response.dataset.splice(0, pageSize);
-                    data[p2] = response.dataset;
-                    renderViewportNoCompute();
-                };
-            } else if (empty(p1) && (!empty(p2) || p1 === p2)) {
-                lo = p1 * pageSize;
-                hi = lo + pageSize;
-                f = function f(response) {
-                    data[p1] = response.dataset;
-                    renderViewportNoCompute();
-                };
-            } else if ((!empty(p1) || p1 === p2) && empty(p2)) {
-                lo = p2 * pageSize;
-                hi = lo + pageSize;
-                f = function f(response) {
-                    data[p2] = response.dataset;
-                    renderViewportNoCompute();
-                };
-            } else {
-                renderViewportNoCompute();
-                return;
-            }
-            $.get('/exec', {query: query, limit: lo + ',' + hi, nm: true}).done(f);
-        }
-
-        function loadPagesDelayed(p1, p2) {
-            if (queryTimer) {
-                clearTimeout(queryTimer);
-            }
-            queryTimer = setTimeout(function () {
-                loadPages(p1, p2);
-            }, 75);
-        }
-
-        function computePages(direction, t, b) {
-
-            if (t !== t || b !== b) {
-                return;
-            }
-
-            var tp; // top page
-            var tr; // top remaining
-            var bp; // bottom page
-            var br; // bottom remaining
-
-            tp = Math.floor(t / pageSize);
-            bp = Math.floor(b / pageSize);
-
-            if (direction > 0) {
-                br = b % pageSize;
-
-                if (tp >= loPage && bp < hiPage) {
-                    return;
-                }
-
-                if (bp === hiPage) {
-                    if (br > twoThirdsPage) {
-                        hiPage = bp + 1;
-                        loPage = bp;
-                        loadPagesDelayed(bp, bp + 1);
-                    }
-                    return;
-                }
-
-                if (tp < bp) {
-                    loadPagesDelayed(tp, bp);
-                    loPage = tp;
-                    hiPage = bp;
-                } else if (br > twoThirdsPage) {
-                    loadPagesDelayed(bp, bp + 1);
-                    loPage = bp;
-                    hiPage = bp + 1;
-                } else {
-                    hiPage = tp;
-                    loPage = tp;
-                    loadPagesDelayed(tp, tp);
-                }
-            } else {
-                tr = t % pageSize;
-
-                if (tp > loPage && bp <= hiPage) {
-                    return;
-                }
-
-                if (tp === loPage) {
-                    if (tr < oneThirdPage && loPage > 0) {
-                        loPage = Math.max(0, tp - 1);
-                        hiPage = tp;
-                        loadPagesDelayed(tp - 1, tp);
-                    }
-                    return;
-                }
-
-                if (tp < bp) {
-                    loadPagesDelayed(tp, bp);
-                    loPage = tp;
-                    hiPage = bp;
-                } else if (tr < oneThirdPage && tp > 0) {
-                    loadPagesDelayed(tp - 1, tp);
-                    loPage = Math.max(0, tp - 1);
-                    hiPage = tp;
-                } else {
-                    loPage = tp;
-                    hiPage = tp;
-                    loadPagesDelayed(tp, tp);
-                }
-            }
-        }
-
-        function renderViewport(direction) {
-            // calculate the viewport + buffer
-            var t = Math.max(0, Math.floor((y - vp) / rh));
-            var b = Math.min(yMax / rh, Math.ceil((y + vp + vp) / rh));
-
-            if (direction !== 0) {
-                computePages(direction, t, b);
-            }
-
-            if (t === 0) {
-                b = dc;
-            } else if (b > r - 2) {
-                t = Math.max(0, b - dc);
-            }
-
-            for (var i = t; i < b; i++) {
-                var row = rows[i & dcn];
-                if (row) {
-                    renderRow(row, i);
-                }
-            }
-        }
-
-        function getColumnAlignment(i) {
-            switch (columns[i].type) {
-                case 'STRING':
-                case 'SYMBOL':
-                    return 'text-align: left;';
-                default:
-                    return '';
-            }
-        }
-
-        function generatePxWidth(rules) {
-            for (var i = 0; i < colMax.length; i++) {
-                rules.push('.qg-w' + i + '{width:' + colMax[i] + 'px;' + getColumnAlignment(i) + '}');
-            }
-            rules.push('.qg-r{width:' + totalWidth + 'px;}');
-            rules.push('.qg-canvas{width:' + totalWidth + 'px;}');
-            stretched = 2;
-        }
-
-        function generatePctWidth(rules) {
-            for (var i = 0; i < colMax.length; i++) {
-                rules.push('.qg-w' + i + '{width:' + colMax[i] * 100 / totalWidth + '%;' + getColumnAlignment(i) + '}');
-            }
-            rules.push('.qg-r{width:100%;}');
-            rules.push('.qg-canvas{width:100%;}');
-            stretched = 1;
-        }
-
-        function createCss() {
-            if (data.length > 0) {
-                var viewportWidth = viewport.offsetWidth;
-                var f = null;
-                if (totalWidth < viewportWidth && stretched !== 1) {
-                    f = generatePctWidth;
-                } else if (totalWidth > viewportWidth && stretched !== 2) {
-                    f = generatePxWidth;
-                }
-
-                if (f) {
-                    if ($style) {
-                        $style.remove();
-                    }
-                    $style = $('<style type="text/css" rel="stylesheet"/>').appendTo($('head'));
-                    var rules = [];
-
-                    f(rules);
-
-                    rules.push('.qg-c{height:' + rh + 'px;}');
-                    if ($style[0].styleSheet) {
-                        // IE
-                        $style[0].styleSheet.cssText = rules.join(' ');
-                    } else {
-                        $style[0].appendChild(document.createTextNode(rules.join(' ')));
-                    }
-                }
-            }
-        }
-
-        function computeColumnWidths() {
-            colMax = [];
-            var i, k, w;
-            totalWidth = 0;
-            for (i = 0; i < columns.length; i++) {
-                var c = columns[i];
-                var col = $('<div class="qg-header qg-w' + i + '">' + c.name + '</div>').appendTo(header);
-                switch (c.type) {
-                    case 'STRING':
-                    case 'SYMBOL':
-                        col.addClass('qg-header-l');
-                        break;
-                }
-                w = Math.max(defaults.minColumnWidth, Math.ceil(c.name.length * 8 * 1.2 + 8));
-                colMax.push(w);
-                totalWidth += w;
-            }
-
-            var max = data[0].length > defaults.maxRowsToAnalyze ? defaults.maxRowsToAnalyze : data[0].length;
-            for (i = 0; i < max; i++) {
-                var row = data[0][i];
-                var sum = 0;
-                for (k = 0; k < row.length; k++) {
-                    var cell = row[k];
-                    var str = cell !== null ? cell.toString() : 'null';
-                    w = Math.max(defaults.minColumnWidth, str.length * 8 + 8);
-                    colMax[k] = Math.max(w, colMax[k]);
-                    sum += colMax[k];
-                }
-                totalWidth = Math.max(totalWidth, sum);
-            }
-        }
-
-        function clear() {
-            top = 0;
-            y = 0;
-            o = 0;
-            r = 0;
-
-            if ($style) {
-                $style.remove();
-            }
-            header.empty();
-            canvas.empty();
-            rows = [];
-            stretched = 0;
-            data = [];
-            query = null;
-            loPage = 0;
-            hiPage = 0;
-            downKey = [];
-            activeRowContainer = null;
-            activeCellContainer = null;
-            activeRow = 0;
-            activeCell = 0;
-        }
-
-        function logDebug() {
-            if (dbg) {
-                dbg.empty();
-                dbg.append('time = ' + new Date() + '<br>');
-                dbg.append('y = ' + y + '<br>');
-                dbg.append('M = ' + M + '<br>');
-                dbg.append('o = ' + o + '<br>');
-                dbg.append('h = ' + h + '<br>');
-                dbg.append('vp = ' + vp + '<br>');
-                dbg.append('yMax = ' + yMax + '<br>');
-                dbg.append('top = ' + top + '<br>');
-                dbg.append('activeRow = ' + activeRow + '<br>');
-            }
-        }
-
-        function activeCellOff() {
-            activeCellContainer.className = 'qg-c qg-w' + activeCell;
-        }
-
-        function activeCellOn(focus) {
-            activeCellContainer = activeRowContainer.childNodes[activeCell];
-            activeCellContainer.className += ' qg-c-active';
-
-            if (focus) {
-                var w;
-                w = Math.max(0, activeCellContainer.offsetLeft - 5);
-                if (w < viewport.scrollLeft) {
-                    viewport.scrollLeft = w;
-                } else {
-                    w = activeCellContainer.offsetLeft + activeCellContainer.clientWidth + 5;
-                    if (w > viewport.scrollLeft + viewport.clientWidth) {
-                        viewport.scrollLeft = w - viewport.clientWidth;
-                    }
-                }
-            }
-        }
-
-        function activeRowUp(n) {
-            if (activeRow > 0) {
-                activeRow = Math.max(0, activeRow - n);
-                activeRowContainer.className = 'qg-r';
-                activeCellOff();
-                activeRowContainer = rows[activeRow & dcn];
-                activeRowContainer.className = 'qg-r qg-r-active';
-                activeCellOn();
-                var scrollTop = activeRow * rh - o;
-                if (scrollTop < viewport.scrollTop) {
-                    viewport.scrollTop = Math.max(0, scrollTop);
-                }
-            }
-        }
-
-        function activeRowDown(n) {
-            if (activeRow > -1 && activeRow < r - 1) {
-                activeRow = Math.min(r - 1, activeRow + n);
-                activeRowContainer.className = 'qg-r';
-                activeCellOff();
-                activeRowContainer = rows[activeRow & dcn];
-                activeRowContainer.className = 'qg-r qg-r-active';
-                activeCellOn();
-                var scrollTop = activeRow * rh - vp + rh - o;
-                if (scrollTop > viewport.scrollTop) {
-                    viewport.scrollTop = scrollTop;
-                }
-            }
-        }
-
-        function viewportScroll(force) {
-            header.scrollLeft(viewport.scrollLeft);
-
-            var scrollTop = viewport.scrollTop;
-            if (scrollTop !== top || force) {
-                var oldY = y;
-                if (Math.abs(scrollTop - top) > 4 * vp) {
-                    y = scrollTop === 0 ? 0 : Math.min(Math.ceil((scrollTop + vp) * M - vp), yMax - vp);
-                    top = scrollTop;
-                    o = y - top;
-                } else if (h - vp > 0) {
-                    // if grid content fits in viewport we don't need to adjust activeRow
-                    if (scrollTop >= h - vp) {
-                        // final leap to bottom of grid
-                        // this happens when container div runs out of vertical height
-                        // and we artificially force leap to bottom
-                        y = Math.max(0, yMax - vp);
-                        top = scrollTop;
-                        o = y - top;
-                        activeRowDown(r - activeRow);
-                    } else {
-                        if (scrollTop === 0 && top > 0) {
-                            // this happens when grid is coming slowly back up after being scrolled down harshly
-                            // because 'y' is much greater than top, we have to jump to top artificially.
-                            y = 0;
-                            o = 0;
-                            activeRowUp(activeRow);
-                        } else {
-                            y += scrollTop - top;
-                        }
-                        top = scrollTop;
-                    }
-                }
-                renderViewport(y - oldY);
-            }
-            logDebug();
-        }
-
-        function resize() {
-            var wh = window.innerHeight - $(window).scrollTop();
-            vp = Math.round(wh - viewport.getBoundingClientRect().top) - defaults.bottomMargin;
-            vp = Math.max(vp, defaults.minVpHeight);
-            rowsInView = Math.floor(vp / rh);
-            viewport.style.height = vp + 'px';
-            div.css('height', Math.max(Math.round(wh - div[0].getBoundingClientRect().top) - defaults.bottomMargin, defaults.minDivHeight) + 'px');
-            createCss();
-            viewportScroll(true);
-        }
-
-        function rowClick() {
-            if (activeRowContainer) {
-                activeRowContainer.className = 'qg-r';
-            }
-            this.focus();
-            activeRowContainer = this.parentElement;
-            activeRowContainer.className += ' qg-r-active';
-            activeRow = activeRowContainer.questIndex;
-
-            if (activeCellContainer) {
-                activeCellContainer.className = 'qg-c qg-w' + activeCell;
-            }
-            activeCellContainer = this;
-            activeCell = this.cellIndex;
-            activeCellContainer.className += ' qg-c-active';
-        }
-
-        function activeCellRight() {
-            if (activeCell > -1 && activeCell < columns.length - 1) {
-                activeCellOff();
-                activeCell++;
-                activeCellOn(true);
-            }
-        }
-
-        function activeCellLeft() {
-            if (activeCell > 0) {
-                activeCellOff();
-                activeCell--;
-                activeCellOn(true);
-            }
-        }
-
-        function activeCellHome() {
-            if (activeCell > 0) {
-                activeCellOff();
-                activeCell = 0;
-                activeCellOn(true);
-            }
-        }
-
-        function activeCellEnd() {
-            if (activeCell > -1 && activeCell !== columns.length - 1) {
-                activeCellOff();
-                activeCell = columns.length - 1;
-                activeCellOn(true);
-            }
-        }
-
-        function onKeyUp(e) {
-            delete downKey['which' in e ? e.which : e.keyCode];
-        }
-
-        function onKeyDown(e) {
-            var keyCode = 'which' in e ? e.which : e.keyCode;
-            var preventDefault = true;
-            switch (keyCode) {
-                case 33:
-                    // page up
-                    activeRowUp(rowsInView);
-                    break;
-                case 38:
-                    // arrow up
-                    if (downKey[91]) {
-                        activeRowUp(activeRow);
-                    } else {
-                        activeRowUp(1);
-                    }
-                    break;
-                case 40:
-                    // arrow down
-                    if (downKey[91]) {
-                        activeRowDown(r - activeRow);
-                    } else {
-                        activeRowDown(1);
-                    }
-                    break;
-                case 34:
-                    // arrow down
-                    activeRowDown(rowsInView);
-                    break;
-                case 39:
-                    // arrow right
-                    activeCellRight();
-                    break;
-                case 37:
-                    // arrow left
-                    activeCellLeft();
-                    break;
-                case 35:
-                    // end? Fn+arrow right on mac
-                    if (downKey[17]) {
-                        activeRowDown(r - activeRow);
-                    } else {
-                        activeCellEnd();
-                    }
-                    break;
-                case 36:
-                    // home ? Fn + arrow left on mac
-                    if (downKey[17]) {
-                        activeRowUp(activeRow);
-                    } else {
-                        activeCellHome();
-                    }
-                    break;
-                case 113:
-                    unfocusCell();
-                    bus.trigger('editor.focus');
-                    break;
-                default:
-                    downKey[keyCode] = true;
-                    preventDefault = false;
-                    break;
-            }
-
-            if (preventDefault) {
-                e.preventDefault();
-            }
-        }
-
-        function addColumns() {
-            for (var i = 0; i < dc; i++) {
-                var rowDiv = $('<div class="qg-r" tabindex="' + i + '"/>');
-                if (i === 0) {
-                    activeRowContainer = rowDiv;
-                }
-                for (var k = 0; k < columns.length; k++) {
-                    var cell = $('<div class="qg-c qg-w' + k + '"/>').click(rowClick).appendTo(rowDiv)[0];
-                    if (i === 0 && k === 0) {
-                        activeCellContainer = cell;
-                    }
-                    cell.cellIndex = k;
-                }
-                rowDiv.css({top: -100, height: rh}).appendTo(canvas);
-                rows.push(rowDiv[0]);
-            }
-        }
-
-        function focusCell() {
-            if (activeCellContainer && activeRowContainer) {
-                activeCellContainer.click();
-                activeRowContainer.focus();
-            }
-        }
-
-        function unfocusCell() {
-            if (activeCellContainer) {
-                activeCellOff();
-            }
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function update(x, m) {
-            clear();
-            query = m.query;
-            data.push(m.dataset);
-            columns = m.columns;
-            addColumns();
-            addRows(m.count);
-            computeColumnWidths();
-            viewport.scrollTop = 0;
-            resize();
-            focusCell();
-        }
-
-        function publishQuery() {
-            if (query) {
-                bus.trigger('grid.query', encodeURIComponent(query));
-            }
-        }
-
-        function refreshQuery() {
-            if (query) {
-                bus.trigger(qdb.MSG_QUERY_EXEC, {q: query});
-            }
-        }
-
-        function bind() {
-            dbg = $('#debug');
-            header = div.find('.qg-header-row');
-            viewport = div.find('.qg-viewport')[0];
-            viewport.onscroll = viewportScroll;
-            canvas = div.find('.qg-canvas');
-            canvas.bind('keydown', onKeyDown);
-            canvas.bind('keyup', onKeyUp);
-            $(window).resize(resize);
-            bus.on(qdb.MSG_QUERY_DATASET, update);
-            bus.on('grid.focus', focusCell);
-            bus.on('grid.refresh', refreshQuery);
-            bus.on('grid.publish.query', publishQuery);
-            bus.on('active.panel', resize);
-        }
-
-        bind();
-        resize();
-    };
-})(jQuery);
-//# sourceMappingURL=grid.js.map
-
-'use strict';
-
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
- * The MIT License (MIT)
- *
- * Copyright (C) 2016-2017 Appsicle
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-
-/*globals jQuery:false */
-/*eslint no-use-before-define: 0*/
-
-/**
- * @return {string}
- */
-function s4() {
-    'use strict';
-
-    return ((1 + Math.random()) * 0x10000 | 0).toString(16).substring(1);
-}
-
-function guid() {
-    'use strict';
-
-    return s4() + s4() + '-' + s4() + '-' + s4() + '-' + s4() + '-' + s4() + s4() + s4();
-}
-
-function fmtNumber(n) {
-    'use strict';
-
-    return n.toFixed(0).replace(/./g, function (c, i, a) {
-        return i && c !== '.' && (a.length - i) % 3 === 0 ? ',' + c : c;
-    });
-}
-
-function toSize(x) {
-    'use strict';
-
-    if (x < 1024) {
-        return x;
-    }
-
-    if (x < 1024 * 1024) {
-        return Math.round(x / 1024) + 'KB';
-    }
-
-    if (x < 1024 * 1024 * 1024) {
-        return Math.round(x / 1024 / 1024) + 'MB';
-    }
-
-    return Math.round(x / 1024 / 1024 / 1024) + 'GB';
-}
-
-function nopropagation(e) {
-    'use strict';
-
-    e.stopPropagation();
-    if (e.preventDefault) {
-        e.preventDefault();
-    }
-}
-
-(function ($) {
-    'use strict';
-
-    $.fn.importManager = function (editorBus) {
-        var ACTION_DEFAULT = 0;
-        var ACTION_APPEND = 1;
-        var ACTTION_OVERWRITE = 2;
-
-        var dict = {};
-        var container = this;
-        var ebus = editorBus;
-        var canvas = void 0;
-        var top = 0;
-        var uploadQueue = [];
-        var current = null;
-        var currentHtml = null;
-        var rowHeight = 35;
-        var xhr = null;
-
-        function updateProgress(event) {
-            if (event.lengthComputable) {
-                var pos = event.loaded || event.position;
-                currentHtml.find(' > .ud-progress').css('width', pos * 100 / current.size + '%');
-            }
-        }
-
-        function updateButtons() {
-            var selected = false;
-            var retry = false;
-
-            for (var id in dict) {
-                if (dict.hasOwnProperty(id)) {
-                    var e = dict[id];
-                    if (e.selected) {
-                        selected = true;
-                        if (e.retry) {
-                            retry = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            $('#btnImportClearSelected').attr('disabled', !selected);
-            $('#btnRetry').attr('disabled', !retry);
-        }
-
-        function renderActions(e, element) {
-            switch (e.retry) {
-                case ACTION_APPEND:
-                    element.find('.js-row-append').addClass('label-danger');
-                    element.find('.js-row-overwrite').removeClass('label-danger');
-                    break;
-                case ACTTION_OVERWRITE:
-                    element.find('.js-row-append').removeClass('label-danger');
-                    element.find('.js-row-overwrite').addClass('label-danger');
-                    break;
-                default:
-                    element.find('.js-row-append').removeClass('label-danger');
-                    element.find('.js-row-overwrite').removeClass('label-danger');
-                    break;
-            }
-
-            if (e.selected) {
-                element.find('.js-row-toggle').removeClass('fa-square-o').addClass('fa-check-square-o');
-            } else {
-                element.find('.js-row-toggle').removeClass('fa-check-square-o').addClass('fa-square-o');
-            }
-
-            if (e.forceHeader) {
-                element.find('.js-row-toggle-header').addClass('label-success');
-            } else {
-                element.find('.js-row-toggle-header').removeClass('label-success');
-            }
-
-            updateButtons();
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function renderRowAsOverwrite(x, e) {
-            e.retry = ACTTION_OVERWRITE;
-            renderActions(e, $('#' + e.id + ' > .ud-c0'));
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function renderRowAsAppend(x, e) {
-            e.retry = ACTION_APPEND;
-            renderActions(e, $('#' + e.id + ' > .ud-c0'));
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function renderRowAsCancel(x, e) {
-            e.retry = ACTION_DEFAULT;
-            renderActions(e, $('#' + e.id + ' > .ud-c0'));
-        }
-
-        function setupUploadProgressCallback() {
-            var xhrobj = $.ajaxSettings.xhr();
-            if (xhrobj.upload) {
-                xhrobj.upload.addEventListener('progress', updateProgress, false);
-            }
-            return xhrobj;
-        }
-
-        var importRequest = {
-            xhr: setupUploadProgressCallback,
-            url: '/imp?fmt=json',
-            type: 'POST',
-            contentType: false,
-            processData: false,
-            cache: false
-        };
-
-        var existenceCheckRequest = {
-            type: 'GET',
-            contentType: false,
-            processData: false,
-            cache: false
-        };
-
-        function updateBtnImportCancel() {
-            $('#btnImportCancel').attr('disabled', current === null);
-        }
-
-        function toggleRow() {
-            var btn = $(this);
-            var e = dict[btn.parent().parent().attr('id')];
-            e.selected = !e.selected;
-            renderActions(e, btn.parent());
-        }
-
-        function toggleRowAppend() {
-            var btn = $(this);
-            var e = dict[btn.parent().parent().attr('id')];
-
-            switch (e.retry) {
-                case 1:
-                    e.retry = 0;
-                    e.selected = false;
-                    break;
-                default:
-                    e.retry = 1;
-                    e.selected = true;
-                    break;
-            }
-
-            renderActions(e, btn.parent());
-        }
-
-        function toggleRowOverwrite() {
-            var btn = $(this);
-            var e = dict[btn.parent().parent().attr('id')];
-
-            switch (e.retry) {
-                case 2:
-                    e.retry = 0;
-                    e.selected = false;
-                    break;
-                default:
-                    e.retry = 2;
-                    e.selected = true;
-                    break;
-            }
-
-            renderActions(e, btn.parent());
-        }
-
-        function toggleRowHeader() {
-            var btn = $(this);
-            var e = dict[btn.parent().parent().attr('id')];
-            e.forceHeader = !e.forceHeader;
-            renderActions(e, btn.parent());
-        }
-
-        function uploadRow() {
-            var btn = $(this);
-            var e = dict[btn.parent().parent().attr('id')];
-            submitUploadTask(e);
-        }
-
-        function viewRow() {
-            var btn = $(this);
-            var e = dict[btn.parent().parent().attr('id')];
-            ebus.trigger('query.build.execute', e.name);
-        }
-
-        function showDetail(e) {
-            var item = dict[$(this).parent().attr('id')];
-            if (item.importState > -1) {
-                $(document).trigger('import.detail', item);
-            }
-            nopropagation(e);
-        }
-
-        function render(e) {
-            var html = $('\n                        <div id="' + e.id + '" class="ud-row" style="top: ' + top + 'px;">\n                            <div class="ud-cell ud-c0">\n                                <i class="fa fa-square-o ud-checkbox js-row-toggle"></i>\n                                <span class="label js-row-append">A</span>\n                                <span class="label js-row-overwrite">O</span>\n                                <span class="label js-row-toggle-header">H</span>\n                                <i class="fa fa-upload js-row-upload"></i>\n                            </div>\n                            <div class="ud-cell ud-c1">' + e.name + '</div>\n                            <div class="ud-cell ud-c2"><i class="fa fa-eye js-row-query"></i></div>\n                            <div class="ud-cell ud-c3">' + e.sizeFmt + '</div>\n                            <div class="ud-cell ud-c4 js-row-imported">?</div>\n                            <div class="ud-cell ud-c5 js-row-rejected">?</div>\n                            <div class="ud-cell ud-c6 js-row-header">?</div>\n                            <div class="ud-cell ud-c7 ud-status">\n                                <span class="label">pending</span>\n                            </div>\n                        </div>\n            ');
-
-            canvas.append(html);
-            html.find('.js-row-toggle').click(toggleRow);
-            html.find('.js-row-append').click(toggleRowAppend);
-            html.find('.js-row-overwrite').click(toggleRowOverwrite);
-            html.find('.js-row-toggle-header').click(toggleRowHeader);
-            html.find('.js-row-upload').click(uploadRow);
-            html.find('.js-row-query').click(viewRow);
-
-            html.find('.ud-c1').click(showDetail);
-            html.find('.ud-c2').click(showDetail);
-            html.find('.ud-c3').click(showDetail);
-            top += rowHeight;
-        }
-
-        function status(e, html, processNext) {
-            var row = currentHtml;
-            row.find(' > .ud-status').html(html);
-            row.find(' > .ud-progress').remove();
-
-            current.selected = false;
-            if (processNext) {
-                var next = uploadQueue.shift();
-                if (next) {
-                    retryOrCheckExistence(next);
-                } else {
-                    current = null;
-                    currentHtml = null;
-                    xhr = null;
-                }
-            }
-            updateBtnImportCancel();
-            $(document).trigger('import.detail.updated', e);
-        }
-
-        function importDone(data) {
-            current.delta = new Date().getTime() - current.time;
-            if (data.status === 'OK') {
-                current.response = data;
-                current.importState = 0; // ok
-                renderRowAsCancel(null, current);
-
-                currentHtml.find('.js-row-imported').html(fmtNumber(data.rowsImported));
-                currentHtml.find('.js-row-rejected').html(fmtNumber(data.rowsRejected));
-                currentHtml.find('.js-row-header').html(data.header ? 'Yes' : 'No');
-
-                var type = data.rowsRejected > 0 ? 'label-warning' : 'label-success';
-                status(current, '<span class="label ' + type + '">imported in ' + current.delta / 1000 + 's</span>', true);
-            } else {
-                current.importState = 4; // error with journal, status has error message
-                current.response = data.status;
-                status(current, '<span class="label label-danger">failed</span>', true);
-            }
-        }
-
-        function httpStatusToImportState(s) {
-            switch (s) {
-                case 0:
-                    return 3; // server not responding
-                case 500:
-                    return 5; // internal error
-                default:
-                    return 101; // unknown
-            }
-        }
-
-        function importFailed(r) {
-            renderRowAsCancel(null, current);
-            if (r.statusText !== 'abort') {
-                current.response = r.responseText;
-                current.importState = httpStatusToImportState(r.status);
-                status(current, '<span class="label label-danger">failed</span>', true);
-            } else {
-                // current.importState = -1; // abort
-                status(current, '<span class="label label-warning">aborted</span>', true);
-            }
-        }
-
-        function setupImportRequest() {
-            importRequest.url = '/imp?fmt=json';
-
-            if (current.retry === ACTTION_OVERWRITE) {
-                importRequest.url += '&overwrite=true';
-            }
-
-            if (current.forceHeader) {
-                importRequest.url += '&forceHeader=true';
-            }
-
-            importRequest.xhr = setupUploadProgressCallback;
-            importRequest.data = new FormData();
-
-            // encode type overrides
-            if (current.response && current.response.columns) {
-                var schema = '';
-                for (var i = 0; i < current.response.columns.length; i++) {
-                    var c = current.response.columns[i];
-                    if (c.altType && c.type !== c.altType.text && c.altType.text !== 'AUTO') {
-                        schema += c.name + '=' + c.altType.value + '&';
-                    } else if (c.errors === 0 && c.type !== 'DATE' && (c.altType === undefined || c.altType.text !== 'AUTO')) {
-                        schema += c.name + '=' + c.type + '&';
-                    }
-                }
-                importRequest.data.append('schema', schema);
-            }
-
-            if (current.type === 'file') {
-                importRequest.data.append('data', current.file);
-            } else if (current.type === 'clipboard') {
-                importRequest.url = importRequest.url + '&name=' + encodeURIComponent(current.name);
-                importRequest.data.append('data', current.content);
-            }
-            current.time = new Date().getTime();
-            return importRequest;
-        }
-
-        function sendImportRequest() {
-            status(current, '<span class="label label-info">importing</span>', false);
-            currentHtml.append('<div class="ud-progress"></div>');
-            xhr = $.ajax(setupImportRequest()).done(importDone).fail(importFailed);
-            // updateBtnImportCancel();
-        }
-
-        function existenceCheckFork(e) {
-            switch (e.status) {
-                case 'Exists':
-                    current.importState = 1; // exists
-                    status(current, '<span class="label label-danger">exists</span>', true);
-                    break;
-                case 'Does not exist':
-                    current.importState = 0; // ok
-                    sendImportRequest();
-                    break;
-                case 'Reserved name':
-                    current.importState = 2; // exists foreign (reserved)
-                    status(current, '<span class="label label-danger">reserved</span>', true);
-                    break;
-                default:
-                    current.importState = 101; // unknown
-                    status(current, '<span class="label label-danger">failed</span>', true);
-                    break;
-            }
-        }
-
-        function retryOrCheckExistence(e) {
-            current = e;
-            currentHtml = $('#' + e.id);
-            if (e.retry) {
-                current.importState = 0;
-                sendImportRequest();
-            } else {
-                existenceCheckRequest.url = '/chk?f=json&j=' + encodeURIComponent(e.name);
-                $.ajax(existenceCheckRequest).then(existenceCheckFork).fail(importFailed);
-            }
-        }
-
-        function submitUploadTask(item) {
-            if (current == null) {
-                retryOrCheckExistence(item);
-            } else if (current !== item) {
-                uploadQueue.push(item);
-            }
-        }
-
-        function enqueueImportItem(item) {
-            dict[item.id] = item;
-            render(item);
-            submitUploadTask(item);
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function addFiles(x, e) {
-            for (var i = 0; i < e.files.length; i++) {
-                var f = e.files[i];
-                enqueueImportItem({
-                    id: guid(),
-                    name: f.name,
-                    size: f.size,
-                    file: f,
-                    type: 'file',
-                    sizeFmt: toSize(f.size),
-                    selected: false,
-                    imported: false,
-                    forceHeader: false
-                });
-            }
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function addClipboard(x, content) {
-            enqueueImportItem({
-                id: guid(),
-                name: 'clipboard-' + new Date().getTime(),
-                size: content.length,
-                type: 'clipboard',
-                content: content,
-                sizeFmt: toSize(content.length),
-                selected: false,
-                imported: false,
-                forceHeader: false
-            });
-        }
-
-        function clearSelected() {
-            for (var id in dict) {
-                if (dict.hasOwnProperty(id)) {
-                    var e = dict[id];
-                    if (e.selected && e !== current) {
-                        var uploadQueueIndex = uploadQueue.indexOf(e);
-                        if (uploadQueueIndex > -1) {
-                            delete uploadQueue[uploadQueueIndex];
-                        }
-                        $('#' + id).remove();
-                        delete dict[id];
-                        $(document).trigger('import.cleared', e);
-                    }
-                }
-            }
-
-            // rejig remaining rows
-            top = 0;
-            var rows = canvas.find('.ud-row');
-            for (var i = 0; i < rows.length; i++) {
-                $(rows[i]).css('top', top);
-                top += rowHeight;
-            }
-            updateButtons();
-        }
-
-        function retrySelected() {
-            for (var id in dict) {
-                if (dict.hasOwnProperty(id)) {
-                    var e = dict[id];
-                    if (e.selected && e.retry) {
-                        submitUploadTask(e);
-                    }
-                }
-            }
-        }
-
-        function abortImport() {
-            if (xhr !== null) {
-                xhr.abort();
-            }
-        }
-
-        function subscribe() {
-            // subscribe to document event
-            $(document).on('dropbox.files', addFiles);
-            $(document).on('dropbox.clipboard', addClipboard);
-            // $(document).on('import.clearSelected', clearSelected);
-            // $(document).on('import.cancel', abortImport);
-            // $(document).on('import.retry', retrySelected);
-
-            $(document).on('import.line.overwrite', renderRowAsOverwrite);
-            $(document).on('import.line.append', renderRowAsAppend);
-            $(document).on('import.line.abort', renderRowAsCancel);
-
-            $('#btnImportClearSelected').click(clearSelected);
-            $('#btnImportCancel').click(abortImport);
-            $('#btnRetry').click(retrySelected);
-        }
-
-        function init() {
-            canvas = container.find('> .ud-canvas');
-            subscribe();
-        }
-
-        init();
-
-        return this;
-    };
-
-    // this class will manage drag&drop into dropbox element and
-    // broadcast file readiness to document via custom event 'dropbox.files'
-    $.fn.dropbox = function (bus) {
-
-        var collection = $();
-        var target = this;
-
-        function startDrag() {
-            target.addClass('drag-drop').removeClass('drag-idle');
-        }
-
-        function endDrag() {
-            target.removeClass('drag-drop').addClass('drag-idle');
-        }
-
-        function handleDrop(evt) {
-            nopropagation(evt);
-            endDrag();
-            collection = $();
-            $(document).trigger('dropbox.files', evt.originalEvent.dataTransfer);
-        }
-
-        function handlePaste(evt) {
-            var pastedText;
-            if (window.clipboardData && window.clipboardData.getData) {
-                // IE
-                pastedText = window.clipboardData.getData('Text');
-            } else if (evt.originalEvent.clipboardData && evt.originalEvent.clipboardData.getData) {
-                pastedText = evt.originalEvent.clipboardData.getData('text/plain');
-            }
-            $(document).trigger('dropbox.clipboard', pastedText);
-        }
-
-        function handleDragEnter(event) {
-            nopropagation(event);
-            if (collection.size() === 0) {
-                startDrag();
-            }
-            collection = collection.add(event.target);
-        }
-
-        function handleDragLeave(event) {
-            /*
-             * Firefox 3.6 fires the dragleave event on the previous element
-             * before firing dragenter on the next one so we introduce a delay
-             */
-            setTimeout(function () {
-                collection = collection.not(event.target);
-                if (collection.size() === 0) {
-                    endDrag();
-                }
-            }, 1);
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function handleActivation(evt, name) {
-            if (name === 'import') {
-                $(document).on('drop', handleDrop);
-                $(document).on('paste', handlePaste);
-                $(document).on('dragenter', handleDragEnter);
-                $(document).on('dragover', nopropagation);
-                $(document).on('dragleave', handleDragLeave);
-            } else {
-                $(document).unbind('drop', handleDrop);
-                $(document).unbind('paste', handlePaste);
-                $(document).unbind('dragenter', handleDragEnter);
-                $(document).unbind('dragover', nopropagation);
-                $(document).unbind('dragleave', handleDragLeave);
-            }
-        }
-
-        function init() {
-            bus.on('active.panel', handleActivation);
-
-            var input = $('#js-browse-files-input')[0];
-
-            $('#js-browse-files').click(function () {
-                input.click();
-            });
-
-            input.onchange = function () {
-                $(document).trigger('dropbox.files', input);
-                // reset to be able to browse same file again
-                input.value = '';
-            };
-        }
-
-        init();
-
-        return this;
-    };
-})(jQuery);
-//# sourceMappingURL=import.js.map
-
-'use strict';
-
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
- * The MIT License (MIT)
- *
- * Copyright (C) 2016-2017 Appsicle
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-
-/*globals jQuery:false */
-
-(function ($) {
-    'use strict';
-
-    $.fn.importEditor = function (ebus) {
-        var container = $(this);
-        var statsSwitcher = $('.stats-switcher');
-        var divEditor = $(this).find('.js-import-editor');
-        var msgPanel = $(this).find('.js-import-error');
-        var divMessage = $(this).find('.js-message');
-        var divTabName = $(this).find('.js-import-tab-name');
-        var divRejectedPct = $(this).find('.import-rejected');
-        var divImportedPct = $(this).find('.import-imported');
-        var divRejectedCount = $(this).find('.js-rejected-row-count');
-        var divImportedCount = $(this).find('.js-imported-row-count');
-        var divCanvas = $(this).find('.ud-canvas');
-        var footerHeight = $('.footer')[0].offsetHeight;
-        var lineHeight = 35;
-        var select = void 0;
-        var location = void 0;
-        var types = [{text: 'AUTO', value: null}, {text: 'BOOLEAN', value: 'BOOLEAN'}, {
-            text: 'BYTE',
-            value: 'BYTE'
-        }, {text: 'DOUBLE', value: 'DOUBLE'}, {text: 'FLOAT', value: 'FLOAT'}, {
-            text: 'INT',
-            value: 'INT'
-        }, {text: 'LONG', value: 'LONG'}, {text: 'SHORT', value: 'SHORT'}, {
-            text: 'STRING',
-            value: 'STRING'
-        }, {text: 'SYMBOL', value: 'SYMBOL'}, {
-            text: 'DATE (ISO)',
-            value: 'DATE_ISO'
-        }, {text: 'DATE (YYYY-MM-DD hh:mm:ss)', value: 'DATE_1'}, {
-            text: 'DATE (MM/DD/YYYY)',
-            value: 'DATE_2'
-        }, {text: 'DATE (DD/MM/YYYY)', value: 'DATE_3'}];
-
-        var current = null;
-        var editorBus = ebus;
-
-        function resizeCanvas() {
-            var top = divCanvas[0].getBoundingClientRect().top;
-            var h = Math.round(window.innerHeight - top);
-            h = h - footerHeight - 45;
-            divCanvas[0].style.height = h + 'px';
-        }
-
-        function selectClick() {
-            var div = $(this);
-            select.appendTo(div.parent());
-            select.css('left', div.css('left'));
-            select.css('width', div.css('width'));
-
-            // find column index
-            var colIndex = parseInt($(this).parent().find('.js-g-row').text()) - 1;
-
-            // get column
-            var col = current.response.columns[colIndex];
-
-            // set option
-            if (col.altType) {
-                select.val(col.altType.value);
-            } else {
-                select.val(col.type);
-            }
-
-            select.changeTargetDiv = div;
-            select.changeTargetCol = col;
-
-            select.show();
-            select.focus();
-        }
-
-        function selectHide() {
-            select.hide();
-        }
-
-        function getTypeHtml(col) {
-            if (col.altType && col.altType.text !== col.type) {
-                return col.type + '<i class="fa fa-angle-double-right g-type-separator"></i>' + col.altType.text;
-            } else {
-                return col.type;
-            }
-        }
-
-        function calcModifiedFlag() {
-            var modified = false;
-            for (var i = 0; i < current.response.columns.length; i++) {
-                var col = current.response.columns[i];
-                if (col.altType && col.type !== col.altType.text) {
-                    modified = true;
-                    break;
-                }
-            }
-
-            $(document).trigger(modified ? 'import.line.overwrite' : 'import.line.cancel', current);
-        }
-
-        function selectChange() {
-            var sel = $(this).find('option:selected');
-            select.changeTargetCol.altType = {text: sel.text(), value: sel.val()};
-            select.changeTargetDiv.html(getTypeHtml(select.changeTargetCol));
-            calcModifiedFlag();
-            selectHide();
-        }
-
-        function attachSelect() {
-            $('.g-type').click(selectClick);
-            $('.g-other').click(selectHide);
-            select.change(selectChange);
-        }
-
-        function render(e) {
-            if (e.importState === 0 && !e.response) {
-                // aborted at start
-                return;
-            }
-
-            if (e.response && e.importState === 0) {
-                divTabName.html(location = e.response.location);
-
-                // update "chart"
-                var importedRows = e.response.rowsImported;
-                var rejectedRows = e.response.rowsRejected;
-                var totalRows = importedRows + rejectedRows;
-                divRejectedPct.css('width', Math.round(rejectedRows * 100 / totalRows) + '%');
-                divImportedPct.css('width', Math.round(importedRows * 100 / totalRows) + '%');
-
-                // update counts
-                divRejectedCount.html(rejectedRows);
-                divImportedCount.html(importedRows);
-
-                divCanvas.empty();
-
-                // records
-                if (e.response.columns) {
-                    var top = 0;
-                    for (var k = 0; k < e.response.columns.length; k++) {
-                        var col = e.response.columns[k];
-                        divCanvas.append('<div class="ud-row" style="top: ' + top + 'px">' + '<div class="ud-cell gc-1 g-other js-g-row">' + (k + 1) + '</div>' + '<div class="ud-cell gc-2 g-other">' + (col.errors > 0 ? '<i class="fa fa-exclamation-triangle g-warning"></i>' : '') + col.name + '</div>' + '<div class="ud-cell gc-3 g-type">' + getTypeHtml(col) + '</div>' + '<div class="ud-cell gc-4 g-other">' + col.errors + '</div>' + '</div>');
-
-                        top += lineHeight;
-                    }
-                }
-
-                attachSelect();
-
-                // display component
-                divEditor.show();
-                msgPanel.hide();
-                resizeCanvas();
-            } else {
-                switch (e.importState) {
-                    case 1:
-                        divMessage.html('Journal <strong>' + e.name + '</strong> already exists on server');
-                        break;
-                    case 2:
-                        divMessage.html('Journal name <strong>' + e.name + '</strong> is reserved');
-                        break;
-                    case 3:
-                        divMessage.html('Server is not responding...');
-                        break;
-                    case 4:
-                        divMessage.html(e.response);
-                        break;
-                    case 5:
-                        divMessage.html('Server encountered internal problem. Check server logs for more details.');
-                        break;
-                    default:
-                        divMessage.html('Unknown error: ' + e.responseStatus);
-                        break;
-                }
-                divEditor.hide();
-                msgPanel.show();
-                // reset button group option
-            }
-            container.show();
-        }
-
-        function setupSelect() {
-            select = $('<select class="g-dynamic-select form-control m-b"/>');
-            for (var i = 0; i < types.length; i++) {
-                var val = types[i];
-                $('<option />', {value: val.value, text: val.text}).appendTo(select);
-            }
-        }
-
-        $(document).on('import.detail', function (x, e) {
-            current = e;
-            render(e);
-        });
-
-        $(document).on('import.detail.updated', function (x, e) {
-            if (current === e && e.response) {
-                render(e);
-            }
-        });
-
-        $(document).on('import.cleared', function (x, e) {
-            if (e === current) {
-                current = null;
-                divEditor.hide();
-                msgPanel.hide();
-            }
-        });
-
-        setupSelect();
-
-        $('.import-stats-chart').click(function () {
-            if (statsSwitcher.hasClass('stats-visible')) {
-                statsSwitcher.removeClass('stats-visible');
-            } else {
-                statsSwitcher.addClass('stats-visible');
-            }
-        });
-
-        divTabName.mouseover(function () {
-            divTabName.addClass('animated tada').one('webkitAnimationEnd mozAnimationEnd MSAnimationEnd oanimationend animationend', function () {
-                $(this).removeClass('animated').removeClass('tada');
-            });
-        });
-
-        divTabName.click(function () {
-            editorBus.trigger('query.build.execute', location);
-        });
-
-        $(window).resize(resizeCanvas);
-        editorBus.on('active.panel', resizeCanvas);
-    };
-})(jQuery);
-//# sourceMappingURL=import-detail.js.map
-
-'use strict';
-
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
- * The MIT License (MIT)
- *
- * Copyright (C) 2016-2017 Appsicle
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-
-/*globals jQuery:false */
-/*globals qdb:false */
-/*globals ace:false */
-
-(function ($) {
-    'use strict';
-
-    $.fn.query = function () {
-        var bus = $(this);
-        var qry;
-        var hActiveRequest = null;
-        var hPendingRequest = null;
-        var time;
-        var batchSize = qdb.queryBatchSize;
-
-        var requestParams = {
-            'query': '',
-            'limit': ''
-        };
-
-        function cancelActiveQuery() {
-            if (hActiveRequest !== null) {
-                hActiveRequest.abort();
-                hActiveRequest = null;
-            }
-        }
-
-        function abortPending() {
-            if (hPendingRequest !== null) {
-                clearTimeout(hPendingRequest);
-                hPendingRequest = null;
-            }
-        }
-
-        function handleServerResponse(r) {
-            bus.trigger(qdb.MSG_QUERY_OK, {
-                delta: new Date().getTime() - time,
-                count: r.count
-            });
-
-            if (r.dataset) {
-                bus.trigger(qdb.MSG_QUERY_DATASET, r);
-            }
-
-            hActiveRequest = null;
-        }
-
-        function handleServerError(jqXHR) {
-            bus.trigger(qdb.MSG_QUERY_ERROR, {
-                query: qry,
-                r: jqXHR.responseJSON,
-                status: jqXHR.status,
-                statusText: jqXHR.statusText,
-                delta: new Date().getTime() - time
-            });
-            hActiveRequest = null;
-        }
-
-        function sendQueryDelayed() {
-            cancelActiveQuery();
-            requestParams.query = qry.q;
-            requestParams.limit = '0,' + batchSize;
-            requestParams.count = true;
-            time = new Date().getTime();
-            hActiveRequest = $.get('/exec', requestParams).done(handleServerResponse).fail(handleServerError);
-            bus.trigger(qdb.MSG_QUERY_RUNNING);
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function sendQuery(x, q) {
-            qry = q;
-            abortPending();
-            hPendingRequest = setTimeout(sendQueryDelayed, 50);
-        }
-
-        bus.on(qdb.MSG_QUERY_EXEC, sendQuery);
-        bus.on(qdb.MSG_QUERY_CANCEL, cancelActiveQuery);
-    };
-
-    $.fn.domController = function () {
-        var div = $('.js-query-spinner');
-        var divMsg = $('.js-query-message-panel');
-        var divTime = $('.js-query-message-panel .js-query-time');
-        var divMsgText = $('.js-query-message-panel .js-query-message-text');
-        var timer;
-        var runBtn;
-        var running = false;
-        var bus = $(this);
-
-        function delayedStart() {
-            div.addClass('query-progress-animated', 100);
-            divMsg.addClass('query-message-ok');
-            divTime.html('-');
-            divMsgText.html('Running...');
-        }
-
-        function start() {
-            running = true;
-            runBtn.html('<i class="fa fa-stop"></i>Cancel');
-            runBtn.removeClass('js-query-run').addClass('js-query-cancel');
-            timer = setTimeout(delayedStart, 500);
-        }
-
-        function stop() {
-            runBtn.html('<i class="fa fa-play"></i>Run');
-            runBtn.removeClass('js-query-cancel').addClass('js-query-run');
-            clearTimeout(timer);
-            div.removeClass('query-progress-animated');
-            running = false;
-        }
-
-        function toTextPosition(q, pos) {
-            var r = 0,
-                c = 0,
-                n = Math.min(pos, q.q.length);
-            for (var i = 0; i < n; i++) {
-                if (q.q.charAt(i) === '\n') {
-                    r++;
-                    c = 0;
-                } else {
-                    c++;
-                }
-            }
-
-            return {
-                r: r + 1 + q.r,
-                c: (r === 0 ? c + q.c : c) + 1
-            };
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function error(x, m) {
-            stop();
-            divMsg.removeClass('query-message-ok').addClass('query-message-error');
-            divTime.html('failed after <strong>' + m.delta / 1000 + 's</strong>');
-            if (m.statusText === 'abort') {
-                divMsgText.html('Cancelled by user');
-            } else if (m.r) {
-                var pos = toTextPosition(m.query, m.r.position);
-                divMsgText.html('<strong>' + pos.r + ':' + pos.c + '</strong>&nbsp;&nbsp;' + m.r.error);
-                bus.trigger('editor.show.error', pos);
-            } else if (m.status === 0) {
-                divMsgText.html('Server down?');
-            } else {
-                divMsgText.html('Server error: ' + m.status);
-            }
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function ok(x, m) {
-            stop();
-            divMsg.removeClass('query-message-error').addClass('query-message-ok');
-            divTime.html('read in <strong>' + m.delta / 1000 + 's</strong>');
-            if (m.count) {
-                divMsgText.html(m.count.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ' rows');
-            } else {
-                divMsgText.html('done');
-            }
-        }
-
-        function toggleRunBtn() {
-            if (running) {
-                bus.trigger(qdb.MSG_QUERY_CANCEL);
-            } else {
-                bus.trigger('editor.execute');
-            }
-        }
-
-        function exportClick(e) {
-            e.preventDefault();
-            bus.trigger('grid.publish.query');
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function exportQuery(x, query) {
-            if (query) {
-                window.location.href = '/exp?query=' + query;
-            }
-        }
-
-        function bind() {
-            runBtn = $('.js-query-run');
-            runBtn.click(toggleRunBtn);
-            bus.on(qdb.MSG_QUERY_ERROR, error);
-            bus.on(qdb.MSG_QUERY_OK, ok);
-            bus.on(qdb.MSG_QUERY_RUNNING, start);
-            bus.on('grid.query', exportQuery);
-
-            $('.js-editor-toggle-invisible').click(function () {
-                bus.trigger('editor.toggle.invisibles');
-            });
-            $('.js-query-export').click(exportClick);
-        }
-
-        bind();
-    };
-
-    $.fn.editor = function (msgBus) {
-        var edit;
-        var storeKeys = {
-            text: 'query.text',
-            line: 'editor.line',
-            col: 'editor.col'
-        };
-
-        var Range = ace.require('ace/range').Range;
-        var marker;
-        var searchOpts = {
-            wrap: true,
-            caseSensitive: true,
-            wholeWord: false,
-            regExp: false,
-            preventScroll: false
-        };
-        var bus = msgBus;
-        var element = this;
-
-        function clearMarker() {
-            if (marker) {
-                edit.session.removeMarker(marker);
-                marker = null;
-            }
-        }
-
-        function setup() {
-            edit = ace.edit(element[0]);
-            edit.getSession().setMode('ace/mode/questdb');
-            edit.setTheme('ace/theme/merbivore_soft');
-            edit.setShowPrintMargin(false);
-            edit.setDisplayIndentGuides(false);
-            edit.setHighlightActiveLine(false);
-            edit.session.on('change', clearMarker);
-            edit.$blockScrolling = Infinity;
-
-            $(window).on('resize', function () {
-                edit.resize();
-            });
-        }
-
-        function loadPreferences() {
-            if (typeof Storage !== 'undefined') {
-                var q = localStorage.getItem(storeKeys.text);
-                if (q) {
-                    edit.setValue(q);
-                }
-
-                var row = localStorage.getItem(storeKeys.line);
-                var col = localStorage.getItem(storeKeys.col);
-
-                if (row && col) {
-                    edit.gotoLine(row, col);
-                }
-            }
-        }
-
-        function savePreferences() {
-            if (typeof Storage !== 'undefined') {
-                localStorage.setItem(storeKeys.text, edit.getValue());
-                localStorage.setItem(storeKeys.line, edit.getCursorPosition().row + 1);
-                localStorage.setItem(storeKeys.col, edit.getCursorPosition().column);
-            }
-        }
-
-        function computeQueryTextFromCursor() {
-            var text = edit.getValue();
-            var pos = edit.getCursorPosition();
-            var r = 0;
-            var c = 0;
-
-            var startRow = 0;
-            var startCol = 0;
-            var startPos = -1;
-            var sql = null;
-            var inQuote = false;
-
-            for (var i = 0; i < text.length; i++) {
-                var char = text.charAt(i);
-
-                switch (char) {
-                    case ';':
-                        if (inQuote) {
-                            c++;
-                            continue;
-                        }
-
-                        if (r < pos.row || r === pos.row && c < pos.column) {
-                            startRow = r;
-                            startCol = c;
-                            startPos = i + 1;
-                            c++;
-                        } else {
-                            if (startPos === -1) {
-                                sql = text.substring(0, i);
-                            } else {
-                                sql = text.substring(startPos, i);
-                            }
-                        }
-                        break;
-                    case '\n':
-                        r++;
-                        c = 0;
-                        break;
-                    case '\'':
-                        inQuote = !inQuote;
-                        c++;
-                        break;
-                    default:
-                        c++;
-                        break;
-                }
-
-                if (sql !== null) {
-                    break;
-                }
-            }
-
-            if (sql === null) {
-                if (startPos === -1) {
-                    sql = text;
-                } else {
-                    sql = text.substring(startPos);
-                }
-            }
-
-            if (sql.length === 0) {
-                return null;
-            }
-
-            return {q: sql, r: startRow, c: startCol};
-        }
-
-        function computeQueryTextFromSelection() {
-            var q = edit.getSelectedText();
-            var n = q.length;
-            var c;
-            while (n > 0 && ((c = q.charAt(n)) === ' ' || c === '\n' || c === ';')) {
-                n--;
-            }
-
-            if (n > 0) {
-                q = q.substr(0, n + 1);
-                var range = edit.getSelectionRange();
-                return {q: q, r: range.start.row, c: range.start.column};
-            }
-
-            return null;
-        }
-
-        function submitQuery() {
-            bus.trigger('preferences.save');
-            clearMarker();
-            var q;
-            if (edit.getSelectedText() === '') {
-                q = computeQueryTextFromCursor();
-            } else {
-                q = computeQueryTextFromSelection();
-            }
-
-            if (q) {
-                bus.trigger(qdb.MSG_QUERY_EXEC, q);
-            }
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function showError(x, pos) {
-            var token = edit.session.getTokenAt(pos.r - 1, pos.c);
-            marker = edit.session.addMarker(new Range(pos.r - 1, pos.c - 1, pos.r - 1, pos.c + token.value.length - 1), 'js-syntax-error', 'text', true);
-
-            edit.gotoLine(pos.r, pos.c - 1);
-            edit.focus();
-        }
-
-        function toggleInvisibles() {
-            edit.renderer.setShowInvisibles(!edit.renderer.getShowInvisibles());
-        }
-
-        function focusGrid() {
-            bus.trigger('grid.focus');
-        }
-
-        //noinspection JSUnusedLocalSymbols
-        function findOrInsertQuery(e, q) {
-            // "select" existing query or append text of new one
-            // "find" will select text if anything is found, so we just
-            // execute whats there
-            if (!edit.find('\'' + q + '\'', searchOpts)) {
-                var row = edit.session.getLength();
-                var text = '\n\'' + q + '\';';
-                edit.session.insert({
-                    row: row,
-                    column: 0
-                }, text);
-                edit.selection.moveCursorToPosition({
-                    row: row + 1,
-                    column: 0
-                });
-                edit.selection.selectLine();
-            }
-            submitQuery();
-        }
-
-        function bind() {
-            bus.on('editor.execute', submitQuery);
-            bus.on('editor.show.error', showError);
-            bus.on('editor.toggle.invisibles', toggleInvisibles);
-            bus.on('query.build.execute', findOrInsertQuery);
-            bus.on('editor.focus', function () {
-                edit.scrollToLine(edit.getCursorPosition().row + 1, true, true, function () {
-                });
-                edit.focus();
-            });
-
-            edit.commands.addCommand({
-                name: 'editor.execute',
-                bindKey: 'F9',
-                exec: submitQuery
-            });
-
-            edit.commands.addCommand({
-                name: 'editor.focus.grid',
-                bindKey: 'F2',
-                exec: focusGrid
-            });
-
-            bus.on('preferences.load', loadPreferences);
-            bus.on('preferences.save', savePreferences);
-        }
-
-        setup();
-        bind();
-    };
-})(jQuery);
-//# sourceMappingURL=query.js.map
-
-'use strict';
-
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
- * The MIT License (MIT)
- *
- * Copyright (C) 2016-2017 Appsicle
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-
-/*globals jQuery:false */
-/*globals vg:false */
-
-(function ($) {
-    'use strict';
-
-    $.fn.chart = function (msgBus) {
-        var bus = $(msgBus);
-        // var container = $(this);
-
-        function draw() {
-            // line chart
-            // var spec = {
-            //     width: 900,
-            //     height: 300,
-            //     data: [
-            //         {
-            //             name: 'accidents',
-            //             url: '/csv?query=%0A%0Aselect%20severity%2C%20timestamp%20ts%2C%20count()%20count%20from%20z2%20sample%20by%20Y',
-            //             format: {type: 'csv', parse: {ts: 'date', count: 'number'}}
-            //         }
-            //     ],
-            //     scales: [
-            //         {
-            //             name: 'a',
-            //             type: 'time',
-            //             range: 'width',
-            //             domain: {data: 'accidents', field: 'ts'}
-            //         },
-            //         {
-            //             name: 'b',
-            //             type: 'linear',
-            //             range: 'height',
-            //             nice: true,
-            //             domain: {data: 'accidents', field: 'count'}
-            //         },
-            //         {
-            //             name: 'color',
-            //             type: 'ordinal',
-            //             domain: {data: 'accidents', field: 'severity'},
-            //             range: 'category10',
-            //             nice: true
-            //         }
-            //
-            //     ],
-            //     axes: [
-            //         {type: 'x', scale: 'a'},
-            //         {type: 'y', scale: 'b'}
-            //     ],
-            //     legends: [
-            //         {
-            //             fill: 'color',
-            //             properties: {
-            //                 title: {
-            //                     fontSize: {value: 14}
-            //                 },
-            //                 labels: {
-            //                     fontSize: {value: 12}
-            //                 },
-            //                 symbols: {
-            //                     stroke: {value: 'transparent'}
-            //                 },
-            //                 legend: {
-            //                     stroke: {value: '#ccc'},
-            //                     strokeWidth: {value: 1.5}
-            //                 }
-            //             }
-            //         }
-            //     ],
-            //     marks: [
-            //         {
-            //             type: 'group',
-            //             from: {
-            //                 data: 'accidents',
-            //                 transform: [{type: 'facet', groupby: ['severity']}]
-            //             },
-            //             marks: [
-            //                 {
-            //                     type: 'line',
-            //                     properties: {
-            //                         enter: {
-            //                             x: {scale: 'a', field: 'ts'},
-            //                             y: {scale: 'b', field: 'count'},
-            //                             stroke: {scale: 'color', field: 'severity'},
-            //                             strokeWidth: {value: 4}
-            //                         }
-            //                     }
-            //                 }
-            //             ]
-            //         }
-            //     ]
-            // };
-
-
-            // stacked area chart
-
-            // var spec = {
-            //     width: 500,
-            //     height: 200,
-            //     // padding: {top: 10, left: 30, bottom: 30, right: 10},
-            //     data: [
-            //         {
-            //             name: 'accidents',
-            //             url: 'http://localhost:9000/csv?query=%0A%0Aselect%20severity%2C%20timestamp%20ts%2C%20count()%20count%20from%20z2%20where%20severity%20%3D%20\'Slight\'%20sample%20by%201M',
-            //             format: {type: 'csv', parse: {ts: 'date', count: 'number'}}
-            //         },
-            //         {
-            //             name: 'stats',
-            //             source: 'accidents',
-            //             transform: [
-            //                 {
-            //                     type: 'aggregate',
-            //                     groupby: ['ts'],
-            //                     summarize: [{field: 'count', ops: ['sum']}]
-            //                 }
-            //             ]
-            //         }
-            //     ],
-            //     scales: [
-            //         {
-            //             name: 'x',
-            //             type: 'time',
-            //             range: 'width',
-            //             points: true,
-            //             domain: {data: 'accidents', field: 'ts'}
-            //         },
-            //         {
-            //             name: 'y',
-            //             type: 'linear',
-            //             range: 'height',
-            //             nice: true,
-            //             domain: {data: 'stats', field: 'sum_count'}
-            //         },
-            //         {
-            //             name: 'color',
-            //             type: 'ordinal',
-            //             range: 'category10',
-            //             domain: {data: 'accidents', field: 'severity'},
-            //             nice: true
-            //         }
-            //     ],
-            //     axes: [
-            //         {type: 'x', scale: 'x', grid: true},
-            //         {type: 'y', scale: 'y', grid: true}
-            //     ],
-            //     marks: [
-            //         {
-            //             type: 'group',
-            //             from: {
-            //                 data: 'accidents',
-            //                 transform: [
-            //                     {type: 'stack', groupby: ['ts'], sortby: ['severity'], field: 'count'},
-            //                     {type: 'facet', groupby: ['severity']}
-            //                 ]
-            //             },
-            //             marks: [
-            //                 {
-            //                     type: 'area',
-            //                     properties: {
-            //                         enter: {
-            //                             interpolate: {value: 'monotone'},
-            //                             x: {scale: 'x', field: 'ts'},
-            //                             y: {scale: 'y', field: 'layout_start'},
-            //                             y2: {scale: 'y', field: 'layout_end'},
-            //                             fill: {scale: 'color', field: 'severity'}
-            //                         },
-            //                         update: {
-            //                             fillOpacity: {value: 1}
-            //                         },
-            //                         hover: {
-            //                             fillOpacity: {value: 0.5}
-            //                         }
-            //                     }
-            //                 }
-            //             ]
-            //         }
-            //     ]
-            // };
-
-            // scatter plot
-
-            var spec = {
-                width: 500,
-                height: 200,
-                // padding: {top: 10, left: 30, bottom: 30, right: 10},
-                data: [{
-                    name: 'accidents',
-                    url: 'http://localhost:9000/exp?query=%0A%0Aselect%20severity%2C%20timestamp%20ts%2C%20count()%20count%20from%20z2%20%20sample%20by%201M',
-                    format: {type: 'csv', parse: {ts: 'date', count: 'number'}}
-                }],
-                scales: [{
-                    name: 'x',
-                    type: 'time',
-                    range: 'width',
-                    points: true,
-                    domain: {data: 'accidents', field: 'ts'}
-                }, {
-                    name: 'y',
-                    type: 'linear',
-                    range: 'height',
-                    nice: true,
-                    domain: {data: 'accidents', field: 'count'}
-                }, {
-                    name: 'color',
-                    type: 'ordinal',
-                    range: 'category10',
-                    domain: {data: 'accidents', field: 'severity'},
-                    nice: true
-                }],
-                axes: [{type: 'x', scale: 'x', grid: true}, {type: 'y', scale: 'y', grid: true}],
-                marks: [{
-                    type: 'group',
-                    from: {
-                        data: 'accidents',
-                        transform: [{
-                            type: 'stack',
-                            groupby: ['ts'],
-                            sortby: ['severity'],
-                            field: 'count'
-                        }, {type: 'facet', groupby: ['severity']}]
-                    },
-                    marks: [{
-                        type: 'symbol',
-                        properties: {
-                            update: {
-                                x: {scale: 'x', field: 'ts'},
-                                y: {scale: 'y', field: 'count'},
-                                fill: {scale: 'color', field: 'severity'},
-                                size: {value: 10}
-                            }
-                        }
-                    }]
-                }]
-            };
-
-            // stacked bar
-
-            // var spec = {
-            //     width: 500,
-            //     height: 200,
-            //     padding: {top: 10, left: 30, bottom: 30, right: 10},
-            //     data: [
-            //         {
-            //             name: 'accidents',
-            //             url: 'http://localhost:9000/csv?query=%0A%0Aselect%20severity%2C%20timestamp%20ts%2C%20count()%20count%20from%20z2%20%20sample%20by%201M',
-            //             format: {type: 'csv', parse: {ts: 'date', count: 'number'}}
-            //         },
-            //         {
-            //             name: 'stats',
-            //             source: 'accidents',
-            //             transform: [
-            //                 {
-            //                     type: 'aggregate',
-            //                     groupby: ['ts'],
-            //                     summarize: [{field: 'count', ops: ['sum']}]
-            //                 }
-            //             ]
-            //         }
-            //     ],
-            //     scales: [
-            //         {
-            //             name: 'x',
-            //             type: 'time',
-            //             range: 'width',
-            //             domain: {data: 'accidents', field: 'ts'}
-            //         },
-            //         {
-            //             name: 'y',
-            //             type: 'linear',
-            //             range: 'height',
-            //             nice: true,
-            //             domain: {data: 'stats', field: 'sum_count'}
-            //         },
-            //         {
-            //             name: 'color',
-            //             type: 'ordinal',
-            //             range: 'category10',
-            //             domain: {data: 'accidents', field: 'severity'}
-            //         }
-            //     ],
-            //     axes: [
-            //         {type: 'x', scale: 'x', grid: true},
-            //         {type: 'y', scale: 'y', grid: true}
-            //     ],
-            //     marks: [
-            //         {
-            //             type: 'rect',
-            //             from: {
-            //                 data: 'accidents',
-            //                 transform: [
-            //                     {type: 'stack', groupby: ['ts'], sortby: ['severity'], field: 'count'}
-            //                 ]
-            //             },
-            //             properties: {
-            //                 enter: {
-            //                     x: {scale: 'x', field: 'ts'},
-            //                     width: {value: 1},
-            //                     y: {scale: 'y', field: 'layout_start'},
-            //                     y2: {scale: 'y', field: 'layout_end'},
-            //                     fill: {scale: 'color', field: 'severity'}
-            //                 },
-            //                 update: {
-            //                     fillOpacity: {value: 1}
-            //                 },
-            //                 hover: {
-            //                     fillOpacity: {value: 0.5}
-            //                 }
-            //             }
-            //         }
-            //     ]
-            // };
-
-
-            // pie chart
-            // var spec = {
-            //     width: 400,
-            //     height: 400,
-            //     data: [
-            //         {
-            //             name: 'table',
-            //             url: 'http://localhost:9000/csv?query=%0A%0Aselect%20severity%2C%20count%20from%20(select%20severity%2C%20count()%20count%20from%20z2)',
-            //             format: {type: 'csv', parse: {count: 'number'}},
-            //             transform: [{type: 'pie', field: 'count'}]
-            //         }
-            //     ],
-            //     scales: [
-            //         {
-            //             name: 'r',
-            //             type: 'sqrt',
-            //             domain: {data: 'table', field: 'count'},
-            //             range: [20, 100]
-            //         }
-            //     ],
-            //     marks: [
-            //         {
-            //             type: 'arc',
-            //             from: {data: 'table'},
-            //             properties: {
-            //                 enter: {
-            //                     x: {field: {group: 'width'}, mult: 0.5},
-            //                     y: {field: {group: 'height'}, mult: 0.5},
-            //                     startAngle: {field: 'layout_start'},
-            //                     endAngle: {field: 'layout_end'},
-            //                     innerRadius: {value: 20},
-            //                     outerRadius: {scale: 'r', field: 'count'},
-            //                     stroke: {value: '#fff'}
-            //                 },
-            //                 update: {
-            //                     fill: {value: '#ccc'}
-            //                 },
-            //                 hover: {
-            //                     fill: {value: 'pink'}
-            //                 }
-            //             }
-            //         },
-            //         {
-            //             type: 'text',
-            //             from: {data: 'table'},
-            //             properties: {
-            //                 enter: {
-            //                     x: {field: {group: 'width'}, mult: 0.5},
-            //                     y: {field: {group: 'height'}, mult: 0.5},
-            //                     radius: {scale: 'r', field: 'count', offset: 8},
-            //                     theta: {field: 'layout_mid'},
-            //                     fill: {value: '#000'},
-            //                     align: {value: 'center'},
-            //                     baseline: {value: 'middle'},
-            //                     text: {field: 'severity'}
-            //                 }
-            //             }
-            //         }
-            //     ]
-            // };
-
-            //
-            vg.parse.spec(spec, function (error, chart) {
-                chart({el: '#chart'}).update();
-            });
-        }
-
-        bus.on('chart.draw', draw);
-    };
-})(jQuery);
-//# sourceMappingURL=chart.js.map
-
-'use strict';
-
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
- * The MIT License (MIT)
- *
- * Copyright (C) 2016-2017 Appsicle
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-
-/*globals jQuery:false */
-
-(function ($) {
-    'use strict';
-
-    $.fn.splitter = function (msgBus, pName, pMinTop, pMinBottom) {
-        var bus = $(msgBus);
-        var div = $(this);
-        var busMsgName = 'splitter.' + pName + '.resize';
-        var ghost = void 0;
-        var start = void 0;
-        var end = void 0;
-        var styleMain = void 0;
-        var minTop = pMinTop;
-        var minBottom = pMinBottom;
-
-        function drag(e) {
-            e.preventDefault();
-            if (e.pageY > minTop && e.pageY < window.innerHeight + $(window).scrollTop() - minBottom) {
-                end = e.pageY;
-                ghost[0].style = styleMain + 'top: ' + e.pageY + 'px;';
-            }
-        }
-
-        function endDrag() {
-            $(document).off('mousemove', drag);
-            $(document).off('mouseup', endDrag);
-            ghost[0].style = 'display: none';
-            div.removeClass('qs-dragging');
-            bus.trigger(busMsgName, end - start);
-        }
-
-        function beginDrag() {
-            var rect = div[0].getBoundingClientRect();
-            start = rect.top + $(window).scrollTop();
-            styleMain = 'position: absolute; left: ' + rect.left + 'px; width: ' + rect.width + 'px; height: ' + rect.height + 'px;';
-            if (!ghost) {
-                ghost = $('<div class="qs-ghost"></div>');
-                ghost.appendTo('body');
-            }
-            ghost[0].style = styleMain + 'top: ' + start + 'px;';
-            div.addClass('qs-dragging');
-            $(document).mousemove(drag);
-            $(document).mouseup(endDrag);
-        }
-
-        $(this).mousedown(beginDrag);
-    };
-})(jQuery);
-//# sourceMappingURL=splitter.js.map
-
-'use strict';
-
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
- * The MIT License (MIT)
- *
- * Copyright (C) 2016-2017 Appsicle
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-
-/*globals jQuery:false */
-/*globals qdb:false */
-/*globals Clipboard:false */
-
-(function ($) {
-    'use strict';
-
-    var divSqlPanel = $('.js-sql-panel');
-    var divExportUrl = $('.js-export-url');
-    var editor = $('#editor');
-    var sqlEditor = $('#sqlEditor');
-    var consoleTop = $('#console-top');
-    var wrapper = $('#page-wrapper');
-    var msgPanel = editor.find('.js-query-message-panel');
-    var navbar = $('nav.navbar-default');
-    var chart = $('#chart');
-
-    var topHeight = 350;
-    var bottomHeight = 350;
-
-    function resize() {
-        var navbarHeight = navbar.height();
-        var wrapperHeight = wrapper.height();
-        var msgPanelHeight = msgPanel.height();
-        var h = void 0;
-
-        if (navbarHeight > wrapperHeight) {
-            h = navbarHeight;
-        }
-
-        if (navbarHeight < wrapperHeight) {
-            h = $(window).height();
-        }
-
-        if (h) {
-            if (h < topHeight + bottomHeight) {
-                h = topHeight + bottomHeight;
-            }
-            qdb.setHeight(wrapper, h - 1);
-        }
-
-        qdb.setHeight(consoleTop, topHeight);
-        qdb.setHeight(editor, topHeight);
-        qdb.setHeight(sqlEditor, topHeight - msgPanelHeight - 60);
-        qdb.setHeight(chart, topHeight);
-    }
-
-    function show() {
-        divSqlPanel.show();
-    }
-
-    function hide() {
-        divSqlPanel.hide();
-    }
-
-    function switchToGrid() {
-        chart.hide();
-        $('#editor').show();
-        $('#js-toggle-chart').removeClass('active');
-        $('#js-toggle-grid').addClass('active');
-    }
-
-    function switchToChart() {
-        chart.show();
-        $('#editor').hide();
-        $('#js-toggle-chart').addClass('active');
-        $('#js-toggle-grid').removeClass('active');
-        $(document).trigger('chart.draw');
-    }
-
-    function loadSplitterPosition() {
-        if (typeof Storage !== 'undefined') {
-            var n = localStorage.getItem('splitter.position');
-            if (n) {
-                topHeight = parseInt(n);
-            }
-        }
-    }
-
-    function saveSplitterPosition() {
-        if (typeof Storage !== 'undefined') {
-            localStorage.setItem('splitter.position', topHeight);
-        }
-    }
-
-    function setup(bus) {
-        $(window).bind('resize', resize);
-        bus.on(qdb.MSG_QUERY_DATASET, function (e, m) {
-            divExportUrl.val(qdb.toExportUrl(m.query));
-        });
-
-        divExportUrl.click(function () {
-            this.select();
-        });
-
-        /* eslint-disable no-new */
-        new Clipboard('.js-export-copy-url');
-        $('.js-query-refresh').click(function () {
-            bus.trigger('grid.refresh');
-        });
-
-        $('#js-toggle-chart').click(switchToChart);
-        $('#js-toggle-grid').click(switchToGrid);
-
-        // named splitter
-        bus.on('splitter.console.resize', function (x, e) {
-            topHeight += e;
-            $(window).trigger('resize');
-            bus.trigger('preferences.save');
-        });
-
-        bus.on('preferences.save', saveSplitterPosition);
-        bus.on('preferences.load', loadSplitterPosition);
-
-        bus.query();
-        bus.domController();
-
-        sqlEditor.editor(bus);
-
-        $('#grid').grid(bus);
-        chart.chart(document);
-        $('#sp1').splitter(bus, 'console', 200, 0);
-    }
-
-    $.extend(true, window, {
-        qdb: {
-            setupConsoleController: setup,
-            switchToGrid: switchToGrid,
-            showConsole: show,
-            hideConsole: hide
-        }
-    });
-})(jQuery);
-//# sourceMappingURL=console-controller.js.map
-
-'use strict';
-
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
- * The MIT License (MIT)
- *
- * Copyright (C) 2016-2017 Appsicle
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-
-/*globals qdb:false */
-/*globals jQuery:false */
-
-(function ($) {
-    'use strict';
-
-    var divImportPanel = $('.js-import-panel');
-    var importTopPanel = $('#import-top');
-    var canvasPanel = importTopPanel.find('.ud-canvas');
-    var w = $(window);
-
-    var upperHalfHeight = 450;
-
-    function hide() {
-        divImportPanel.hide();
-    }
-
-    function show() {
-        divImportPanel.show();
-        w.trigger('resize');
-    }
-
-    function resize() {
-        var r1 = importTopPanel[0].getBoundingClientRect();
-        var r2 = canvasPanel[0].getBoundingClientRect();
-        qdb.setHeight(importTopPanel, upperHalfHeight);
-        qdb.setHeight(canvasPanel, upperHalfHeight - (r2.top - r1.top) - 10);
-    }
-
-    function setup(b) {
-        w.bind('resize', resize);
-        $('#dragTarget').dropbox(b);
-        $('#import-file-list').importManager(b);
-        $('#import-detail').importEditor(b);
-        $('#sp2').splitter(b, 'import', 470, 300);
-        // upperHalfHeight = importTopPanel.height();
-
-        b.on('splitter.import.resize', function (x, p) {
-            upperHalfHeight += p;
-            w.trigger('resize');
-        });
-    }
-
-    $.extend(true, window, {
-        qdb: {
-            setupImportController: setup,
-            showImport: show,
-            hideImport: hide
-        }
-    });
-})(jQuery);
-//# sourceMappingURL=import-controller.js.map
-
-'use strict';
-
-/*******************************************************************************
- *    ___                  _   ____  ____
- *   / _ \ _   _  ___  ___| |_|  _ \| __ )
- *  | | | | | | |/ _ \/ __| __| | | |  _ \
- *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *   \__\_\\__,_|\___||___/\__|____/|____/
- *
- * The MIT License (MIT)
- *
- * Copyright (C) 2016-2017 Appsicle
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- ******************************************************************************/
-
-/*globals $:false */
-/*globals qdb:false */
-/*globals jQuery:false */
-
-(function ($) {
-    'use strict';
-
-    var messageBus = void 0;
-
-    function switchToEditor() {
-        qdb.showConsole();
-        qdb.hideImport();
-        messageBus.trigger('active.panel', 'console');
-    }
-
-    function switchToImport() {
-        qdb.hideConsole();
-        qdb.showImport();
-        messageBus.trigger('active.panel', 'import');
-    }
-
-    function setup(b) {
-        messageBus = b;
-        $('#side-menu').metisMenu();
-        $('a#sql-editor').click(switchToEditor);
-        $('a#file-upload').click(switchToImport);
-        b.on('query.build.execute', switchToEditor);
-    }
-
-    $.extend(true, window, {
-        qdb: {
-            setup: setup
-        }
-    });
-})(jQuery);
-
-var bus = void 0;
-
-$(document).ready(function () {
-    'use strict';
-
-    bus = $({});
-
-    qdb.setup(bus);
-    qdb.setupConsoleController(bus);
-    qdb.setupImportController(bus);
-    qdb.switchToGrid();
-
-    $('#chart').chart(document);
-    bus.trigger('preferences.load');
-});
-
-$(window).load(function () {
-    'use strict';
-
-    $(window).trigger('resize');
-    bus.trigger('editor.focus');
-});
-//# sourceMappingURL=main.js.map

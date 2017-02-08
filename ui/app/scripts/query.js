@@ -36,14 +36,14 @@
     'use strict';
 
     $.fn.query = function () {
-        var bus = $(this);
-        var qry;
-        var hActiveRequest = null;
-        var hPendingRequest = null;
-        var time;
-        var batchSize = qdb.queryBatchSize;
+        const bus = $(this);
+        let qry;
+        let hActiveRequest = null;
+        let hPendingRequest = null;
+        let time;
+        const batchSize = qdb.queryBatchSize;
 
-        var requestParams = {
+        const requestParams = {
             'query': '',
             'limit': ''
         };
@@ -110,14 +110,14 @@
     };
 
     $.fn.domController = function () {
-        var div = $('.js-query-spinner');
-        var divMsg = $('.js-query-message-panel');
-        var divTime = $('.js-query-message-panel .js-query-time');
-        var divMsgText = $('.js-query-message-panel .js-query-message-text');
-        var timer;
-        var runBtn;
-        var running = false;
-        var bus = $(this);
+        const div = $('.js-query-spinner');
+        const divMsg = $('.js-query-message-panel');
+        const divTime = $('.js-query-message-panel .js-query-time');
+        const divMsgText = $('.js-query-message-panel .js-query-message-text');
+        let timer;
+        let runBtn;
+        let running = false;
+        const bus = $(this);
 
         function delayedStart() {
             div.addClass('query-progress-animated', 100);
@@ -142,8 +142,8 @@
         }
 
         function toTextPosition(q, pos) {
-            var r = 0, c = 0, n = Math.min(pos, q.q.length);
-            for (var i = 0; i < n; i++) {
+            let r = 0, c = 0, n = Math.min(pos, q.q.length);
+            for (let i = 0; i < n; i++) {
                 if (q.q.charAt(i) === '\n') {
                     r++;
                     c = 0;
@@ -166,7 +166,7 @@
             if (m.statusText === 'abort') {
                 divMsgText.html('Cancelled by user');
             } else if (m.r) {
-                var pos = toTextPosition(m.query, m.r.position);
+                const pos = toTextPosition(m.query, m.r.position);
                 divMsgText.html('<strong>' + pos.r + ':' + pos.c + '</strong>&nbsp;&nbsp;' + m.r.error);
                 bus.trigger('editor.show.error', pos);
             } else if (m.status === 0) {
@@ -226,24 +226,24 @@
     };
 
     $.fn.editor = function (msgBus) {
-        var edit;
-        var storeKeys = {
+        let edit;
+        const storeKeys = {
             text: 'query.text',
             line: 'editor.line',
             col: 'editor.col'
         };
 
-        var Range = ace.require('ace/range').Range;
-        var marker;
-        var searchOpts = {
+        const Range = ace.require('ace/range').Range;
+        let marker;
+        const searchOpts = {
             wrap: true,
             caseSensitive: true,
             wholeWord: false,
             regExp: false,
             preventScroll: false
         };
-        var bus = msgBus;
-        var element = this;
+        const bus = msgBus;
+        const element = this;
 
         function clearMarker() {
             if (marker) {
@@ -269,13 +269,13 @@
 
         function loadPreferences() {
             if (typeof (Storage) !== 'undefined') {
-                var q = localStorage.getItem(storeKeys.text);
+                const q = localStorage.getItem(storeKeys.text);
                 if (q) {
                     edit.setValue(q);
                 }
 
-                var row = localStorage.getItem(storeKeys.line);
-                var col = localStorage.getItem(storeKeys.col);
+                const row = localStorage.getItem(storeKeys.line);
+                const col = localStorage.getItem(storeKeys.col);
 
                 if (row && col) {
                     edit.gotoLine(row, col);
@@ -292,20 +292,20 @@
         }
 
         function computeQueryTextFromCursor() {
-            var text = edit.getValue();
-            var pos = edit.getCursorPosition();
-            var r = 0;
-            var c = 0;
+            const text = edit.getValue();
+            const pos = edit.getCursorPosition();
+            let r = 0;
+            let c = 0;
 
-            var startRow = 0;
-            var startCol = 0;
-            var startPos = -1;
-            var sql = null;
-            var inQuote = false;
+            let startRow = 0;
+            let startCol = 0;
+            let startPos = -1;
+            let sql = null;
+            let inQuote = false;
 
 
-            for (var i = 0; i < text.length; i++) {
-                var char = text.charAt(i);
+            for (let i = 0; i < text.length; i++) {
+                const char = text.charAt(i);
 
                 switch (char) {
                     case ';':
@@ -361,16 +361,16 @@
         }
 
         function computeQueryTextFromSelection() {
-            var q = edit.getSelectedText();
-            var n = q.length;
-            var c;
+            let q = edit.getSelectedText();
+            let n = q.length;
+            let c;
             while (n > 0 && ((c = q.charAt(n)) === ' ' || c === '\n' || c === ';')) {
                 n--;
             }
 
             if (n > 0) {
                 q = q.substr(0, n + 1);
-                var range = edit.getSelectionRange();
+                const range = edit.getSelectionRange();
                 return {q, r: range.start.row, c: range.start.column};
             }
 
@@ -380,7 +380,7 @@
         function submitQuery() {
             bus.trigger('preferences.save');
             clearMarker();
-            var q;
+            let q;
             if (edit.getSelectedText() === '') {
                 q = computeQueryTextFromCursor();
             } else {
@@ -394,7 +394,7 @@
 
         //noinspection JSUnusedLocalSymbols
         function showError(x, pos) {
-            var token = edit.session.getTokenAt(pos.r - 1, pos.c);
+            const token = edit.session.getTokenAt(pos.r - 1, pos.c);
             marker = edit.session.addMarker(
                 new Range(pos.r - 1, pos.c - 1, pos.r - 1, pos.c + token.value.length - 1),
                 'js-syntax-error',
@@ -419,8 +419,8 @@
             // "find" will select text if anything is found, so we just
             // execute whats there
             if (!edit.find('\'' + q + '\'', searchOpts)) {
-                var row = edit.session.getLength();
-                var text = '\n\'' + q + '\';';
+                const row = edit.session.getLength();
+                const text = '\n\'' + q + '\';';
                 edit.session.insert({
                     row,
                     column: 0
@@ -438,7 +438,7 @@
             bus.on('editor.execute', submitQuery);
             bus.on('editor.show.error', showError);
             bus.on('editor.toggle.invisibles', toggleInvisibles);
-            bus.on('query.build.execute', findOrInsertQuery);
+            bus.on(qdb.MSG_QUERY_FIND_N_EXEC, findOrInsertQuery);
             bus.on('editor.focus', function () {
                 edit.scrollToLine(edit.getCursorPosition().row + 1, true, true, function () {
                 });

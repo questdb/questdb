@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*!******************************************************************************
  *    ___                  _   ____  ____
  *   / _ \ _   _  ___  ___| |_|  _ \| __ )
  *  | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,43 +28,30 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-/*globals jQuery:false */
+.full-height {
+  height: 100%;
+}
 
-(function ($) {
-    'use strict';
+.js-vis-panel {
+  display: none;
+}
 
-    const queryBatchSize = 1000;
-    const MSG_QUERY_EXEC = 'query.in.exec';
-    const MSG_QUERY_CANCEL = 'query.in.cancel';
-    const MSG_QUERY_RUNNING = 'query.out.running';
-    const MSG_QUERY_OK = 'query.out.ok';
-    const MSG_QUERY_ERROR = 'query.out.error';
-    const MSG_QUERY_DATASET = 'query.out.dataset';
-    const MSG_QUERY_FIND_N_EXEC = 'query.build.execute';
-    const MSG_ACTIVE_PANEL = 'active.panel';
+.vis-columns {
+  padding: 0;
+}
 
-    function toExportUrl(query) {
-        return window.location.protocol + '//' + window.location.host + '/exp?query=' + encodeURIComponent(query);
-    }
+.vis-columns > li {
+  background: #f3f3f4;
+  border-left: 4px solid #e7eaec;
+  border-right: 4px solid #e7eaec;
+  border-radius: 4px;
+  color: inherit;
+  margin-bottom: 2px;
+  padding: 5px;
+  list-style-type: none;
+}
 
-    function setHeight(element, height) {
-        element.css('height', height + 'px');
-        element.css('min-height', height + 'px');
-    }
-
-    $.extend(true, window, {
-        qdb: {
-            queryBatchSize,
-            MSG_QUERY_EXEC,
-            MSG_QUERY_CANCEL,
-            MSG_QUERY_RUNNING,
-            MSG_QUERY_OK,
-            MSG_QUERY_ERROR,
-            MSG_QUERY_DATASET,
-            MSG_ACTIVE_PANEL,
-            MSG_QUERY_FIND_N_EXEC,
-            toExportUrl,
-            setHeight
-        }
-    });
-}(jQuery));
+#vis-canvas {
+  height: 400px;
+  width: 600px;
+}

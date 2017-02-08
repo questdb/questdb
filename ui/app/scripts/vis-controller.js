@@ -29,42 +29,59 @@
  ******************************************************************************/
 
 /*globals jQuery:false */
+/*globals qdb:false */
+/*globals echarts:false */
+
 
 (function ($) {
     'use strict';
+    const panels = $('.js-vis-panel');
+    const w = $(window);
+    const container = $('#visualisation-top');
+    const footerHeight = $('.footer')[0].offsetHeight;
+    const columnContainer = panels.find('.vis-columns');
+    const canvas = panels.find('#vis-canvas')[0];
 
-    const queryBatchSize = 1000;
-    const MSG_QUERY_EXEC = 'query.in.exec';
-    const MSG_QUERY_CANCEL = 'query.in.cancel';
-    const MSG_QUERY_RUNNING = 'query.out.running';
-    const MSG_QUERY_OK = 'query.out.ok';
-    const MSG_QUERY_ERROR = 'query.out.error';
-    const MSG_QUERY_DATASET = 'query.out.dataset';
-    const MSG_QUERY_FIND_N_EXEC = 'query.build.execute';
-    const MSG_ACTIVE_PANEL = 'active.panel';
+    let visible = true;
 
-    function toExportUrl(query) {
-        return window.location.protocol + '//' + window.location.host + '/exp?query=' + encodeURIComponent(query);
+    function toggleVisibility(x, name) {
+        if (name === 'visualisation') {
+            panels.show();
+            visible = true;
+            w.trigger('resize');
+        } else {
+            visible = false;
+            panels.hide();
+        }
     }
 
-    function setHeight(element, height) {
-        element.css('height', height + 'px');
-        element.css('min-height', height + 'px');
+    function processDataSet(x, dataSet) {
+        console.log(dataSet);
+        const cols = dataSet.columns;
+        let html = '';
+        for (let i = 0, n = cols.length; i < n; i++) {
+            html += '<li>' + cols[i].name + '</li>';
+        }
+        columnContainer.html(html);
+    }
+
+    function resize() {
+        if (visible) {
+            qdb.setHeight(container, window.innerHeight - footerHeight - 80);
+        }
+    }
+
+    function setup(bus) {
+        $(window).bind('resize', resize);
+        bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
+        bus.on(qdb.MSG_QUERY_DATASET, processDataSet);
+
+        echarts.init(canvas);
     }
 
     $.extend(true, window, {
         qdb: {
-            queryBatchSize,
-            MSG_QUERY_EXEC,
-            MSG_QUERY_CANCEL,
-            MSG_QUERY_RUNNING,
-            MSG_QUERY_OK,
-            MSG_QUERY_ERROR,
-            MSG_QUERY_DATASET,
-            MSG_ACTIVE_PANEL,
-            MSG_QUERY_FIND_N_EXEC,
-            toExportUrl,
-            setHeight
+            setupVisualisationController: setup
         }
     });
 }(jQuery));

@@ -29,6 +29,7 @@
  ******************************************************************************/
 
 /*globals jQuery:false */
+/*globals qdb:false */
 /*eslint no-use-before-define: 0*/
 
 
@@ -260,7 +261,7 @@ function nopropagation(e) {
         function viewRow() {
             const btn = $(this);
             const e = dict[btn.parent().parent().attr('id')];
-            ebus.trigger('query.build.execute', e.name);
+            ebus.trigger(qdb.MSG_QUERY_FIND_N_EXEC, e.name);
         }
 
         function showDetail(e) {
@@ -571,8 +572,8 @@ function nopropagation(e) {
     // broadcast file readiness to document via custom event 'dropbox.files'
     $.fn.dropbox = function (bus) {
 
-        var collection = $();
-        var target = this;
+        let collection = $();
+        const target = this;
 
         function startDrag() {
             target.addClass('drag-drop').removeClass('drag-idle');
@@ -590,7 +591,7 @@ function nopropagation(e) {
         }
 
         function handlePaste(evt) {
-            var pastedText;
+            let pastedText;
             if (window.clipboardData && window.clipboardData.getData) { // IE
                 pastedText = window.clipboardData.getData('Text');
             } else if (evt.originalEvent.clipboardData && evt.originalEvent.clipboardData.getData) {

@@ -37,30 +37,45 @@
     'use strict';
 
     let messageBus;
+    const menuItems = $('#side-menu').find('a');
 
-    function switchToEditor() {
-        qdb.showConsole();
-        qdb.hideImport();
-        messageBus.trigger('active.panel', 'console');
+    function switchTo(name, index) {
+        messageBus.trigger(qdb.MSG_ACTIVE_PANEL, name);
+        const n = menuItems.length;
+        for (let i = 0; i < n; i++) {
+            if (i === index) {
+                menuItems[i].setAttribute('class', 'selected');
+            } else {
+                menuItems[i].setAttribute('class', '');
+            }
+        }
+    }
+
+    function switchToConsole() {
+        switchTo('console', 0);
+    }
+
+    function switchToVis() {
+        switchTo('visualisation', 1);
     }
 
     function switchToImport() {
-        qdb.hideConsole();
-        qdb.showImport();
-        messageBus.trigger('active.panel', 'import');
+        switchTo('import', 2);
     }
 
     function setup(b) {
         messageBus = b;
         $('#side-menu').metisMenu();
-        $('a#sql-editor').click(switchToEditor);
-        $('a#file-upload').click(switchToImport);
-        b.on('query.build.execute', switchToEditor);
+        $('a#nav-console').click(switchToConsole);
+        $('a#nav-import').click(switchToImport);
+        $('a#nav-visualisation').click(switchToVis);
+        b.on(qdb.MSG_QUERY_FIND_N_EXEC, switchToConsole);
     }
 
     $.extend(true, window, {
         qdb: {
-            setup
+            setup,
+            switchToConsole
         }
     });
 
@@ -75,9 +90,8 @@ $(document).ready(function () {
     qdb.setup(bus);
     qdb.setupConsoleController(bus);
     qdb.setupImportController(bus);
-    qdb.switchToGrid();
-
-    $('#chart').chart(document);
+    qdb.setupVisualisationController(bus);
+    qdb.switchToConsole();
     bus.trigger('preferences.load');
 });
 

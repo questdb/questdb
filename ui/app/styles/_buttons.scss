@@ -337,3 +337,7 @@ button.dim:active:before {
 .btn:focus {
   outline: none !important;
 }
+
+.btn-icon > i {
+  padding-right: 5px;
+}
