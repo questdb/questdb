@@ -76,6 +76,20 @@
         bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
         bus.on(qdb.MSG_QUERY_DATASET, processDataSet);
 
+        $('#vis-x-axis').selectize({
+            persist: false,
+            maxItems: null,
+            openOnFocus: false,
+            valueField: 'email',
+            labelField: 'name',
+            searchField: ['name'],
+            options: [
+                {name: 'Brian Reavis'},
+                {name: 'Nikola Tesla'},
+                {name: 'x'}
+            ]
+        });
+
         echarts.init(canvas);
     }
 

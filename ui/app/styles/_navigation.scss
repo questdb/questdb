@@ -67,6 +67,20 @@
   color: white;
 }
 
+.nav > li > a.selected > .nav-pointer,
+.nav > li > a.selected:hover > .nav-pointer {
+  display: block !important;
+  position: absolute;
+  right: -3px;
+  top: 8px;
+  background: 0 0;
+  width: 100px;
+  height: 10px;
+  border-top: 12px solid transparent;
+  border-bottom: 12px solid transparent;
+  border-right: 12px solid $gray;
+}
+
 .navbar {
   border: 0;
 }
@@ -565,3 +579,4 @@ body.canvas-menu.mini-navbar nav.navbar-static-side {
   display: block;
   width: 220px;
 }
+

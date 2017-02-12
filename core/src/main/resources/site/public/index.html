@@ -68,14 +68,13 @@
                     </div>
                 </li>
                 <li>
-                    <a id="nav-console" href="#"><i class="fa fa-bars"></i> <span
-                            class="nav-label">SQL Console</span></a>
+                    <a id="nav-console" href="#"><i class="fa fa-bars"></i><span class="nav-pointer"></span></a>
                 </li>
                 <li>
-                    <a id="nav-visualisation" href="#"><i class="fa fa-pie-chart"></i> <span class="nav-label">Visualisation</span></a>
+                    <a id="nav-visualisation" href="#"><i class="fa fa-pie-chart"></i><span class="nav-pointer"></span></a>
                 </li>
                 <li>
-                    <a id="nav-import" href="#"><i class="fa fa-upload"></i> <span class="nav-label">Data import</span></a>
+                    <a id="nav-import" href="#"><i class="fa fa-upload"></i><span class="nav-pointer"></span></a>
                 </li>
             </ul>
         </div>
@@ -303,10 +302,24 @@
                             </div>
                             <div class="col-lg-9 full-height">
                                 <div class="ibox float-e-margins">
-                                    <div class="ibox-title">
-                                        <h5>Your visualisation</h5>
-                                    </div>
                                     <div class="ibox-content">
+                                        <form class="form-horizontal">
+
+                                            <div class="form-group">
+                                                <label class="col-lg-1 control-label" for="vis-x-axis">x-axis:</label>
+                                                <div class="col-lg-11">
+                                                    <select class="form-control" id="vis-x-axis"
+                                                            placeholder="pick x-axis fields"></select>
+                                                </div>
+                                            </div>
+
+                                            <div class="form-group">
+                                                <label class="col-lg-1 control-label" for="vis-y-axis">y-axis:</label>
+                                                <div class="col-lg-11">
+                                                    <input class="form-control" type="text" id="vis-y-axis">
+                                                </div>
+                                            </div>
+                                        </form>
                                         <div id="vis-canvas"></div>
                                     </div>
                                 </div>

@@ -24,7 +24,8 @@
     "bootstrap": "^3.3.6",
     "animate.css": "^3.5.1",
     "clipboard": "^1.5.10",
-    "echarts": "^3.4.0"
+    "echarts": "^3.4.0",
+    "selectize": "^0.12.4"
   },
   "overrides": {
     "bootstrap-sass": {
