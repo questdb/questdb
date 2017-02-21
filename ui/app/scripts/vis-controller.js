@@ -31,66 +31,146 @@
 /*globals jQuery:false */
 /*globals qdb:false */
 /*globals echarts:false */
-
+/*globals eChartsMacarons:false */
 
 (function ($) {
     'use strict';
     const panels = $('.js-vis-panel');
-    const w = $(window);
     const container = $('#visualisation-top');
     const footerHeight = $('.footer')[0].offsetHeight;
     const columnContainer = panels.find('.vis-columns');
-    const canvas = panels.find('#vis-canvas')[0];
+    const canvas = panels.find('#vis-canvas');
+    const queryDiv = $('#vis-query')[0];
+    const colsDiv = $('#vis-columns');
+    const queryRowDiv = $('#vis-query-row')[0];
+    const toolbarDiv = $('div.js-vis-panel')[0];
+    const formDiv = $('#vis-form-row')[0];
+    const queryRequest = {
+        q: null,
+        callback: null
+    };
+    const edit = qdb.createEditor(queryDiv);
+    let chart;
 
+    let xSelect;
+    let ySelect;
     let visible = true;
+    let query;
 
     function toggleVisibility(x, name) {
         if (name === 'visualisation') {
-            panels.show();
             visible = true;
-            w.trigger('resize');
+            panels.show();
+            resize();
         } else {
             visible = false;
             panels.hide();
         }
     }
 
-    function processDataSet(x, dataSet) {
-        console.log(dataSet);
+    function toColumnSupertype(type) {
+        switch (type) {
+            case 'STRING':
+            case 'SYMBOL':
+                return '<span class="label label-danger">L</span>';
+            case 'DATE':
+                return '<span class="label label-success">D</span>';
+            default:
+                return '<span class="label label-warning-light">N</span>';
+        }
+    }
+
+    function createColumnPicker(id) {
+        return $(id).selectize({
+            persist: false,
+            maxItems: null,
+            valueField: 'name',
+            labelField: 'name',
+            searchField: ['name'],
+            options: []
+        })[0].selectize;
+    }
+
+    function refreshColumnPicker(select, columns) {
+        select.clearOptions();
+        select.addOption(columns);
+        select.refreshOptions(false);
+    }
+
+    function processDataSet(dataSet) {
         const cols = dataSet.columns;
         let html = '';
         for (let i = 0, n = cols.length; i < n; i++) {
-            html += '<li>' + cols[i].name + '</li>';
+            const col = cols[i];
+            html += `<li>${col.name}${toColumnSupertype(col.type)}</li>`;
         }
         columnContainer.html(html);
+        refreshColumnPicker(xSelect, cols);
+        refreshColumnPicker(ySelect, cols);
     }
 
     function resize() {
         if (visible) {
-            qdb.setHeight(container, window.innerHeight - footerHeight - 80);
+            const h = window.innerHeight;
+            qdb.setHeight(container, h - footerHeight - toolbarDiv.offsetHeight - queryRowDiv.offsetHeight - 30);
+            qdb.setHeight(colsDiv, container[0].offsetHeight - 60);
+            //todo: compute height of form above chart canvas
+            qdb.setHeight(canvas, container[0].offsetHeight - formDiv.offsetHeight);
+            chart.resize();
         }
+    }
+
+    function showQueryText(e, qry) {
+        query = qry.q;
+        edit.setValue(query);
     }
 
     function setup(bus) {
         $(window).bind('resize', resize);
         bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
-        bus.on(qdb.MSG_QUERY_DATASET, processDataSet);
+        bus.on('query.text', showQueryText);
 
-        $('#vis-x-axis').selectize({
-            persist: false,
-            maxItems: null,
-            openOnFocus: false,
-            valueField: 'email',
-            labelField: 'name',
-            searchField: ['name'],
-            options: [
-                {name: 'Brian Reavis'},
-                {name: 'Nikola Tesla'},
-                {name: 'x'}
-            ]
+        chart = echarts.init(canvas[0], eChartsMacarons);
+
+        $('#btnVisRefresh').click(function () {
+            queryRequest.q = edit.getValue();
+            queryRequest.callback = processDataSet;
+            bus.trigger(qdb.MSG_QUERY_EXEC, queryRequest);
         });
 
-        echarts.init(canvas);
+        $('#btnVisBuild').click(function () {
+            let options = {
+                xAxis: [
+                    {
+                        type: 'category value',
+                        boundaryGap: false,
+                        data: [1, 2, 3, 4, 5, 6, 7]
+                    }
+                ],
+                yAxis: [
+                    {
+                        type: 'value'
+                    }
+                ],
+                series: [
+                    {
+                        name: '最高气温',
+                        type: 'line',
+                        data: [11, 11, 15, 13, 12, 13, 10]
+                    },
+                    {
+                        name: '最低气温',
+                        type: 'line',
+                        data: [1, -2, 2, 5, 3, 2, 0]
+                    }
+                ]
+            };
+
+            chart.setOption(options);
+        });
+
+        xSelect = createColumnPicker('#vis-x-axis');
+        ySelect = createColumnPicker('#vis-y-axis');
     }
 
     $.extend(true, window, {

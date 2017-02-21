@@ -39,21 +39,26 @@
     const importTopPanel = $('#import-top');
     const canvasPanel = importTopPanel.find('.ud-canvas');
     const w = $(window);
+    let visible = false;
 
     let upperHalfHeight = 450;
 
     function resize() {
-        let r1 = importTopPanel[0].getBoundingClientRect();
-        let r2 = canvasPanel[0].getBoundingClientRect();
-        qdb.setHeight(importTopPanel, upperHalfHeight);
-        qdb.setHeight(canvasPanel, upperHalfHeight - (r2.top - r1.top) - 10);
+        if (visible) {
+            let r1 = importTopPanel[0].getBoundingClientRect();
+            let r2 = canvasPanel[0].getBoundingClientRect();
+            qdb.setHeight(importTopPanel, upperHalfHeight);
+            qdb.setHeight(canvasPanel, upperHalfHeight - (r2.top - r1.top) - 10);
+        }
     }
 
     function toggleVisibility(x, name) {
         if (name === 'import') {
+            visible = true;
             divImportPanel.show();
             w.trigger('resize');
         } else {
+            visible = false;
             divImportPanel.hide();
         }
     }

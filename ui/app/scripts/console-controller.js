@@ -68,7 +68,7 @@
                 if (h < topHeight + bottomHeight) {
                     h = topHeight + bottomHeight;
                 }
-                qdb.setHeight(wrapper, h - 1);
+                // qdb.setHeight(wrapper, h - 1);
             }
 
             qdb.setHeight(consoleTop, topHeight);
@@ -145,6 +145,11 @@
         $('#sp1').splitter(bus, 'console', 200, 0);
 
         switchToGrid();
+
+        // wire query publish
+        $('#js-toggle-chart').click(function () {
+            bus.trigger('query.publish');
+        });
     }
 
     $.extend(true, window, {

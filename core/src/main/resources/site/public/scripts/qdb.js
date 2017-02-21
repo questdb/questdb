@@ -27594,6 +27594,7 @@ ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "
  ******************************************************************************/
 
 /*globals jQuery:false */
+/*globals ace:false */
 
 (function ($) {
     'use strict';
@@ -27617,6 +27618,22 @@ ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "
         element.css('min-height', height + 'px');
     }
 
+    function createEditor(div) {
+        var edit = ace.edit(div);
+        edit.getSession().setMode('ace/mode/questdb');
+        edit.setTheme('ace/theme/merbivore_soft');
+        edit.setShowPrintMargin(false);
+        edit.setDisplayIndentGuides(false);
+        edit.setHighlightActiveLine(false);
+        edit.$blockScrolling = Infinity;
+
+        $(window).on('resize', function () {
+            edit.resize();
+        });
+
+        return edit;
+    }
+
     $.extend(true, window, {
         qdb: {
             queryBatchSize: queryBatchSize,
@@ -27629,7 +27646,8 @@ ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "
             MSG_ACTIVE_PANEL: MSG_ACTIVE_PANEL,
             MSG_QUERY_FIND_N_EXEC: MSG_QUERY_FIND_N_EXEC,
             toExportUrl: toExportUrl,
-            setHeight: setHeight
+            setHeight: setHeight,
+            createEditor: createEditor
         }
     });
 })(jQuery);
@@ -29358,16 +29376,19 @@ function nopropagation(e) {
             }
         }
 
-        function handleServerResponse(r) {
-            bus.trigger(qdb.MSG_QUERY_OK, {
-                delta: new Date().getTime() - time,
-                count: r.count
-            });
+        function handleServerResponse(r, textStatus, jqXHR) {
+            if (jqXHR.questCallback) {
+                jqXHR.questCallback(r);
+            } else {
+                bus.trigger(qdb.MSG_QUERY_OK, {
+                    delta: new Date().getTime() - time,
+                    count: r.count
+                });
 
-            if (r.dataset) {
-                bus.trigger(qdb.MSG_QUERY_DATASET, r);
+                if (r.dataset) {
+                    bus.trigger(qdb.MSG_QUERY_DATASET, r);
+                }
             }
-
             hActiveRequest = null;
         }
 
@@ -29388,8 +29409,12 @@ function nopropagation(e) {
             requestParams.limit = '0,' + batchSize;
             requestParams.count = true;
             time = new Date().getTime();
-            hActiveRequest = $.get('/exec', requestParams).done(handleServerResponse).fail(handleServerError);
-            bus.trigger(qdb.MSG_QUERY_RUNNING);
+            hActiveRequest = $.get('/exec', requestParams);
+            hActiveRequest.questCallback = qry.callback;
+            hActiveRequest.done(handleServerResponse).fail(handleServerError);
+            if (!qry.callback) {
+                bus.trigger(qdb.MSG_QUERY_RUNNING);
+            }
         }
 
         //noinspection JSUnusedLocalSymbols
@@ -29399,8 +29424,13 @@ function nopropagation(e) {
             hPendingRequest = setTimeout(sendQueryDelayed, 50);
         }
 
+        function publishCurrentQuery() {
+            bus.trigger('query.text', qry);
+        }
+
         bus.on(qdb.MSG_QUERY_EXEC, sendQuery);
         bus.on(qdb.MSG_QUERY_CANCEL, cancelActiveQuery);
+        bus.on('query.publish', publishCurrentQuery);
     };
 
     $.fn.domController = function () {
@@ -29549,18 +29579,8 @@ function nopropagation(e) {
         }
 
         function setup() {
-            edit = ace.edit(element[0]);
-            edit.getSession().setMode('ace/mode/questdb');
-            edit.setTheme('ace/theme/merbivore_soft');
-            edit.setShowPrintMargin(false);
-            edit.setDisplayIndentGuides(false);
-            edit.setHighlightActiveLine(false);
+            edit = qdb.createEditor(element[0]);
             edit.session.on('change', clearMarker);
-            edit.$blockScrolling = Infinity;
-
-            $(window).on('resize', function () {
-                edit.resize();
-            });
         }
 
         function loadPreferences() {
@@ -29913,7 +29933,7 @@ function nopropagation(e) {
                 if (h < topHeight + bottomHeight) {
                     h = topHeight + bottomHeight;
                 }
-                qdb.setHeight(wrapper, h - 1);
+                // qdb.setHeight(wrapper, h - 1);
             }
 
             qdb.setHeight(consoleTop, topHeight);
@@ -29989,6 +30009,11 @@ function nopropagation(e) {
         $('#sp1').splitter(bus, 'console', 200, 0);
 
         switchToGrid();
+
+        // wire query publish
+        $('#js-toggle-chart').click(function () {
+            bus.trigger('query.publish');
+        });
     }
 
     $.extend(true, window, {
@@ -30042,21 +30067,26 @@ function nopropagation(e) {
     var importTopPanel = $('#import-top');
     var canvasPanel = importTopPanel.find('.ud-canvas');
     var w = $(window);
+    var visible = false;
 
     var upperHalfHeight = 450;
 
     function resize() {
-        var r1 = importTopPanel[0].getBoundingClientRect();
-        var r2 = canvasPanel[0].getBoundingClientRect();
-        qdb.setHeight(importTopPanel, upperHalfHeight);
-        qdb.setHeight(canvasPanel, upperHalfHeight - (r2.top - r1.top) - 10);
+        if (visible) {
+            var r1 = importTopPanel[0].getBoundingClientRect();
+            var r2 = canvasPanel[0].getBoundingClientRect();
+            qdb.setHeight(importTopPanel, upperHalfHeight);
+            qdb.setHeight(canvasPanel, upperHalfHeight - (r2.top - r1.top) - 10);
+        }
     }
 
     function toggleVisibility(x, name) {
         if (name === 'import') {
+            visible = true;
             divImportPanel.show();
             w.trigger('resize');
         } else {
+            visible = false;
             divImportPanel.hide();
         }
     }
@@ -30085,6 +30115,259 @@ function nopropagation(e) {
     });
 })(jQuery);
 //# sourceMappingURL=import-controller.js.map
+
+const eChartsMacarons = {
+    // 默认色板
+    color: [
+        '#2ec7c9', '#b6a2de', '#5ab1ef', '#ffb980', '#d87a80',
+        '#8d98b3', '#e5cf0d', '#97b552', '#95706d', '#dc69aa',
+        '#07a2a4', '#9a7fd1', '#588dd5', '#f5994e', '#c05050',
+        '#59678c', '#c9ab00', '#7eb00a', '#6f5553', '#c14089'
+    ],
+
+    // 图表标题
+    title: {
+        textStyle: {
+            fontWeight: 'normal',
+            color: '#008acd'          // 主标题文字颜色
+        }
+    },
+
+    // 值域
+    dataRange: {
+        itemWidth: 15,
+        color: ['#5ab1ef', '#e0ffff']
+    },
+
+    // 工具箱
+    toolbox: {
+        color: ['#1e90ff', '#1e90ff', '#1e90ff', '#1e90ff'],
+        effectiveColor: '#ff4500'
+    },
+
+    // 提示框
+    tooltip: {
+        backgroundColor: 'rgba(50,50,50,0.5)',     // 提示背景颜色，默认为透明度为0.7的黑色
+        axisPointer: {            // 坐标轴指示器，坐标轴触发有效
+            type: 'line',         // 默认为直线，可选为：'line' | 'shadow'
+            lineStyle: {          // 直线指示器样式设置
+                color: '#008acd'
+            },
+            crossStyle: {
+                color: '#008acd'
+            },
+            shadowStyle: {                     // 阴影指示器样式设置
+                color: 'rgba(200,200,200,0.2)'
+            }
+        }
+    },
+
+    // 区域缩放控制器
+    dataZoom: {
+        dataBackgroundColor: '#efefff',            // 数据背景颜色
+        fillerColor: 'rgba(182,162,222,0.2)',   // 填充颜色
+        handleColor: '#008acd'    // 手柄颜色
+    },
+
+    // 网格
+    grid: {
+        borderColor: '#eee'
+    },
+
+    // 类目轴
+    categoryAxis: {
+        axisLine: {            // 坐标轴线
+            lineStyle: {       // 属性lineStyle控制线条样式
+                color: '#008acd'
+            }
+        },
+        splitLine: {           // 分隔线
+            lineStyle: {       // 属性lineStyle（详见lineStyle）控制线条样式
+                color: ['#eee']
+            }
+        }
+    },
+
+    // 数值型坐标轴默认参数
+    valueAxis: {
+        axisLine: {            // 坐标轴线
+            lineStyle: {       // 属性lineStyle控制线条样式
+                color: '#008acd'
+            }
+        },
+        splitArea: {
+            show: true,
+            areaStyle: {
+                color: ['rgba(250,250,250,0.1)', 'rgba(200,200,200,0.1)']
+            }
+        },
+        splitLine: {           // 分隔线
+            lineStyle: {       // 属性lineStyle（详见lineStyle）控制线条样式
+                color: ['#eee']
+            }
+        }
+    },
+
+    polar: {
+        axisLine: {            // 坐标轴线
+            lineStyle: {       // 属性lineStyle控制线条样式
+                color: '#ddd'
+            }
+        },
+        splitArea: {
+            show: true,
+            areaStyle: {
+                color: ['rgba(250,250,250,0.2)', 'rgba(200,200,200,0.2)']
+            }
+        },
+        splitLine: {
+            lineStyle: {
+                color: '#ddd'
+            }
+        }
+    },
+
+    timeline: {
+        lineStyle: {
+            color: '#008acd'
+        },
+        controlStyle: {
+            normal: {color: '#008acd'},
+            emphasis: {color: '#008acd'}
+        },
+        symbol: 'emptyCircle',
+        symbolSize: 3
+    },
+
+    // 柱形图默认参数
+    bar: {
+        itemStyle: {
+            normal: {
+                barBorderRadius: 5
+            },
+            emphasis: {
+                barBorderRadius: 5
+            }
+        }
+    },
+
+    // 折线图默认参数
+    line: {
+        smooth: true,
+        symbol: 'emptyCircle',  // 拐点图形类型
+        symbolSize: 3           // 拐点图形大小
+    },
+
+    // K线图默认参数
+    k: {
+        itemStyle: {
+            normal: {
+                color: '#d87a80',       // 阳线填充颜色
+                color0: '#2ec7c9',      // 阴线填充颜色
+                lineStyle: {
+                    color: '#d87a80',   // 阳线边框颜色
+                    color0: '#2ec7c9'   // 阴线边框颜色
+                }
+            }
+        }
+    },
+
+    // 散点图默认参数
+    scatter: {
+        symbol: 'circle',    // 图形类型
+        symbolSize: 4        // 图形大小，半宽（半径）参数，当图形为方向或菱形则总宽度为symbolSize * 2
+    },
+
+    // 雷达图默认参数
+    radar: {
+        symbol: 'emptyCircle',    // 图形类型
+        symbolSize: 3
+        //symbol: null,         // 拐点图形类型
+        //symbolRotate : null,  // 图形旋转控制
+    },
+
+    map: {
+        itemStyle: {
+            normal: {
+                areaStyle: {
+                    color: '#ddd'
+                },
+                label: {
+                    textStyle: {
+                        color: '#d87a80'
+                    }
+                }
+            },
+            emphasis: {                 // 也是选中样式
+                areaStyle: {
+                    color: '#fe994e'
+                }
+            }
+        }
+    },
+
+    force: {
+        itemStyle: {
+            normal: {
+                linkStyle: {
+                    color: '#1e90ff'
+                }
+            }
+        }
+    },
+
+    chord: {
+        itemStyle: {
+            normal: {
+                borderWidth: 1,
+                borderColor: 'rgba(128, 128, 128, 0.5)',
+                chordStyle: {
+                    lineStyle: {
+                        color: 'rgba(128, 128, 128, 0.5)'
+                    }
+                }
+            },
+            emphasis: {
+                borderWidth: 1,
+                borderColor: 'rgba(128, 128, 128, 0.5)',
+                chordStyle: {
+                    lineStyle: {
+                        color: 'rgba(128, 128, 128, 0.5)'
+                    }
+                }
+            }
+        }
+    },
+
+    gauge: {
+        axisLine: {            // 坐标轴线
+            lineStyle: {       // 属性lineStyle控制线条样式
+                color: [[0.2, '#2ec7c9'], [0.8, '#5ab1ef'], [1, '#d87a80']],
+                width: 10
+            }
+        },
+        axisTick: {            // 坐标轴小标记
+            splitNumber: 10,   // 每份split细分多少段
+            length: 15,        // 属性length控制线长
+            lineStyle: {       // 属性lineStyle控制线条样式
+                color: 'auto'
+            }
+        },
+        splitLine: {           // 分隔线
+            length: 22,         // 属性length控制线长
+            lineStyle: {       // 属性lineStyle（详见lineStyle）控制线条样式
+                color: 'auto'
+            }
+        },
+        pointer: {
+            width: 5
+        }
+    },
+
+    textStyle: {
+        fontFamily: '微软雅黑, Arial, Verdana, sans-serif'
+    }
+};
 
 'use strict';
 
@@ -30121,65 +30404,140 @@ function nopropagation(e) {
 /*globals jQuery:false */
 /*globals qdb:false */
 /*globals echarts:false */
+/*globals eChartsMacarons:false */
 
 (function ($) {
     'use strict';
 
     var panels = $('.js-vis-panel');
-    var w = $(window);
     var container = $('#visualisation-top');
     var footerHeight = $('.footer')[0].offsetHeight;
     var columnContainer = panels.find('.vis-columns');
-    var canvas = panels.find('#vis-canvas')[0];
+    var canvas = panels.find('#vis-canvas');
+    var queryDiv = $('#vis-query')[0];
+    var colsDiv = $('#vis-columns');
+    var queryRowDiv = $('#vis-query-row')[0];
+    var toolbarDiv = $('div.js-vis-panel')[0];
+    var formDiv = $('#vis-form-row')[0];
+    var queryRequest = {
+        q: null,
+        callback: null
+    };
+    var edit = qdb.createEditor(queryDiv);
+    var chart = void 0;
 
+    var xSelect = void 0;
+    var ySelect = void 0;
     var visible = true;
+    var query = void 0;
 
     function toggleVisibility(x, name) {
         if (name === 'visualisation') {
-            panels.show();
             visible = true;
-            w.trigger('resize');
+            panels.show();
+            resize();
         } else {
             visible = false;
             panels.hide();
         }
     }
 
-    function processDataSet(x, dataSet) {
-        console.log(dataSet);
+    function toColumnSupertype(type) {
+        switch (type) {
+            case 'STRING':
+            case 'SYMBOL':
+                return '<span class="label label-danger">L</span>';
+            case 'DATE':
+                return '<span class="label label-success">D</span>';
+            default:
+                return '<span class="label label-warning-light">N</span>';
+        }
+    }
+
+    function createColumnPicker(id) {
+        return $(id).selectize({
+            persist: false,
+            maxItems: null,
+            valueField: 'name',
+            labelField: 'name',
+            searchField: ['name'],
+            options: []
+        })[0].selectize;
+    }
+
+    function refreshColumnPicker(select, columns) {
+        select.clearOptions();
+        select.addOption(columns);
+        select.refreshOptions(false);
+    }
+
+    function processDataSet(dataSet) {
         var cols = dataSet.columns;
         var html = '';
         for (var i = 0, n = cols.length; i < n; i++) {
-            html += '<li>' + cols[i].name + '</li>';
+            var col = cols[i];
+            html += '<li>' + col.name + toColumnSupertype(col.type) + '</li>';
         }
         columnContainer.html(html);
+        refreshColumnPicker(xSelect, cols);
+        refreshColumnPicker(ySelect, cols);
     }
 
     function resize() {
         if (visible) {
-            qdb.setHeight(container, window.innerHeight - footerHeight - 80);
+            var h = window.innerHeight;
+            qdb.setHeight(container, h - footerHeight - toolbarDiv.offsetHeight - queryRowDiv.offsetHeight - 30);
+            qdb.setHeight(colsDiv, container[0].offsetHeight - 60);
+            //todo: compute height of form above chart canvas
+            qdb.setHeight(canvas, container[0].offsetHeight - formDiv.offsetHeight);
+            chart.resize();
         }
+    }
+
+    function showQueryText(e, qry) {
+        query = qry.q;
+        edit.setValue(query);
     }
 
     function setup(bus) {
         $(window).bind('resize', resize);
         bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
-        bus.on(qdb.MSG_QUERY_DATASET, processDataSet);
+        bus.on('query.text', showQueryText);
 
-        $('#vis-x-axis').selectize({
-            persist: false,
-            maxItems: null,
-            openOnFocus: false,
-            valueField: 'email',
-            labelField: 'name',
-            searchField: ['name'],
-            options: [{email: 'brian@thirdroute.com', name: 'Brian Reavis'}, {
-                email: 'nikola@tesla.com',
-                name: 'Nikola Tesla'
-            }, {email: 'someone@gmail.com', name: 'x'}]
+        chart = echarts.init(canvas[0], eChartsMacarons);
+
+        $('#btnVisRefresh').click(function () {
+            queryRequest.q = edit.getValue();
+            queryRequest.callback = processDataSet;
+            bus.trigger(qdb.MSG_QUERY_EXEC, queryRequest);
         });
 
-        echarts.init(canvas);
+        $('#btnVisBuild').click(function () {
+            var options = {
+                xAxis: [{
+                    type: 'value',
+                    boundaryGap: false,
+                    data: [1, 2, 3, 4, 5, 6, 7]
+                }],
+                yAxis: [{
+                    type: 'value'
+                }],
+                series: [{
+                    name: '最高气温',
+                    type: 'line',
+                    data: [11, 11, 15, 13, 12, 13, 10]
+                }, {
+                    name: '最低气温',
+                    type: 'line',
+                    data: [1, -2, 2, 5, 3, 2, 0]
+                }]
+            };
+
+            chart.setOption(options);
+        });
+
+        xSelect = createColumnPicker('#vis-x-axis');
+        ySelect = createColumnPicker('#vis-y-axis');
     }
 
     $.extend(true, window, {

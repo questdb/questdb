@@ -62,16 +62,19 @@
             }
         }
 
-        function handleServerResponse(r) {
-            bus.trigger(qdb.MSG_QUERY_OK, {
-                delta: (new Date().getTime() - time),
-                count: r.count
-            });
+        function handleServerResponse(r, textStatus, jqXHR) {
+            if (jqXHR.questCallback) {
+                jqXHR.questCallback(r);
+            } else {
+                bus.trigger(qdb.MSG_QUERY_OK, {
+                    delta: (new Date().getTime() - time),
+                    count: r.count
+                });
 
-            if (r.dataset) {
-                bus.trigger(qdb.MSG_QUERY_DATASET, r);
+                if (r.dataset) {
+                    bus.trigger(qdb.MSG_QUERY_DATASET, r);
+                }
             }
-
             hActiveRequest = null;
         }
 
@@ -94,8 +97,12 @@
             requestParams.limit = '0,' + batchSize;
             requestParams.count = true;
             time = new Date().getTime();
-            hActiveRequest = $.get('/exec', requestParams).done(handleServerResponse).fail(handleServerError);
-            bus.trigger(qdb.MSG_QUERY_RUNNING);
+            hActiveRequest = $.get('/exec', requestParams);
+            hActiveRequest.questCallback = qry.callback;
+            hActiveRequest.done(handleServerResponse).fail(handleServerError);
+            if (!qry.callback) {
+                bus.trigger(qdb.MSG_QUERY_RUNNING);
+            }
         }
 
         //noinspection JSUnusedLocalSymbols
@@ -105,8 +112,13 @@
             hPendingRequest = setTimeout(sendQueryDelayed, 50);
         }
 
+        function publishCurrentQuery() {
+            bus.trigger('query.text', qry);
+        }
+
         bus.on(qdb.MSG_QUERY_EXEC, sendQuery);
         bus.on(qdb.MSG_QUERY_CANCEL, cancelActiveQuery);
+        bus.on('query.publish', publishCurrentQuery);
     };
 
     $.fn.domController = function () {
@@ -253,18 +265,8 @@
         }
 
         function setup() {
-            edit = ace.edit(element[0]);
-            edit.getSession().setMode('ace/mode/questdb');
-            edit.setTheme('ace/theme/merbivore_soft');
-            edit.setShowPrintMargin(false);
-            edit.setDisplayIndentGuides(false);
-            edit.setHighlightActiveLine(false);
+            edit = qdb.createEditor(element[0]);
             edit.session.on('change', clearMarker);
-            edit.$blockScrolling = Infinity;
-
-            $(window).on('resize', function () {
-                edit.resize();
-            });
         }
 
         function loadPreferences() {

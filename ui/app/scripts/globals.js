@@ -29,6 +29,7 @@
  ******************************************************************************/
 
 /*globals jQuery:false */
+/*globals ace:false */
 
 (function ($) {
     'use strict';
@@ -52,6 +53,22 @@
         element.css('min-height', height + 'px');
     }
 
+    function createEditor(div) {
+        const edit = ace.edit(div);
+        edit.getSession().setMode('ace/mode/questdb');
+        edit.setTheme('ace/theme/merbivore_soft');
+        edit.setShowPrintMargin(false);
+        edit.setDisplayIndentGuides(false);
+        edit.setHighlightActiveLine(false);
+        edit.$blockScrolling = Infinity;
+
+        $(window).on('resize', function () {
+            edit.resize();
+        });
+
+        return edit;
+    }
+
     $.extend(true, window, {
         qdb: {
             queryBatchSize,
@@ -64,7 +81,8 @@
             MSG_ACTIVE_PANEL,
             MSG_QUERY_FIND_N_EXEC,
             toExportUrl,
-            setHeight
+            setHeight,
+            createEditor
         }
     });
 }(jQuery));

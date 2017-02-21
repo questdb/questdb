@@ -290,6 +290,9 @@
                     <button id="btnVisRefresh" class="btn btn-white btn-sm btn-icon"><i
                             class="fa fa-refresh"></i>Refresh
                     </button>
+                    <button id="btnVisBuild" class="btn btn-white btn-sm btn-icon"><i
+                            class="fa fa-play-circle"></i>Refresh
+                    </button>
                 </div>
             </div>
         </div>
@@ -297,11 +300,13 @@
             <div class="row">
                 <div class="col-lg-12">
                     <div id="visualisation-top">
-                        <div class="row full-height">
-                            <div class="col-lg-3 full-height">
+                        <div class="row">
+                            <div class="col-lg-2">
                                 <div class="ibox float-e-margins">
-                                    <div class="ibox-content">
-                                        <h2>Available columns</h2>
+                                    <div class="ibox-title">
+                                        <h4>Available columns</h4>
+                                    </div>
+                                    <div id="vis-columns" class="ibox-content">
                                         <ul class="vis-columns">
                                             <li>x</li>
                                             <li>y</li>
@@ -309,30 +314,59 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-lg-9 full-height">
-                                <div class="ibox float-e-margins">
+                            <div class="col-lg-8">
+                                <div id="vis-form-row" class="row">
+                                    <div class="ibox float-e-margins">
+                                        <div class="ibox-content">
+                                            <form class="form-horizontal">
+
+                                                <div class="form-group">
+                                                    <label class="col-lg-1 control-label"
+                                                           for="vis-x-axis">x-axis:</label>
+                                                    <div class="col-lg-11">
+                                                        <select class="form-control" id="vis-x-axis"
+                                                                placeholder="pick x-axis fields"></select>
+                                                    </div>
+                                                </div>
+
+                                                <div class="form-group">
+                                                    <label class="col-lg-1 control-label"
+                                                           for="vis-y-axis">y-axis:</label>
+                                                    <div class="col-lg-11">
+                                                        <select class="form-control" id="vis-y-axis"
+                                                                placeholder="pick y-axis fields"></select>
+                                                    </div>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div id="vis-canvas" class="col-lg-12"></div>
+                                </div>
+                            </div>
+                            <div class="col-lg-2">
+                                <div class="ibox">
+                                    <div class="ibox-title">
+                                        <h4>Chart types</h4>
+                                    </div>
                                     <div class="ibox-content">
-                                        <form class="form-horizontal">
 
-                                            <div class="form-group">
-                                                <label class="col-lg-1 control-label" for="vis-x-axis">x-axis:</label>
-                                                <div class="col-lg-11">
-                                                    <select class="form-control" id="vis-x-axis"
-                                                            placeholder="pick x-axis fields"></select>
-                                                </div>
-                                            </div>
-
-                                            <div class="form-group">
-                                                <label class="col-lg-1 control-label" for="vis-y-axis">y-axis:</label>
-                                                <div class="col-lg-11">
-                                                    <input class="form-control" type="text" id="vis-y-axis">
-                                                </div>
-                                            </div>
-                                        </form>
-                                        <div id="vis-canvas"></div>
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="row" id="vis-query-row">
+                <div class="col-lg-12">
+                    <div class="ibox e-margings">
+                        <div class="ibox-title">
+                            <h4>Query</h4>
+                        </div>
+                        <div id="vis-query" class="ibox-content">
+
                         </div>
                     </div>
                 </div>
@@ -370,6 +404,7 @@
 <script src="scripts/splitter.js"></script>
 <script src="scripts/console-controller.js"></script>
 <script src="scripts/import-controller.js"></script>
+<script src="thirdparty/macarons.js"></script>
 <script src="scripts/vis-controller.js"></script>
 <script src="scripts/main.js"></script>
 <!-- bower:js -->

@@ -28,10 +28,6 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-.full-height {
-  height: 100%;
-}
-
 .js-vis-panel {
   display: none;
 }
@@ -51,7 +47,24 @@
   list-style-type: none;
 }
 
+.vis-columns > li > span.label {
+  float: right;
+}
+
 #vis-canvas {
   height: 400px;
-  width: 600px;
+  width: 100%;
+}
+
+#vis-query {
+  height: 200px;
+}
+
+#vis-columns {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+#visualisation-top {
+  margin-bottom: 10px;
 }
