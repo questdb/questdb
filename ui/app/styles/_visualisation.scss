@@ -68,3 +68,40 @@
 #visualisation-top {
   margin-bottom: 10px;
 }
+
+// new things
+
+.config-tabs > .nav-tabs {
+  border: none;
+  margin: 0;
+}
+
+.config-tabs > .nav-tabs > li.active > a {
+  border-top: none !important;
+  font-weight: 400;
+  border-radius: 0;
+  border-bottom: transparent;
+  font-size: 14px;
+}
+
+.config-tabs > .nav-tabs > li.active {
+  border-top: 3px solid #ed6b75;
+  margin-top: 0;
+  position: relative;
+}
+
+.config-tabs > .tab-content {
+  background-color: #fff;
+  border: 1px solid #ddd;
+  padding: 10px;
+  -webkit-border-radius: 0 0 4px 4px;
+  -moz-border-radius: 0 0 4px 4px;
+  -ms-border-radius: 0 0 4px 4px;
+  -o-border-radius: 0 0 4px 4px;
+  border-radius: 0 0 4px 4px;
+}
+
+.config-tabs > .nav-tabs > li > a {
+  margin-right: 0;
+
+}

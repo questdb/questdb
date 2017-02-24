@@ -51,6 +51,7 @@
   },
   "dependencies": {
     "bower": "^1.7.9",
-    "gulp": "^3.9.1"
+    "gulp": "^3.9.1",
+    "gulp-file-include": "^1.0.0"
   }
 }

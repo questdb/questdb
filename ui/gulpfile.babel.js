@@ -34,6 +34,7 @@ import browserSync from "browser-sync";
 import del from "del";
 import {stream as wiredep} from "wiredep";
 import path from "path";
+import fileinclude from "gulp-file-include";
 
 const $ = gulpLoadPlugins();
 const reload = browserSync.reload;
@@ -84,6 +85,10 @@ gulp.task('lint:test', lint('test/spec/**/*.js', testLintOptions));
 
 gulp.task('html', ['styles', 'scripts'], () => {
     return gulp.src('app/*.html')
+        .pipe(fileinclude({
+            prefix: '@@',
+            basepath: '@file'
+        }))
         .pipe($.useref({searchPath: ['.tmp', 'app', '.']}))
         .pipe($.if('/\.js$/', $.uglify({compress: {drop_console: true}})))
         .pipe($.if('/\.css$/b', $.cssnano({safe: true, autoprefixer: false})))

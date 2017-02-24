@@ -1,0 +1,89 @@
+<div class="row wrapper border-bottom white-bg page-heading js-vis-panel">
+    <div class="col-lg-12">
+        <div class="section-title"><i class="fa fa-pie-chart"></i> Visualisation</div>
+        <div class="m-b-sm m-t-sm section-nav">
+            <button id="btnVisRefresh" class="btn btn-white btn-sm btn-icon"><i
+                    class="fa fa-refresh"></i>Refresh
+            </button>
+            <button id="btnVisBuild" class="btn btn-white btn-sm btn-icon"><i
+                    class="fa fa-play-circle"></i>Refresh
+            </button>
+        </div>
+    </div>
+</div>
+<div class="wrapper wrapper-content js-vis-panel">
+    <div class="row">
+        <div class="col-lg-12">
+            <div id="visualisation-top">
+                <div class="row">
+                    <div class="col-lg-2">
+                        <div class="ibox float-e-margins">
+                            <div class="ibox-title">
+                                <h4>Available columns</h4>
+                            </div>
+                            <div id="vis-columns" class="ibox-content">
+                                <ul class="vis-columns">
+                                    <li>x</li>
+                                    <li>y</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-8">
+                        <div id="vis-form-row" class="row">
+                            <div class="ibox float-e-margins">
+                                <div class="ibox-content">
+                                    <form class="form-horizontal">
+
+                                        <div class="form-group">
+                                            <label class="col-lg-1 control-label"
+                                                   for="vis-x-axis">x-axis:</label>
+                                            <div class="col-lg-11">
+                                                <select class="form-control" id="vis-x-axis"
+                                                        placeholder="pick x-axis fields"></select>
+                                            </div>
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label class="col-lg-1 control-label"
+                                                   for="vis-y-axis">y-axis:</label>
+                                            <div class="col-lg-11">
+                                                <select class="form-control" id="vis-y-axis"
+                                                        placeholder="pick y-axis fields"></select>
+                                            </div>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div id="vis-canvas" class="col-lg-12"></div>
+                        </div>
+                    </div>
+                    <div class="col-lg-2">
+                        <div class="ibox">
+                            <div class="ibox-title">
+                                <h4>Chart types</h4>
+                            </div>
+                            <div class="ibox-content">
+
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="row" id="vis-query-row">
+        <div class="col-lg-12">
+            <div class="ibox e-margings">
+                <div class="ibox-title">
+                    <h4>Query</h4>
+                </div>
+                <div id="vis-query" class="ibox-content">
+
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

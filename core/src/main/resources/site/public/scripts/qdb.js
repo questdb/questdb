@@ -30515,7 +30515,7 @@ const eChartsMacarons = {
         $('#btnVisBuild').click(function () {
             var options = {
                 xAxis: [{
-                    type: 'value',
+                    type: 'category value',
                     boundaryGap: false,
                     data: [1, 2, 3, 4, 5, 6, 7]
                 }],

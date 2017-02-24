@@ -55,6 +55,7 @@
         });
     </script>
 </head>
+
 <body class="mini-navbar pace-done">
 
 <div id="wrapper">
@@ -80,7 +81,9 @@
         </div>
     </nav>
 
+
     <div id="page-wrapper" class="gray-bg">
+
         <div class="row wrapper border-bottom white-bg page-heading js-sql-panel">
             <div class="col-lg-12">
                 <div class="section-title"><i class="fa fa-bars"></i> SQL console</div>
@@ -117,6 +120,7 @@
                 </div>
             </div>
         </div>
+
         <div class="wrapper wrapper-content js-sql-panel">
             <div class="row">
                 <div class="col-lg-12">
@@ -152,6 +156,79 @@
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+
+        <div class="row wrapper border-bottom white-bg page-heading js-vis-panel">
+            <div class="col-lg-12">
+                <div class="section-title"><i class="fa fa-pie-chart"></i> Visualisation</div>
+                <div class="m-b-sm m-t-sm section-nav">
+                    <button id="btnVisRefresh" class="btn btn-white btn-sm btn-icon"><i
+                            class="fa fa-refresh"></i>Refresh
+                    </button>
+                    <button id="btnVisBuild" class="btn btn-white btn-sm btn-icon"><i
+                            class="fa fa-play-circle"></i>Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="row js-vis-panel">
+            <div class="col-lg-12">
+                <div id="vis-canvas"></div>
+            </div>
+        </div>
+
+        <div class="config-tabs js-vis-panel ibox-content">
+            <ul class="nav nav-tabs ">
+                <li class="">
+                    <a href="#tab_5_1" data-toggle="tab" aria-expanded="false"> Section 1 </a>
+                </li>
+                <li class="">
+                    <a href="#tab_5_2" data-toggle="tab" aria-expanded="false"> Section 2 </a>
+                </li>
+                <li class="active">
+                    <a href="#tab_5_3" data-toggle="tab" aria-expanded="true"> Section 3 </a>
+                </li>
+            </ul>
+            <div class="tab-content">
+                <div class="tab-pane" id="tab_5_1">
+                    <p> I'm in Section 1. </p>
+                    <p> Duis autem vel eum iriure dolor in hendrerit in vulputate velit esse molestie consequat. Ut wisi
+                        enim ad
+                        minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea
+                        commodo
+                        consequat. Duis autem vel eum iriure dolor in hendrerit in vulputate velit esse molestie
+                        consequat. Duis
+                        autem vel eum iriure dolor in hendrerit in vulputate velit esse molestie consequat. </p>
+                </div>
+                <div class="tab-pane" id="tab_5_2">
+                    <p> Howdy, I'm in Section 2. </p>
+                    <p> Ut wisi enim ad minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut
+                        aliquip
+                        ex ea commodo consequat. Duis autem vel eum iriure dolor in hendrerit in vulputate velit esse
+                        molestie
+                        consequat. Ut wisi enim ad minim veniam, quis nostrud exerci tation. </p>
+                    <p>
+                        <a class="btn green" href="ui_tabs_accordions_navs.html#tab_5_2" target="_blank"> Activate this
+                            tab via
+                            URL </a>
+                    </p>
+                </div>
+                <div class="tab-pane active" id="tab_5_3">
+                    <p> Howdy, I'm in Section 3. </p>
+                    <p> Duis autem vel eum iriure dolor in hendrerit in vulputate. Ut wisi enim ad minim veniam, quis
+                        nostrud
+                        exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea commodo consequat. Duis autem
+                        vel
+                        eum iriure dolor in hendrerit in vulputate velit esse molestie consequat </p>
+                    <p>
+                        <a class="btn yellow" href="ui_tabs_accordions_navs.html#tab_5_3" target="_blank"> Activate this
+                            tab via
+                            URL </a>
+                    </p>
                 </div>
             </div>
         </div>
@@ -274,95 +351,6 @@
             </div>
         </div>
 
-        <div class="row wrapper border-bottom white-bg page-heading js-vis-panel">
-            <div class="col-lg-12">
-                <div class="section-title"><i class="fa fa-pie-chart"></i> Visualisation</div>
-                <div class="m-b-sm m-t-sm section-nav">
-                    <button id="btnVisRefresh" class="btn btn-white btn-sm btn-icon"><i
-                            class="fa fa-refresh"></i>Refresh
-                    </button>
-                    <button id="btnVisBuild" class="btn btn-white btn-sm btn-icon"><i
-                            class="fa fa-play-circle"></i>Refresh
-                    </button>
-                </div>
-            </div>
-        </div>
-        <div class="wrapper wrapper-content js-vis-panel">
-            <div class="row">
-                <div class="col-lg-12">
-                    <div id="visualisation-top">
-                        <div class="row">
-                            <div class="col-lg-2">
-                                <div class="ibox float-e-margins">
-                                    <div class="ibox-title">
-                                        <h4>Available columns</h4>
-                                    </div>
-                                    <div id="vis-columns" class="ibox-content">
-                                        <ul class="vis-columns">
-                                            <li>x</li>
-                                            <li>y</li>
-                                        </ul>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-lg-8">
-                                <div id="vis-form-row" class="row">
-                                    <div class="ibox float-e-margins">
-                                        <div class="ibox-content">
-                                            <form class="form-horizontal">
-
-                                                <div class="form-group">
-                                                    <label class="col-lg-1 control-label"
-                                                           for="vis-x-axis">x-axis:</label>
-                                                    <div class="col-lg-11">
-                                                        <select class="form-control" id="vis-x-axis"
-                                                                placeholder="pick x-axis fields"></select>
-                                                    </div>
-                                                </div>
-
-                                                <div class="form-group">
-                                                    <label class="col-lg-1 control-label"
-                                                           for="vis-y-axis">y-axis:</label>
-                                                    <div class="col-lg-11">
-                                                        <select class="form-control" id="vis-y-axis"
-                                                                placeholder="pick y-axis fields"></select>
-                                                    </div>
-                                                </div>
-                                            </form>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="row">
-                                    <div id="vis-canvas" class="col-lg-12"></div>
-                                </div>
-                            </div>
-                            <div class="col-lg-2">
-                                <div class="ibox">
-                                    <div class="ibox-title">
-                                        <h4>Chart types</h4>
-                                    </div>
-                                    <div class="ibox-content">
-
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="row" id="vis-query-row">
-                <div class="col-lg-12">
-                    <div class="ibox e-margings">
-                        <div class="ibox-title">
-                            <h4>Query</h4>
-                        </div>
-                        <div id="vis-query" class="ibox-content">
-
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
 
         <div class="footer">
             <div>

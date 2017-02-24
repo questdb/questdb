@@ -1,0 +1,75 @@
+<div class="row wrapper border-bottom white-bg page-heading js-sql-panel">
+    <div class="col-lg-12">
+        <div class="section-title"><i class="fa fa-bars"></i> SQL console</div>
+        <div class="m-b-sm m-t-sm section-nav">
+            <button class="btn btn-white btn-sm m-r-sm js-query-run" style="width: 80px;"><i
+                    class="fa fa-play"></i>Run
+            </button>
+
+            <div class="btn-group">
+                <button id="js-toggle-grid" type="button" class="btn btn-white btn-sm active"><i
+                        class="fa fa-bars"></i>
+                </button>
+                <button id="js-toggle-chart" type="button" class="btn btn-white btn-sm"><i
+                        class="fa fa-pie-chart"></i>
+                </button>
+            </div>
+
+            <button class="btn btn-white btn-sm js-query-refresh"><i class="fa fa-refresh"></i>
+            </button>
+            <button class="btn btn-white btn-sm js-query-export"><i class="fa fa-download"></i>
+            </button>
+            <div class="export-input-container">
+                <label for="export-url" style="display: none;"></label><input id="export-url"
+                                                                              class="js-export-url"
+                                                                              type="text">
+            </div>
+            <button type="button" class="btn btn-white btn-sm js-export-copy-url"
+                    data-clipboard-target="#export-url"><i
+                    class="fa fa-files-o"></i></button>
+            <button data-toggle="button" type="button"
+                    class="btn btn-white btn-sm js-editor-toggle-invisible"><i
+                    class="fa fa-paragraph"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="wrapper wrapper-content js-sql-panel">
+    <div class="row">
+        <div class="col-lg-12">
+            <div class="ibox">
+                <div id="console-top" class="ibox-content">
+                    <div id="editor">
+                        <!--<div id="debug"></div>-->
+                        <div id="sqlEditor" class="editor border-rounded-top-half">
+                        </div>
+                        <div class="query-progress-spinner js-query-spinner"></div>
+                        <div class="query-message query-message-ok js-query-message-panel">
+                            <div class="query-time">
+                                <i class="fa fa-clock-o"></i>
+                                <div class="js-query-time">-</div>
+                            </div>
+                            <div class="js-query-message-text"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="sp1" class="splitter"></div>
+    <div class="row">
+        <div class="col-lg-12">
+            <div class="ibox">
+                <div class="ibox-content">
+                    <div id="grid">
+                        <div class="qg-header-row"></div>
+                        <div class="qg-viewport">
+                            <div class="qg-canvas"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
