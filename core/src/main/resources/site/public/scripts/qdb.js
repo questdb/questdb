@@ -29085,8 +29085,9 @@ function nopropagation(e) {
     $.fn.importEditor = function (ebus) {
         var container = $(this);
         var statsSwitcher = $('.stats-switcher');
-        var divEditor = $(this).find('.js-import-editor');
-        var msgPanel = $(this).find('.js-import-error');
+        var divEditor = $('#js-import-editor');
+        var msgPanel = $('#js-import-error');
+        var placeholder = $('#js-import-placeholder');
         var divMessage = $(this).find('.js-message');
         var divTabName = $(this).find('.js-import-tab-name');
         var divRejectedPct = $(this).find('.import-rejected');
@@ -29252,6 +29253,7 @@ function nopropagation(e) {
                 }
                 divEditor.hide();
                 msgPanel.show();
+                placeholder.hide();
                 // reset button group option
             }
             container.show();
@@ -29281,6 +29283,7 @@ function nopropagation(e) {
                 current = null;
                 divEditor.hide();
                 msgPanel.hide();
+                placeholder.show();
             }
         });
 
@@ -30006,7 +30009,7 @@ function nopropagation(e) {
         sqlEditor.editor(bus);
 
         $('#grid').grid(bus);
-        $('#sp1').splitter(bus, 'console', 200, 0);
+        $('#console-splitter').splitter(bus, 'console', 200, 0);
 
         switchToGrid();
 
@@ -30065,6 +30068,10 @@ function nopropagation(e) {
 
     var divImportPanel = $('.js-import-panel');
     var importTopPanel = $('#import-top');
+    var importDetail = $('#import-detail');
+    var importMenu = $('#import-menu')[0];
+
+    var footer = $('.footer')[0];
     var canvasPanel = importTopPanel.find('.ud-canvas');
     var w = $(window);
     var visible = false;
@@ -30073,9 +30080,14 @@ function nopropagation(e) {
 
     function resize() {
         if (visible) {
+            var h = w[0].innerHeight;
+            var footerHeight = footer.offsetHeight;
+            qdb.setHeight(importTopPanel, upperHalfHeight);
+            qdb.setHeight(importDetail, h - footerHeight - upperHalfHeight - importMenu.offsetHeight - 10);
+
             var r1 = importTopPanel[0].getBoundingClientRect();
             var r2 = canvasPanel[0].getBoundingClientRect();
-            qdb.setHeight(importTopPanel, upperHalfHeight);
+            // qdb.setHeight(importTopPanel, upperHalfHeight);
             qdb.setHeight(canvasPanel, upperHalfHeight - (r2.top - r1.top) - 10);
         }
     }
@@ -30102,7 +30114,7 @@ function nopropagation(e) {
         $('#dragTarget').dropbox(bus);
         $('#import-file-list').importManager(bus);
         $('#import-detail').importEditor(bus);
-        $('#sp2').splitter(bus, 'import', 470, 300);
+        $('#import-splitter').splitter(bus, 'import', 470, 300);
 
         bus.on('splitter.import.resize', splitterResize);
         bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
@@ -30410,21 +30422,21 @@ const eChartsMacarons = {
     'use strict';
 
     var panels = $('.js-vis-panel');
-    var container = $('#visualisation-top');
-    var footerHeight = $('.footer')[0].offsetHeight;
     var columnContainer = panels.find('.vis-columns');
     var canvas = panels.find('#vis-canvas');
+    var menu = panels.find('#vis-menu');
+    var forms = panels.find('#vis-forms');
+    var footer = $('.footer')[0];
+
     var queryDiv = $('#vis-query')[0];
-    var colsDiv = $('#vis-columns');
-    var queryRowDiv = $('#vis-query-row')[0];
-    var toolbarDiv = $('div.js-vis-panel')[0];
-    var formDiv = $('#vis-form-row')[0];
+
     var queryRequest = {
         q: null,
         callback: null
     };
     var edit = qdb.createEditor(queryDiv);
     var chart = void 0;
+    var formsHeight = 300;
 
     var xSelect = void 0;
     var ySelect = void 0;
@@ -30454,16 +30466,16 @@ const eChartsMacarons = {
         }
     }
 
-    function createColumnPicker(id) {
-        return $(id).selectize({
-            persist: false,
-            maxItems: null,
-            valueField: 'name',
-            labelField: 'name',
-            searchField: ['name'],
-            options: []
-        })[0].selectize;
-    }
+    // function createColumnPicker(id) {
+    //     return $(id).selectize({
+    //         persist: false,
+    //         maxItems: null,
+    //         valueField: 'name',
+    //         labelField: 'name',
+    //         searchField: ['name'],
+    //         options: []
+    //     })[0].selectize;
+    // }
 
     function refreshColumnPicker(select, columns) {
         select.clearOptions();
@@ -30486,10 +30498,9 @@ const eChartsMacarons = {
     function resize() {
         if (visible) {
             var h = window.innerHeight;
-            qdb.setHeight(container, h - footerHeight - toolbarDiv.offsetHeight - queryRowDiv.offsetHeight - 30);
-            qdb.setHeight(colsDiv, container[0].offsetHeight - 60);
-            //todo: compute height of form above chart canvas
-            qdb.setHeight(canvas, container[0].offsetHeight - formDiv.offsetHeight);
+            var menuHeight = menu[0].offsetHeight;
+            qdb.setHeight(forms, formsHeight);
+            qdb.setHeight(canvas, h - menuHeight - formsHeight - footer.offsetHeight);
             chart.resize();
         }
     }
@@ -30504,6 +30515,11 @@ const eChartsMacarons = {
         bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
         bus.on('query.text', showQueryText);
 
+        bus.on('splitter.vis.resize', function (x, delta) {
+            formsHeight -= delta;
+            $(window).trigger('resize');
+        });
+
         chart = echarts.init(canvas[0], eChartsMacarons);
 
         $('#btnVisRefresh').click(function () {
@@ -30511,6 +30527,8 @@ const eChartsMacarons = {
             queryRequest.callback = processDataSet;
             bus.trigger(qdb.MSG_QUERY_EXEC, queryRequest);
         });
+
+        $('#vis-splitter').splitter(bus, 'vis', 300, 0);
 
         $('#btnVisBuild').click(function () {
             var options = {
@@ -30536,8 +30554,8 @@ const eChartsMacarons = {
             chart.setOption(options);
         });
 
-        xSelect = createColumnPicker('#vis-x-axis');
-        ySelect = createColumnPicker('#vis-y-axis');
+        // xSelect = createColumnPicker('#vis-x-axis');
+        // ySelect = createColumnPicker('#vis-y-axis');
     }
 
     $.extend(true, window, {

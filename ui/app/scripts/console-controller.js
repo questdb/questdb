@@ -142,7 +142,7 @@
         sqlEditor.editor(bus);
 
         $('#grid').grid(bus);
-        $('#sp1').splitter(bus, 'console', 200, 0);
+        $('#console-splitter').splitter(bus, 'console', 200, 0);
 
         switchToGrid();
 

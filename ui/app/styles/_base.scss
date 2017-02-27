@@ -348,7 +348,7 @@ body.body-small .footer.fixed {
   -moz-border-top-colors: none;
   //background: none;
   border-color: #DDDDDD #DDDDDD rgba(0, 0, 0, 0);
-  border-bottom: $gray;
+  //border-bottom: $gray;
   border-image: none;
   border-style: solid;
   border-width: 1px;
@@ -368,7 +368,7 @@ body.body-small .footer.fixed {
 }
 
 .nav-tabs > li > a:hover, .nav-tabs > li > a:focus {
-  background-color: #e6e6e6;
+  background: none;
   color: $text-color;
 }
 

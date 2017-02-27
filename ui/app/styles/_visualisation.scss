@@ -71,37 +71,59 @@
 
 // new things
 
-.config-tabs > .nav-tabs {
-  border: none;
-  margin: 0;
-}
+.config-tabs {
 
-.config-tabs > .nav-tabs > li.active > a {
-  border-top: none !important;
-  font-weight: 400;
-  border-radius: 0;
-  border-bottom: transparent;
-  font-size: 14px;
-}
+  .tab-content {
+    background-color: #fff;
+    border: 1px solid #ddd;
+    padding: 10px;
+    -webkit-border-radius: 0 0 4px 4px;
+    -moz-border-radius: 0 0 4px 4px;
+    -ms-border-radius: 0 0 4px 4px;
+    -o-border-radius: 0 0 4px 4px;
+    border-radius: 0 0 4px 4px;
+  }
 
-.config-tabs > .nav-tabs > li.active {
-  border-top: 3px solid #ed6b75;
-  margin-top: 0;
-  position: relative;
-}
+  .nav-tabs {
+    border: none;
+    margin: 0;
 
-.config-tabs > .tab-content {
-  background-color: #fff;
-  border: 1px solid #ddd;
-  padding: 10px;
-  -webkit-border-radius: 0 0 4px 4px;
-  -moz-border-radius: 0 0 4px 4px;
-  -ms-border-radius: 0 0 4px 4px;
-  -o-border-radius: 0 0 4px 4px;
-  border-radius: 0 0 4px 4px;
-}
+    li {
+      border-top: 3px solid transparent;
+      margin-bottom: -2px;
 
-.config-tabs > .nav-tabs > li > a {
-  margin-right: 0;
+      a {
+        margin-right: 0;
+        font-size: 14px;
+        font-weight: normal;
+      }
 
+      a:hover {
+        font-weight: 400;
+        border-radius: 0;
+        border-left: 1px solid transparent;
+        border-right: 1px solid transparent;
+        border-top: 1px solid transparent;
+        border-bottom: none;
+      }
+    }
+
+    li.active {
+      border-top: 3px solid #ed6b75;
+      margin-top: 0;
+      position: relative;
+
+      a, a:hover {
+        border-top: none !important;
+        font-weight: 400;
+        border-radius: 0;
+        border-left: 1px solid $gray;
+        border-right: 1px solid $gray;
+      }
+
+      a:hover {
+        //border-bottom: 3px transparent;
+      }
+    }
+  }
 }

@@ -37,8 +37,9 @@
     $.fn.importEditor = function (ebus) {
         const container = $(this);
         const statsSwitcher = $('.stats-switcher');
-        const divEditor = $(this).find('.js-import-editor');
-        const msgPanel = $(this).find('.js-import-error');
+        const divEditor = $('#js-import-editor');
+        const msgPanel = $('#js-import-error');
+        const placeholder = $('#js-import-placeholder');
         const divMessage = $(this).find('.js-message');
         const divTabName = $(this).find('.js-import-tab-name');
         const divRejectedPct = $(this).find('.import-rejected');
@@ -209,6 +210,7 @@
                 }
                 divEditor.hide();
                 msgPanel.show();
+                placeholder.hide();
                 // reset button group option
             }
             container.show();
@@ -238,6 +240,7 @@
                 current = null;
                 divEditor.hide();
                 msgPanel.hide();
+                placeholder.show();
             }
         });
 

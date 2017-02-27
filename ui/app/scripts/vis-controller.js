@@ -36,21 +36,21 @@
 (function ($) {
     'use strict';
     const panels = $('.js-vis-panel');
-    const container = $('#visualisation-top');
-    const footerHeight = $('.footer')[0].offsetHeight;
     const columnContainer = panels.find('.vis-columns');
     const canvas = panels.find('#vis-canvas');
+    const menu = panels.find('#vis-menu');
+    const forms = panels.find('#vis-forms');
+    const footer = $('.footer')[0];
+
     const queryDiv = $('#vis-query')[0];
-    const colsDiv = $('#vis-columns');
-    const queryRowDiv = $('#vis-query-row')[0];
-    const toolbarDiv = $('div.js-vis-panel')[0];
-    const formDiv = $('#vis-form-row')[0];
+
     const queryRequest = {
         q: null,
         callback: null
     };
     const edit = qdb.createEditor(queryDiv);
     let chart;
+    let formsHeight = 300;
 
     let xSelect;
     let ySelect;
@@ -80,16 +80,16 @@
         }
     }
 
-    function createColumnPicker(id) {
-        return $(id).selectize({
-            persist: false,
-            maxItems: null,
-            valueField: 'name',
-            labelField: 'name',
-            searchField: ['name'],
-            options: []
-        })[0].selectize;
-    }
+    // function createColumnPicker(id) {
+    //     return $(id).selectize({
+    //         persist: false,
+    //         maxItems: null,
+    //         valueField: 'name',
+    //         labelField: 'name',
+    //         searchField: ['name'],
+    //         options: []
+    //     })[0].selectize;
+    // }
 
     function refreshColumnPicker(select, columns) {
         select.clearOptions();
@@ -112,10 +112,9 @@
     function resize() {
         if (visible) {
             const h = window.innerHeight;
-            qdb.setHeight(container, h - footerHeight - toolbarDiv.offsetHeight - queryRowDiv.offsetHeight - 30);
-            qdb.setHeight(colsDiv, container[0].offsetHeight - 60);
-            //todo: compute height of form above chart canvas
-            qdb.setHeight(canvas, container[0].offsetHeight - formDiv.offsetHeight);
+            const menuHeight = menu[0].offsetHeight;
+            qdb.setHeight(forms, formsHeight);
+            qdb.setHeight(canvas, h - menuHeight - formsHeight - footer.offsetHeight);
             chart.resize();
         }
     }
@@ -130,6 +129,11 @@
         bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
         bus.on('query.text', showQueryText);
 
+        bus.on('splitter.vis.resize', function (x, delta) {
+            formsHeight -= delta;
+            $(window).trigger('resize');
+        });
+
         chart = echarts.init(canvas[0], eChartsMacarons);
 
         $('#btnVisRefresh').click(function () {
@@ -137,6 +141,8 @@
             queryRequest.callback = processDataSet;
             bus.trigger(qdb.MSG_QUERY_EXEC, queryRequest);
         });
+
+        $('#vis-splitter').splitter(bus, 'vis', 300, 0);
 
         $('#btnVisBuild').click(function () {
             let options = {
@@ -169,8 +175,8 @@
             chart.setOption(options);
         });
 
-        xSelect = createColumnPicker('#vis-x-axis');
-        ySelect = createColumnPicker('#vis-y-axis');
+        // xSelect = createColumnPicker('#vis-x-axis');
+        // ySelect = createColumnPicker('#vis-y-axis');
     }
 
     $.extend(true, window, {
