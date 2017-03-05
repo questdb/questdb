@@ -171,7 +171,10 @@
                             class="fa fa-refresh"></i>Refresh
                     </button>
                     <button id="btnVisBuild" class="btn btn-white btn-sm btn-icon"><i
-                            class="fa fa-play-circle"></i>Refresh
+                            class="fa fa-play-circle"></i>Canned chart
+                    </button>
+                    <button id="btnVisFetch" class="btn btn-white btn-sm btn-icon"><i
+                            class="fa fa-play-circle"></i>Fetch
                     </button>
                 </div>
             </div>
@@ -193,68 +196,163 @@
                     <div class="col-lg-12">
                         <div class="config-tabs">
                             <ul class="nav nav-tabs ">
-                                <li class="">
-                                    <a href="#tab_5_1" data-toggle="tab" aria-expanded="false"> Section 1 </a>
-                                </li>
-                                <li class="">
-                                    <a href="#tab_5_2" data-toggle="tab" aria-expanded="false"> Section 2 </a>
-                                </li>
                                 <li class="active">
-                                    <a href="#tab_5_3" data-toggle="tab" aria-expanded="true"> Section 3 </a>
+                                    <a href="#vis-tab-axis" data-toggle="tab" aria-expanded="false"> Axis </a>
+                                </li>
+                                <li class="">
+                                    <a href="#vis-tab-series" data-toggle="tab" aria-expanded="false"> Series </a>
+                                </li>
+                                <li class="">
+                                    <a href="#vis-general" data-toggle="tab" aria-expanded="true"> General </a>
                                 </li>
                             </ul>
                             <div class="tab-content">
-                                <div class="tab-pane" id="tab_5_1">
-                                    <p> I'm in Section 1. </p>
-                                    <p> Duis autem vel eum iriure dolor in hendrerit in vulputate velit esse molestie
-                                        consequat.
-                                        Ut wisi enim ad
-                                        minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut
-                                        aliquip
-                                        ex ea commodo
-                                        consequat. Duis autem vel eum iriure dolor in hendrerit in vulputate velit esse
-                                        molestie
-                                        consequat. Duis
-                                        autem vel eum iriure dolor in hendrerit in vulputate velit esse molestie
-                                        consequat. </p>
+                                <div class="tab-pane active" id="vis-tab-axis">
+                                    <div class="row">
+                                        <div class="col-lg-6">
+                                            <div class="portlet">
+                                                <div class="portlet-title">
+                                                    X Axis
+                                                </div>
+                                                <form role="form">
+                                                    <div class="form-group">
+                                                        <label>Type</label>
+                                                        <select id="_vis_axis_x_type" class="form-control">
+                                                            <option>Category field name</option>
+                                                            <option>Category values</option>
+                                                            <option>Series value</option>
+                                                        </select>
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label>Field name</label>
+                                                        <input id="_vis_axis_x_field" type="text" class="form-control"
+                                                               placeholder="Field name">
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label>Category values</label>
+                                                        <textarea id="_vis_axis_x_values" class="form-control"
+                                                                  rows="4"></textarea>
+                                                    </div>
+                                                </form>
+                                            </div>
+
+                                        </div>
+                                        <div class="col-lg-6">
+                                            <div class="portlet">
+                                                <div class="portlet-title">
+                                                    Y Axis
+                                                </div>
+                                                <form role="form">
+                                                    <div class="form-group">
+                                                        <label>Type</label>
+                                                        <select id="_vis_axis_y_type" class="form-control">
+                                                            <option>Category field name</option>
+                                                            <option>Category values</option>
+                                                            <option>Series value</option>
+                                                        </select>
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label>Field name</label>
+                                                        <input id="_vis_axis_y_field" type="text" class="form-control"
+                                                               placeholder="Field name">
+        </div>
+                                                    <div class="form-group">
+                                                        <label>Category values</label>
+                                                        <textarea id="_vis_axis_y_values" class="form-control"
+                                                                  rows="4"></textarea>
+                                                    </div>
+                                                </form>
+                                            </div>
+
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="tab-pane" id="tab_5_2">
-                                    <p> Howdy, I'm in Section 2. </p>
-                                    <p> Ut wisi enim ad minim veniam, quis nostrud exerci tation ullamcorper suscipit
-                                        lobortis
-                                        nisl ut aliquip
-                                        ex ea commodo consequat. Duis autem vel eum iriure dolor in hendrerit in
-                                        vulputate velit
-                                        esse molestie
-                                        consequat. Ut wisi enim ad minim veniam, quis nostrud exerci tation. </p>
-                                    <p>
-                                        <a class="btn green" href="ui_tabs_accordions_navs.html#tab_5_2"
-                                           target="_blank">
-                                            Activate this tab via
-                                            URL </a>
-                                    </p>
+                                <div class="tab-pane" id="vis-tab-series">
+                                    <div class="row">
+                                        <div class="col-lg-3">
+                                            <div class="portlet">
+                                                <div class="portlet-title">
+                                                    <button id="vis-btn-add-series" type="button" class="btn btn-info">
+                                                        <i class="fa fa-plus" aria-hidden="true"></i></button>
+                                                    <span>Series</span>
+                                                </div>
+                                                <div id="vis-series-list">
+                                                    <ul>
+                                                    </ul>
+                                                </div>
+                                            </div>
+
+                                        </div>
+                                        <div class="col-lg-9">
+                                            <div class="portlet">
+                                                <div class="portlet-title">
+                                                    <button id="vis-btn-delete-series" type="button"
+                                                            class="btn btn-danger"><i class="fa fa-trash-o"
+                                                                                      aria-hidden="true"></i> Delete
+                                                    </button>
+                                                    <span id="js-vis-series-name">Series 1</span>
+                                                </div>
+                                                <form role="form">
+                                                    <div class="form-group">
+                                                        <label>Series name</label>
+                                                        <input id="_vis_frm_ser_name" type="text" class="form-control"
+                                                               placeholder="Name of series">
+                                                    </div>
+                                                    <div class="form-group">
+                                                        <label>Chart type</label>
+                                                        <select id="_vis_frm_ser_chart_type" class="form-control">
+                                                            <option>Line</option>
+                                                            <option>Area</option>
+                                                            <option>Bar</option>
+                                                        </select>
+                                                    </div>
+
+                                                    <div class="form-group">
+                                                        <label>Query text</label>
+                                                        <textarea id="_vis_frm_ser_query" class="form-control"
+                                                                  rows="2"></textarea>
+                                                    </div>
+
+                                                    <div class="form-group">
+                                                        <label>Data fields</label>
+                                                        <input id="_vis_frm_ser_fields" type="text" class="form-control"
+                                                               placeholder="Choose fields">
+                                                    </div>
+
+                                                    <div class="form-group">
+                                                        <label>Stack</label>
+                                                        <input id="_vis_frm_ser_stack" type="text" class="form-control"
+                                                               placeholder="Name of stack">
+                                                    </div>
+
+                                                    <div class="form-group">
+                                                        <label>Color</label>
+                                                        <input id="_vis_frm_ser_colour" type="text" class="form-control"
+                                                               placeholder="Auto">
+                                                    </div>
+
+                                                </form>
+                                            </div>
+
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="tab-pane active" id="tab_5_3">
-                                    <p> Howdy, I'm in Section 3. </p>
-                                    <p> Duis autem vel eum iriure dolor in hendrerit in vulputate. Ut wisi enim ad minim
-                                        veniam,
-                                        quis nostrud
-                                        exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea commodo
-                                        consequat.
-                                        Duis autem vel
-                                        eum iriure dolor in hendrerit in vulputate velit esse molestie consequat </p>
-                                    <p>
-                                        <a class="btn yellow" href="ui_tabs_accordions_navs.html#tab_5_3"
-                                           target="_blank">
-                                            Activate this tab via
-                                            URL </a>
-                                    </p>
+                                <div class="tab-pane" id="vis-general">
+                                    <div class="row">
+                                        <div class="col-lg-12">
+                                            <div class="portlet">
+                                                <div class="portlet-title">
+                                                    <span>General Settings</span>
+                                                </div>
+                                            </div>
+
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
                 </div>
-            </div>
-        </div>
-
             </div>
         </div>
 

@@ -63,8 +63,10 @@
         }
 
         function handleServerResponse(r, textStatus, jqXHR) {
+            console.log('reposnse');
+            console.log(jqXHR);
             if (jqXHR.questCallback) {
-                jqXHR.questCallback(r);
+                jqXHR.questCallback(r, jqXHR.callbackData);
             } else {
                 bus.trigger(qdb.MSG_QUERY_OK, {
                     delta: (new Date().getTime() - time),
@@ -79,6 +81,8 @@
         }
 
         function handleServerError(jqXHR) {
+            console.log('error');
+            console.log(jqXHR);
             bus.trigger(qdb.MSG_QUERY_ERROR,
                 {
                     query: qry,
@@ -99,6 +103,7 @@
             time = new Date().getTime();
             hActiveRequest = $.get('/exec', requestParams);
             hActiveRequest.questCallback = qry.callback;
+            hActiveRequest.callbackData = qry.callbackData;
             hActiveRequest.done(handleServerResponse).fail(handleServerError);
             if (!qry.callback) {
                 bus.trigger(qdb.MSG_QUERY_RUNNING);

@@ -25,7 +25,8 @@
     "animate.css": "^3.5.1",
     "clipboard": "^1.5.10",
     "echarts": "^3.4.0",
-    "selectize": "^0.12.4"
+    "selectize": "^0.12.4",
+    "jquery-minicolors": "minicolors#^2.2.4"
   },
   "overrides": {
     "bootstrap-sass": {

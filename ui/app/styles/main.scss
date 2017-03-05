@@ -65,3 +65,6 @@ $icon-font-path: '../fonts/';
 .btn:disabled {
   cursor: default;
 }
+
+@import "vis_axis";
+@import "vis_series";
