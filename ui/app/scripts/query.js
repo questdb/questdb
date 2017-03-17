@@ -62,27 +62,19 @@
             }
         }
 
-        function handleServerResponse(r, textStatus, jqXHR) {
-            console.log('reposnse');
-            console.log(jqXHR);
-            if (jqXHR.questCallback) {
-                jqXHR.questCallback(r, jqXHR.callbackData);
-            } else {
-                bus.trigger(qdb.MSG_QUERY_OK, {
-                    delta: (new Date().getTime() - time),
-                    count: r.count
-                });
+        function handleServerResponse(r) {
+            bus.trigger(qdb.MSG_QUERY_OK, {
+                delta: (new Date().getTime() - time),
+                count: r.count
+            });
 
-                if (r.dataset) {
-                    bus.trigger(qdb.MSG_QUERY_DATASET, r);
-                }
+            if (r.dataset) {
+                bus.trigger(qdb.MSG_QUERY_DATASET, r);
             }
             hActiveRequest = null;
         }
 
         function handleServerError(jqXHR) {
-            console.log('error');
-            console.log(jqXHR);
             bus.trigger(qdb.MSG_QUERY_ERROR,
                 {
                     query: qry,
@@ -102,12 +94,7 @@
             requestParams.count = true;
             time = new Date().getTime();
             hActiveRequest = $.get('/exec', requestParams);
-            hActiveRequest.questCallback = qry.callback;
-            hActiveRequest.callbackData = qry.callbackData;
             hActiveRequest.done(handleServerResponse).fail(handleServerError);
-            if (!qry.callback) {
-                bus.trigger(qdb.MSG_QUERY_RUNNING);
-            }
         }
 
         //noinspection JSUnusedLocalSymbols

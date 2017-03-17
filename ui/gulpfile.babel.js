@@ -73,14 +73,8 @@ function lint(files, options) {
             .pipe($.if(!browserSync.active, $.eslint.failAfterError()));
     };
 }
-const testLintOptions = {
-    env: {
-        mocha: true
-    }
-};
 
 gulp.task('lint', lint('app/scripts/**/*.js'));
-gulp.task('lint:test', lint('test/spec/**/*.js', testLintOptions));
 
 gulp.task('html', ['styles', 'scripts'], () => {
     return gulp.src('app/*.html')

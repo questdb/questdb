@@ -37,11 +37,27 @@
   width: 100%;
 }
 
-#vis-query {
-  height: 200px;
+.portlet {
+  padding: 12px 20px 15px;
+  border: 1px solid #e7ecf1 !important;
 }
 
-#vis-series-list {
+.portlet-title {
+  padding: 10px 0;
+  border-bottom: 1px solid #eef1f5;
+  margin-bottom: 20px;
+  font-size: 16px;
+  color: #2f353b !important;
+}
+
+.portlet-body {
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 5px 0 0;
+  height: calc(100% - 60px);
+}
+
+.qdb-list {
   overflow-x: hidden;
   overflow-y: auto;
 
@@ -55,15 +71,29 @@
       border-radius: 4px;
       color: inherit;
       margin-bottom: 2px;
-      padding: 5px;
+      padding: 10px 15px;
       list-style-type: none;
       cursor: pointer;
+      font-size: 11pt;
 
       span.label {
         float: right;
       }
     }
+
+    li.active {
+      background: $navy;
+      color: white;
+      border: none;
+      padding: 10px 19px;
+    }
   }
+}
+
+.qdb-list-add-btn, .qdb-list-delete-btn {
+  float: right;
+  position: relative;
+  top: -10px;
 }
 
 #visualisation-top {
@@ -74,6 +104,8 @@
 
 .config-tabs {
 
+  height: calc(100% - 30px);
+
   .tab-content {
     background-color: #fff;
     border: 1px solid #ddd;
@@ -83,6 +115,7 @@
     -ms-border-radius: 0 0 4px 4px;
     -o-border-radius: 0 0 4px 4px;
     border-radius: 0 0 4px 4px;
+    height: calc(100% - 60px);
   }
 
   .nav-tabs {
@@ -123,4 +156,29 @@
       }
     }
   }
+}
+
+.v-fit {
+  height: 100%;
+}
+
+.qdb-vis-placeholder {
+  min-height: 300px;
+
+  h1 {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-weight: 800;
+    color: #d6d6d6;
+  }
+}
+
+.qdb-vis-query-editor {
+  height: calc(100% - 120px);
+}
+
+#_vis_frm_query_text {
+  height: calc(100% - 35px) !important;
 }

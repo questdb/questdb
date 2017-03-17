@@ -28800,6 +28800,16 @@ ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "
         return edit;
     }
 
+    function parseColumns(columns) {
+        var colArray = columns.split(',');
+        var columnMap = new Map();
+        var n = colArray.length;
+        for (var i = 0; i < n; i++) {
+            columnMap.set(colArray[i].trim(), null);
+        }
+        return columnMap;
+    }
+
     $.extend(true, window, {
         qdb: {
             queryBatchSize: queryBatchSize,
@@ -28813,7 +28823,8 @@ ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "
             MSG_QUERY_FIND_N_EXEC: MSG_QUERY_FIND_N_EXEC,
             toExportUrl: toExportUrl,
             setHeight: setHeight,
-            createEditor: createEditor
+            createEditor: createEditor,
+            parseColumns: parseColumns
         }
     });
 })(jQuery);
@@ -30545,27 +30556,19 @@ function nopropagation(e) {
             }
         }
 
-        function handleServerResponse(r, textStatus, jqXHR) {
-            console.log('reposnse');
-            console.log(jqXHR);
-            if (jqXHR.questCallback) {
-                jqXHR.questCallback(r, jqXHR.callbackData);
-            } else {
-                bus.trigger(qdb.MSG_QUERY_OK, {
-                    delta: new Date().getTime() - time,
-                    count: r.count
-                });
+        function handleServerResponse(r) {
+            bus.trigger(qdb.MSG_QUERY_OK, {
+                delta: new Date().getTime() - time,
+                count: r.count
+            });
 
-                if (r.dataset) {
-                    bus.trigger(qdb.MSG_QUERY_DATASET, r);
-                }
+            if (r.dataset) {
+                bus.trigger(qdb.MSG_QUERY_DATASET, r);
             }
             hActiveRequest = null;
         }
 
         function handleServerError(jqXHR) {
-            console.log('error');
-            console.log(jqXHR);
             bus.trigger(qdb.MSG_QUERY_ERROR, {
                 query: qry,
                 r: jqXHR.responseJSON,
@@ -30583,12 +30586,7 @@ function nopropagation(e) {
             requestParams.count = true;
             time = new Date().getTime();
             hActiveRequest = $.get('/exec', requestParams);
-            hActiveRequest.questCallback = qry.callback;
-            hActiveRequest.callbackData = qry.callbackData;
             hActiveRequest.done(handleServerResponse).fail(handleServerError);
-            if (!qry.callback) {
-                bus.trigger(qdb.MSG_QUERY_RUNNING);
-            }
         }
 
         //noinspection JSUnusedLocalSymbols
@@ -31585,132 +31583,563 @@ const eChartsMacarons = {
  ******************************************************************************/
 
 /*globals jQuery:false */
+
+(function ($) {
+    'use strict';
+
+    $.fn.listManager = function (pCreateCallback, pCopyToFormCallback, pCopyToMemCallback, pClearCallback) {
+        var div = $(this);
+        var ulList = div.find('.qdb-list ul');
+        var createCallback = pCreateCallback;
+        var copyToFormCallback = pCopyToFormCallback;
+        var copyToMemCallback = pCopyToMemCallback;
+        var clearCallback = pClearCallback;
+        var map = [];
+        var btnAdd = div.find('.qdb-list-add-btn');
+        var btnDelete = div.find('.qdb-list-delete-btn');
+        var divForm = div.find('.qdb-vis-form');
+        var divPlaceholder = div.find('.qdb-vis-placeholder');
+
+        var activeItem = void 0;
+
+        function updateVisibility() {
+            var count = ulList.find('li').length;
+            if (count === 0) {
+                divForm.hide();
+                divPlaceholder.show();
+            } else {
+                divPlaceholder.hide();
+                divForm.show();
+            }
+        }
+
+        function activeLi() {
+            return ulList.find('#' + activeItem);
+        }
+
+        function switchTo(evt) {
+
+            if (activeItem) {
+                var html = activeLi()[0];
+                if (html) {
+                    if (!copyToMemCallback(map[activeItem])) {
+                        return;
+                    }
+                    html.className = '';
+                }
+            }
+
+            activeItem = evt.target.getAttribute('id');
+            evt.target.className = 'active';
+
+            var series = map[activeItem];
+
+            if (series) {
+                copyToFormCallback(series);
+            } else {
+                clearCallback();
+            }
+        }
+
+        function updateCallback() {
+            var html = ulList.find('#' + this.id);
+            html.html(this.name);
+        }
+
+        function addItem() {
+            var next = ulList.find('li').length + 1;
+            var item = createCallback(next);
+            item.callback = updateCallback;
+            var id = item.id;
+            var name = item.name;
+            var html = $('<li id="' + id + '">' + name + '</li>');
+            map[id] = item;
+            html.click(switchTo);
+            html.appendTo(ulList);
+            updateVisibility();
+            html.click();
+        }
+
+        function deleteItem() {
+            if (activeItem) {
+                var html = activeLi();
+                if (html) {
+                    clearCallback();
+                    var next = html.next();
+                    if (next.length === 0) {
+                        next = html.prev();
+                    }
+                    html.remove();
+                    next.click();
+                }
+            }
+            updateVisibility();
+        }
+
+        btnAdd.click(addItem);
+        btnDelete.click(deleteItem);
+
+        updateVisibility();
+
+        return map;
+    };
+})(jQuery);
+//# sourceMappingURL=list-manager.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
+/*globals qdb:false */
+
+(function ($) {
+    'use strict';
+
+    $.fn.queryForm = function () {
+        var div = $(this);
+        var fQueryName = div.find('#_vis_frm_query_name')[0];
+        var gQueryName = div.find('.qdb-vis-query-name');
+        var gQueryNameHelp = gQueryName.find('.help-block');
+        var fTitle = div.find('.js-vis-title');
+        var fQueryText = qdb.createEditor(div.find('#_vis_frm_query_text')[0]);
+        var queryRequestParams = {
+            query: '',
+            limit: '0,0',
+            count: false
+        };
+
+        var last = void 0;
+
+        function newQuery(index) {
+            return {
+                id: '_li_query_' + index,
+                name: 'query' + index
+            };
+        }
+
+        function copyToForm(query) {
+
+            last = query;
+
+            fQueryName.value = query.name;
+            if (query.text) {
+                fQueryText.setValue(query.text, -1);
+            } else {
+                fQueryText.setValue('', -1);
+            }
+
+            if (query.name === '') {
+                fTitle.html('&lt;no name&gt;');
+            } else {
+                fTitle.html(query.name);
+            }
+            fQueryName.focus();
+        }
+
+        function storeColumns(response, status, jqXHR) {
+            jqXHR.query.columns = response.columns;
+            jqXHR.query.error = null;
+        }
+
+        function clearColumnsAndReportQueryError(jqXHR) {
+            jqXHR.query.columns = null;
+            jqXHR.query.error = jqXHR.responseJSON;
+        }
+
+        function fetchQueryColumns(query) {
+            queryRequestParams.query = query.textNormalized;
+            var request = $.get('/exec', queryRequestParams);
+            request.query = query;
+            request.done(storeColumns).fail(clearColumnsAndReportQueryError);
+        }
+
+        function normalizeQuery(text) {
+            if (!text || text.length === 0) {
+                return null;
+            }
+
+            var q = text.trim();
+            var n = q.length;
+            if (n === 0) {
+                return null;
+            }
+
+            if (q.charAt(n - 1) === ';') {
+                return q.substr(0, n - 1);
+            } else {
+                return q;
+            }
+        }
+
+        function copyToMem(query) {
+            var error = false;
+
+            if (fQueryName.value === '') {
+                gQueryName.addClass('has-error');
+                gQueryNameHelp.html('Please fill this field');
+                error = true;
+            }
+
+            if (error) {
+                return false;
+            }
+
+            gQueryNameHelp.html('');
+            gQueryName.removeClass('has-error');
+            query.name = fQueryName.value;
+
+            var q = fQueryText.getValue();
+            if (query.text !== q) {
+                query.text = q;
+                var nq = normalizeQuery(q);
+                if (query.textNormalized !== nq) {
+                    query.textNormalized = nq;
+                    if (query.textNormalized) {
+                        fetchQueryColumns(query);
+                    }
+                }
+            }
+
+            if (query.callback) {
+                query.callback();
+            }
+            return true;
+        }
+
+        function copyToLast() {
+            if (last) {
+                copyToMem(last);
+            }
+        }
+
+        function clear() {
+            fQueryName.value = '';
+            fQueryText.value = '';
+        }
+
+        fQueryName.onfocusout = copyToLast;
+        fQueryText.on('blur', copyToLast);
+
+        return div.listManager(newQuery, copyToForm, copyToMem, clear);
+    };
+})(jQuery);
+//# sourceMappingURL=vis-query-form.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
+/*globals qdb:false */
+
+(function ($) {
+    'use strict';
+
+    $.fn.seriesForm = function () {
+        var div = $(this);
+        var fName = div.find('#_vis_frm_ser_name')[0];
+        var fChartType = div.find('#_vis_frm_ser_chart_type')[0];
+        var fColumns = div.find('#_vis_frm_ser_columns')[0];
+        var fStack = div.find('#_vis_frm_ser_stack')[0];
+        var fColor = div.find('#_vis_frm_ser_color')[0];
+
+        var last = void 0;
+
+        function newQuery(index) {
+            return {
+                id: '_li_series_' + index,
+                name: 'series' + index
+            };
+        }
+
+        function copyToForm(series) {
+            last = series;
+
+            fName.value = series.name;
+            if (series.chartType) {
+                fChartType.value = series.chartType;
+            } else {
+                fChartType.value = 'Line';
+            }
+
+            if (series.columns) {
+                fColumns.value = series.columns;
+            } else {
+                fColumns.value = '';
+            }
+
+            if (series.stack) {
+                fStack.value = series.stack;
+            } else {
+                fStack.value = '';
+            }
+
+            if (series.color) {
+                fColor.value = series.color;
+            } else {
+                fColor.value = '';
+            }
+        }
+
+        function copyToMem(series) {
+            series.name = fName.value;
+            series.chartType = fChartType.value;
+            series.columns = fColumns.value;
+            series.stack = fStack.value;
+            series.color = fColor.value;
+            series.columnMap = qdb.parseColumns(series.columns);
+            return true;
+        }
+
+        function clear() {
+            fName.value = '';
+            fChartType.value = 'Line';
+            fColumns.value = '';
+            fStack.value = '';
+            fColor.value = '';
+        }
+
+        function copyToLast() {
+            if (last) {
+                copyToMem(last);
+            }
+        }
+
+        fName.onfocusout = copyToLast;
+        fChartType.onfocusout = copyToLast;
+        fColumns.onfocusout = copyToLast;
+        fStack.onfocusout = copyToLast;
+        fColor.onfocusout = copyToLast;
+        return div.listManager(newQuery, copyToForm, copyToMem, clear);
+    };
+})(jQuery);
+//# sourceMappingURL=vis-series-form.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
+
+(function ($) {
+    'use strict';
+
+    $.fn.axisForm = function () {
+        var div = $(this);
+        var fName = div.find('#_vis_frm_axis_name')[0];
+        var fType = div.find('#_vis_frm_axis_type')[0];
+        var fValueType = div.find('#_vis_frm_axis_value_type')[0];
+        var fColumn = div.find('#_vis_frm_axis_column')[0];
+        var fValues = div.find('#_vis_frm_axis_values')[0];
+
+        var last = void 0;
+
+        function newQuery(index) {
+            return {
+                id: '_li_axis_' + index,
+                name: 'axis' + index
+            };
+        }
+
+        function copyToForm(axis) {
+            last = axis;
+
+            fName.value = axis.name;
+            if (axis.type) {
+                fType.value = axis.type;
+            } else {
+                fType.value = 'X-axis';
+            }
+
+            if (axis.valueType) {
+                fValueType.value = axis.valueType;
+            } else {
+                fValueType.value = 'Category column';
+            }
+
+            if (axis.column) {
+                fColumn.value = axis.column;
+            } else {
+                fColumn.value = '';
+            }
+
+            if (axis.values) {
+                fValues.value = axis.values;
+            } else {
+                fValues.value = '';
+            }
+        }
+
+        function copyToMem(axis) {
+            console.log('axis copy to mem');
+            axis.name = fName.value;
+            axis.type = fType.value;
+            axis.valueType = fValueType.value;
+            axis.column = fColumn.value;
+            axis.values = fValues.value;
+            return true;
+        }
+
+        function copyToLast() {
+            if (last) {
+                copyToMem(last);
+            }
+        }
+
+        function clear() {
+            fName.value = '';
+            fType.value = 'X-axis';
+            fValueType.value = 'Category column';
+            fColumn.value = '';
+            fValues.value = '';
+        }
+
+        fName.onfocusout = copyToLast;
+        fType.onfocusout = copyToLast;
+        fValueType.onfocusout = copyToLast;
+        fColumn.onfocusout = copyToLast;
+        fValues.onfocusout = copyToLast;
+
+        return div.listManager(newQuery, copyToForm, copyToMem, clear);
+    };
+})(jQuery);
+//# sourceMappingURL=vis-axis-form.js.map
+
+'use strict';
+
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (C) 2016-2017 Appsicle
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
+ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+ * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ ******************************************************************************/
+
+/*globals jQuery:false */
 /*globals qdb:false */
 /*globals echarts:false */
 /*globals eChartsMacarons:false */
+/*globals VisBuilder:false */
 
 (function ($) {
     'use strict';
 
     var panels = $('.js-vis-panel');
-    var columnContainer = panels.find('.vis-columns');
     var canvas = panels.find('#vis-canvas');
     var menu = panels.find('#vis-menu');
     var forms = panels.find('#vis-forms');
     var footer = $('.footer')[0];
-    var seriesList = $('#vis-series-list');
-    var ulSeriesList = seriesList.find('ul');
-    var seriesName = $('#js-vis-series-name');
-    var seriesMap = {};
 
-    var frmName = $('#_vis_frm_ser_name')[0];
-    var frmChartType = $('#_vis_frm_ser_chart_type')[0];
-    var frmQuery = $('#_vis_frm_ser_query')[0];
-    var frmFields = $('#_vis_frm_ser_fields')[0];
-    var frmStack = $('#_vis_frm_ser_stack')[0];
-    var frmColour = $('#_vis_frm_ser_colour')[0];
-
-    var xAxisType = $('#_vis_axis_x_type')[0];
-    var xAxisField = $('#_vis_axis_x_field')[0];
-    // const xAxisValues = $('#_vis_axis_x_values')[0];
-    //
-    var yAxisType = $('#_vis_axis_y_type')[0];
-    var yAxisField = $('#_vis_axis_y_field')[0];
-    // const yAxisValues = $('#_vis_axis_y_values')[0];
-
-    var msgBus = void 0;
-    var activeSeries = void 0;
-
-    var chartTypeMap = {
-        'Line': 'line',
-        'Area': 'area',
-        'Bar': 'bar'
-    };
-
-    var queryDiv = $('#vis-query')[0];
-
-    var queryRequest = {
-        q: null,
-        callback: null
-    };
-    var edit = qdb.createEditor(queryDiv);
     var chart = void 0;
-    var formsHeight = 300;
-    var xSelect = void 0;
-    var ySelect = void 0;
-    var visible = true;
-
-    function updateSeriesName(id, name) {
-        seriesName.text(name);
-        $('#' + id).text(name);
-    }
-
-    function clearSeriesName() {
-        seriesName.text('');
-    }
-
-    function storeActiveSeries(flag) {
-        if (activeSeries) {
-            var series = seriesMap[activeSeries];
-            series.name = frmName.value;
-            series.chartType = frmChartType.value;
-            series.query = frmQuery.value;
-            series.fields = frmFields.value;
-            series.stack = frmFields.value;
-            series.colour = frmColour.value;
-            // flag would be undefined when called back from list items
-            if (!flag) {
-                updateSeriesName(activeSeries, series.name);
-            }
-        }
-    }
-
-    function switchToSeries(evt) {
-        storeActiveSeries(true);
-        activeSeries = evt.target.getAttribute('id');
-        var series = seriesMap[activeSeries];
-        if (series) {
-            updateSeriesName(activeSeries, series.name);
-            frmName.value = series.name;
-            frmChartType.value = series.chartType;
-            frmQuery.value = series.query;
-            frmFields.value = series.fields;
-            frmStack.value = series.stack;
-            frmColour.value = series.colour;
-            seriesName.html = series.name;
-        } else {
-            clearSeriesName();
-        }
-    }
-
-    function addSeries() {
-        var next = ulSeriesList.find('li').length + 1;
-        var id = '_li_ser_' + next;
-        var name = 'Series ' + next;
-        var html = $('<li id="' + id + '">' + name + '</li>');
-
-        seriesMap[id] = {
-            name: name,
-            chartType: 'Line',
-            query: '',
-            fields: '',
-            stack: '',
-            colour: ''
-        };
-
-        html.click(switchToSeries);
-        html.appendTo(ulSeriesList);
-        html.click();
-    }
-
-    function setupAutoSave() {
-        frmName.onfocusout = storeActiveSeries;
-        frmChartType.onfocusout = storeActiveSeries;
-        frmQuery.onfocusout = storeActiveSeries;
-        frmFields.onfocusout = storeActiveSeries;
-        frmFields.onfocusout = storeActiveSeries;
-        frmColour.onfocusout = storeActiveSeries;
-    }
+    var visible = false;
+    var formsHeight = 450;
 
     function toggleVisibility(x, name) {
         if (name === 'visualisation') {
@@ -31720,143 +32149,6 @@ const eChartsMacarons = {
         } else {
             visible = false;
             panels.hide();
-        }
-    }
-
-    function extractData(response, names) {
-        var indices = [];
-        // find column indices
-        if (names && names.length > 0) {
-            var columns = response.columns;
-            for (var i = 0; i < columns.length; i++) {
-                for (var j = 0; j < names.length; j++) {
-                    if (columns[i].name === names[j]) {
-                        indices.push(i);
-                    }
-                }
-            }
-        }
-
-        var d = response.dataset;
-        var data = new Array(d.length);
-        var columnCount = indices.length;
-
-        switch (columnCount) {
-            case 0:
-                break;
-            case 1:
-                var index = indices[0];
-                for (var _i = 0; _i < d.length; _i++) {
-                    data[_i] = d[_i][index];
-                }
-                break;
-            default:
-                for (var _i2 = 0; _i2 < d.length; _i2++) {
-                    var row = [];
-                    for (var _j = 0; _j < indices.length; _j++) {
-                        row.push(d[_i2][indices[_j]]);
-                    }
-                    data[_i2] = row;
-                }
-                break;
-        }
-        return data;
-    }
-
-    function generateChart() {
-        var ready = true;
-        // temporarily take first response as input for axis
-        var firstResponse = void 0;
-
-        for (var name in seriesMap) {
-            var series = seriesMap[name];
-            if (!series.queryResponse) {
-                ready = false;
-                break;
-            }
-
-            if (!firstResponse) {
-                firstResponse = series.queryResponse;
-            }
-        }
-
-        if (ready) {
-            var options = {};
-            var xAxis = {};
-            var yAxis = {};
-
-            options.xAxis = [xAxis];
-            options.yAxis = [yAxis];
-
-            switch (xAxisType.value) {
-                case 'Category field name':
-                    xAxis.data = extractData(firstResponse, xAxisField.value.split(','));
-                    xAxis.type = 'category';
-                    break;
-                case 'Series value':
-                    xAxis.type = 'value';
-                    break;
-                default:
-                    break;
-            }
-
-            switch (yAxisType.value) {
-                case 'Category field name':
-                    yAxis.data = extractData(firstResponse, yAxisField.value.split(','));
-                    yAxis.type = 'category';
-                    break;
-                case 'Series value':
-                    yAxis.type = 'value';
-                    break;
-                default:
-                    break;
-            }
-
-            options.series = [];
-            for (var _name in seriesMap) {
-                var _series = seriesMap[_name];
-                options.series.push({
-                    type: chartTypeMap[_series.chartType],
-                    name: _series.name,
-                    data: _series.data
-                });
-            }
-
-            console.log(options);
-            chart.setOption(options);
-        }
-    }
-
-    function queryCallback(response, series) {
-        series.data = extractData(response, series.fields.split(','));
-        series.queryResponse = response;
-        generateChart();
-    }
-
-    function fetchData() {
-        console.log('fetching?');
-
-        for (var name in seriesMap) {
-            var series = seriesMap[name];
-            var query = series.query;
-            var request = {
-                q: query,
-                callback: queryCallback,
-                callbackData: series
-            };
-            msgBus.trigger(qdb.MSG_QUERY_EXEC, request);
-        }
-    }
-
-    function toColumnSupertype(type) {
-        switch (type) {
-            case 'STRING':
-            case 'SYMBOL':
-                return '<span class="label label-danger">L</span>';
-            case 'DATE':
-                return '<span class="label label-success">D</span>';
-            default:
-                return '<span class="label label-warning-light">N</span>';
         }
     }
 
@@ -31871,24 +32163,6 @@ const eChartsMacarons = {
     //     })[0].selectize;
     // }
 
-    function refreshColumnPicker(select, columns) {
-        select.clearOptions();
-        select.addOption(columns);
-        select.refreshOptions(false);
-    }
-
-    function processDataSet(dataSet) {
-        var cols = dataSet.columns;
-        var html = '';
-        for (var i = 0, n = cols.length; i < n; i++) {
-            var col = cols[i];
-            html += '<li>' + col.name + toColumnSupertype(col.type) + '</li>';
-        }
-        columnContainer.html(html);
-        refreshColumnPicker(xSelect, cols);
-        refreshColumnPicker(ySelect, cols);
-    }
-
     function resize() {
         if (visible) {
             var h = window.innerHeight;
@@ -31899,30 +32173,23 @@ const eChartsMacarons = {
         }
     }
 
+    function splitterResize(x, delta) {
+        formsHeight -= delta;
+        $(window).trigger('resize');
+    }
+
     function setup(bus) {
         $(window).bind('resize', resize);
-        msgBus = bus;
         bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
-
-        bus.on('splitter.vis.resize', function (x, delta) {
-            formsHeight -= delta;
-            $(window).trigger('resize');
-        });
-
+        bus.on('splitter.vis.resize', splitterResize);
         chart = echarts.init(canvas[0], eChartsMacarons);
+        $('#vis-splitter').splitter(bus, 'vis', 300, formsHeight);
 
-        // add series button
-        $('#vis-btn-add-series').click(addSeries);
-        setupAutoSave();
+        var mapQueries = $('#vis-tab-queries').queryForm();
+        var mapSeries = $('#vis-tab-series').seriesForm();
+        var mapAxis = $('#vis-tab-axis').axisForm();
 
-        $('#btnVisRefresh').click(function () {
-            queryRequest.q = edit.getValue();
-            queryRequest.callback = processDataSet;
-            bus.trigger(qdb.MSG_QUERY_EXEC, queryRequest);
-        });
-
-        $('#vis-splitter').splitter(bus, 'vis', 300, 0);
-        $('#btnVisFetch').click(fetchData);
+        var visBuilder = new VisBuilder(mapQueries, mapSeries, mapAxis);
 
         $('#btnVisBuild').click(function () {
             var options = {
@@ -31947,9 +32214,13 @@ const eChartsMacarons = {
 
             chart.setOption(options);
         });
-
-        // xSelect = createColumnPicker('#vis-x-axis');
-        // ySelect = createColumnPicker('#vis-y-axis');
+        $('#btnVisFetch').click(function () {
+            visBuilder.generateOptions(function (status, options) {
+                console.log(status);
+                console.log(options);
+                chart.setOption(options);
+            });
+        });
     }
 
     $.extend(true, window, {
@@ -31959,6 +32230,322 @@ const eChartsMacarons = {
     });
 })(jQuery);
 //# sourceMappingURL=vis-controller.js.map
+
+'use strict';
+
+/*globals $:false */
+/*globals module:false */
+
+function VisBuilder(mapQueries, mapSeries, mapAxis) {
+    'use strict';
+
+    this.mapQueries = mapQueries;
+    this.mapSeries = mapSeries;
+    this.mapAxis = mapAxis;
+}
+
+function isReady(mapSeries) {
+    'use strict';
+
+    for (var sk in mapSeries) {
+        if (mapSeries.hasOwnProperty(sk)) {
+            var series = mapSeries[sk];
+            if (!series.ready) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+function createColumnHash(columns) {
+    'use strict';
+
+    var columnHash = [];
+    // create hash of query column names for fast lookup
+    for (var i = 0; i < columns.length; i++) {
+        var col = columns[i];
+        columnHash[col.name] = {
+            name: col.name,
+            index: i
+        };
+    }
+    return columnHash;
+}
+
+function reportQueryError(jqXHR) {
+    'use strict';
+
+    console.log(jqXHR);
+}
+
+function assignDataToSeriesColumns(mapSeries, queryNamePrefix, queryColHash, ds) {
+    'use strict';
+
+    var prefixLen = queryNamePrefix.length;
+    // analyse series and map datasource and column index in that datasource to each column in series
+    for (var sk in mapSeries) {
+        if (mapSeries.hasOwnProperty(sk)) {
+            var series = mapSeries[sk];
+            var columnMap = series.columnMap;
+
+            series.ready = true;
+
+            var _iteratorNormalCompletion = true;
+            var _didIteratorError = false;
+            var _iteratorError = undefined;
+
+            try {
+                for (var _iterator = columnMap.keys()[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
+                    var key = _step.value;
+
+                    var col = key.startsWith(queryNamePrefix) ? key.substr(prefixLen, key.length - prefixLen) : key;
+                    var colDef = queryColHash[col];
+                    if (colDef) {
+                        if (!series.dataLength) {
+                            series.dataLength = ds.length;
+                        } else if (series.dataLength !== ds.length) {
+                            series.error = 'Column data is of unequal length';
+                        }
+
+                        columnMap.set(key, {
+                            dataset: ds,
+                            columnIndex: colDef.index
+                        });
+                    }
+
+                    if (columnMap.get(key) === null) {
+                        series.ready = false;
+                    }
+                }
+            } catch (err) {
+                _didIteratorError = true;
+                _iteratorError = err;
+            } finally {
+                try {
+                    if (!_iteratorNormalCompletion && _iterator.return) {
+                        _iterator.return();
+                    }
+                } finally {
+                    if (_didIteratorError) {
+                        throw _iteratorError;
+                    }
+                }
+            }
+        }
+    }
+}
+
+function assignDataToAxis(mapAxis, queryNamePrefix, queryColHash, ds) {
+    'use strict';
+
+    var prefixLen = queryNamePrefix.length;
+    // analyse series and map datasource and column index in that datasource to each column in series
+    for (var ak in mapAxis) {
+        if (mapAxis.hasOwnProperty(ak)) {
+            var axis = mapAxis[ak];
+            if (axis.valueType === 'Category column') {
+                var col = axis.column.startsWith(queryNamePrefix) ? axis.column.substr(prefixLen, axis.column.length - prefixLen) : axis.column;
+                var colDef = queryColHash[col];
+                if (colDef) {
+                    axis.ready = true;
+                    axis.dataset = ds;
+                    axis.columnIndex = colDef.index;
+                } else {
+                    axis.ready = false;
+                }
+            } else {
+                axis.ready = true;
+            }
+        }
+    }
+}
+
+function generateOptionSeries(mapSeries) {
+    'use strict';
+
+    var optionSeries = [];
+    for (var sk in mapSeries) {
+        if (mapSeries.hasOwnProperty(sk)) {
+            var series = mapSeries[sk];
+            var columnMap = series.columnMap;
+            var columnCount = columnMap.size;
+            var colArray = [];
+
+            var _iteratorNormalCompletion2 = true;
+            var _didIteratorError2 = false;
+            var _iteratorError2 = undefined;
+
+            try {
+                for (var _iterator2 = columnMap.values()[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
+                    var val = _step2.value;
+
+                    colArray.push(val);
+                }
+            } catch (err) {
+                _didIteratorError2 = true;
+                _iteratorError2 = err;
+            } finally {
+                try {
+                    if (!_iteratorNormalCompletion2 && _iterator2.return) {
+                        _iterator2.return();
+                    }
+                } finally {
+                    if (_didIteratorError2) {
+                        throw _iteratorError2;
+                    }
+                }
+            }
+
+            var chartSeries = {
+                name: series.name
+            };
+
+            switch (series.chartType) {
+                case 'Line':
+                    chartSeries.type = 'line';
+                    break;
+                case 'Bar':
+                    chartSeries.type = 'bar';
+                    break;
+                case 'Area':
+                    chartSeries.type = 'line';
+                    chartSeries.itemStyle = {normal: {areaStyle: {type: 'default'}}};
+                    break;
+                case 'Scatter':
+                    chartSeries.type = 'scatter';
+                    break;
+                default:
+                    chartSeries.type = 'line';
+                    break;
+            }
+
+            var n = series.dataLength;
+            var data = new Array(n);
+            chartSeries.data = data;
+
+            if (columnCount === 1) {
+                var def = colArray[0];
+                for (var i = 0; i < n; i++) {
+                    data[i] = def.dataset[i][def.columnIndex];
+                }
+            } else if (columnCount > 1) {
+
+                for (var _i = 0; _i < n; _i++) {
+                    var row = new Array(columnMap.length);
+                    for (var j = 0; j < columnCount; j++) {
+                        var col = colArray[j];
+                        row[j] = col.dataset[_i][col.columnIndex];
+                    }
+                    data[_i] = row;
+                }
+            }
+
+            optionSeries.push(chartSeries);
+        }
+    }
+
+    return optionSeries;
+}
+
+function generateOptionAxis(mapAxis) {
+    'use strict';
+
+    var yAxis = [];
+    var xAxis = [];
+
+    for (var ak in mapAxis) {
+        if (mapAxis.hasOwnProperty(ak)) {
+            var axis = mapAxis[ak];
+            var optionAxis = {
+                name: axis.name
+            };
+
+            switch (axis.valueType) {
+                case 'Category column':
+                    optionAxis.type = 'category';
+                    var n = axis.dataset.length;
+                    var data = new Array(n);
+                    for (var i = 0; i < n; i++) {
+                        data[i] = axis.dataset[i][axis.columnIndex];
+                    }
+                    optionAxis.data = data;
+                    break;
+
+                case 'Category values':
+                    optionAxis.type = 'category';
+                    optionAxis.data = JSON.parse(axis.values);
+                    break;
+                default:
+                    optionAxis.type = 'value';
+                    break;
+            }
+
+            if (axis.type === 'X-axis') {
+                xAxis.push(optionAxis);
+            } else {
+                yAxis.push(optionAxis);
+            }
+        }
+    }
+
+    return {
+        xAxis: xAxis,
+        yAxis: yAxis
+    };
+}
+
+function parseQueryData(response, status, jqXHR) {
+    'use strict';
+
+    var columns = response.columns;
+    var queryName = jqXHR.query.name + '.';
+    var done = jqXHR.doneCallback;
+    var queryColHash = createColumnHash(columns);
+
+    assignDataToSeriesColumns(jqXHR.mapSeries, queryName, queryColHash, response.dataset);
+    assignDataToAxis(jqXHR.mapAxis, queryName, queryColHash, response.dataset);
+
+    // check if all series are ready
+
+    if (!isReady(jqXHR.mapSeries) || !isReady(jqXHR.mapAxis)) {
+        done('incomplete');
+        return;
+    }
+
+    jqXHR.chartOptions.series = generateOptionSeries(jqXHR.mapSeries);
+    console.log(jqXHR.mapAxis);
+    var axis = generateOptionAxis(jqXHR.mapAxis);
+    jqXHR.chartOptions.yAxis = axis.yAxis;
+    jqXHR.chartOptions.xAxis = axis.xAxis;
+    done('done', jqXHR.chartOptions);
+}
+
+VisBuilder.prototype.generateOptions = function (done) {
+    'use strict';
+
+    var options = {};
+
+    for (var q in this.mapQueries) {
+        if (this.mapQueries.hasOwnProperty(q)) {
+            var query = this.mapQueries[q];
+
+            var queryRequestParams = {
+                query: query.textNormalized,
+                count: false
+            };
+
+            var jqXHR = $.get('/exec', queryRequestParams);
+            jqXHR.query = query;
+            jqXHR.mapSeries = this.mapSeries;
+            jqXHR.mapAxis = this.mapAxis;
+            jqXHR.doneCallback = done;
+            jqXHR.chartOptions = options;
+            jqXHR.done(parseQueryData).fail(reportQueryError);
+        }
+    }
+};
+//# sourceMappingURL=vis-builder.js.map
 
 'use strict';
 

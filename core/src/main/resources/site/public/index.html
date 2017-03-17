@@ -193,10 +193,13 @@
                 </div>
 
                 <div id="vis-forms" class="row ibox-content">
-                    <div class="col-lg-12">
+                    <div class="col-lg-12 v-fit">
                         <div class="config-tabs">
                             <ul class="nav nav-tabs ">
                                 <li class="active">
+                                    <a href="#vis-tab-queries" data-toggle="tab" aria-expanded="false"> Queries </a>
+                                </li>
+                                <li>
                                     <a href="#vis-tab-axis" data-toggle="tab" aria-expanded="false"> Axis </a>
                                 </li>
                                 <li class="">
@@ -207,131 +210,204 @@
                                 </li>
                             </ul>
                             <div class="tab-content">
-                                <div class="tab-pane active" id="vis-tab-axis">
-                                    <div class="row">
-                                        <div class="col-lg-6">
-                                            <div class="portlet">
+                                <div class="tab-pane v-fit active" id="vis-tab-queries">
+                                    <div class="row v-fit">
+                                        <div class="col-lg-3 v-fit">
+                                            <div class="portlet v-fit">
                                                 <div class="portlet-title">
-                                                    X Axis
+                                                    <button type="button" class="btn btn-info qdb-list-add-btn"><i
+                                                            class="fa fa-plus" aria-hidden="true"></i>
+                                                    </button>
+                                                    <span>Query</span>
                                                 </div>
-                                                <form role="form">
-                                                    <div class="form-group">
-                                                        <label>Type</label>
-                                                        <select id="_vis_axis_x_type" class="form-control">
-                                                            <option>Category field name</option>
-                                                            <option>Category values</option>
-                                                            <option>Series value</option>
-                                                        </select>
+                                                <div class="portlet-body">
+                                                    <div class="qdb-list">
+                                                        <ul>
+                                                        </ul>
                                                     </div>
-                                                    <div class="form-group">
-                                                        <label>Field name</label>
-                                                        <input id="_vis_axis_x_field" type="text" class="form-control"
-                                                               placeholder="Field name">
-                                                    </div>
-                                                    <div class="form-group">
-                                                        <label>Category values</label>
-                                                        <textarea id="_vis_axis_x_values" class="form-control"
-                                                                  rows="4"></textarea>
-                                                    </div>
-                                                </form>
+                                                </div>
                                             </div>
 
                                         </div>
-                                        <div class="col-lg-6">
-                                            <div class="portlet">
+                                        <div class="col-lg-9 v-fit">
+                                            <div class="portlet qdb-vis-form v-fit">
                                                 <div class="portlet-title">
-                                                    Y Axis
+                                                    <button type="button" class="btn btn-danger qdb-list-delete-btn"><i
+                                                            class="fa fa-trash-o"
+                                                            aria-hidden="true"></i> Delete
+                                                    </button>
+                                                    <span class="js-vis-title">Query_1</span>
                                                 </div>
-                                                <form role="form">
-                                                    <div class="form-group">
-                                                        <label>Type</label>
-                                                        <select id="_vis_axis_y_type" class="form-control">
-                                                            <option>Category field name</option>
-                                                            <option>Category values</option>
-                                                            <option>Series value</option>
-                                                        </select>
-                                                    </div>
-                                                    <div class="form-group">
-                                                        <label>Field name</label>
-                                                        <input id="_vis_axis_y_field" type="text" class="form-control"
-                                                               placeholder="Field name">
-        </div>
-                                                    <div class="form-group">
-                                                        <label>Category values</label>
-                                                        <textarea id="_vis_axis_y_values" class="form-control"
-                                                                  rows="4"></textarea>
-                                                    </div>
-                                                </form>
+                                                <div class="portlet-body v-fit">
+                                                    <form role="form" class="v-fit">
+                                                        <div class="form-group qdb-vis-query-name">
+                                                            <label>Query name</label>
+                                                            <input id="_vis_frm_query_name" type="text"
+                                                                   class="form-control" placeholder="Enter query name">
+                                                            <div class="help-block with-errors"></div>
+                                                        </div>
+
+                                                        <div class="form-group qdb-vis-query-editor">
+                                                            <label for="_vis_frm_query_text">Query text</label>
+                                                            <div id="_vis_frm_query_text" class="form-control"></div>
+                                                        </div>
+                                                    </form>
+                                                </div>
+                                            </div>
+
+                                            <div class="qdb-vis-placeholder">
+
+                                                <h1>Nothing to display</h1>
+
                                             </div>
 
                                         </div>
                                     </div>
                                 </div>
-                                <div class="tab-pane" id="vis-tab-series">
-                                    <div class="row">
-                                        <div class="col-lg-3">
-                                            <div class="portlet">
+                                <div class="tab-pane v-fit" id="vis-tab-axis">
+                                    <div class="row v-fit">
+                                        <div class="col-lg-3 v-fit">
+                                            <div class="portlet v-fit">
                                                 <div class="portlet-title">
-                                                    <button id="vis-btn-add-series" type="button" class="btn btn-info">
-                                                        <i class="fa fa-plus" aria-hidden="true"></i></button>
-                                                    <span>Series</span>
+                                                    <button type="button" class="btn btn-info qdb-list-add-btn"><i
+                                                            class="fa fa-plus" aria-hidden="true"></i>
+                                                    </button>
+                                                    <span>Axis</span>
                                                 </div>
-                                                <div id="vis-series-list">
-                                                    <ul>
-                                                    </ul>
+                                                <div class="portlet-body">
+                                                    <div class="qdb-list">
+                                                        <ul>
+                                                        </ul>
+                                                    </div>
                                                 </div>
                                             </div>
 
                                         </div>
-                                        <div class="col-lg-9">
-                                            <div class="portlet">
+                                        <div class="col-lg-9 v-fit">
+                                            <div class="portlet qdb-vis-form v-fit">
                                                 <div class="portlet-title">
-                                                    <button id="vis-btn-delete-series" type="button"
-                                                            class="btn btn-danger"><i class="fa fa-trash-o"
-                                                                                      aria-hidden="true"></i> Delete
+                                                    <button type="button" class="btn btn-danger qdb-list-delete-btn"><i
+                                                            class="fa fa-trash-o"
+                                                            aria-hidden="true"></i> Delete
+                                                    </button>
+
+                                                    <span class="js-vis-title">Axis details</span>
+                                                </div>
+                                                <div class="portlet-body">
+                                                    <form role="form" class="v-fit">
+                                                        <div class="form-group">
+                                                            <label>Axis name</label>
+                                                            <input id="_vis_frm_axis_name" type="text"
+                                                                   class="form-control" placeholder="Axis name">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label>Axis direction</label>
+                                                            <select id="_vis_frm_axis_type" class="form-control">
+                                                                <option>X-axis</option>
+                                                                <option>Y-axis</option>
+                                                            </select>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label>Axis value type</label>
+                                                            <select id="_vis_frm_axis_value_type" class="form-control">
+                                                                <option>Category column</option>
+                                                                <option>Category values</option>
+                                                                <option>Series value</option>
+                                                            </select>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label>Column name</label>
+                                                            <input id="_vis_frm_axis_column" type="text"
+                                                                   class="form-control" placeholder="[query1.]column">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label>Category values</label>
+                                                            <textarea id="_vis_frm_axis_values" class="form-control"
+                                                                      rows="4"></textarea>
+                                                        </div>
+                                                    </form>
+                                                </div>
+                                            </div>
+
+                                            <div class="qdb-vis-placeholder">
+
+                                                <h1>Nothing to display</h1>
+
+                                            </div>
+
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="tab-pane v-fit" id="vis-tab-series">
+                                    <div class="row v-fit">
+                                        <div class="col-lg-3 v-fit">
+                                            <div class="portlet v-fit">
+                                                <div class="portlet-title">
+                                                    <button type="button" class="btn btn-info qdb-list-add-btn"><i
+                                                            class="fa fa-plus" aria-hidden="true"></i>
+                                                    </button>
+                                                    <span>Series</span>
+                                                </div>
+                                                <div class="portlet-body">
+                                                    <div class="qdb-list">
+                                                        <ul>
+                                                        </ul>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                        </div>
+                                        <div class="col-lg-9 v-fit">
+                                            <div class="portlet qdb-vis-form v-fit">
+                                                <div class="portlet-title">
+                                                    <button type="button" class="btn btn-danger qdb-list-delete-btn"><i
+                                                            class="fa fa-trash-o"
+                                                            aria-hidden="true"></i> Delete
                                                     </button>
                                                     <span id="js-vis-series-name">Series 1</span>
                                                 </div>
-                                                <form role="form">
-                                                    <div class="form-group">
-                                                        <label>Series name</label>
-                                                        <input id="_vis_frm_ser_name" type="text" class="form-control"
-                                                               placeholder="Name of series">
-                                                    </div>
-                                                    <div class="form-group">
-                                                        <label>Chart type</label>
-                                                        <select id="_vis_frm_ser_chart_type" class="form-control">
-                                                            <option>Line</option>
-                                                            <option>Area</option>
-                                                            <option>Bar</option>
-                                                        </select>
-                                                    </div>
+                                                <div class="portlet-body">
+                                                    <form role="form">
+                                                        <div class="form-group">
+                                                            <label>Series name</label>
+                                                            <input id="_vis_frm_ser_name" type="text"
+                                                                   class="form-control">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="_vis_frm_ser_chart_type">Chart type</label>
+                                                            <select id="_vis_frm_ser_chart_type" class="form-control">
+                                                                <option>Line</option>
+                                                                <option>Area</option>
+                                                                <option>Bar</option>
+                                                            </select>
+                                                        </div>
 
-                                                    <div class="form-group">
-                                                        <label>Query text</label>
-                                                        <textarea id="_vis_frm_ser_query" class="form-control"
-                                                                  rows="2"></textarea>
-                                                    </div>
+                                                        <div class="form-group">
+                                                            <label>Data columns</label>
+                                                            <input id="_vis_frm_ser_columns" type="text"
+                                                                   class="form-control"
+                                                                   placeholder="[query1.]column1,[query2.]column2,...">
+                                                        </div>
 
-                                                    <div class="form-group">
-                                                        <label>Data fields</label>
-                                                        <input id="_vis_frm_ser_fields" type="text" class="form-control"
-                                                               placeholder="Choose fields">
-                                                    </div>
+                                                        <div class="form-group">
+                                                            <label>Stack</label>
+                                                            <input id="_vis_frm_ser_stack" type="text"
+                                                                   class="form-control" placeholder="Name of stack">
+                                                        </div>
 
-                                                    <div class="form-group">
-                                                        <label>Stack</label>
-                                                        <input id="_vis_frm_ser_stack" type="text" class="form-control"
-                                                               placeholder="Name of stack">
-                                                    </div>
+                                                        <div class="form-group">
+                                                            <label>Color</label>
+                                                            <input id="_vis_frm_ser_color" type="text"
+                                                                   class="form-control" placeholder="Auto">
+                                                        </div>
+                                                    </form>
+                                                </div>
+                                            </div>
 
-                                                    <div class="form-group">
-                                                        <label>Color</label>
-                                                        <input id="_vis_frm_ser_colour" type="text" class="form-control"
-                                                               placeholder="Auto">
-                                                    </div>
+                                            <div class="qdb-vis-placeholder">
 
-                                                </form>
+                                                <h1>Nothing to display</h1>
+
                                             </div>
 
                                         </div>
