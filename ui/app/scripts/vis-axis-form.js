@@ -52,6 +52,9 @@
             function copyToForm(axis) {
                 last = axis;
 
+                console.log('copyToForm');
+                console.log(axis);
+
                 fName.value = axis.name;
                 if (axis.type) {
                     fType.value = axis.type;
@@ -80,11 +83,39 @@
 
             function copyToMem(axis) {
                 console.log('axis copy to mem');
-                axis.name = fName.value;
-                axis.type = fType.value;
-                axis.valueType = fValueType.value;
-                axis.column = fColumn.value;
-                axis.values = fValues.value;
+                let changed = false;
+                if (axis.name !== fName.value) {
+                    axis.name = fName.value;
+                    changed = true;
+                }
+
+                if (axis.type !== fType.value) {
+                    axis.type = fType.value;
+                    changed = true;
+                }
+
+                if (axis.valueType !== fValueType.value) {
+                    axis.valueType = fValueType.value;
+                    changed = true;
+                }
+
+                if (axis.column !== fColumn.value) {
+                    axis.column = fColumn.value;
+                    changed = true;
+                }
+
+                if (axis.values !== fValues.value) {
+                    axis.values = fValues.value;
+                    changed = true;
+                }
+
+                if (changed) {
+                    axis.timestamp = new Date().getTime();
+                }
+
+                if (axis.callback) {
+                    axis.callback();
+                }
                 return true;
             }
 

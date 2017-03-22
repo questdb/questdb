@@ -69,16 +69,6 @@
         return edit;
     }
 
-    function parseColumns(columns) {
-        const colArray = columns.split(',');
-        const columnMap = new Map();
-        const n = colArray.length;
-        for (let i = 0; i < n; i++) {
-            columnMap.set(colArray[i].trim(), null);
-        }
-        return columnMap;
-    }
-
     $.extend(true, window, {
         qdb: {
             queryBatchSize,
@@ -92,8 +82,7 @@
             MSG_QUERY_FIND_N_EXEC,
             toExportUrl,
             setHeight,
-            createEditor,
-            parseColumns
+            createEditor
         }
     });
 }(jQuery));

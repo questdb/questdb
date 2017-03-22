@@ -42,9 +42,11 @@
         const forms = panels.find('#vis-forms');
         const footer = $('.footer')[0];
 
+        let visBuilder;
         let chart;
         let visible = false;
         let formsHeight = 450;
+        let lastSaveTimestamp = -1;
 
         function toggleVisibility(x, name) {
             if (name === 'visualisation') {
@@ -83,6 +85,67 @@
             $(window).trigger('resize');
         }
 
+        function saveState(item) {
+            if (item === undefined || lastSaveTimestamp < item.timestamp) {
+                const state = visBuilder.serializeState();
+                if (item) {
+                    lastSaveTimestamp = item.timestamp;
+                }
+
+                console.log('serializing');
+                console.log(state);
+                localStorage.setItem('vis', JSON.stringify(state));
+            }
+        }
+
+        function buildChartWhenReady(status, options) {
+            switch (status) {
+                case 'done':
+                    if (options) {
+                        console.log('options arrived');
+                        console.log(JSON.stringify(options));
+                        chart.setOption(options);
+                    }
+                    break;
+                default:
+                    console.log(status);
+                    break;
+            }
+        }
+
+        function buildChart() {
+            visBuilder.generateOptions(buildChartWhenReady);
+        }
+
+        function loadState(queryForm, axisForm, seriesForm) {
+            if (typeof (Storage) !== 'undefined') {
+                const vis = localStorage.getItem('vis');
+
+                if (vis) {
+                    const state = JSON.parse(vis);
+                    if (state) {
+                        console.log('loading');
+                        console.log(state);
+                        if (state.queries) {
+                            queryForm.setMap(state.queries);
+                        }
+
+                        if (state.axis) {
+                            axisForm.setMap(state.axis);
+                        }
+
+                        if (state.series) {
+                            seriesForm.setMap(state.series);
+                        }
+                    }
+                }
+
+                queryForm.onUpdate(saveState);
+                axisForm.onUpdate(saveState);
+                seriesForm.onUpdate(saveState);
+            }
+        }
+
         function setup(bus) {
             $(window).bind('resize', resize);
             bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
@@ -90,48 +153,16 @@
             chart = echarts.init(canvas[0], eChartsMacarons);
             $('#vis-splitter').splitter(bus, 'vis', 300, formsHeight);
 
-            const mapQueries = $('#vis-tab-queries').queryForm();
-            const mapSeries = $('#vis-tab-series').seriesForm();
-            const mapAxis = $('#vis-tab-axis').axisForm();
+            const queryForm = $('#vis-tab-queries').queryForm();
+            const seriesForm = $('#vis-tab-series').seriesForm();
+            const axisForm = $('#vis-tab-axis').axisForm();
 
-            const visBuilder = new VisBuilder(mapQueries, mapSeries, mapAxis);
+            visBuilder = new VisBuilder(queryForm.getMap(), seriesForm.getMap(), axisForm.getMap());
+            loadState(queryForm, axisForm, seriesForm);
 
-            $('#btnVisBuild').click(function () {
-                let options = {
-                    xAxis: [
-                        {
-                            type: 'category',
-                            boundaryGap: false,
-                            data: [1, 2, 3, 4, 5, 6, 7]
-                        }
-                    ],
-                    yAxis: [
-                        {
-                            type: 'value'
-                        }
-                    ],
-                    series: [
-                        {
-                            name: '最高气温',
-                            type: 'line',
-                            data: [11, 11, 15, 13, 12, 13, 10]
-                        },
-                        {
-                            name: '最低气温',
-                            type: 'line',
-                            data: [1, -2, 2, 5, 3, 2, 0]
-                        }
-                    ]
-                };
-
-                chart.setOption(options);
-            });
-            $('#btnVisFetch').click(function () {
-                visBuilder.generateOptions(function (status, options) {
-                    console.log(status);
-                    console.log(options);
-                    chart.setOption(options);
-                });
+            $('#btnVisFetch').click(buildChart);
+            $('#btnVisReload').click(function () {
+                loadState(queryForm, seriesForm, axisForm);
             });
         }
 

@@ -3248,11 +3248,11 @@ if ("undefined" == typeof jQuery)throw new Error("Bootstrap's JavaScript require
     })
 }(jQuery);
 /*
- * metismenu - v2.6.2
+ * metismenu - v2.7.0
  * A jQuery menu plugin
- * https://github.com/onokumus/metisMenu#readme
+ * https://github.com/onokumus/metismenu#readme
  *
- * Made by Osman Nuri Okumuş <onokumus@gmail.com> (https://github.com/onokumus)
+ * Made by Osman Nuri Okumus <onokumus@gmail.com> (https://github.com/onokumus)
  * Under MIT License
  */
 
@@ -3275,141 +3275,118 @@ if ("undefined" == typeof jQuery)throw new Error("Bootstrap's JavaScript require
             return typeof a
         } : function (a) {
             return a && "function" == typeof Symbol && a.constructor === Symbol && a !== Symbol.prototype ? "symbol" : typeof a
-        }), e = function () {
-        function a(a, b) {
-            for (var c = 0; c < b.length; c++) {
-                var d = b[c];
-                d.enumerable = d.enumerable || !1, d.configurable = !0, "value" in d && (d.writable = !0), Object.defineProperty(a, d.key, d)
-            }
-        }
-
-        return function (b, c, d) {
-            return c && a(b.prototype, c), d && a(b, d), b
-        }
-    }();
-    (function (a) {
+        }), e = function (a) {
         function b() {
             return {
-                bindType: q.end, delegateType: q.end, handle: function (b) {
+                bindType: f.end, delegateType: f.end, handle: function (b) {
                     if (a(b.target).is(this))return b.handleObj.handler.apply(this, arguments)
                 }
             }
         }
 
-        function f() {
+        function c() {
             if (window.QUnit)return !1;
             var a = document.createElement("mm");
-            for (var b in r)if (void 0 !== a.style[b])return {end: r[b]};
+            for (var b in g)if (void 0 !== a.style[b])return {end: g[b]};
             return !1
         }
 
-        function g(b) {
+        function d(b) {
             var c = this, d = !1;
-            a(this).one(s.TRANSITION_END, function () {
+            return a(this).one(h.TRANSITION_END, function () {
                 d = !0
             }), setTimeout(function () {
-                d || s.triggerTransitionEnd(c)
-            }, b)
+                d || h.triggerTransitionEnd(c)
+            }, b), this
         }
 
-        function h() {
-            q = f(), s.supportsTransitionEnd() && (a.event.special[s.TRANSITION_END] = b())
+        function e() {
+            f = c(), a.fn.emulateTransitionEnd = d, h.supportsTransitionEnd() && (a.event.special[h.TRANSITION_END] = b())
         }
 
-        var i = "metisMenu", j = "metisMenu", k = "." + j, l = ".data-api", m = a.fn[i], n = 350, o = {
+        var f = !1, g = {
+            WebkitTransition: "webkitTransitionEnd",
+            MozTransition: "transitionend",
+            OTransition: "oTransitionEnd otransitionend",
+            transition: "transitionend"
+        }, h = {
+            TRANSITION_END: "mmTransitionEnd", triggerTransitionEnd: function (b) {
+                a(b).trigger(f.end)
+            }, supportsTransitionEnd: function () {
+                return Boolean(f)
+            }
+        };
+        return e(), h
+    }(jQuery);
+    (function (a) {
+        var b = "metisMenu", f = "metisMenu", g = "." + f, h = ".data-api", i = a.fn[b], j = 350, k = {
             toggle: !0,
             preventDefault: !0,
             activeClass: "active",
             collapseClass: "collapse",
             collapseInClass: "in",
-            collapsingClass: "collapsing"
-        }, p = {
-            SHOW: "show" + k,
-            SHOWN: "shown" + k,
-            HIDE: "hide" + k,
-            HIDDEN: "hidden" + k,
-            CLICK_DATA_API: "click" + k + l
-        }, q = !1, r = {
-            WebkitTransition: "webkitTransitionEnd",
-            MozTransition: "transitionend",
-            OTransition: "oTransitionEnd otransitionend",
-            transition: "transitionend"
-        }, s = {
-            TRANSITION_END: "mmTransitionEnd", triggerTransitionEnd: function (b) {
-                a(b).trigger(q.end)
-            }, supportsTransitionEnd: function () {
-                return Boolean(q)
-            }
-        };
-        h();
-        var t = function () {
+            collapsingClass: "collapsing",
+            triggerElement: "a",
+            parentTrigger: "li",
+            subMenu: "ul"
+        }, l = {
+            SHOW: "show" + g,
+            SHOWN: "shown" + g,
+            HIDE: "hide" + g,
+            HIDDEN: "hidden" + g,
+            CLICK_DATA_API: "click" + g + h
+        }, m = function () {
             function b(a, d) {
                 c(this, b), this._element = a, this._config = this._getConfig(d), this._transitioning = null, this.init()
             }
 
-            return e(b, [{
-                key: "init", value: function () {
-                    var b = this;
-                    a(this._element).find("li." + this._config.activeClass).has("ul").children("ul").attr("aria-expanded", !0).addClass(this._config.collapseClass + " " + this._config.collapseInClass), a(this._element).find("li").not("." + this._config.activeClass).has("ul").children("ul").attr("aria-expanded", !1).addClass(this._config.collapseClass), a(this._element).find("li").has("ul").children("a").on(p.CLICK_DATA_API, function (c) {
-                        var d = a(this), e = d.parent("li"), f = e.siblings("li").children("a"), g = e.children("ul");
-                        b._config.preventDefault && c.preventDefault(), "true" !== d.attr("aria-disabled") && (e.hasClass(b._config.activeClass) ? (d.attr("aria-expanded", !1), b._hide(g)) : (b._show(g), d.attr("aria-expanded", !0), b._config.toggle && f.attr("aria-expanded", !1)), b._config.onTransitionStart && b._config.onTransitionStart(c))
-                    })
-                }
-            }, {
-                key: "_show", value: function (b) {
-                    if (!this._transitioning && !a(b).hasClass(this._config.collapsingClass)) {
-                        var c = this, d = a(b), e = a.Event(p.SHOW);
-                        if (d.trigger(e), !e.isDefaultPrevented()) {
-                            d.parent("li").addClass(this._config.activeClass), this._config.toggle && this._hide(d.parent("li").siblings().children("ul." + this._config.collapseInClass).attr("aria-expanded", !1)), d.removeClass(this._config.collapseClass).addClass(this._config.collapsingClass).height(0), this.setTransitioning(!0);
-                            var f = function () {
-                                d.removeClass(c._config.collapsingClass).addClass(c._config.collapseClass + " " + c._config.collapseInClass).height("").attr("aria-expanded", !0), c.setTransitioning(!1), d.trigger(p.SHOWN)
-                            };
-                            if (!s.supportsTransitionEnd())return void f();
-                            d.height(d[0].scrollHeight).one(s.TRANSITION_END, f), g(n)
-                        }
+            return b.prototype.init = function () {
+                var b = this;
+                a(this._element).find(this._config.parentTrigger + "." + this._config.activeClass).has(this._config.subMenu).children(this._config.subMenu).attr("aria-expanded", !0).addClass(this._config.collapseClass + " " + this._config.collapseInClass), a(this._element).find(this._config.parentTrigger).not("." + this._config.activeClass).has(this._config.subMenu).children(this._config.subMenu).attr("aria-expanded", !1).addClass(this._config.collapseClass), a(this._element).find(this._config.parentTrigger).has(this._config.subMenu).children(this._config.triggerElement).on(l.CLICK_DATA_API, function (c) {
+                    var d = a(this), e = d.parent(b._config.parentTrigger), f = e.siblings(b._config.parentTrigger).children(b._config.triggerElement), g = e.children(b._config.subMenu);
+                    b._config.preventDefault && c.preventDefault(), "true" !== d.attr("aria-disabled") && (e.hasClass(b._config.activeClass) ? (d.attr("aria-expanded", !1), b._hide(g)) : (b._show(g), d.attr("aria-expanded", !0), b._config.toggle && f.attr("aria-expanded", !1)), b._config.onTransitionStart && b._config.onTransitionStart(c))
+                })
+            }, b.prototype._show = function (b) {
+                if (!this._transitioning && !a(b).hasClass(this._config.collapsingClass)) {
+                    var c = this, d = a(b), f = a.Event(l.SHOW);
+                    if (d.trigger(f), !f.isDefaultPrevented()) {
+                        d.parent(this._config.parentTrigger).addClass(this._config.activeClass), this._config.toggle && this._hide(d.parent(this._config.parentTrigger).siblings().children(this._config.subMenu + "." + this._config.collapseInClass).attr("aria-expanded", !1)), d.removeClass(this._config.collapseClass).addClass(this._config.collapsingClass).height(0), this.setTransitioning(!0);
+                        var g = function () {
+                            d.removeClass(c._config.collapsingClass).addClass(c._config.collapseClass + " " + c._config.collapseInClass).height("").attr("aria-expanded", !0), c.setTransitioning(!1), d.trigger(l.SHOWN)
+                        };
+                        return e.supportsTransitionEnd() ? void d.height(d[0].scrollHeight).one(e.TRANSITION_END, g).emulateTransitionEnd(j) : void g()
                     }
                 }
-            }, {
-                key: "_hide", value: function (b) {
-                    if (!this._transitioning && a(b).hasClass(this._config.collapseInClass)) {
-                        var c = this, d = a(b), e = a.Event(p.HIDE);
-                        if (d.trigger(e), !e.isDefaultPrevented()) {
-                            d.parent("li").removeClass(this._config.activeClass), d.height(d.height())[0].offsetHeight, d.addClass(this._config.collapsingClass).removeClass(this._config.collapseClass).removeClass(this._config.collapseInClass), this.setTransitioning(!0);
-                            var f = function () {
-                                c._transitioning && c._config.onTransitionEnd && c._config.onTransitionEnd(), c.setTransitioning(!1), d.trigger(p.HIDDEN), d.removeClass(c._config.collapsingClass).addClass(c._config.collapseClass).attr("aria-expanded", !1)
-                            };
-                            if (!s.supportsTransitionEnd())return void f();
-                            0 == d.height() || "none" == d.css("display") ? f() : d.height(0).one(s.TRANSITION_END, f), g(n)
-                        }
+            }, b.prototype._hide = function (b) {
+                if (!this._transitioning && a(b).hasClass(this._config.collapseInClass)) {
+                    var c = this, d = a(b), f = a.Event(l.HIDE);
+                    if (d.trigger(f), !f.isDefaultPrevented()) {
+                        d.parent(this._config.parentTrigger).removeClass(this._config.activeClass), d.height(d.height())[0].offsetHeight, d.addClass(this._config.collapsingClass).removeClass(this._config.collapseClass).removeClass(this._config.collapseInClass), this.setTransitioning(!0);
+                        var g = function () {
+                            c._transitioning && c._config.onTransitionEnd && c._config.onTransitionEnd(), c.setTransitioning(!1), d.trigger(l.HIDDEN), d.removeClass(c._config.collapsingClass).addClass(c._config.collapseClass).attr("aria-expanded", !1)
+                        };
+                        return e.supportsTransitionEnd() ? void(0 == d.height() || "none" == d.css("display") ? g() : d.height(0).one(e.TRANSITION_END, g).emulateTransitionEnd(j)) : void g()
                     }
                 }
-            }, {
-                key: "setTransitioning", value: function (a) {
-                    this._transitioning = a
-                }
-            }, {
-                key: "dispose", value: function () {
-                    a.removeData(this._element, j), a(this._element).find("li").has("ul").children("a").off("click"), this._transitioning = null, this._config = null, this._element = null
-                }
-            }, {
-                key: "_getConfig", value: function (b) {
-                    return b = a.extend({}, o, b)
-                }
-            }], [{
-                key: "_jQueryInterface", value: function (c) {
-                    return this.each(function () {
-                        var e = a(this), f = e.data(j), g = a.extend({}, o, e.data(), "object" === ("undefined" == typeof c ? "undefined" : d(c)) && c);
-                        if (!f && /dispose/.test(c) && this.dispose(), f || (f = new b(this, g), e.data(j, f)), "string" == typeof c) {
-                            if (void 0 === f[c])throw new Error('No method named "' + c + '"');
-                            f[c]()
-                        }
-                    })
-                }
-            }]), b
+            }, b.prototype.setTransitioning = function (a) {
+                this._transitioning = a
+            }, b.prototype.dispose = function () {
+                a.removeData(this._element, f), a(this._element).find(this._config.parentTrigger).has(this._config.subMenu).children(this._config.triggerElement).off("click"), this._transitioning = null, this._config = null, this._element = null
+            }, b.prototype._getConfig = function (b) {
+                return b = a.extend({}, k, b)
+            }, b._jQueryInterface = function (c) {
+                return this.each(function () {
+                    var e = a(this), g = e.data(f), h = a.extend({}, k, e.data(), "object" === ("undefined" == typeof c ? "undefined" : d(c)) && c);
+                    if (!g && /dispose/.test(c) && this.dispose(), g || (g = new b(this, h), e.data(f, g)), "string" == typeof c) {
+                        if (void 0 === g[c])throw new Error('No method named "' + c + '"');
+                        g[c]()
+                    }
+                })
+            }, b
         }();
-        return a.fn[i] = t._jQueryInterface, a.fn[i].Constructor = t, a.fn[i].noConflict = function () {
-            return a.fn[i] = m, t._jQueryInterface
-        }, t
+        return a.fn[b] = m._jQueryInterface, a.fn[b].Constructor = m, a.fn[b].noConflict = function () {
+            return a.fn[b] = i, m._jQueryInterface
+        }, m
     })(jQuery)
 });
 //# sourceMappingURL=metisMenu.js.map
@@ -23246,7 +23223,7 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
 });
 
 /*!
- * clipboard.js v1.5.16
+ * clipboard.js v1.6.1
  * https://zenorocha.github.io/clipboard.js
  *
  * Licensed MIT © Zeno Rocha
@@ -23258,45 +23235,45 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
     }
 }(function () {
     var e, t, n;
-    return function e(t, n, i) {
-        function o(a, c) {
+    return function e(t, n, o) {
+        function i(a, c) {
             if (!n[a]) {
                 if (!t[a]) {
                     var l = "function" == typeof require && require;
                     if (!c && l)return l(a, !0);
                     if (r)return r(a, !0);
-                    var s = new Error("Cannot find module '" + a + "'");
-                    throw s.code = "MODULE_NOT_FOUND", s
+                    var u = new Error("Cannot find module '" + a + "'");
+                    throw u.code = "MODULE_NOT_FOUND", u
                 }
-                var u = n[a] = {exports: {}};
-                t[a][0].call(u.exports, function (e) {
+                var s = n[a] = {exports: {}};
+                t[a][0].call(s.exports, function (e) {
                     var n = t[a][1][e];
-                    return o(n ? n : e)
-                }, u, u.exports, e, t, n, i)
+                    return i(n ? n : e)
+                }, s, s.exports, e, t, n, o)
             }
             return n[a].exports
         }
 
-        for (var r = "function" == typeof require && require, a = 0; a < i.length; a++)o(i[a]);
-        return o
+        for (var r = "function" == typeof require && require, a = 0; a < o.length; a++)i(o[a]);
+        return i
     }({
         1: [function (e, t, n) {
-            function i(e, t) {
-                for (; e && e.nodeType !== o;) {
+            function o(e, t) {
+                for (; e && e.nodeType !== i;) {
                     if (e.matches(t))return e;
                     e = e.parentNode
                 }
             }
 
-            var o = 9;
-            if (Element && !Element.prototype.matches) {
+            var i = 9;
+            if ("undefined" != typeof Element && !Element.prototype.matches) {
                 var r = Element.prototype;
                 r.matches = r.matchesSelector || r.mozMatchesSelector || r.msMatchesSelector || r.oMatchesSelector || r.webkitMatchesSelector
             }
-            t.exports = i
+            t.exports = o
         }, {}], 2: [function (e, t, n) {
-            function i(e, t, n, i, r) {
-                var a = o.apply(this, arguments);
+            function o(e, t, n, o, r) {
+                var a = i.apply(this, arguments);
                 return e.addEventListener(n, a, r), {
                     destroy: function () {
                         e.removeEventListener(n, a, r)
@@ -23304,14 +23281,14 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
                 }
             }
 
-            function o(e, t, n, i) {
+            function i(e, t, n, o) {
                 return function (n) {
-                    n.delegateTarget = r(n.target, t), n.delegateTarget && i.call(e, n)
+                    n.delegateTarget = r(n.target, t), n.delegateTarget && o.call(e, n)
                 }
             }
 
             var r = e("./closest");
-            t.exports = i
+            t.exports = o
         }, {"./closest": 1}], 3: [function (e, t, n) {
             n.node = function (e) {
                 return void 0 !== e && e instanceof HTMLElement && 1 === e.nodeType
@@ -23325,17 +23302,17 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
                 return "[object Function]" === t
             }
         }, {}], 4: [function (e, t, n) {
-            function i(e, t, n) {
+            function o(e, t, n) {
                 if (!e && !t && !n)throw new Error("Missing required arguments");
                 if (!c.string(t))throw new TypeError("Second argument must be a String");
                 if (!c.fn(n))throw new TypeError("Third argument must be a Function");
-                if (c.node(e))return o(e, t, n);
+                if (c.node(e))return i(e, t, n);
                 if (c.nodeList(e))return r(e, t, n);
                 if (c.string(e))return a(e, t, n);
                 throw new TypeError("First argument must be a String, HTMLElement, HTMLCollection, or NodeList")
             }
 
-            function o(e, t, n) {
+            function i(e, t, n) {
                 return e.addEventListener(t, n), {
                     destroy: function () {
                         e.removeEventListener(t, n)
@@ -23360,49 +23337,52 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
             }
 
             var c = e("./is"), l = e("delegate");
-            t.exports = i
+            t.exports = o
         }, {"./is": 3, delegate: 2}], 5: [function (e, t, n) {
-            function i(e) {
+            function o(e) {
                 var t;
-                if ("SELECT" === e.nodeName) e.focus(), t = e.value; else if ("INPUT" === e.nodeName || "TEXTAREA" === e.nodeName) e.focus(), e.setSelectionRange(0, e.value.length), t = e.value; else {
+                if ("SELECT" === e.nodeName) e.focus(), t = e.value; else if ("INPUT" === e.nodeName || "TEXTAREA" === e.nodeName) {
+                    var n = e.hasAttribute("readonly");
+                    n || e.setAttribute("readonly", ""), e.select(), e.setSelectionRange(0, e.value.length), n || e.removeAttribute("readonly"), t = e.value
+                } else {
                     e.hasAttribute("contenteditable") && e.focus();
-                    var n = window.getSelection(), i = document.createRange();
-                    i.selectNodeContents(e), n.removeAllRanges(), n.addRange(i), t = n.toString()
+                    var o = window.getSelection(), i = document.createRange();
+                    i.selectNodeContents(e), o.removeAllRanges(), o.addRange(i), t = o.toString()
                 }
                 return t
             }
 
-            t.exports = i
+            t.exports = o
         }, {}], 6: [function (e, t, n) {
-            function i() {
+            function o() {
             }
 
-            i.prototype = {
+            o.prototype = {
                 on: function (e, t, n) {
-                    var i = this.e || (this.e = {});
-                    return (i[e] || (i[e] = [])).push({fn: t, ctx: n}), this
+                    var o = this.e || (this.e = {});
+                    return (o[e] || (o[e] = [])).push({fn: t, ctx: n}), this
                 }, once: function (e, t, n) {
-                    function i() {
-                        o.off(e, i), t.apply(n, arguments)
+                    function o() {
+                        i.off(e, o), t.apply(n, arguments)
                     }
 
-                    var o = this;
-                    return i._ = t, this.on(e, i, n)
+                    var i = this;
+                    return o._ = t, this.on(e, o, n)
                 }, emit: function (e) {
-                    var t = [].slice.call(arguments, 1), n = ((this.e || (this.e = {}))[e] || []).slice(), i = 0, o = n.length;
-                    for (i; i < o; i++)n[i].fn.apply(n[i].ctx, t);
+                    var t = [].slice.call(arguments, 1), n = ((this.e || (this.e = {}))[e] || []).slice(), o = 0, i = n.length;
+                    for (o; o < i; o++)n[o].fn.apply(n[o].ctx, t);
                     return this
                 }, off: function (e, t) {
-                    var n = this.e || (this.e = {}), i = n[e], o = [];
-                    if (i && t)for (var r = 0, a = i.length; r < a; r++)i[r].fn !== t && i[r].fn._ !== t && o.push(i[r]);
-                    return o.length ? n[e] = o : delete n[e], this
+                    var n = this.e || (this.e = {}), o = n[e], i = [];
+                    if (o && t)for (var r = 0, a = o.length; r < a; r++)o[r].fn !== t && o[r].fn._ !== t && i.push(o[r]);
+                    return i.length ? n[e] = i : delete n[e], this
                 }
-            }, t.exports = i
-        }, {}], 7: [function (t, n, i) {
-            !function (o, r) {
-                if ("function" == typeof e && e.amd) e(["module", "select"], r); else if ("undefined" != typeof i) r(n, t("select")); else {
+            }, t.exports = o
+        }, {}], 7: [function (t, n, o) {
+            !function (i, r) {
+                if ("function" == typeof e && e.amd) e(["module", "select"], r); else if ("undefined" != typeof o) r(n, t("select")); else {
                     var a = {exports: {}};
-                    r(a, o.select), o.clipboardAction = a.exports
+                    r(a, i.select), i.clipboardAction = a.exports
                 }
             }(this, function (e, t) {
                 "use strict";
@@ -23410,28 +23390,28 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
                     return e && e.__esModule ? e : {default: e}
                 }
 
-                function i(e, t) {
+                function o(e, t) {
                     if (!(e instanceof t))throw new TypeError("Cannot call a class as a function")
                 }
 
-                var o = n(t), r = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (e) {
+                var i = n(t), r = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (e) {
                         return typeof e
                     } : function (e) {
                         return e && "function" == typeof Symbol && e.constructor === Symbol && e !== Symbol.prototype ? "symbol" : typeof e
                     }, a = function () {
                     function e(e, t) {
                         for (var n = 0; n < t.length; n++) {
-                            var i = t[n];
-                            i.enumerable = i.enumerable || !1, i.configurable = !0, "value" in i && (i.writable = !0), Object.defineProperty(e, i.key, i)
+                            var o = t[n];
+                            o.enumerable = o.enumerable || !1, o.configurable = !0, "value" in o && (o.writable = !0), Object.defineProperty(e, o.key, o)
                         }
                     }
 
-                    return function (t, n, i) {
-                        return n && e(t.prototype, n), i && e(t, i), t
+                    return function (t, n, o) {
+                        return n && e(t.prototype, n), o && e(t, o), t
                     }
                 }(), c = function () {
                     function e(t) {
-                        i(this, e), this.resolveOptions(t), this.initSelection()
+                        o(this, e), this.resolveOptions(t), this.initSelection()
                     }
 
                     return a(e, [{
@@ -23449,8 +23429,8 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
                             this.removeFake(), this.fakeHandlerCallback = function () {
                                 return t.removeFake()
                             }, this.fakeHandler = document.body.addEventListener("click", this.fakeHandlerCallback) || !0, this.fakeElem = document.createElement("textarea"), this.fakeElem.style.fontSize = "12pt", this.fakeElem.style.border = "0", this.fakeElem.style.padding = "0", this.fakeElem.style.margin = "0", this.fakeElem.style.position = "absolute", this.fakeElem.style[n ? "right" : "left"] = "-9999px";
-                            var i = window.pageYOffset || document.documentElement.scrollTop;
-                            this.fakeElem.addEventListener("focus", window.scrollTo(0, i)), this.fakeElem.style.top = i + "px", this.fakeElem.setAttribute("readonly", ""), this.fakeElem.value = this.text, document.body.appendChild(this.fakeElem), this.selectedText = (0, o.default)(this.fakeElem), this.copyText()
+                            var o = window.pageYOffset || document.documentElement.scrollTop;
+                            this.fakeElem.style.top = o + "px", this.fakeElem.setAttribute("readonly", ""), this.fakeElem.value = this.text, document.body.appendChild(this.fakeElem), this.selectedText = (0, i.default)(this.fakeElem), this.copyText()
                         }
                     }, {
                         key: "removeFake", value: function e() {
@@ -23458,7 +23438,7 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
                         }
                     }, {
                         key: "selectTarget", value: function e() {
-                            this.selectedText = (0, o.default)(this.target), this.copyText()
+                            this.selectedText = (0, i.default)(this.target), this.copyText()
                         }
                     }, {
                         key: "copyText", value: function e() {
@@ -23509,15 +23489,15 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
                 }();
                 e.exports = c
             })
-        }, {select: 5}], 8: [function (t, n, i) {
-            !function (o, r) {
-                if ("function" == typeof e && e.amd) e(["module", "./clipboard-action", "tiny-emitter", "good-listener"], r); else if ("undefined" != typeof i) r(n, t("./clipboard-action"), t("tiny-emitter"), t("good-listener")); else {
+        }, {select: 5}], 8: [function (t, n, o) {
+            !function (i, r) {
+                if ("function" == typeof e && e.amd) e(["module", "./clipboard-action", "tiny-emitter", "good-listener"], r); else if ("undefined" != typeof o) r(n, t("./clipboard-action"), t("tiny-emitter"), t("good-listener")); else {
                     var a = {exports: {}};
-                    r(a, o.clipboardAction, o.tinyEmitter, o.goodListener), o.clipboard = a.exports
+                    r(a, i.clipboardAction, i.tinyEmitter, i.goodListener), i.clipboard = a.exports
                 }
-            }(this, function (e, t, n, i) {
+            }(this, function (e, t, n, o) {
                 "use strict";
-                function o(e) {
+                function i(e) {
                     return e && e.__esModule ? e : {default: e}
                 }
 
@@ -23547,22 +23527,22 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
                     if (t.hasAttribute(n))return t.getAttribute(n)
                 }
 
-                var s = o(t), u = o(n), f = o(i), d = function () {
+                var u = i(t), s = i(n), f = i(o), d = function () {
                     function e(e, t) {
                         for (var n = 0; n < t.length; n++) {
-                            var i = t[n];
-                            i.enumerable = i.enumerable || !1, i.configurable = !0, "value" in i && (i.writable = !0), Object.defineProperty(e, i.key, i)
+                            var o = t[n];
+                            o.enumerable = o.enumerable || !1, o.configurable = !0, "value" in o && (o.writable = !0), Object.defineProperty(e, o.key, o)
                         }
                     }
 
-                    return function (t, n, i) {
-                        return n && e(t.prototype, n), i && e(t, i), t
+                    return function (t, n, o) {
+                        return n && e(t.prototype, n), o && e(t, o), t
                     }
                 }(), h = function (e) {
                     function t(e, n) {
                         r(this, t);
-                        var i = a(this, (t.__proto__ || Object.getPrototypeOf(t)).call(this));
-                        return i.resolveOptions(n), i.listenClick(e), i
+                        var o = a(this, (t.__proto__ || Object.getPrototypeOf(t)).call(this));
+                        return o.resolveOptions(n), o.listenClick(e), o
                     }
 
                     return c(t, e), d(t, [{
@@ -23580,7 +23560,7 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
                     }, {
                         key: "onClick", value: function e(t) {
                             var n = t.delegateTarget || t.currentTarget;
-                            this.clipboardAction && (this.clipboardAction = null), this.clipboardAction = new s.default({
+                            this.clipboardAction && (this.clipboardAction = null), this.clipboardAction = new u.default({
                                 action: this.action(n),
                                 target: this.target(n),
                                 text: this.text(n),
@@ -23605,8 +23585,15 @@ background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgb
                         key: "destroy", value: function e() {
                             this.listener.destroy(), this.clipboardAction && (this.clipboardAction.destroy(), this.clipboardAction = null)
                         }
+                    }], [{
+                        key: "isSupported", value: function e() {
+                            var t = arguments.length > 0 && void 0 !== arguments[0] ? arguments[0] : ["copy", "cut"], n = "string" == typeof t ? [t] : t, o = !!document.queryCommandSupported;
+                            return n.forEach(function (e) {
+                                o = o && !!document.queryCommandSupported(e)
+                            }), o
+                        }
                     }]), t
-                }(u.default);
+                }(s.default);
                 e.exports = h
             })
         }, {"./clipboard-action": 7, "good-listener": 4, "tiny-emitter": 6}]
@@ -28800,16 +28787,6 @@ ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "
         return edit;
     }
 
-    function parseColumns(columns) {
-        var colArray = columns.split(',');
-        var columnMap = new Map();
-        var n = colArray.length;
-        for (var i = 0; i < n; i++) {
-            columnMap.set(colArray[i].trim(), null);
-        }
-        return columnMap;
-    }
-
     $.extend(true, window, {
         qdb: {
             queryBatchSize: queryBatchSize,
@@ -28823,8 +28800,7 @@ ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "
             MSG_QUERY_FIND_N_EXEC: MSG_QUERY_FIND_N_EXEC,
             toExportUrl: toExportUrl,
             setHeight: setHeight,
-            createEditor: createEditor,
-            parseColumns: parseColumns
+            createEditor: createEditor
         }
     });
 })(jQuery);
@@ -31600,6 +31576,7 @@ const eChartsMacarons = {
         var divForm = div.find('.qdb-vis-form');
         var divPlaceholder = div.find('.qdb-vis-placeholder');
 
+        var usrUpdateCallaback = void 0;
         var activeItem = void 0;
 
         function updateVisibility() {
@@ -31641,14 +31618,19 @@ const eChartsMacarons = {
             }
         }
 
+        function callUsrUpdateCallback(item) {
+            if (usrUpdateCallaback) {
+                usrUpdateCallaback(item);
+            }
+        }
+
         function updateCallback() {
             var html = ulList.find('#' + this.id);
             html.html(this.name);
+            callUsrUpdateCallback(this);
         }
 
-        function addItem() {
-            var next = ulList.find('li').length + 1;
-            var item = createCallback(next);
+        function addItem0(item) {
             item.callback = updateCallback;
             var id = item.id;
             var name = item.name;
@@ -31656,13 +31638,30 @@ const eChartsMacarons = {
             map[id] = item;
             html.click(switchTo);
             html.appendTo(ulList);
+            return html;
+        }
+
+        function addItem() {
+            var next = ulList.find('li').length + 1;
+            var item = void 0;
+
+            do {
+                item = createCallback(next++);
+            } while (ulList.find('#' + item.id).length > 0);
+
+            item.timestamp = new Date().getTime();
+            var html = addItem0(item);
             updateVisibility();
             html.click();
+
+            callUsrUpdateCallback(item);
         }
 
         function deleteItem() {
             if (activeItem) {
                 var html = activeLi();
+                delete map[activeItem];
+                callUsrUpdateCallback();
                 if (html) {
                     clearCallback();
                     var next = html.next();
@@ -31670,9 +31669,40 @@ const eChartsMacarons = {
                         next = html.prev();
                     }
                     html.remove();
-                    next.click();
+                    if (next.length === 0) {
+                        activeItem = null;
+                    } else {
+                        next.click();
+                    }
                 }
             }
+
+            updateVisibility();
+        }
+
+        function getMap() {
+            return map;
+        }
+
+        function onUpdate(callback) {
+            usrUpdateCallaback = callback;
+        }
+
+        function setMap(items) {
+            map.splice(0, map.length);
+            var first = void 0;
+
+            for (var i = 0, n = items.length; i < n; i++) {
+                var html = addItem0(items[i]);
+                if (!first) {
+                    first = html;
+                }
+            }
+
+            if (first) {
+                first.click();
+            }
+
             updateVisibility();
         }
 
@@ -31681,7 +31711,11 @@ const eChartsMacarons = {
 
         updateVisibility();
 
-        return map;
+        return {
+            getMap: getMap,
+            setMap: setMap,
+            onUpdate: onUpdate
+        };
     };
 })(jQuery);
 //# sourceMappingURL=list-manager.js.map
@@ -31815,10 +31849,17 @@ const eChartsMacarons = {
 
             gQueryNameHelp.html('');
             gQueryName.removeClass('has-error');
-            query.name = fQueryName.value;
+
+            var changed = false;
+
+            if (query.name !== fQueryName.value) {
+                query.name = fQueryName.value;
+                changed = true;
+            }
 
             var q = fQueryText.getValue();
             if (query.text !== q) {
+                changed = true;
                 query.text = q;
                 var nq = normalizeQuery(q);
                 if (query.textNormalized !== nq) {
@@ -31827,6 +31868,10 @@ const eChartsMacarons = {
                         fetchQueryColumns(query);
                     }
                 }
+            }
+
+            if (changed) {
+                query.timestamp = new Date().getTime();
             }
 
             if (query.callback) {
@@ -31844,6 +31889,7 @@ const eChartsMacarons = {
         function clear() {
             fQueryName.value = '';
             fQueryText.value = '';
+            last = null;
         }
 
         fQueryName.onfocusout = copyToLast;
@@ -31887,7 +31933,6 @@ const eChartsMacarons = {
  ******************************************************************************/
 
 /*globals jQuery:false */
-/*globals qdb:false */
 
 (function ($) {
     'use strict';
@@ -31939,12 +31984,40 @@ const eChartsMacarons = {
         }
 
         function copyToMem(series) {
-            series.name = fName.value;
-            series.chartType = fChartType.value;
-            series.columns = fColumns.value;
-            series.stack = fStack.value;
-            series.color = fColor.value;
-            series.columnMap = qdb.parseColumns(series.columns);
+            var changed = false;
+            if (series.name !== fName.value) {
+                series.name = fName.value;
+                changed = true;
+            }
+
+            if (series.chartType !== fChartType.value) {
+                series.chartType = fChartType.value;
+                changed = true;
+            }
+
+            if (series.columns !== fColumns.value) {
+                series.columns = fColumns.value;
+                changed = true;
+            }
+
+            if (series.stack !== fStack.value) {
+                series.stack = fStack.value;
+                changed = true;
+            }
+
+            if (series.color !== fColor.value) {
+                series.color = fColor.value;
+                changed = true;
+            }
+
+            if (changed) {
+                series.timestamp = new Date().getTime();
+            }
+
+            if (series.callback) {
+                series.callback();
+            }
+
             return true;
         }
 
@@ -31967,6 +32040,7 @@ const eChartsMacarons = {
         fColumns.onfocusout = copyToLast;
         fStack.onfocusout = copyToLast;
         fColor.onfocusout = copyToLast;
+
         return div.listManager(newQuery, copyToForm, copyToMem, clear);
     };
 })(jQuery);
@@ -32029,6 +32103,9 @@ const eChartsMacarons = {
         function copyToForm(axis) {
             last = axis;
 
+            console.log('copyToForm');
+            console.log(axis);
+
             fName.value = axis.name;
             if (axis.type) {
                 fType.value = axis.type;
@@ -32057,11 +32134,39 @@ const eChartsMacarons = {
 
         function copyToMem(axis) {
             console.log('axis copy to mem');
-            axis.name = fName.value;
-            axis.type = fType.value;
-            axis.valueType = fValueType.value;
-            axis.column = fColumn.value;
-            axis.values = fValues.value;
+            var changed = false;
+            if (axis.name !== fName.value) {
+                axis.name = fName.value;
+                changed = true;
+            }
+
+            if (axis.type !== fType.value) {
+                axis.type = fType.value;
+                changed = true;
+            }
+
+            if (axis.valueType !== fValueType.value) {
+                axis.valueType = fValueType.value;
+                changed = true;
+            }
+
+            if (axis.column !== fColumn.value) {
+                axis.column = fColumn.value;
+                changed = true;
+            }
+
+            if (axis.values !== fValues.value) {
+                axis.values = fValues.value;
+                changed = true;
+            }
+
+            if (changed) {
+                axis.timestamp = new Date().getTime();
+            }
+
+            if (axis.callback) {
+                axis.callback();
+            }
             return true;
         }
 
@@ -32137,9 +32242,11 @@ const eChartsMacarons = {
     var forms = panels.find('#vis-forms');
     var footer = $('.footer')[0];
 
+    var visBuilder = void 0;
     var chart = void 0;
     var visible = false;
     var formsHeight = 450;
+    var lastSaveTimestamp = -1;
 
     function toggleVisibility(x, name) {
         if (name === 'visualisation') {
@@ -32178,6 +32285,67 @@ const eChartsMacarons = {
         $(window).trigger('resize');
     }
 
+    function saveState(item) {
+        if (item === undefined || lastSaveTimestamp < item.timestamp) {
+            var state = visBuilder.serializeState();
+            if (item) {
+                lastSaveTimestamp = item.timestamp;
+            }
+
+            console.log('serializing');
+            console.log(state);
+            localStorage.setItem('vis', JSON.stringify(state));
+        }
+    }
+
+    function buildChartWhenReady(status, options) {
+        switch (status) {
+            case 'done':
+                if (options) {
+                    console.log('options arrived');
+                    console.log(JSON.stringify(options));
+                    chart.setOption(options);
+                }
+                break;
+            default:
+                console.log(status);
+                break;
+        }
+    }
+
+    function buildChart() {
+        visBuilder.generateOptions(buildChartWhenReady);
+    }
+
+    function loadState(queryForm, axisForm, seriesForm) {
+        if (typeof Storage !== 'undefined') {
+            var vis = localStorage.getItem('vis');
+
+            if (vis) {
+                var state = JSON.parse(vis);
+                if (state) {
+                    console.log('loading');
+                    console.log(state);
+                    if (state.queries) {
+                        queryForm.setMap(state.queries);
+                    }
+
+                    if (state.axis) {
+                        axisForm.setMap(state.axis);
+                    }
+
+                    if (state.series) {
+                        seriesForm.setMap(state.series);
+                    }
+                }
+            }
+
+            queryForm.onUpdate(saveState);
+            axisForm.onUpdate(saveState);
+            seriesForm.onUpdate(saveState);
+        }
+    }
+
     function setup(bus) {
         $(window).bind('resize', resize);
         bus.on(qdb.MSG_ACTIVE_PANEL, toggleVisibility);
@@ -32185,41 +32353,16 @@ const eChartsMacarons = {
         chart = echarts.init(canvas[0], eChartsMacarons);
         $('#vis-splitter').splitter(bus, 'vis', 300, formsHeight);
 
-        var mapQueries = $('#vis-tab-queries').queryForm();
-        var mapSeries = $('#vis-tab-series').seriesForm();
-        var mapAxis = $('#vis-tab-axis').axisForm();
+        var queryForm = $('#vis-tab-queries').queryForm();
+        var seriesForm = $('#vis-tab-series').seriesForm();
+        var axisForm = $('#vis-tab-axis').axisForm();
 
-        var visBuilder = new VisBuilder(mapQueries, mapSeries, mapAxis);
+        visBuilder = new VisBuilder(queryForm.getMap(), seriesForm.getMap(), axisForm.getMap());
+        loadState(queryForm, axisForm, seriesForm);
 
-        $('#btnVisBuild').click(function () {
-            var options = {
-                xAxis: [{
-                    type: 'category',
-                    boundaryGap: false,
-                    data: [1, 2, 3, 4, 5, 6, 7]
-                }],
-                yAxis: [{
-                    type: 'value'
-                }],
-                series: [{
-                    name: '最高气温',
-                    type: 'line',
-                    data: [11, 11, 15, 13, 12, 13, 10]
-                }, {
-                    name: '最低气温',
-                    type: 'line',
-                    data: [1, -2, 2, 5, 3, 2, 0]
-                }]
-            };
-
-            chart.setOption(options);
-        });
-        $('#btnVisFetch').click(function () {
-            visBuilder.generateOptions(function (status, options) {
-                console.log(status);
-                console.log(options);
-                chart.setOption(options);
-            });
+        $('#btnVisFetch').click(buildChart);
+        $('#btnVisReload').click(function () {
+            loadState(queryForm, seriesForm, axisForm);
         });
     }
 
@@ -32244,18 +32387,51 @@ function VisBuilder(mapQueries, mapSeries, mapAxis) {
     this.mapAxis = mapAxis;
 }
 
-function isReady(mapSeries) {
+function isReady(map) {
     'use strict';
 
-    for (var sk in mapSeries) {
-        if (mapSeries.hasOwnProperty(sk)) {
-            var series = mapSeries[sk];
+    for (var sk in map) {
+        if (map.hasOwnProperty(sk)) {
+            var series = map[sk];
             if (!series.ready) {
                 return false;
             }
         }
     }
     return true;
+}
+
+function invalidate(map) {
+    'use strict';
+
+    for (var k in map) {
+        if (map.hasOwnProperty(k)) {
+            map[k].ready = false;
+        }
+    }
+}
+
+function parseColumns(columns) {
+    'use strict';
+
+    var colArray = columns.split(',');
+    var columnMap = new Map();
+    var n = colArray.length;
+    for (var i = 0; i < n; i++) {
+        columnMap.set(colArray[i].trim(), null);
+    }
+    return columnMap;
+}
+
+function parseColumnsToMap(map) {
+    'use strict';
+
+    for (var sk in map) {
+        if (map.hasOwnProperty(sk)) {
+            var e = map[sk];
+            e.columnMap = parseColumns(e.columns);
+        }
+    }
 }
 
 function createColumnHash(columns) {
@@ -32287,6 +32463,14 @@ function assignDataToSeriesColumns(mapSeries, queryNamePrefix, queryColHash, ds)
     for (var sk in mapSeries) {
         if (mapSeries.hasOwnProperty(sk)) {
             var series = mapSeries[sk];
+
+            if (series.ready) {
+                continue;
+            }
+
+            console.log('analysing series');
+            console.log(series);
+            console.log(queryColHash);
             var columnMap = series.columnMap;
 
             series.ready = true;
@@ -32344,6 +32528,10 @@ function assignDataToAxis(mapAxis, queryNamePrefix, queryColHash, ds) {
     for (var ak in mapAxis) {
         if (mapAxis.hasOwnProperty(ak)) {
             var axis = mapAxis[ak];
+            if (axis.ready) {
+                continue;
+            }
+
             if (axis.valueType === 'Category column') {
                 var col = axis.column.startsWith(queryNamePrefix) ? axis.column.substr(prefixLen, axis.column.length - prefixLen) : axis.column;
                 var colDef = queryColHash[col];
@@ -32359,6 +32547,22 @@ function assignDataToAxis(mapAxis, queryNamePrefix, queryColHash, ds) {
             }
         }
     }
+}
+
+function generateLegend(mapSeries) {
+    'use strict';
+
+    var data = [];
+    for (var sk in mapSeries) {
+        if (mapSeries.hasOwnProperty(sk)) {
+            var series = mapSeries[sk];
+            data.push(series.name);
+        }
+    }
+
+    return {
+        data: data
+    };
 }
 
 function generateOptionSeries(mapSeries) {
@@ -32401,9 +32605,12 @@ function generateOptionSeries(mapSeries) {
                 name: series.name
             };
 
+            chartSeries.stack = series.stack;
+
             switch (series.chartType) {
                 case 'Line':
                     chartSeries.type = 'line';
+                    chartSeries.itemStyle = {normal: {lineStyle: {type: 'solid'}}};
                     break;
                 case 'Bar':
                     chartSeries.type = 'bar';
@@ -32503,18 +32710,26 @@ function parseQueryData(response, status, jqXHR) {
     var done = jqXHR.doneCallback;
     var queryColHash = createColumnHash(columns);
 
+    console.log('query responded: ' + queryName);
+
     assignDataToSeriesColumns(jqXHR.mapSeries, queryName, queryColHash, response.dataset);
     assignDataToAxis(jqXHR.mapAxis, queryName, queryColHash, response.dataset);
 
     // check if all series are ready
 
-    if (!isReady(jqXHR.mapSeries) || !isReady(jqXHR.mapAxis)) {
+    var seriesReady = isReady(jqXHR.mapSeries);
+    var axisReady = isReady(jqXHR.mapAxis);
+
+    console.log('series ready: ' + seriesReady);
+    console.log('axis ready: ' + axisReady);
+
+    if (!seriesReady || !axisReady) {
         done('incomplete');
         return;
     }
 
+    jqXHR.chartOptions.legend = generateLegend(jqXHR.mapSeries);
     jqXHR.chartOptions.series = generateOptionSeries(jqXHR.mapSeries);
-    console.log(jqXHR.mapAxis);
     var axis = generateOptionAxis(jqXHR.mapAxis);
     jqXHR.chartOptions.yAxis = axis.yAxis;
     jqXHR.chartOptions.xAxis = axis.xAxis;
@@ -32525,6 +32740,10 @@ VisBuilder.prototype.generateOptions = function (done) {
     'use strict';
 
     var options = {};
+
+    parseColumnsToMap(this.mapSeries);
+    invalidate(this.mapSeries);
+    invalidate(this.mapAxis);
 
     for (var q in this.mapQueries) {
         if (this.mapQueries.hasOwnProperty(q)) {
@@ -32544,6 +32763,99 @@ VisBuilder.prototype.generateOptions = function (done) {
             jqXHR.done(parseQueryData).fail(reportQueryError);
         }
     }
+};
+
+function mapChanged(map, timestamp) {
+    'use strict';
+
+    var changed = false;
+    for (var k in map) {
+        if (map.hasOwnProperty(k)) {
+            var entry = map[k];
+            if (entry.timestamp && entry.timestamp > timestamp) {
+                changed = true;
+                break;
+            }
+        }
+    }
+    console.log('mapChanged');
+    console.log(map);
+    console.log(changed);
+    return changed;
+}
+
+VisBuilder.prototype.stateChanged = function (timestamp) {
+    'use strict';
+
+    return mapChanged(this.mapQueries, timestamp) || mapChanged(this.mapAxis, timestamp) || mapChanged(this.mapSeries, timestamp);
+};
+
+VisBuilder.prototype.serializeState = function () {
+    'use strict';
+
+    var queries = [];
+    var timestamp = 0;
+
+    for (var k in this.mapQueries) {
+        if (this.mapQueries.hasOwnProperty(k)) {
+            var query = this.mapQueries[k];
+            queries.push({
+                id: query.id,
+                name: query.name,
+                text: query.text,
+                textNormalized: query.textNormalized
+            });
+
+            if (query.timestamp && query.timestamp > timestamp) {
+                timestamp = query.timestamp;
+            }
+        }
+    }
+
+    var axis = [];
+
+    for (var _k in this.mapAxis) {
+        if (this.mapAxis.hasOwnProperty(_k)) {
+            var ax = this.mapAxis[_k];
+            axis.push({
+                id: ax.id,
+                name: ax.name,
+                type: ax.type,
+                valueType: ax.valueType,
+                column: ax.column
+            });
+
+            if (ax.timestamp && ax.timestamp > timestamp) {
+                timestamp = axis.timestamp;
+            }
+        }
+    }
+
+    var series = [];
+
+    for (var _k2 in this.mapSeries) {
+        if (this.mapSeries.hasOwnProperty(_k2)) {
+            var ser = this.mapSeries[_k2];
+            series.push({
+                id: ser.id,
+                name: ser.name,
+                chartType: ser.chartType,
+                stack: ser.stack,
+                columns: ser.columns
+            });
+
+            if (ser.timestamp && ser.timestamp > timestamp) {
+                timestamp = ser.timestamp;
+            }
+        }
+    }
+
+    return {
+        queries: queries,
+        axis: axis,
+        series: series,
+        timestamp: timestamp
+    };
 };
 //# sourceMappingURL=vis-builder.js.map
 

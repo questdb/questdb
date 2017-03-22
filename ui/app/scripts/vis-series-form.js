@@ -29,7 +29,6 @@
  ******************************************************************************/
 
 /*globals jQuery:false */
-/*globals qdb:false */
 
 (function ($) {
         'use strict';
@@ -80,12 +79,40 @@
             }
 
             function copyToMem(series) {
-                series.name = fName.value;
-                series.chartType = fChartType.value;
-                series.columns = fColumns.value;
-                series.stack = fStack.value;
-                series.color = fColor.value;
-                series.columnMap = qdb.parseColumns(series.columns);
+                let changed = false;
+                if (series.name !== fName.value) {
+                    series.name = fName.value;
+                    changed = true;
+                }
+
+                if (series.chartType !== fChartType.value) {
+                    series.chartType = fChartType.value;
+                    changed = true;
+                }
+
+                if (series.columns !== fColumns.value) {
+                    series.columns = fColumns.value;
+                    changed = true;
+                }
+
+                if (series.stack !== fStack.value) {
+                    series.stack = fStack.value;
+                    changed = true;
+                }
+
+                if (series.color !== fColor.value) {
+                    series.color = fColor.value;
+                    changed = true;
+                }
+
+                if (changed) {
+                    series.timestamp = new Date().getTime();
+                }
+
+                if (series.callback) {
+                    series.callback();
+                }
+
                 return true;
             }
 
@@ -108,6 +135,7 @@
             fColumns.onfocusout = copyToLast;
             fStack.onfocusout = copyToLast;
             fColor.onfocusout = copyToLast;
+
             return div.listManager(newQuery, copyToForm, copyToMem, clear);
         };
     }(jQuery)

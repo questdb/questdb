@@ -124,10 +124,17 @@
 
                 gQueryNameHelp.html('');
                 gQueryName.removeClass('has-error');
-                query.name = fQueryName.value;
+
+                let changed = false;
+
+                if (query.name !== fQueryName.value) {
+                    query.name = fQueryName.value;
+                    changed = true;
+                }
 
                 const q = fQueryText.getValue();
                 if (query.text !== q) {
+                    changed = true;
                     query.text = q;
                     const nq = normalizeQuery(q);
                     if (query.textNormalized !== nq) {
@@ -136,6 +143,10 @@
                             fetchQueryColumns(query);
                         }
                     }
+                }
+
+                if (changed) {
+                    query.timestamp = new Date().getTime();
                 }
 
                 if (query.callback) {
@@ -153,6 +164,7 @@
             function clear() {
                 fQueryName.value = '';
                 fQueryText.value = '';
+                last = null;
             }
 
             fQueryName.onfocusout = copyToLast;

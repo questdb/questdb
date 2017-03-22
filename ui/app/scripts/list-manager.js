@@ -45,6 +45,7 @@
             const divForm = div.find('.qdb-vis-form');
             const divPlaceholder = div.find('.qdb-vis-placeholder');
 
+            let usrUpdateCallaback;
             let activeItem;
 
             function updateVisibility() {
@@ -86,14 +87,19 @@
                 }
             }
 
+            function callUsrUpdateCallback(item) {
+                if (usrUpdateCallaback) {
+                    usrUpdateCallaback(item);
+                }
+            }
+
             function updateCallback() {
                 const html = ulList.find('#' + this.id);
                 html.html(this.name);
+                callUsrUpdateCallback(this);
             }
 
-            function addItem() {
-                const next = ulList.find('li').length + 1;
-                const item = createCallback(next);
+            function addItem0(item) {
                 item.callback = updateCallback;
                 const id = item.id;
                 const name = item.name;
@@ -101,13 +107,30 @@
                 map[id] = item;
                 html.click(switchTo);
                 html.appendTo(ulList);
+                return html;
+            }
+
+            function addItem() {
+                let next = ulList.find('li').length + 1;
+                let item;
+
+                do {
+                    item = createCallback(next++);
+                } while (ulList.find('#' + item.id).length > 0);
+
+                item.timestamp = new Date().getTime();
+                const html = addItem0(item);
                 updateVisibility();
                 html.click();
+
+                callUsrUpdateCallback(item);
             }
 
             function deleteItem() {
                 if (activeItem) {
                     const html = activeLi();
+                    delete map[activeItem];
+                    callUsrUpdateCallback();
                     if (html) {
                         clearCallback();
                         let next = html.next();
@@ -115,9 +138,40 @@
                             next = html.prev();
                         }
                         html.remove();
-                        next.click();
+                        if (next.length === 0) {
+                            activeItem = null;
+                        } else {
+                            next.click();
+                        }
                     }
                 }
+
+                updateVisibility();
+            }
+
+            function getMap() {
+                return map;
+            }
+
+            function onUpdate(callback) {
+                usrUpdateCallaback = callback;
+            }
+
+            function setMap(items) {
+                map.splice(0, map.length);
+                let first;
+
+                for (let i = 0, n = items.length; i < n; i++) {
+                    const html = addItem0(items[i]);
+                    if (!first) {
+                        first = html;
+                    }
+                }
+
+                if (first) {
+                    first.click();
+                }
+
                 updateVisibility();
             }
 
@@ -126,7 +180,11 @@
 
             updateVisibility();
 
-            return map;
+            return {
+                getMap,
+                setMap,
+                onUpdate
+            };
         };
     }(jQuery)
 );

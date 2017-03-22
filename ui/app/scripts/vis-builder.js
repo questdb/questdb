@@ -9,18 +9,51 @@ function VisBuilder(mapQueries, mapSeries, mapAxis) {
     this.mapAxis = mapAxis;
 }
 
-function isReady(mapSeries) {
+function isReady(map) {
     'use strict';
 
-    for (let sk in mapSeries) {
-        if (mapSeries.hasOwnProperty(sk)) {
-            const series = mapSeries[sk];
+    for (let sk in map) {
+        if (map.hasOwnProperty(sk)) {
+            const series = map[sk];
             if (!series.ready) {
                 return false;
             }
         }
     }
     return true;
+}
+
+function invalidate(map) {
+    'use strict';
+
+    for (let k in map) {
+        if (map.hasOwnProperty(k)) {
+            map[k].ready = false;
+        }
+    }
+}
+
+function parseColumns(columns) {
+    'use strict';
+
+    const colArray = columns.split(',');
+    const columnMap = new Map();
+    const n = colArray.length;
+    for (let i = 0; i < n; i++) {
+        columnMap.set(colArray[i].trim(), null);
+    }
+    return columnMap;
+}
+
+function parseColumnsToMap(map) {
+    'use strict';
+
+    for (let sk in map) {
+        if (map.hasOwnProperty(sk)) {
+            const e = map[sk];
+            e.columnMap = parseColumns(e.columns);
+        }
+    }
 }
 
 function createColumnHash(columns) {
@@ -52,6 +85,14 @@ function assignDataToSeriesColumns(mapSeries, queryNamePrefix, queryColHash, ds)
     for (let sk in mapSeries) {
         if (mapSeries.hasOwnProperty(sk)) {
             const series = mapSeries[sk];
+
+            if (series.ready) {
+                continue;
+            }
+
+            console.log('analysing series');
+            console.log(series);
+            console.log(queryColHash);
             const columnMap = series.columnMap;
 
             series.ready = true;
@@ -88,6 +129,10 @@ function assignDataToAxis(mapAxis, queryNamePrefix, queryColHash, ds) {
     for (let ak in mapAxis) {
         if (mapAxis.hasOwnProperty(ak)) {
             const axis = mapAxis[ak];
+            if (axis.ready) {
+                continue;
+            }
+
             if (axis.valueType === 'Category column') {
                 const col = axis.column.startsWith(queryNamePrefix) ? axis.column.substr(prefixLen, axis.column.length - prefixLen) : axis.column;
                 const colDef = queryColHash[col];
@@ -103,6 +148,22 @@ function assignDataToAxis(mapAxis, queryNamePrefix, queryColHash, ds) {
             }
         }
     }
+}
+
+function generateLegend(mapSeries) {
+    'use strict';
+
+    const data = [];
+    for (let sk in mapSeries) {
+        if (mapSeries.hasOwnProperty(sk)) {
+            const series = mapSeries[sk];
+            data.push(series.name);
+        }
+    }
+
+    return {
+        data
+    };
 }
 
 function generateOptionSeries(mapSeries) {
@@ -124,9 +185,12 @@ function generateOptionSeries(mapSeries) {
                 name: series.name
             };
 
+            chartSeries.stack = series.stack;
+
             switch (series.chartType) {
                 case 'Line':
                     chartSeries.type = 'line';
+                    chartSeries.itemStyle = {normal: {lineStyle: {type: 'solid'}}};
                     break;
                 case 'Bar':
                     chartSeries.type = 'bar';
@@ -226,18 +290,26 @@ function parseQueryData(response, status, jqXHR) {
     const done = jqXHR.doneCallback;
     const queryColHash = createColumnHash(columns);
 
+    console.log('query responded: ' + queryName);
+
     assignDataToSeriesColumns(jqXHR.mapSeries, queryName, queryColHash, response.dataset);
     assignDataToAxis(jqXHR.mapAxis, queryName, queryColHash, response.dataset);
 
     // check if all series are ready
 
-    if (!isReady(jqXHR.mapSeries) || !isReady(jqXHR.mapAxis)) {
+    const seriesReady = isReady(jqXHR.mapSeries);
+    const axisReady = isReady(jqXHR.mapAxis);
+
+    console.log('series ready: ' + seriesReady);
+    console.log('axis ready: ' + axisReady);
+
+    if (!seriesReady || !axisReady) {
         done('incomplete');
         return;
     }
 
+    jqXHR.chartOptions.legend = generateLegend(jqXHR.mapSeries);
     jqXHR.chartOptions.series = generateOptionSeries(jqXHR.mapSeries);
-    console.log(jqXHR.mapAxis);
     const axis = generateOptionAxis(jqXHR.mapAxis);
     jqXHR.chartOptions.yAxis = axis.yAxis;
     jqXHR.chartOptions.xAxis = axis.xAxis;
@@ -248,6 +320,10 @@ VisBuilder.prototype.generateOptions = function (done) {
     'use strict';
 
     const options = {};
+
+    parseColumnsToMap(this.mapSeries);
+    invalidate(this.mapSeries);
+    invalidate(this.mapAxis);
 
     for (let q in this.mapQueries) {
         if (this.mapQueries.hasOwnProperty(q)) {
@@ -267,4 +343,97 @@ VisBuilder.prototype.generateOptions = function (done) {
             jqXHR.done(parseQueryData).fail(reportQueryError);
         }
     }
+};
+
+function mapChanged(map, timestamp) {
+    'use strict';
+
+    let changed = false;
+    for (let k in map) {
+        if (map.hasOwnProperty(k)) {
+            const entry = map[k];
+            if (entry.timestamp && entry.timestamp > timestamp) {
+                changed = true;
+                break;
+            }
+        }
+    }
+    console.log('mapChanged');
+    console.log(map);
+    console.log(changed);
+    return changed;
+}
+
+VisBuilder.prototype.stateChanged = function (timestamp) {
+    'use strict';
+
+    return mapChanged(this.mapQueries, timestamp) || mapChanged(this.mapAxis, timestamp) || mapChanged(this.mapSeries, timestamp);
+};
+
+VisBuilder.prototype.serializeState = function () {
+    'use strict';
+
+    const queries = [];
+    let timestamp = 0;
+
+    for (let k in this.mapQueries) {
+        if (this.mapQueries.hasOwnProperty(k)) {
+            const query = this.mapQueries[k];
+            queries.push({
+                id: query.id,
+                name: query.name,
+                text: query.text,
+                textNormalized: query.textNormalized
+            });
+
+            if (query.timestamp && query.timestamp > timestamp) {
+                timestamp = query.timestamp;
+            }
+        }
+    }
+
+    const axis = [];
+
+    for (let k in this.mapAxis) {
+        if (this.mapAxis.hasOwnProperty(k)) {
+            const ax = this.mapAxis[k];
+            axis.push({
+                id: ax.id,
+                name: ax.name,
+                type: ax.type,
+                valueType: ax.valueType,
+                column: ax.column
+            });
+
+            if (ax.timestamp && ax.timestamp > timestamp) {
+                timestamp = axis.timestamp;
+            }
+        }
+    }
+
+    const series = [];
+
+    for (let k in this.mapSeries) {
+        if (this.mapSeries.hasOwnProperty(k)) {
+            const ser = this.mapSeries[k];
+            series.push({
+                id: ser.id,
+                name: ser.name,
+                chartType: ser.chartType,
+                stack: ser.stack,
+                columns: ser.columns
+            });
+
+            if (ser.timestamp && ser.timestamp > timestamp) {
+                timestamp = ser.timestamp;
+            }
+        }
+    }
+
+    return {
+        queries,
+        axis,
+        series,
+        timestamp
+    };
 };
