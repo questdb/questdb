@@ -59,6 +59,21 @@
                 }
             }
 
+            function clearUL() {
+                const node = ulList[0];
+                while (node.firstChild) {
+                    node.removeChild(node.firstChild);
+                }
+            }
+
+            function clearMap() {
+                for (let k in map) {
+                    if (map.hasOwnProperty(k)) {
+                        delete map[k];
+                    }
+                }
+            }
+
             function activeLi() {
                 return ulList.find('#' + activeItem);
             }
@@ -158,7 +173,13 @@
             }
 
             function setMap(items) {
-                map.splice(0, map.length);
+
+                clearUL();
+                clearMap();
+
+                console.log('after splice');
+                console.log(map);
+
                 let first;
 
                 for (let i = 0, n = items.length; i < n; i++) {

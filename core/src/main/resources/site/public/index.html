@@ -61,109 +61,109 @@
 <div id="wrapper">
 
     <nav class="navbar-default navbar-static-side" role="navigation">
-        <div class="sidebar-collapse">
-            <ul class="nav metismenu" id="side-menu">
-                <li class="nav-header">
-                    <div class="logo-element">
-                        <img src="../images/favicon@76x-8.png" style="max-height: 30px; margin-left: -7px;">
-                    </div>
-                </li>
-                <li>
-                    <a id="nav-console" href="#"><i class="fa fa-bars"></i><span class="nav-pointer"></span></a>
-                </li>
-                <li>
-                    <a id="nav-visualisation" href="#"><i class="fa fa-pie-chart"></i><span class="nav-pointer"></span></a>
-                </li>
-                <li>
-                    <a id="nav-import" href="#"><i class="fa fa-upload"></i><span class="nav-pointer"></span></a>
-                </li>
-            </ul>
-        </div>
-    </nav>
+    <div class="sidebar-collapse">
+        <ul class="nav metismenu" id="side-menu">
+            <li class="nav-header">
+                <div class="logo-element">
+                    <img src="../images/favicon@76x-8.png" style="max-height: 30px; margin-left: -7px;">
+                </div>
+            </li>
+            <li>
+                <a id="nav-console" href="#"><i class="fa fa-bars"></i><span class="nav-pointer"></span></a>
+            </li>
+            <li>
+                <a id="nav-visualisation" href="#"><i class="fa fa-pie-chart"></i><span class="nav-pointer"></span></a>
+            </li>
+            <li>
+                <a id="nav-import" href="#"><i class="fa fa-upload"></i><span class="nav-pointer"></span></a>
+            </li>
+        </ul>
+    </div>
+</nav>
 
 
     <div id="page-wrapper" class="gray-bg">
 
         <div class="row wrapper border-bottom white-bg page-heading js-sql-panel">
-            <div class="col-lg-12">
-                <div class="section-title"><i class="fa fa-bars"></i> SQL console</div>
-                <div class="m-b-sm m-t-sm section-nav">
-                    <button class="btn btn-white btn-sm m-r-sm js-query-run" style="width: 80px;"><i
-                            class="fa fa-play"></i>Run
-                    </button>
+    <div class="col-lg-12">
+        <div class="section-title"><i class="fa fa-bars"></i> SQL console</div>
+        <div class="m-b-sm m-t-sm section-nav">
+            <button class="btn btn-white btn-sm m-r-sm js-query-run" style="width: 80px;"><i
+                    class="fa fa-play"></i>Run
+            </button>
 
-                    <div class="btn-group">
-                        <button id="js-toggle-grid" type="button" class="btn btn-white btn-sm active"><i
-                                class="fa fa-bars"></i>
-                        </button>
-                        <button id="js-toggle-chart" type="button" class="btn btn-white btn-sm"><i
-                                class="fa fa-pie-chart"></i>
-                        </button>
-                    </div>
-
-                    <button class="btn btn-white btn-sm js-query-refresh"><i class="fa fa-refresh"></i>
-                    </button>
-                    <button class="btn btn-white btn-sm js-query-export"><i class="fa fa-download"></i>
-                    </button>
-                    <div class="export-input-container">
-                        <label for="export-url" style="display: none;"></label><input id="export-url"
-                                                                                      class="js-export-url"
-                                                                                      type="text">
-                    </div>
-                    <button type="button" class="btn btn-white btn-sm js-export-copy-url"
-                            data-clipboard-target="#export-url"><i
-                            class="fa fa-files-o"></i></button>
-                    <button data-toggle="button" type="button"
-                            class="btn btn-white btn-sm js-editor-toggle-invisible"><i
-                            class="fa fa-paragraph"></i>
-                    </button>
-                </div>
+            <div class="btn-group">
+                <button id="js-toggle-grid" type="button" class="btn btn-white btn-sm active"><i
+                        class="fa fa-bars"></i>
+                </button>
+                <button id="js-toggle-chart" type="button" class="btn btn-white btn-sm"><i
+                        class="fa fa-pie-chart"></i>
+                </button>
             </div>
+
+            <button class="btn btn-white btn-sm js-query-refresh"><i class="fa fa-refresh"></i>
+            </button>
+            <button class="btn btn-white btn-sm js-query-export"><i class="fa fa-download"></i>
+            </button>
+            <div class="export-input-container">
+                <label for="export-url" style="display: none;"></label><input id="export-url"
+                                                                              class="js-export-url"
+                                                                              type="text">
+            </div>
+            <button type="button" class="btn btn-white btn-sm js-export-copy-url"
+                    data-clipboard-target="#export-url"><i
+                    class="fa fa-files-o"></i></button>
+            <button data-toggle="button" type="button"
+                    class="btn btn-white btn-sm js-editor-toggle-invisible"><i
+                    class="fa fa-paragraph"></i>
+            </button>
         </div>
+    </div>
+</div>
 
-        <div class="wrapper wrapper-content js-sql-panel">
-            <div class="row">
-                <div class="col-lg-12">
-                    <div class="ibox">
-                        <div id="console-top" class="ibox-content">
-                            <div id="editor">
-                                <!--<div id="debug"></div>-->
-                                <div id="sqlEditor" class="editor border-rounded-top-half">
-                                </div>
-                                <div class="query-progress-spinner js-query-spinner"></div>
-                                <div class="query-message query-message-ok js-query-message-panel">
-                                    <div class="query-time">
-                                        <i class="fa fa-clock-o"></i>
-                                        <div class="js-query-time">-</div>
-                                    </div>
-                                    <div class="js-query-message-text"></div>
-                                </div>
-                            </div>
+<div class="wrapper wrapper-content js-sql-panel">
+    <div class="row">
+        <div class="col-lg-12">
+            <div class="ibox">
+                <div id="console-top" class="ibox-content">
+                    <div id="editor">
+                        <!--<div id="debug"></div>-->
+                        <div id="sqlEditor" class="editor border-rounded-top-half">
                         </div>
-                    </div>
-                </div>
-            </div>
-            <div id="console-splitter" class="splitter"></div>
-            <div class="row">
-                <div class="col-lg-12">
-                    <div class="ibox">
-                        <div class="ibox-content">
-                            <div id="grid">
-                                <div class="qg-header-row"></div>
-                                <div class="qg-viewport">
-                                    <div class="qg-canvas"></div>
-                                </div>
+                        <div class="query-progress-spinner js-query-spinner"></div>
+                        <div class="query-message query-message-ok js-query-message-panel">
+                            <div class="query-time">
+                                <i class="fa fa-clock-o"></i>
+                                <div class="js-query-time">-</div>
                             </div>
+                            <div class="js-query-message-text"></div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
+    </div>
+    <div id="console-splitter" class="splitter"></div>
+    <div class="row">
+        <div class="col-lg-12">
+            <div class="ibox">
+                <div class="ibox-content">
+                    <div id="grid">
+                        <div class="qg-header-row"></div>
+                        <div class="qg-viewport">
+                            <div class="qg-canvas"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
 
         <div class="row js-vis-panel">
-            <div class="col-lg-12">
-                <div id="vis-menu" class="row wrapper border-bottom white-bg page-heading">
+    <div class="col-lg-12">
+        <div id="vis-menu" class="row wrapper border-bottom white-bg page-heading">
             <div class="col-lg-12">
                 <div class="section-title"><i class="fa fa-pie-chart"></i> Visualisation</div>
                 <div class="m-b-sm m-t-sm section-nav">
@@ -180,250 +180,234 @@
             </div>
         </div>
 
-                <div class="row">
+        <div class="row">
             <div class="col-lg-12">
                 <div id="vis-canvas"></div>
             </div>
         </div>
 
-                <div class="row">
-                    <div class="col-lg-12">
-                        <div id="vis-splitter" class="splitter"></div>
-                    </div>
-                </div>
+        <div class="row">
+            <div class="col-lg-12">
+                <div id="vis-splitter" class="splitter"></div>
+            </div>
+        </div>
 
-                <div id="vis-forms" class="row ibox-content">
-                    <div class="col-lg-12 v-fit">
-                        <div class="config-tabs">
-                            <ul class="nav nav-tabs ">
-                                <li class="active">
-                                    <a href="#vis-tab-queries" data-toggle="tab" aria-expanded="false"> Queries </a>
-                                </li>
-                                <li>
-                                    <a href="#vis-tab-axis" data-toggle="tab" aria-expanded="false"> Axis </a>
-                                </li>
-                                <li class="">
-                                    <a href="#vis-tab-series" data-toggle="tab" aria-expanded="false"> Series </a>
-                                </li>
-                                <li class="">
-                                    <a href="#vis-general" data-toggle="tab" aria-expanded="true"> General </a>
-                                </li>
-                            </ul>
-                            <div class="tab-content">
-                                <div class="tab-pane v-fit active" id="vis-tab-queries">
-                                    <div class="row v-fit">
-                                        <div class="col-lg-3 v-fit">
-                                            <div class="portlet v-fit">
-                                                <div class="portlet-title">
-                                                    <button type="button" class="btn btn-info qdb-list-add-btn"><i
-                                                            class="fa fa-plus" aria-hidden="true"></i>
-                                                    </button>
-                                                    <span>Query</span>
-                                                </div>
-                                                <div class="portlet-body">
-                                                    <div class="qdb-list">
-                                                        <ul>
-                                                        </ul>
-                                                    </div>
-                                                </div>
-                                            </div>
+        <div id="vis-forms" class="row ibox-content">
+            <div class="col-lg-12 v-fit">
+                <div class="config-tabs">
+                    <ul class="nav nav-tabs ">
+                        <li class="active">
+                            <a href="#vis-tab-queries" data-toggle="tab" aria-expanded="false"> Queries </a>
+                        </li>
+                        <li>
+                            <a href="#vis-tab-axis" data-toggle="tab" aria-expanded="false"> Axis </a>
+                        </li>
+                        <li class="">
+                            <a href="#vis-tab-series" data-toggle="tab" aria-expanded="false"> Series </a>
+                        </li>
+                        <li class="">
+                            <a href="#vis-general" data-toggle="tab" aria-expanded="true"> General </a>
+                        </li>
+                    </ul>
+                    <div class="tab-content">
+                        <div class="tab-pane v-fit active" id="vis-tab-queries">
+                            <div class="row v-fit">
+                                <div class="col-lg-3 v-fit">
+                                    <div class="portlet v-fit">
+    <div class="portlet-title">
+        <button type="button" class="btn btn-info qdb-list-add-btn"><i class="fa fa-plus" aria-hidden="true"></i>
+        </button>
+        <span>Query</span>
+    </div>
+    <div class="portlet-body">
+        <div class="qdb-list">
+            <ul>
+            </ul>
+        </div>
+    </div>
+</div>
 
-                                        </div>
-                                        <div class="col-lg-9 v-fit">
-                                            <div class="portlet qdb-vis-form v-fit">
-                                                <div class="portlet-title">
-                                                    <button type="button" class="btn btn-danger qdb-list-delete-btn"><i
-                                                            class="fa fa-trash-o"
-                                                            aria-hidden="true"></i> Delete
-                                                    </button>
-                                                    <span class="js-vis-title">Query_1</span>
-                                                </div>
-                                                <div class="portlet-body v-fit">
-                                                    <form role="form" class="v-fit">
-                                                        <div class="form-group qdb-vis-query-name">
-                                                            <label>Query name</label>
-                                                            <input id="_vis_frm_query_name" type="text"
-                                                                   class="form-control" placeholder="Enter query name">
-                                                            <div class="help-block with-errors"></div>
-                                                        </div>
-
-                                                        <div class="form-group qdb-vis-query-editor">
-                                                            <label for="_vis_frm_query_text">Query text</label>
-                                                            <div id="_vis_frm_query_text" class="form-control"></div>
-                                                        </div>
-                                                    </form>
-                                                </div>
-                                            </div>
-
-                                            <div class="qdb-vis-placeholder">
-
-                                                <h1>Nothing to display</h1>
-
-                                            </div>
-
-                                        </div>
-                                    </div>
                                 </div>
-                                <div class="tab-pane v-fit" id="vis-tab-axis">
-                                    <div class="row v-fit">
-                                        <div class="col-lg-3 v-fit">
-                                            <div class="portlet v-fit">
-                                                <div class="portlet-title">
-                                                    <button type="button" class="btn btn-info qdb-list-add-btn"><i
-                                                            class="fa fa-plus" aria-hidden="true"></i>
-                                                    </button>
-                                                    <span>Axis</span>
-                                                </div>
-                                                <div class="portlet-body">
-                                                    <div class="qdb-list">
-                                                        <ul>
-                                                        </ul>
-                                                    </div>
-                                                </div>
-                                            </div>
+                                <div class="col-lg-9 v-fit">
+                                    <div class="portlet qdb-vis-form v-fit">
+    <div class="portlet-title">
+        <button type="button" class="btn btn-danger qdb-list-delete-btn"><i class="fa fa-trash-o"
+                                                                            aria-hidden="true"></i> Delete
+        </button>
+        <span class="js-vis-title">Query_1</span>
+    </div>
+    <div class="portlet-body v-fit">
+        <form role="form" class="v-fit">
+            <div class="form-group qdb-vis-query-name">
+                <label>Query name</label>
+                <input id="_vis_frm_query_name" type="text" class="form-control" placeholder="Enter query name">
+                <div class="help-block with-errors"></div>
+            </div>
 
-                                        </div>
-                                        <div class="col-lg-9 v-fit">
-                                            <div class="portlet qdb-vis-form v-fit">
-                                                <div class="portlet-title">
-                                                    <button type="button" class="btn btn-danger qdb-list-delete-btn"><i
-                                                            class="fa fa-trash-o"
-                                                            aria-hidden="true"></i> Delete
-                                                    </button>
+            <div class="form-group qdb-vis-query-editor">
+                <label for="_vis_frm_query_text">Query text</label>
+                <div id="_vis_frm_query_text" class="form-control"></div>
+            </div>
+        </form>
+    </div>
+</div>
 
-                                                    <span class="js-vis-title">Axis details</span>
-                                                </div>
-                                                <div class="portlet-body">
-                                                    <form role="form" class="v-fit">
-                                                        <div class="form-group">
-                                                            <label>Axis name</label>
-                                                            <input id="_vis_frm_axis_name" type="text"
-                                                                   class="form-control" placeholder="Axis name">
-                                                        </div>
-                                                        <div class="form-group">
-                                                            <label>Axis direction</label>
-                                                            <select id="_vis_frm_axis_type" class="form-control">
-                                                                <option>X-axis</option>
-                                                                <option>Y-axis</option>
-                                                            </select>
-                                                        </div>
-                                                        <div class="form-group">
-                                                            <label>Axis value type</label>
-                                                            <select id="_vis_frm_axis_value_type" class="form-control">
-                                                                <option>Category column</option>
-                                                                <option>Category values</option>
-                                                                <option>Series value</option>
-                                                            </select>
-                                                        </div>
-                                                        <div class="form-group">
-                                                            <label>Column name</label>
-                                                            <input id="_vis_frm_axis_column" type="text"
-                                                                   class="form-control" placeholder="[query1.]column">
-                                                        </div>
-                                                        <div class="form-group">
-                                                            <label>Category values</label>
-                                                            <textarea id="_vis_frm_axis_values" class="form-control"
-                                                                      rows="4"></textarea>
-                                                        </div>
-                                                    </form>
-                                                </div>
-                                            </div>
+                                    <div class="qdb-vis-placeholder">
 
-                                            <div class="qdb-vis-placeholder">
+    <h1>Nothing to display</h1>
 
-                                                <h1>Nothing to display</h1>
+</div>
 
-                                            </div>
-
-                                        </div>
-                                    </div>
                                 </div>
-                                <div class="tab-pane v-fit" id="vis-tab-series">
-                                    <div class="row v-fit">
-                                        <div class="col-lg-3 v-fit">
-                                            <div class="portlet v-fit">
-                                                <div class="portlet-title">
-                                                    <button type="button" class="btn btn-info qdb-list-add-btn"><i
-                                                            class="fa fa-plus" aria-hidden="true"></i>
-                                                    </button>
-                                                    <span>Series</span>
-                                                </div>
-                                                <div class="portlet-body">
-                                                    <div class="qdb-list">
-                                                        <ul>
-                                                        </ul>
-                                                    </div>
-                                                </div>
-                                            </div>
+                            </div>
+                        </div>
+                        <div class="tab-pane v-fit" id="vis-tab-axis">
+                            <div class="row v-fit">
+                                <div class="col-lg-3 v-fit">
+                                    <div class="portlet v-fit">
+    <div class="portlet-title">
+        <button type="button" class="btn btn-info qdb-list-add-btn"><i class="fa fa-plus" aria-hidden="true"></i>
+        </button>
+        <span>Axis</span>
+    </div>
+    <div class="portlet-body">
+        <div class="qdb-list">
+            <ul>
+            </ul>
+        </div>
+    </div>
+</div>
 
-                                        </div>
-                                        <div class="col-lg-9 v-fit">
-                                            <div class="portlet qdb-vis-form v-fit">
-                                                <div class="portlet-title">
-                                                    <button type="button" class="btn btn-danger qdb-list-delete-btn"><i
-                                                            class="fa fa-trash-o"
-                                                            aria-hidden="true"></i> Delete
-                                                    </button>
-                                                    <span id="js-vis-series-name">Series 1</span>
-                                                </div>
-                                                <div class="portlet-body">
-                                                    <form role="form">
-                                                        <div class="form-group">
-                                                            <label>Series name</label>
-                                                            <input id="_vis_frm_ser_name" type="text"
-                                                                   class="form-control">
-                                                        </div>
-                                                        <div class="form-group">
-                                                            <label for="_vis_frm_ser_chart_type">Chart type</label>
-                                                            <select id="_vis_frm_ser_chart_type" class="form-control">
-                                                                <option>Line</option>
-                                                                <option>Area</option>
-                                                                <option>Bar</option>
-                                                            </select>
-                                                        </div>
-
-                                                        <div class="form-group">
-                                                            <label>Data columns</label>
-                                                            <input id="_vis_frm_ser_columns" type="text"
-                                                                   class="form-control"
-                                                                   placeholder="[query1.]column1,[query2.]column2,...">
-                                                        </div>
-
-                                                        <div class="form-group">
-                                                            <label>Stack</label>
-                                                            <input id="_vis_frm_ser_stack" type="text"
-                                                                   class="form-control" placeholder="Name of stack">
-                                                        </div>
-
-                                                        <div class="form-group">
-                                                            <label>Color</label>
-                                                            <input id="_vis_frm_ser_color" type="text"
-                                                                   class="form-control" placeholder="Auto">
-                                                        </div>
-                                                    </form>
-                                                </div>
-                                            </div>
-
-                                            <div class="qdb-vis-placeholder">
-
-                                                <h1>Nothing to display</h1>
-
-                                            </div>
-
-                                        </div>
-                                    </div>
                                 </div>
-                                <div class="tab-pane" id="vis-general">
-                                    <div class="row">
-                                        <div class="col-lg-12">
-                                            <div class="portlet">
-                                                <div class="portlet-title">
-                                                    <span>General Settings</span>
-                                                </div>
-                                            </div>
+                                <div class="col-lg-9 v-fit">
+                                    <div class="portlet qdb-vis-form v-fit">
+    <div class="portlet-title">
+        <button type="button" class="btn btn-danger qdb-list-delete-btn"><i class="fa fa-trash-o"
+                                                                            aria-hidden="true"></i> Delete
+        </button>
 
-                                        </div>
-                                    </div>
+        <span class="js-vis-title">Axis details</span>
+    </div>
+    <div class="portlet-body">
+        <form role="form" class="v-fit">
+            <div class="form-group">
+                <label>Axis name</label>
+                <input id="_vis_frm_axis_name" type="text" class="form-control" placeholder="Axis name">
+            </div>
+            <div class="form-group">
+                <label>Axis direction</label>
+                <select id="_vis_frm_axis_type" class="form-control">
+                    <option>X-axis</option>
+                    <option>Y-axis</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Axis value type</label>
+                <select id="_vis_frm_axis_value_type" class="form-control">
+                    <option>Category column</option>
+                    <option>Category values</option>
+                    <option>Series value</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Column name</label>
+                <input id="_vis_frm_axis_column" type="text" class="form-control" placeholder="[query1.]column">
+            </div>
+            <div class="form-group">
+                <label>Category values</label>
+                <textarea id="_vis_frm_axis_values" class="form-control" rows="4"></textarea>
+            </div>
+        </form>
+    </div>
+</div>
+
+                                    <div class="qdb-vis-placeholder">
+
+    <h1>Nothing to display</h1>
+
+</div>
+
+                                </div>
+                            </div>
+                        </div>
+                        <div class="tab-pane v-fit" id="vis-tab-series">
+                            <div class="row v-fit">
+                                <div class="col-lg-3 v-fit">
+                                    <div class="portlet v-fit">
+    <div class="portlet-title">
+        <button type="button" class="btn btn-info qdb-list-add-btn"><i class="fa fa-plus" aria-hidden="true"></i>
+        </button>
+        <span>Series</span>
+    </div>
+    <div class="portlet-body">
+        <div class="qdb-list">
+            <ul>
+            </ul>
+        </div>
+    </div>
+</div>
+
+                                </div>
+                                <div class="col-lg-9 v-fit">
+                                    <div class="portlet qdb-vis-form v-fit">
+    <div class="portlet-title">
+        <button type="button" class="btn btn-danger qdb-list-delete-btn"><i class="fa fa-trash-o"
+                                                                            aria-hidden="true"></i> Delete
+        </button>
+        <span id="js-vis-series-name">Series 1</span>
+    </div>
+    <div class="portlet-body">
+        <form role="form">
+            <div class="form-group">
+                <label>Series name</label>
+                <input id="_vis_frm_ser_name" type="text" class="form-control">
+            </div>
+            <div class="form-group">
+                <label for="_vis_frm_ser_chart_type">Chart type</label>
+                <select id="_vis_frm_ser_chart_type" class="form-control">
+                    <option>Line</option>
+                    <option>Area</option>
+                    <option>Bar</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Data columns</label>
+                <input id="_vis_frm_ser_columns" type="text" class="form-control"
+                       placeholder="[query1.]column1,[query2.]column2,...">
+            </div>
+
+            <div class="form-group">
+                <label>Stack</label>
+                <input id="_vis_frm_ser_stack" type="text" class="form-control" placeholder="Name of stack">
+            </div>
+
+            <div class="form-group">
+                <label>Color</label>
+                <input id="_vis_frm_ser_color" type="text" class="form-control" placeholder="Auto">
+            </div>
+        </form>
+    </div>
+</div>
+
+                                    <div class="qdb-vis-placeholder">
+
+    <h1>Nothing to display</h1>
+
+</div>
+
+                                </div>
+                            </div>
+                        </div>
+                        <div class="tab-pane" id="vis-general">
+                            <div class="row">
+                                <div class="col-lg-12">
+                                    <div class="portlet">
+    <div class="portlet-title">
+        <span>General Settings</span>
+    </div>
+</div>
+
                                 </div>
                             </div>
                         </div>
@@ -431,11 +415,13 @@
                 </div>
             </div>
         </div>
+    </div>
+</div>
 
 
         <div class="row js-import-panel">
-            <div class="col-lg-12">
-                <div id="import-menu" class="row wrapper border-bottom white-bg page-heading">
+    <div class="col-lg-12">
+        <div id="import-menu" class="row wrapper border-bottom white-bg page-heading">
             <div class="col-lg-12">
                 <div class="section-title"><i class="fa fa-upload"></i> import</div>
                 <div class="m-b-sm m-t-sm section-nav">
@@ -449,7 +435,7 @@
                 </div>
             </div>
         </div>
-                <div class="wrapper wrapper-content">
+        <div class="wrapper wrapper-content">
             <div class="row">
                 <div class="col-lg-12">
                     <div id="import-top" class="ibox-content">
@@ -482,7 +468,7 @@
                     </div>
                 </div>
             </div>
-                    <div id="import-splitter" class="splitter"></div>
+            <div id="import-splitter" class="splitter"></div>
             <div class="row" id="import-detail">
                 <div class="col-lg-12">
                     <div id="js-import-editor">
@@ -553,8 +539,8 @@
                 </div>
             </div>
         </div>
-            </div>
-        </div>
+    </div>
+</div>
 
 
         <div class="footer">

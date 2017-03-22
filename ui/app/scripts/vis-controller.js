@@ -162,7 +162,7 @@
 
             $('#btnVisFetch').click(buildChart);
             $('#btnVisReload').click(function () {
-                loadState(queryForm, seriesForm, axisForm);
+                loadState(queryForm, axisForm, seriesForm);
             });
         }
 
