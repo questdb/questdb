@@ -59,6 +59,7 @@ import com.questdb.ql.ops.plus.*;
 import com.questdb.ql.ops.regex.PluckStrFunction;
 import com.questdb.ql.ops.regex.ReplaceStrWrapper;
 import com.questdb.ql.ops.regex.StrRegexOperator;
+import com.questdb.ql.ops.round.*;
 import com.questdb.ql.ops.stat.AvgAggregator;
 import com.questdb.ql.ops.stat.StdDevAggregator;
 import com.questdb.ql.ops.stat.VarAggregator;
@@ -395,9 +396,14 @@ public final class FunctionFactories {
         unSig("ltod", ColumnType.INT, LtoDFunction.FACTORY);
         unSig("dtol", ColumnType.DATE, DtoLFunction.FACTORY);
         unSig("dtoa4", ColumnType.DATE, DtoA4Function.FACTORY);
-        unSig("round", ColumnType.DOUBLE, RoundFunction.FACTORY);
         unSig("time24", ColumnType.STRING, Time24ToMillisFunction.FACTORY);
         unSig("toDate", ColumnType.STRING, ToDateFunction.FACTORY);
+
+        binSig("roundUp", ColumnType.DOUBLE, ColumnType.INT, RoundUpFunction.FACTORY);
+        binSig("roundDown", ColumnType.DOUBLE, ColumnType.INT, RoundDownFunction.FACTORY);
+        binSig("roundHalfUp", ColumnType.DOUBLE, ColumnType.INT, RoundHalfUpFunction.FACTORY);
+        binSig("roundHalfDown", ColumnType.DOUBLE, ColumnType.INT, RoundHalfDownFunction.FACTORY);
+        binSig("roundHalfEven", ColumnType.DOUBLE, ColumnType.INT, RoundHalfEvenFunction.FACTORY);
 
         binSig("~", ColumnType.STRING, false, ColumnType.STRING, true, StrRegexOperator.FACTORY);
         binSig("~", ColumnType.STRING, false, ColumnType.PARAMETER, true, StrRegexOperator.FACTORY);
