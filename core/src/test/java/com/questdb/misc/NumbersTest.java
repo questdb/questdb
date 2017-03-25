@@ -433,4 +433,56 @@ public class NumbersTest {
     public void testParseWrongNan() throws Exception {
         Numbers.parseDouble("NaN1");
     }
+
+    @Test
+    public void testRoundDown() throws Exception {
+        Rnd rnd = new Rnd();
+        for (int i = 0; i < 1000; i++) {
+            double d = rnd.nextDouble();
+            double n = Numbers.roundDown(d, 8);
+            Assert.assertTrue(d + " " + n + " " + (d - n - 1E-8), d - n - 1E-8 < Numbers.TOLERANCE);
+        }
+    }
+
+    @Test
+    public void testRoundHalfDown() throws Exception {
+        Assert.assertEquals(-1.235, Numbers.roundHalfDown(-1.2346, 3), Numbers.TOLERANCE);
+        Assert.assertEquals(-1.23489, Numbers.roundHalfDown(-1.234895, 5), Numbers.TOLERANCE);
+        Assert.assertEquals(1.23489, Numbers.roundHalfDown(1.234895, 5), Numbers.TOLERANCE);
+    }
+
+    @Test
+    public void testRoundHalfEven() throws Exception {
+        Assert.assertEquals(-1.235, Numbers.roundHalfEven(-1.2346, 3), Numbers.TOLERANCE);
+        Assert.assertEquals(-1.2349, Numbers.roundHalfEven(-1.234899, 5), Numbers.TOLERANCE);
+        Assert.assertEquals(1.2349, Numbers.roundHalfEven(1.234899, 5), Numbers.TOLERANCE);
+        Assert.assertEquals(1.2349, Numbers.roundHalfEven(1.2348995, 6), Numbers.TOLERANCE);
+
+        Assert.assertEquals(-1.2349, Numbers.roundHalfEven(-1.234895, 5), Numbers.TOLERANCE);
+        Assert.assertEquals(1.2349, Numbers.roundHalfEven(1.234895, 5), Numbers.TOLERANCE);
+        Assert.assertEquals(1.0008, Numbers.roundHalfEven(1.00075, 4), Numbers.TOLERANCE);
+        Assert.assertEquals(1.0008, Numbers.roundHalfEven(1.00085, 4), Numbers.TOLERANCE);
+    }
+
+    @Test
+    public void testRoundHalfUp() throws Exception {
+        Assert.assertEquals(-1.235, Numbers.roundHalfUp(-1.2346, 3), Numbers.TOLERANCE);
+        Assert.assertEquals(-1.2349, Numbers.roundHalfUp(-1.234899, 5), Numbers.TOLERANCE);
+        Assert.assertEquals(1.2349, Numbers.roundHalfUp(1.234895, 5), Numbers.TOLERANCE);
+        Assert.assertEquals(1.0009, Numbers.roundHalfUp(1.00091, 4), Numbers.TOLERANCE);
+        Assert.assertEquals(-1.0009, Numbers.roundHalfUp(-1.00091, 4), Numbers.TOLERANCE);
+    }
+
+    @Test
+    public void testRoundUp() throws Exception {
+        Assert.assertEquals(-0.2345678098023, Numbers.roundUp(-0.234567809802242442424242423122388, 13), 1E-14);
+        Assert.assertEquals(0.2345678098023, Numbers.roundUp(0.234567809802242442424242423122388, 13), 1E-14);
+
+        Rnd rnd = new Rnd();
+        for (int i = 0; i < 1000; i++) {
+            double d = rnd.nextDouble();
+            double n = Numbers.roundUp(d, 8);
+            Assert.assertTrue(d + " " + n + " " + (n - d - 1E-8), n - d - 1E-8 < Numbers.TOLERANCE);
+        }
+    }
 }
