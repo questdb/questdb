@@ -8,7 +8,7 @@ QuestDB is a relational database that natively supports time series data. It is 
 
 
 Drag-Drop bulk import
-![Import Progress] (https://cloud.githubusercontent.com/assets/7276403/16665958/70eecec8-447d-11e6-8e78-1437c9c15db5.png)
+![Import Progress](https://cloud.githubusercontent.com/assets/7276403/16665958/70eecec8-447d-11e6-8e78-1437c9c15db5.png)
 
 
 Automatic format recognition 
