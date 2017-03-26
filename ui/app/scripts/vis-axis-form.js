@@ -39,13 +39,15 @@
             const fValueType = div.find('#_vis_frm_axis_value_type')[0];
             const fColumn = div.find('#_vis_frm_axis_column')[0];
             const fValues = div.find('#_vis_frm_axis_values')[0];
+            const fScale = div.find('#_vis_frm_axis_scale')[0];
 
             let last;
 
             function newQuery(index) {
                 return {
                     id: '_li_axis_' + index,
-                    name: 'axis' + index
+                    name: 'axis' + index,
+                    scale: false
                 };
             }
 
@@ -79,6 +81,12 @@
                 } else {
                     fValues.value = '';
                 }
+
+                if (axis.scale) {
+                    fScale.checked = true;
+                } else {
+                    fScale.checked = false;
+                }
             }
 
             function copyToMem(axis) {
@@ -109,6 +117,10 @@
                     changed = true;
                 }
 
+                if (axis.scale !== fScale.checked) {
+                    axis.scale = fScale.checked;
+                }
+
                 if (changed) {
                     axis.timestamp = new Date().getTime();
                 }
@@ -131,6 +143,7 @@
                 fValueType.value = 'Category column';
                 fColumn.value = '';
                 fValues.value = '';
+                fScale.checked = false;
             }
 
             fName.onfocusout = copyToLast;
@@ -138,6 +151,7 @@
             fValueType.onfocusout = copyToLast;
             fColumn.onfocusout = copyToLast;
             fValues.onfocusout = copyToLast;
+            fScale.onfocusout = copyToLast;
 
             return div.listManager(newQuery, copyToForm, copyToMem, clear);
         };

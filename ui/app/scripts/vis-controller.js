@@ -102,9 +102,7 @@
             switch (status) {
                 case 'done':
                     if (options) {
-                        console.log('options arrived');
-                        console.log(JSON.stringify(options));
-                        chart.setOption(options);
+                        chart.setOption(options, true);
                     }
                     break;
                 default:

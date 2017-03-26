@@ -39,6 +39,7 @@
             const fColumns = div.find('#_vis_frm_ser_columns')[0];
             const fStack = div.find('#_vis_frm_ser_stack')[0];
             const fColor = div.find('#_vis_frm_ser_color')[0];
+            const fAxis = div.find('#_vis_frm_ser_axis')[0];
 
             let last;
 
@@ -53,29 +54,11 @@
                 last = series;
 
                 fName.value = series.name;
-                if (series.chartType) {
-                    fChartType.value = series.chartType;
-                } else {
-                    fChartType.value = 'Line';
-                }
-
-                if (series.columns) {
-                    fColumns.value = series.columns;
-                } else {
-                    fColumns.value = '';
-                }
-
-                if (series.stack) {
-                    fStack.value = series.stack;
-                } else {
-                    fStack.value = '';
-                }
-
-                if (series.color) {
-                    fColor.value = series.color;
-                } else {
-                    fColor.value = '';
-                }
+                fChartType.value = series.chartType ? series.chartType : 'Line';
+                fColumns.value = series.columns ? series.columns : '';
+                fStack.value = series.stack ? series.stack : '';
+                fColor.value = series.color ? series.color : '';
+                fAxis.value = series.axis ? series.axis : '';
             }
 
             function copyToMem(series) {
@@ -105,6 +88,11 @@
                     changed = true;
                 }
 
+                if (series.axis !== fAxis.value) {
+                    series.axis = fAxis.value;
+                    changed = true;
+                }
+
                 if (changed) {
                     series.timestamp = new Date().getTime();
                 }
@@ -122,6 +110,7 @@
                 fColumns.value = '';
                 fStack.value = '';
                 fColor.value = '';
+                fAxis.value = '';
             }
 
             function copyToLast() {
@@ -135,6 +124,7 @@
             fColumns.onfocusout = copyToLast;
             fStack.onfocusout = copyToLast;
             fColor.onfocusout = copyToLast;
+            fAxis.onfocusout = copyToLast;
 
             return div.listManager(newQuery, copyToForm, copyToMem, clear);
         };

@@ -27474,6 +27474,7 @@ const eChartsMacarons = {
         var fColumns = div.find('#_vis_frm_ser_columns')[0];
         var fStack = div.find('#_vis_frm_ser_stack')[0];
         var fColor = div.find('#_vis_frm_ser_color')[0];
+        var fAxis = div.find('#_vis_frm_ser_axis')[0];
 
         var last = void 0;
 
@@ -27488,29 +27489,11 @@ const eChartsMacarons = {
             last = series;
 
             fName.value = series.name;
-            if (series.chartType) {
-                fChartType.value = series.chartType;
-            } else {
-                fChartType.value = 'Line';
-            }
-
-            if (series.columns) {
-                fColumns.value = series.columns;
-            } else {
-                fColumns.value = '';
-            }
-
-            if (series.stack) {
-                fStack.value = series.stack;
-            } else {
-                fStack.value = '';
-            }
-
-            if (series.color) {
-                fColor.value = series.color;
-            } else {
-                fColor.value = '';
-            }
+            fChartType.value = series.chartType ? series.chartType : 'Line';
+            fColumns.value = series.columns ? series.columns : '';
+            fStack.value = series.stack ? series.stack : '';
+            fColor.value = series.color ? series.color : '';
+            fAxis.value = series.axis ? series.axis : '';
         }
 
         function copyToMem(series) {
@@ -27540,6 +27523,11 @@ const eChartsMacarons = {
                 changed = true;
             }
 
+            if (series.axis !== fAxis.value) {
+                series.axis = fAxis.value;
+                changed = true;
+            }
+
             if (changed) {
                 series.timestamp = new Date().getTime();
             }
@@ -27557,6 +27545,7 @@ const eChartsMacarons = {
             fColumns.value = '';
             fStack.value = '';
             fColor.value = '';
+            fAxis.value = '';
         }
 
         function copyToLast() {
@@ -27570,6 +27559,7 @@ const eChartsMacarons = {
         fColumns.onfocusout = copyToLast;
         fStack.onfocusout = copyToLast;
         fColor.onfocusout = copyToLast;
+        fAxis.onfocusout = copyToLast;
 
         return div.listManager(newQuery, copyToForm, copyToMem, clear);
     };
@@ -27620,13 +27610,15 @@ const eChartsMacarons = {
         var fValueType = div.find('#_vis_frm_axis_value_type')[0];
         var fColumn = div.find('#_vis_frm_axis_column')[0];
         var fValues = div.find('#_vis_frm_axis_values')[0];
+        var fScale = div.find('#_vis_frm_axis_scale')[0];
 
         var last = void 0;
 
         function newQuery(index) {
             return {
                 id: '_li_axis_' + index,
-                name: 'axis' + index
+                name: 'axis' + index,
+                scale: false
             };
         }
 
@@ -27660,6 +27652,12 @@ const eChartsMacarons = {
             } else {
                 fValues.value = '';
             }
+
+            if (axis.scale) {
+                fScale.checked = true;
+            } else {
+                fScale.checked = false;
+            }
         }
 
         function copyToMem(axis) {
@@ -27690,6 +27688,10 @@ const eChartsMacarons = {
                 changed = true;
             }
 
+            if (axis.scale !== fScale.checked) {
+                axis.scale = fScale.checked;
+            }
+
             if (changed) {
                 axis.timestamp = new Date().getTime();
             }
@@ -27712,6 +27714,7 @@ const eChartsMacarons = {
             fValueType.value = 'Category column';
             fColumn.value = '';
             fValues.value = '';
+            fScale.checked = false;
         }
 
         fName.onfocusout = copyToLast;
@@ -27719,6 +27722,7 @@ const eChartsMacarons = {
         fValueType.onfocusout = copyToLast;
         fColumn.onfocusout = copyToLast;
         fValues.onfocusout = copyToLast;
+        fScale.onfocusout = copyToLast;
 
         return div.listManager(newQuery, copyToForm, copyToMem, clear);
     };
@@ -27832,9 +27836,7 @@ const eChartsMacarons = {
         switch (status) {
             case 'done':
                 if (options) {
-                    console.log('options arrived');
-                    console.log(JSON.stringify(options));
-                    chart.setOption(options);
+                    chart.setOption(options, true);
                 }
                 break;
             default:
@@ -28095,8 +28097,12 @@ function generateLegend(mapSeries) {
     };
 }
 
-function generateOptionSeries(mapSeries) {
+function generateOptionSeries(mapSeries, xMap, yMap) {
     'use strict';
+
+    console.log('maps');
+    console.log(xMap);
+    console.log(yMap);
 
     var optionSeries = [];
     for (var sk in mapSeries) {
@@ -28136,6 +28142,25 @@ function generateOptionSeries(mapSeries) {
             };
 
             chartSeries.stack = series.stack;
+            if (series.axis) {
+                console.log('have axis: ' + series.axis);
+                var yIndex = yMap[series.axis];
+                if (yIndex) {
+                    chartSeries.yAxisIndex = yIndex;
+                } else {
+                    chartSeries.yAxisIndex = 0;
+                }
+
+                var xIndex = xMap[series.axis];
+                if (xIndex) {
+                    chartSeries.xAxisIndex = xIndex;
+                } else {
+                    chartSeries.xAxisIndex = 0;
+                }
+            } else {
+                chartSeries.xAxisIndex = 0;
+                chartSeries.yAxisIndex = 0;
+            }
 
             switch (series.chartType) {
                 case 'Line':
@@ -28190,12 +28215,17 @@ function generateOptionAxis(mapAxis) {
 
     var yAxis = [];
     var xAxis = [];
+    var xMap = [];
+    var yMap = [];
 
+    var xIndex = 0;
+    var yIndex = 0;
     for (var ak in mapAxis) {
         if (mapAxis.hasOwnProperty(ak)) {
             var axis = mapAxis[ak];
             var optionAxis = {
-                name: axis.name
+                name: axis.name,
+                scale: axis.scale
             };
 
             switch (axis.valueType) {
@@ -28219,8 +28249,10 @@ function generateOptionAxis(mapAxis) {
             }
 
             if (axis.type === 'X-axis') {
+                xMap[axis.name] = xIndex++;
                 xAxis.push(optionAxis);
             } else {
+                yMap[axis.name] = yIndex++;
                 yAxis.push(optionAxis);
             }
         }
@@ -28228,7 +28260,9 @@ function generateOptionAxis(mapAxis) {
 
     return {
         xAxis: xAxis,
-        yAxis: yAxis
+        yAxis: yAxis,
+        xMap: xMap,
+        yMap: yMap
     };
 }
 
@@ -28258,11 +28292,15 @@ function parseQueryData(response, status, jqXHR) {
         return;
     }
 
+    console.log('before');
+    console.log(jqXHR.chartOptions);
     jqXHR.chartOptions.legend = generateLegend(jqXHR.mapSeries);
-    jqXHR.chartOptions.series = generateOptionSeries(jqXHR.mapSeries);
     var axis = generateOptionAxis(jqXHR.mapAxis);
     jqXHR.chartOptions.yAxis = axis.yAxis;
     jqXHR.chartOptions.xAxis = axis.xAxis;
+    jqXHR.chartOptions.series = generateOptionSeries(jqXHR.mapSeries, axis.xMap, axis.yMap);
+    console.log('opts');
+    console.log(jqXHR.chartOptions);
     done('done', jqXHR.chartOptions);
 }
 
@@ -28352,7 +28390,8 @@ VisBuilder.prototype.serializeState = function () {
                 name: ax.name,
                 type: ax.type,
                 valueType: ax.valueType,
-                column: ax.column
+                column: ax.column,
+                scale: ax.scale
             });
 
             if (ax.timestamp && ax.timestamp > timestamp) {
@@ -28371,7 +28410,8 @@ VisBuilder.prototype.serializeState = function () {
                 name: ser.name,
                 chartType: ser.chartType,
                 stack: ser.stack,
-                columns: ser.columns
+                columns: ser.columns,
+                axis: ser.axis
             });
 
             if (ser.timestamp && ser.timestamp > timestamp) {

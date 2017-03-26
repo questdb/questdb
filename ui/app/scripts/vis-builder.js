@@ -166,8 +166,12 @@ function generateLegend(mapSeries) {
     };
 }
 
-function generateOptionSeries(mapSeries) {
+function generateOptionSeries(mapSeries, xMap, yMap) {
     'use strict';
+
+    console.log('maps');
+    console.log(xMap);
+    console.log(yMap);
 
     const optionSeries = [];
     for (let sk in mapSeries) {
@@ -186,6 +190,25 @@ function generateOptionSeries(mapSeries) {
             };
 
             chartSeries.stack = series.stack;
+            if (series.axis) {
+                console.log('have axis: ' + series.axis);
+                const yIndex = yMap[series.axis];
+                if (yIndex) {
+                    chartSeries.yAxisIndex = yIndex;
+                } else {
+                    chartSeries.yAxisIndex = 0;
+                }
+
+                const xIndex = xMap[series.axis];
+                if (xIndex) {
+                    chartSeries.xAxisIndex = xIndex;
+                } else {
+                    chartSeries.xAxisIndex = 0;
+                }
+            } else {
+                chartSeries.xAxisIndex = 0;
+                chartSeries.yAxisIndex = 0;
+            }
 
             switch (series.chartType) {
                 case 'Line':
@@ -240,12 +263,17 @@ function generateOptionAxis(mapAxis) {
 
     const yAxis = [];
     const xAxis = [];
+    const xMap = [];
+    const yMap = [];
 
+    let xIndex = 0;
+    let yIndex = 0;
     for (let ak in mapAxis) {
         if (mapAxis.hasOwnProperty(ak)) {
             const axis = mapAxis[ak];
             const optionAxis = {
-                name: axis.name
+                name: axis.name,
+                scale: axis.scale
             };
 
             switch (axis.valueType) {
@@ -269,8 +297,10 @@ function generateOptionAxis(mapAxis) {
             }
 
             if (axis.type === 'X-axis') {
+                xMap[axis.name] = xIndex++;
                 xAxis.push(optionAxis);
             } else {
+                yMap[axis.name] = yIndex++;
                 yAxis.push(optionAxis);
             }
         }
@@ -278,7 +308,9 @@ function generateOptionAxis(mapAxis) {
 
     return {
         xAxis,
-        yAxis
+        yAxis,
+        xMap,
+        yMap
     };
 }
 
@@ -308,11 +340,15 @@ function parseQueryData(response, status, jqXHR) {
         return;
     }
 
+    console.log('before');
+    console.log(jqXHR.chartOptions);
     jqXHR.chartOptions.legend = generateLegend(jqXHR.mapSeries);
-    jqXHR.chartOptions.series = generateOptionSeries(jqXHR.mapSeries);
     const axis = generateOptionAxis(jqXHR.mapAxis);
     jqXHR.chartOptions.yAxis = axis.yAxis;
     jqXHR.chartOptions.xAxis = axis.xAxis;
+    jqXHR.chartOptions.series = generateOptionSeries(jqXHR.mapSeries, axis.xMap, axis.yMap);
+    console.log('opts');
+    console.log(jqXHR.chartOptions);
     done('done', jqXHR.chartOptions);
 }
 
@@ -402,7 +438,8 @@ VisBuilder.prototype.serializeState = function () {
                 name: ax.name,
                 type: ax.type,
                 valueType: ax.valueType,
-                column: ax.column
+                column: ax.column,
+                scale: ax.scale
             });
 
             if (ax.timestamp && ax.timestamp > timestamp) {
@@ -421,7 +458,8 @@ VisBuilder.prototype.serializeState = function () {
                 name: ser.name,
                 chartType: ser.chartType,
                 stack: ser.stack,
-                columns: ser.columns
+                columns: ser.columns,
+                axis: ser.axis
             });
 
             if (ser.timestamp && ser.timestamp > timestamp) {
