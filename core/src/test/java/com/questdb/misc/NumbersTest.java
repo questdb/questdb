@@ -366,6 +366,28 @@ public class NumbersTest {
         Numbers.parseInt("-");
     }
 
+    @Test
+    public void testParseIntToDelim() throws Exception {
+        String in = "1234x5";
+        long val = Numbers.parseIntSafely(in, 0, in.length());
+        Assert.assertEquals(1234, Numbers.decodeInt(val));
+        Assert.assertEquals(4, Numbers.decodeLen(val));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIntToDelimEmpty() throws Exception {
+        String in = "x";
+        Numbers.parseIntSafely(in, 0, in.length());
+    }
+
+    @Test
+    public void testParseIntToDelimNoChar() throws Exception {
+        String in = "12345";
+        long val = Numbers.parseIntSafely(in, 0, in.length());
+        Assert.assertEquals(12345, Numbers.decodeInt(val));
+        Assert.assertEquals(5, Numbers.decodeLen(val));
+    }
+
     @Test(expected = NumericException.class)
     public void testParseIntWrongChars() throws Exception {
         Numbers.parseInt("123ab");

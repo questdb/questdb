@@ -23,6 +23,7 @@
 
 package com.questdb.ql.parser;
 
+import com.questdb.std.Lexer;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;

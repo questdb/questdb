@@ -110,6 +110,24 @@ public final class Chars {
         return true;
     }
 
+    public static boolean equals(CharSequence l, CharSequence r, int rLo, int rHi) {
+        if (l == r) {
+            return true;
+        }
+
+        int ll;
+        if ((ll = l.length()) != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (l.charAt(i) != r.charAt(i + rLo)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean equals(CharSequence l, char r) {
         return l.length() == 1 && l.charAt(0) == r;
     }

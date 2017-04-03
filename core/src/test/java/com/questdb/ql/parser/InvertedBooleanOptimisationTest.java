@@ -25,6 +25,7 @@ package com.questdb.ql.parser;
 
 import com.questdb.ex.ParserException;
 import com.questdb.ql.model.ExprNode;
+import com.questdb.std.Lexer;
 import com.questdb.std.ObjectPool;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;

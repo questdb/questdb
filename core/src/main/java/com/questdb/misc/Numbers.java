@@ -458,6 +458,49 @@ public final class Numbers {
         return parseInt0(sequence, p, lim);
     }
 
+    private static boolean notDigit(char c) {
+        return c < '0' || c > '9';
+    }
+
+    public static long parseIntSafely(CharSequence sequence, final int p, int lim) throws NumericException {
+
+        if (lim == p || notDigit(sequence.charAt(p))) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        int i = p;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        for (; i < lim; i++) {
+            char c = sequence.charAt(i);
+
+            if (notDigit(c)) {
+                break;
+            }
+
+            // val * 10 + (c - '0')
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        if (val == Integer.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+
+        return encodeIntAndLen(negative ? val : -val, i-p);
+    }
+
     public static int parseIntQuiet(CharSequence sequence) {
         try {
             if (sequence == null || Chars.equals("NaN", sequence)) {
@@ -513,6 +556,13 @@ public final class Numbers {
         throw NumericException.INSTANCE;
     }
 
+    public static double roundHalfEven(double value, int scale) throws NumericException {
+        if (scale + 2 < pow10max && scale > -1) {
+            return value > 0 ? roundHalfEven0(value, scale) : -roundHalfEven0(-value, scale);
+        }
+        throw NumericException.INSTANCE;
+    }
+
     public static double roundHalfUp(double value, int scale) throws NumericException {
         if (scale + 2 < pow10max) {
             return value > 0 ? roundHalfUp0(value, scale) : -roundHalfUp0(-value, scale);
@@ -530,13 +580,6 @@ public final class Numbers {
     private static double roundHalfUp0(double value, int scale) throws NumericException {
         long val = (long) (value * Unsafe.arrayGet(pow10, scale + 2) + TOLERANCE);
         return val % 100 < 50 ? roundDown0(value, scale) : roundUp0(value, scale);
-    }
-
-    public static double roundHalfEven(double value, int scale) throws NumericException {
-        if (scale + 2 < pow10max && scale > -1) {
-            return value > 0 ? roundHalfEven0(value, scale) : -roundHalfEven0(-value, scale);
-        }
-        throw NumericException.INSTANCE;
     }
 
     private static double roundHalfEven0(double value, int scale) throws NumericException {
@@ -875,6 +918,9 @@ public final class Numbers {
         sink.put((char) ('0' + (c % 10)));
     }
 
+
+    //////////////////////
+
     private static void appendLong11(CharSink sink, long i) {
         long c;
         sink.put((char) ('0' + i / 10000000000L));
@@ -889,9 +935,6 @@ public final class Numbers {
         sink.put((char) ('0' + (c %= 100) / 10));
         sink.put((char) ('0' + (c % 10)));
     }
-
-
-    //////////////////////
 
     private static void appendLong12(CharSink sink, long i) {
         long c;
@@ -1150,6 +1193,18 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
+    }
+
+    public static long encodeIntAndLen(int value, int len) {
+        return (((long) len) << 32L) | (value);
+    }
+
+    public static int decodeInt(long val) {
+        return (int) (val & 0xffffffffL);
+    }
+
+    public static int decodeLen(long val) {
+        return (int) (val >> 32);
     }
 
     static {

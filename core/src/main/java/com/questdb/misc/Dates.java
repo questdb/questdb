@@ -190,6 +190,10 @@ final public class Dates {
                 + 999L;
     }
 
+    public static long endOfYear(int year) {
+        return toMillis(year, 12, 31, 23, 59) + 59 * 1000L + 999L;
+    }
+
     public static long floorDD(long millis) {
         return millis - getTime(millis);
     }
@@ -277,6 +281,17 @@ final public class Dates {
         Numbers.append(sink, y);
         append0(sink, m);
         append0(sink, getDayOfMonth(millis, y, m, l));
+    }
+
+    /**
+     * Days in a given month. This method expects you to know if month is in leap year.
+     *
+     * @param m    month from 1 to 12
+     * @param leap true if this is for leap year
+     * @return number of days in month.
+     */
+    public static int getDaysPerMonth(int m, boolean leap) {
+        return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
     }
 
     /**
@@ -743,17 +758,6 @@ final public class Dates {
             }
         }
         return 1 + (int) ((d + 3) % 7);
-    }
-
-    /**
-     * Days in a given month. This method expects you to know if month is in leap year.
-     *
-     * @param m    month from 1 to 12
-     * @param leap true if this is for leap year
-     * @return number of days in month.
-     */
-    private static int getDaysPerMonth(int m, boolean leap) {
-        return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
     }
 
     private static int getHourOfDay(long millis) {

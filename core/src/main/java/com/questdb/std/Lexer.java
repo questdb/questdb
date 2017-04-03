@@ -21,23 +21,20 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.parser;
+package com.questdb.std;
 
 import com.questdb.misc.Chars;
-import com.questdb.std.AbstractImmutableIterator;
-import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.IntObjHashMap;
 import com.questdb.std.str.AbstractCharSequence;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-class Lexer extends AbstractImmutableIterator<CharSequence> {
+public class Lexer extends AbstractImmutableIterator<CharSequence> {
+    public static final LenComparator COMPARATOR = new LenComparator();
     private static final CharSequenceHashSet whitespace = new CharSequenceHashSet();
     private final IntObjHashMap<List<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence floatingSequence = new FloatingSequence();
-    private final LenComparator comparator = new LenComparator();
     private CharSequence next = null;
     private int _lo;
     private int _hi;
@@ -61,7 +58,7 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
             symbols.put(c0, l);
         }
         l.add(token);
-        l.sort(comparator);
+        l.sort(COMPARATOR);
     }
 
     public CharSequence getContent() {
@@ -222,7 +219,7 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
         unparsed = last;
     }
 
-    private CharSequence getSymbol(char c) {
+    private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<List<CharSequence>> symbols) {
 
         List<CharSequence> l = symbols.get(c);
         if (l == null) {
@@ -250,7 +247,7 @@ class Lexer extends AbstractImmutableIterator<CharSequence> {
     }
 
     private CharSequence token(char c) {
-        CharSequence t = getSymbol(c);
+        CharSequence t = findToken0(c, content, _pos, _len, symbols);
         if (t != null) {
             _pos = _pos + t.length() - 1;
             if (_lo == _hi) {

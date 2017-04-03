@@ -30,6 +30,7 @@ import com.questdb.model.Quote;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.IntrinsicModel;
 import com.questdb.ql.model.IntrinsicValue;
+import com.questdb.std.Lexer;
 import com.questdb.std.ObjectPool;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;

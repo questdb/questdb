@@ -28,6 +28,7 @@ import com.questdb.misc.Chars;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.IntStack;
+import com.questdb.std.Lexer;
 import com.questdb.std.ObjectPool;
 
 import java.util.ArrayDeque;
