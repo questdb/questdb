@@ -766,7 +766,7 @@ final public class Dates {
         throw NumericException.INSTANCE;
     }
 
-    private static int getDayOfMonth(long millis, int year, int month, boolean leap) {
+    public static int getDayOfMonth(long millis, int year, int month, boolean leap) {
         long dateMillis = yearMillis(year, leap);
         dateMillis += monthOfYearMillis(month, leap);
         return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;

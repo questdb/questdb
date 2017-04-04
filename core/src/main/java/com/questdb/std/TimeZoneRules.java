@@ -31,7 +31,7 @@ import java.time.temporal.TemporalAdjusters;
 import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 
-public class TZ {
+public class TimeZoneRules {
     public static final long SAVING_INSTANT_TRANSITION;
     public static final long STANDARD_OFFSETS;
     public static final long LAST_RULES;
@@ -40,11 +40,10 @@ public class TZ {
     private final long cutoffTransition;
     private final LongList historicTransitions = new LongList();
     private final ZoneOffsetTransitionRule[] lastRules;
-    private final ZoneOffset[] wallOffsets;
+    private final int[] wallOffsets;
     private long standardOffset;
 
-
-    public TZ(ZoneRules rules) {
+    public TimeZoneRules(ZoneRules rules) {
         final long[] savingsInstantTransition = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITION);
 
         if (savingsInstantTransition.length == 0) {
@@ -57,12 +56,19 @@ public class TZ {
         LocalDateTime[] savingsLocalTransitions = (LocalDateTime[]) Unsafe.getUnsafe().getObject(rules, SAVINGS_LOCAL_TRANSITION);
         for (int i = 0, n = savingsLocalTransitions.length; i < n; i++) {
             LocalDateTime dt = savingsLocalTransitions[i];
-            historicTransitions.add(Dates.toMillis(dt.getYear(), dt.getMonthValue(), dt.getDayOfMonth(), dt.getHour(), dt.getMinute()) + dt.getNano() / 1000);
+
+            historicTransitions.add(Dates.toMillis(dt.getYear(), dt.getMonthValue(), dt.getDayOfMonth(), dt.getHour(), dt.getMinute()) +
+                    dt.getSecond() * 1000 +
+                    dt.getNano() / 1000);
         }
         cutoffTransition = historicTransitions.getLast();
 
         this.lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getUnsafe().getObject(rules, LAST_RULES);
-        this.wallOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, WALL_OFFSETS);
+        ZoneOffset[] wallOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, WALL_OFFSETS);
+        this.wallOffsets = new int[wallOffsets.length];
+        for (int i = 0, n = wallOffsets.length; i < n; i++) {
+            this.wallOffsets[i] = wallOffsets[i].getTotalSeconds();
+        }
     }
 
     public static void main(String[] args) {
@@ -71,9 +77,9 @@ public class TZ {
         System.out.println(date.with(TemporalAdjusters.previousOrSame(DayOfWeek.TUESDAY)));
     }
 
-    public long adjust(long millis) {
+    public long getOffset(long millis) {
         if (standardOffset != Long.MIN_VALUE) {
-            return millis + standardOffset;
+            return standardOffset;
         }
 
         int n = lastRules.length;
@@ -110,27 +116,46 @@ public class TZ {
                     date = Dates.addDays(date, 1);
                 }
 
+                switch (zr.getTimeDefinition()) {
+                    case UTC:
+                        date += (offset - ZoneOffset.UTC.getTotalSeconds()) * Dates.SECOND_MILLIS;
+                        break;
+                    case STANDARD:
+                        date += (offset - zr.getStandardOffset().getTotalSeconds()) * Dates.SECOND_MILLIS;
+                        break;
+                    default:  // WALL
+                        break;
+                }
+
                 long delta = offsetAfter.getTotalSeconds() - offset;
 
                 if (delta > 0) {
+                    if (millis < date) {
+                        return offset * Dates.SECOND_MILLIS;
+                    }
+
                     if (millis < date + delta) {
-                        return offset;
+                        return (offsetAfter.getTotalSeconds() + delta) * Dates.SECOND_MILLIS;
+                    } else {
+                        offset = offsetAfter.getTotalSeconds();
                     }
                 } else {
                     if (millis < date) {
-                        return offset;
+                        return offset * Dates.SECOND_MILLIS;
+                    } else {
+                        offset = offsetAfter.getTotalSeconds();
                     }
                 }
             }
 
-            return offset;
+            return offset * Dates.SECOND_MILLIS;
 
         }
 
 
         int index = historicTransitions.binarySearch(millis);
         if (index == -1) {
-            return millis + Unsafe.arrayGet(wallOffsets, 0).getTotalSeconds() * Dates.SECOND_MILLIS;
+            return Unsafe.arrayGet(wallOffsets, 0) * Dates.SECOND_MILLIS;
         }
 
         if (index < 0) {
@@ -140,19 +165,19 @@ public class TZ {
         }
 
         if ((index & 1) == 0) {
-            int offsetBefore = Unsafe.arrayGet(wallOffsets, index / 2).getTotalSeconds();
-            int offsetAfter = Unsafe.arrayGet(wallOffsets, index / 2 + 1).getTotalSeconds();
+            int offsetBefore = Unsafe.arrayGet(wallOffsets, index / 2);
+            int offsetAfter = Unsafe.arrayGet(wallOffsets, index / 2 + 1);
 
             int delta = offsetAfter - offsetBefore;
             if (delta > 0) {
                 // engage 0 transition logic
-                return millis + (delta + offsetAfter) * Dates.SECOND_MILLIS;
+                return (delta + offsetAfter) * Dates.SECOND_MILLIS;
 
             } else {
-                return millis + offsetBefore * Dates.SECOND_MILLIS;
+                return offsetBefore * Dates.SECOND_MILLIS;
             }
         } else {
-            return millis + Unsafe.arrayGet(wallOffsets, index / 2 + 1).getTotalSeconds() * Dates.SECOND_MILLIS;
+            return Unsafe.arrayGet(wallOffsets, index / 2 + 1) * Dates.SECOND_MILLIS;
         }
     }
 

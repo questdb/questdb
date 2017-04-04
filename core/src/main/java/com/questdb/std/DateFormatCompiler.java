@@ -24,16 +24,6 @@
 package com.questdb.std;
 
 
-import com.questdb.misc.Dates;
-
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
-import java.util.*;
-
 public class DateFormatCompiler {
     public static final int OP_ERA = 1;
     public static final int OP_YEAR_ONE_DIGIT = 2;
@@ -90,41 +80,6 @@ public class DateFormatCompiler {
         for (int i = 0, n = opList.size(); i < n; i++) {
             lexer.defineSymbol(opList.getQuick(i));
         }
-    }
-
-    public static void main(String[] args) throws ParseException {
-        String input = "Jul 4, '1024 BC";
-        SimpleDateFormat parser = new SimpleDateFormat("MMM d, ''y G");
-        Date date = parser.parse(input);
-        System.out.println(Dates.toString(date.getTime()));
-
-        Set<String> allZones = ZoneId.getAvailableZoneIds();
-        LocalDateTime dt = LocalDateTime.of(1919, 9, 1, 0, 0);
-        long millis = Dates.toMillis(1919, 9, 1, 0, 0);
-
-// Create a List using the set of zones and sort it.
-        List<String> zoneList = new ArrayList<>(allZones);
-        Collections.sort(zoneList);
-
-        for (String s : zoneList) {
-            ZoneId zone = ZoneId.of(s);
-            TZ tz = new TZ(zone.getRules());
-            ZonedDateTime zdt = dt.atZone(zone);
-            ZoneOffset offset = zdt.getOffset();
-            if (offset.getTotalSeconds() != (tz.adjust(millis) - millis) / 1000) {
-                System.out.println(zone);
-            }
-            int secondsOfHour = offset.getTotalSeconds() % (60 * 60);
-            String out = String.format("%35s %10s %10s%n", zone, offset, Dates.toString(tz.adjust(millis)));
-
-            // Write only time zones that do not have a whole hour offset
-            // to standard out.
-            if (secondsOfHour != 0) {
-//                System.out.println(zdt.getHour());
-                System.out.printf(out);
-            }
-        }
-
     }
 
     public DateFormat create(CharSequence sequence) {
