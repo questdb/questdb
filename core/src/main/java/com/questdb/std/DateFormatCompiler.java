@@ -1,3 +1,26 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.std;
 
 
@@ -77,6 +100,7 @@ public class DateFormatCompiler {
 
         Set<String> allZones = ZoneId.getAvailableZoneIds();
         LocalDateTime dt = LocalDateTime.of(1919, 9, 1, 0, 0);
+        long millis = Dates.toMillis(1919, 9, 1, 0, 0);
 
 // Create a List using the set of zones and sort it.
         List<String> zoneList = new ArrayList<>(allZones);
@@ -84,14 +108,19 @@ public class DateFormatCompiler {
 
         for (String s : zoneList) {
             ZoneId zone = ZoneId.of(s);
+            TZ tz = new TZ(zone.getRules());
             ZonedDateTime zdt = dt.atZone(zone);
             ZoneOffset offset = zdt.getOffset();
+            if (offset.getTotalSeconds() != (tz.adjust(millis) - millis) / 1000) {
+                System.out.println(zone);
+            }
             int secondsOfHour = offset.getTotalSeconds() % (60 * 60);
-            String out = String.format("%35s %10s%n", zone, offset);
+            String out = String.format("%35s %10s %10s%n", zone, offset, Dates.toString(tz.adjust(millis)));
 
             // Write only time zones that do not have a whole hour offset
             // to standard out.
             if (secondsOfHour != 0) {
+//                System.out.println(zdt.getHour());
                 System.out.printf(out);
             }
         }

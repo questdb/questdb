@@ -366,6 +366,19 @@ final public class Dates {
         return leap ? MAX_MONTH_OF_YEAR_MILLIS[month - 1] : MIN_MONTH_OF_YEAR_MILLIS[month - 1];
     }
 
+    public static long nextOrSameDayOfWeek(long millis, int dow) {
+        int thisDow = getDayOfWeek(millis);
+        if (thisDow == dow) {
+            return millis;
+        }
+
+        if (thisDow < dow) {
+            return millis + (dow - thisDow) * DAY_MILLIS;
+        } else {
+            return millis + (7 - (thisDow - dow)) * DAY_MILLIS;
+        }
+    }
+
     // YYYY-MM-DDThh:mm:ss.mmm
     public static long parseDateTime(CharSequence seq) throws NumericException {
         return parseDateTime(seq, 0, seq.length());
@@ -676,6 +689,19 @@ final public class Dates {
                 + min * MINUTE_MILLIS
                 + sec * SECOND_MILLIS
                 + mil;
+    }
+
+    public static long previousOrSameDayOfWeek(long millis, int dow) {
+        int thisDow = getDayOfWeek(millis);
+        if (thisDow == dow) {
+            return millis;
+        }
+
+        if (thisDow < dow) {
+            return millis - (7 + (thisDow - dow)) * DAY_MILLIS;
+        } else {
+            return millis - (thisDow - dow) * DAY_MILLIS;
+        }
     }
 
     public static long toMillis(int y, int m, int d, int h, int mi) {

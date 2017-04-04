@@ -211,6 +211,30 @@ public class DatesTest {
     }
 
     @Test
+    public void testNExtOrSameDow3() throws Exception {
+        // thursday
+        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
+        Dates.appendDateTime(sink, Dates.nextOrSameDayOfWeek(millis, 4));
+        TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testNextOrSameDow1() throws Exception {
+        // thursday
+        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
+        Dates.appendDateTime(sink, Dates.nextOrSameDayOfWeek(millis, 3));
+        TestUtils.assertEquals("2017-04-12T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testNextOrSameDow2() throws Exception {
+        // thursday
+        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
+        Dates.appendDateTime(sink, Dates.nextOrSameDayOfWeek(millis, 6));
+        TestUtils.assertEquals("2017-04-08T00:00:00.000Z", sink);
+    }
+
+    @Test
     public void testOverflowDate() throws Exception {
         Assert.assertEquals("4509540-01-02T00:00:00.000Z", Dates.toString(142245170150400000L));
     }
@@ -290,6 +314,30 @@ public class DatesTest {
     @Test(expected = NumericException.class)
     public void testParseWrongSecond() throws Exception {
         Dates.parseDateTime("2013-09-30T22:04:60.000Z");
+    }
+
+    @Test
+    public void testPreviousOrSameDow1() throws Exception {
+        // thursday
+        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
+        Dates.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 3));
+        TestUtils.assertEquals("2017-04-05T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testPreviousOrSameDow2() throws Exception {
+        // thursday
+        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
+        Dates.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 6));
+        TestUtils.assertEquals("2017-04-01T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testPreviousOrSameDow3() throws Exception {
+        // thursday
+        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
+        Dates.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 4));
+        TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
     }
 
     private void assertTrue(String date) throws NumericException {
