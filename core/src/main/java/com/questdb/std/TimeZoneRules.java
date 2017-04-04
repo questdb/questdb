@@ -26,8 +26,8 @@ package com.questdb.std;
 import com.questdb.misc.Dates;
 import com.questdb.misc.Unsafe;
 
-import java.time.*;
-import java.time.temporal.TemporalAdjusters;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 
@@ -39,9 +39,13 @@ public class TimeZoneRules {
     public static final long WALL_OFFSETS;
     private final long cutoffTransition;
     private final LongList historicTransitions = new LongList();
-    private final ZoneOffsetTransitionRule[] lastRules;
+    private final ObjList<TransitionRule> rules;
+    private final int ruleCount;
     private final int[] wallOffsets;
+    private final long firstWall;
+    private final long lastWall;
     private long standardOffset;
+    private final int historyOverlapCheckCutoff;
 
     public TimeZoneRules(ZoneRules rules) {
         final long[] savingsInstantTransition = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITION);
@@ -62,19 +66,47 @@ public class TimeZoneRules {
                     dt.getNano() / 1000);
         }
         cutoffTransition = historicTransitions.getLast();
+        historyOverlapCheckCutoff = historicTransitions.size()-1;
 
-        this.lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getUnsafe().getObject(rules, LAST_RULES);
+
+        ZoneOffsetTransitionRule[] lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getUnsafe().getObject(rules, LAST_RULES);
+        this.rules = new ObjList<>(lastRules.length);
+        for (int i = 0, n = lastRules.length; i < n; i++) {
+            ZoneOffsetTransitionRule zr = lastRules[i];
+            TransitionRule tr = new TransitionRule();
+            tr.offsetBefore = zr.getOffsetBefore().getTotalSeconds();
+            tr.offsetAfter = zr.getOffsetAfter().getTotalSeconds();
+            tr.standardOffset = zr.getStandardOffset().getTotalSeconds();
+            tr.dow = zr.getDayOfWeek() == null ? -1 : zr.getDayOfWeek().getValue();
+            tr.dom = zr.getDayOfMonthIndicator();
+            tr.month = zr.getMonth().getValue();
+            tr.midnightEOD = zr.isMidnightEndOfDay();
+            tr.hour = zr.getLocalTime().getHour();
+            tr.minute = zr.getLocalTime().getMinute();
+            tr.second = zr.getLocalTime().getSecond();
+            switch (zr.getTimeDefinition()) {
+                case UTC:
+                    tr.timeDef = TransitionRule.UTC;
+                    break;
+                case STANDARD:
+                    tr.timeDef = TransitionRule.STANDARD;
+                    break;
+                default:
+                    tr.timeDef = TransitionRule.WALL;
+                    break;
+            }
+            this.rules.add(tr);
+        }
+
+        this.ruleCount = lastRules.length;
+
         ZoneOffset[] wallOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, WALL_OFFSETS);
         this.wallOffsets = new int[wallOffsets.length];
         for (int i = 0, n = wallOffsets.length; i < n; i++) {
             this.wallOffsets[i] = wallOffsets[i].getTotalSeconds();
         }
-    }
-
-    public static void main(String[] args) {
-        LocalDate date = LocalDate.of(2017, 4, 3);
-        System.out.println(date);
-        System.out.println(date.with(TemporalAdjusters.previousOrSame(DayOfWeek.TUESDAY)));
+        this.firstWall = this.wallOffsets[0]*Dates.SECOND_MILLIS;
+        this.lastWall = this.wallOffsets[wallOffsets.length - 1] * Dates.SECOND_MILLIS;
     }
 
     public long getOffset(long millis) {
@@ -82,85 +114,26 @@ public class TimeZoneRules {
             return standardOffset;
         }
 
-        int n = lastRules.length;
-        if (n > 0 && millis > cutoffTransition) {
-            int year = Dates.getYear(millis);
-            boolean leap = Dates.isLeapYear(year);
-
-            int offset = 0;
-
-            for (int i = 0; i < n; i++) {
-                ZoneOffsetTransitionRule zr = Unsafe.arrayGet(lastRules, i);
-                offset = zr.getOffsetBefore().getTotalSeconds();
-                ZoneOffset offsetAfter = zr.getOffsetAfter();
-                LocalTime time = zr.getLocalTime();
-
-                int dom = zr.getDayOfMonthIndicator();
-                int month = zr.getMonth().getValue();
-
-                DayOfWeek dow = zr.getDayOfWeek();
-                long date;
-                if (dom < 0) {
-                    date = Dates.toMillis(year, month, Dates.getDaysPerMonth(month, leap) + 1 + dom, time.getHour(), time.getMinute()) + time.getSecond() * Dates.SECOND_MILLIS;
-                    if (dow != null) {
-                        date = Dates.previousOrSameDayOfWeek(date, dow.getValue());
-                    }
-                } else {
-                    date = Dates.toMillis(year, month, dom, time.getHour(), time.getMinute()) + time.getSecond() * Dates.SECOND_MILLIS;
-                    if (dow != null) {
-                        date = Dates.nextOrSameDayOfWeek(date, dow.getValue());
-                    }
-                }
-
-                if (zr.isMidnightEndOfDay()) {
-                    date = Dates.addDays(date, 1);
-                }
-
-                switch (zr.getTimeDefinition()) {
-                    case UTC:
-                        date += (offset - ZoneOffset.UTC.getTotalSeconds()) * Dates.SECOND_MILLIS;
-                        break;
-                    case STANDARD:
-                        date += (offset - zr.getStandardOffset().getTotalSeconds()) * Dates.SECOND_MILLIS;
-                        break;
-                    default:  // WALL
-                        break;
-                }
-
-                long delta = offsetAfter.getTotalSeconds() - offset;
-
-                if (delta > 0) {
-                    if (millis < date) {
-                        return offset * Dates.SECOND_MILLIS;
-                    }
-
-                    if (millis < date + delta) {
-                        return (offsetAfter.getTotalSeconds() + delta) * Dates.SECOND_MILLIS;
-                    } else {
-                        offset = offsetAfter.getTotalSeconds();
-                    }
-                } else {
-                    if (millis < date) {
-                        return offset * Dates.SECOND_MILLIS;
-                    } else {
-                        offset = offsetAfter.getTotalSeconds();
-                    }
-                }
-            }
-
-            return offset * Dates.SECOND_MILLIS;
-
+        if (ruleCount > 0 && millis > cutoffTransition) {
+            return fromRules(millis);
         }
 
+        if (millis > cutoffTransition) {
+            return lastWall;
+        }
 
+        return fromHistory(millis);
+    }
+
+    private long fromHistory(long millis) {
         int index = historicTransitions.binarySearch(millis);
         if (index == -1) {
-            return Unsafe.arrayGet(wallOffsets, 0) * Dates.SECOND_MILLIS;
+            return firstWall;
         }
 
         if (index < 0) {
             index = -index - 2;
-        } else if (index < historicTransitions.size() - 1 && historicTransitions.getQuick(index) == historicTransitions.getQuick(index + 1)) {
+        } else if (index < historyOverlapCheckCutoff && historicTransitions.getQuick(index) == historicTransitions.getQuick(index + 1)) {
             index++;
         }
 
@@ -172,13 +145,96 @@ public class TimeZoneRules {
             if (delta > 0) {
                 // engage 0 transition logic
                 return (delta + offsetAfter) * Dates.SECOND_MILLIS;
-
             } else {
                 return offsetBefore * Dates.SECOND_MILLIS;
             }
         } else {
             return Unsafe.arrayGet(wallOffsets, index / 2 + 1) * Dates.SECOND_MILLIS;
         }
+    }
+
+    private long fromRules(long millis) {
+        int year = Dates.getYear(millis);
+        boolean leap = Dates.isLeapYear(year);
+
+        int offset = 0;
+
+        for (int i = 0; i < ruleCount; i++) {
+            TransitionRule zr = rules.getQuick(i);
+            offset = zr.offsetBefore;
+            int offsetAfter = zr.offsetAfter;
+
+            int dom = zr.dom;
+            int month = zr.month;
+
+            int dow = zr.dow;
+            long date;
+            if (dom < 0) {
+                date = Dates.toMillis(year, month, Dates.getDaysPerMonth(month, leap) + 1 + dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MILLIS;
+                if (dow > -1) {
+                    date = Dates.previousOrSameDayOfWeek(date, dow);
+                }
+            } else {
+                date = Dates.toMillis(year, month, dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MILLIS;
+                if (dow > -1) {
+                    date = Dates.nextOrSameDayOfWeek(date, dow);
+                }
+            }
+
+            if (zr.midnightEOD) {
+                date = Dates.addDays(date, 1);
+            }
+
+            switch (zr.timeDef) {
+                case TransitionRule.UTC:
+                    date += (offset - ZoneOffset.UTC.getTotalSeconds()) * Dates.SECOND_MILLIS;
+                    break;
+                case TransitionRule.STANDARD:
+                    date += (offset - zr.standardOffset) * Dates.SECOND_MILLIS;
+                    break;
+                default:  // WALL
+                    break;
+            }
+
+            long delta = offsetAfter - offset;
+
+            if (delta > 0) {
+                if (millis < date) {
+                    return offset * Dates.SECOND_MILLIS;
+                }
+
+                if (millis < date + delta) {
+                    return (offsetAfter + delta) * Dates.SECOND_MILLIS;
+                } else {
+                    offset = offsetAfter;
+                }
+            } else {
+                if (millis < date) {
+                    return offset * Dates.SECOND_MILLIS;
+                } else {
+                    offset = offsetAfter;
+                }
+            }
+        }
+
+        return offset * Dates.SECOND_MILLIS;
+    }
+
+    private static class TransitionRule {
+        public static final int UTC = 0;
+        public static final int STANDARD = 1;
+        public static final int WALL = 2;
+        int offsetBefore;
+        int offsetAfter;
+        int standardOffset;
+        int dow;
+        int dom;
+        int month;
+        boolean midnightEOD;
+        int hour;
+        int minute;
+        int second;
+        int timeDef;
     }
 
     static {

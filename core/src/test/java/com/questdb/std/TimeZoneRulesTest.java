@@ -68,11 +68,36 @@ public class TimeZoneRulesTest {
     }
 
     @Test
+    public void testPerformance() throws Exception {
+        Set<String> allZones = ZoneId.getAvailableZoneIds();
+        List<String> zoneList = new ArrayList<>(allZones);
+        Collections.sort(zoneList);
+        List<ZoneId> zones = new ArrayList<>(zoneList.size());
+        List<TimeZoneRules> zoneRules = new ArrayList<>(zoneList.size());
+
+        for (String z : zoneList) {
+            ZoneId zone = ZoneId.of(z);
+            zones.add(zone);
+            zoneRules.add(new TimeZoneRules(zone.getRules()));
+        }
+
+        long millis = Dates.toMillis(1900, 1, 1, 0, 0);
+        long deadline = Dates.toMillis(2615, 12, 31, 0, 0);
+
+        while (millis < deadline) {
+            for (int i = 0, n = zones.size(); i < n; i++) {
+                zoneRules.get(i).getOffset(millis);
+            }
+            millis += Dates.DAY_MILLIS;
+        }
+    }
+
+    @Test
     public void testSingle() throws Exception {
-        ZoneId zone = ZoneId.of("America/Scoresbysund");
+        ZoneId zone = ZoneId.of("GMT");
         TimeZoneRules rules = new TimeZoneRules(zone.getRules());
 
-        int y = 1998;
+        int y = 2017;
         int m = 3;
         int d = 29;
 
@@ -94,6 +119,5 @@ public class TimeZoneRulesTest {
             System.out.println(zone.getId() + "; " + zdt + "; " + Dates.toString(millis + offset));
             throw e;
         }
-        System.out.println(zone.getId() + "; " + zdt + "; " + Dates.toString(millis + offset));
     }
 }
