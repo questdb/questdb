@@ -24,7 +24,7 @@
 package com.questdb.query.api;
 
 import com.questdb.ex.JournalException;
-import com.questdb.misc.Interval;
+import com.questdb.std.time.Interval;
 import com.questdb.query.UnorderedResultSet;
 
 public interface QueryAllBuilder<T> {

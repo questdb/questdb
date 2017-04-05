@@ -28,7 +28,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Chars;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.ql.model.AliasTranslator;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.IntrinsicModel;

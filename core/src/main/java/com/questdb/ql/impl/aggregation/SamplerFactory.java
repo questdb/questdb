@@ -25,7 +25,7 @@ package com.questdb.ql.impl.aggregation;
 
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.NumericException;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.misc.Numbers;
 
 public final class SamplerFactory {

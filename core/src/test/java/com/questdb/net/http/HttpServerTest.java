@@ -41,6 +41,7 @@ import com.questdb.net.http.handlers.StaticContentHandler;
 import com.questdb.net.http.handlers.UploadHandler;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
+import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.HttpTestUtils;
 import com.questdb.test.tools.TestUtils;

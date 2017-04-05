@@ -26,7 +26,7 @@ package com.questdb.query.spi;
 import com.questdb.Journal;
 import com.questdb.Partition;
 import com.questdb.ex.JournalException;
-import com.questdb.misc.Interval;
+import com.questdb.std.time.Interval;
 import com.questdb.misc.Rows;
 import com.questdb.query.UnorderedResultSet;
 import com.questdb.query.UnorderedResultSetBuilder;

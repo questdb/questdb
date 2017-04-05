@@ -27,7 +27,7 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import org.junit.BeforeClass;

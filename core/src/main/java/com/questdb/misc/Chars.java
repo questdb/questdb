@@ -155,6 +155,18 @@ public final class Chars {
         return true;
     }
 
+    public static boolean equalsIgnoreCase(CharSequence l, int llo, int lhi, CharSequence r, int rlo, int rhi) {
+        int lp = llo;
+        int rp = rlo;
+        while (lp < lhi && rp < rhi) {
+            if (Character.toLowerCase(l.charAt(lp++)) != r.charAt(rp++)) {
+                return false;
+            }
+
+        }
+        return lp == lhi && rp == rhi;
+    }
+
     public static boolean equalsNc(CharSequence l, CharSequence r) {
         return r != null && equals(l, r);
     }

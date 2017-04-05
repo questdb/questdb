@@ -29,7 +29,7 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
 import com.questdb.net.http.HttpServer;

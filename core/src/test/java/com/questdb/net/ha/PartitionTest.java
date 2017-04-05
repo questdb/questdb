@@ -26,7 +26,7 @@ package com.questdb.net.ha;
 import com.questdb.JournalWriter;
 import com.questdb.Partition;
 import com.questdb.ex.JournalNetworkException;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.comsumer.JournalClientStateConsumer;
 import com.questdb.net.ha.comsumer.JournalSymbolTableConsumer;

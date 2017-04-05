@@ -47,6 +47,8 @@ import com.questdb.ql.model.ExprNode;
 import com.questdb.query.ResultSet;
 import com.questdb.std.IntList;
 import com.questdb.std.LongList;
+import com.questdb.std.time.Dates;
+import com.questdb.std.time.Interval;
 import com.questdb.store.ColumnType;
 import com.questdb.store.KVIndex;
 import com.questdb.store.MMappedSymbolTable;

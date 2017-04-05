@@ -23,7 +23,7 @@
 
 package com.questdb.printer.converter;
 
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.misc.Unsafe;
 import com.questdb.printer.JournalPrinter;
 import com.questdb.txt.sink.StringSink;

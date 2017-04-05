@@ -21,8 +21,13 @@
  *
  ******************************************************************************/
 
-package com.questdb.std;
+package com.questdb.std.time;
 
+
+import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.IntList;
+import com.questdb.std.Lexer;
+import com.questdb.std.ObjList;
 
 public class DateFormatCompiler {
     public static final int OP_ERA = 1;

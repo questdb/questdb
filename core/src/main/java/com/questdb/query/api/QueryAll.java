@@ -27,7 +27,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.iter.ConcurrentIterator;
 import com.questdb.iter.JournalIterator;
 import com.questdb.iter.JournalPeekingIterator;
-import com.questdb.misc.Interval;
+import com.questdb.std.time.Interval;
 import com.questdb.query.OrderedResultSet;
 
 public interface QueryAll<T> extends Iterable<T> {

@@ -25,7 +25,7 @@ package com.questdb.ql.impl.sys;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import org.junit.BeforeClass;
 import org.junit.Test;

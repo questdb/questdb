@@ -23,7 +23,7 @@
 
 package com.questdb;
 
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;

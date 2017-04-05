@@ -30,7 +30,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.net.ha.config.ClientConfig;

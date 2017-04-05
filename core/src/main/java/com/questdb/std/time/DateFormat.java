@@ -1,4 +1,4 @@
-package com.questdb.std;
+package com.questdb.std.time;
 
 import com.questdb.ex.NumericException;
 

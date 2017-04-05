@@ -26,7 +26,7 @@ package com.questdb;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Test;

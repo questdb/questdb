@@ -25,8 +25,8 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.misc.Dates;
-import com.questdb.misc.Interval;
+import com.questdb.std.time.Dates;
+import com.questdb.std.time.Interval;
 import com.questdb.model.Quote;
 import com.questdb.store.BSearchType;
 import com.questdb.test.tools.AbstractTest;

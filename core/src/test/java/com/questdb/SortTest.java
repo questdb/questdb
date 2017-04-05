@@ -25,7 +25,7 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.model.TestEntity;
 import com.questdb.query.OrderedResultSet;
 import com.questdb.query.ResultSet;

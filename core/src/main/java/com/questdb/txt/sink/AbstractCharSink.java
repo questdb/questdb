@@ -23,7 +23,7 @@
 
 package com.questdb.txt.sink;
 
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;

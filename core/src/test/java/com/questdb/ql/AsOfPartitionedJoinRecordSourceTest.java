@@ -35,6 +35,7 @@ import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.time.Dates;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;

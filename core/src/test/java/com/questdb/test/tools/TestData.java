@@ -26,7 +26,7 @@ package com.questdb.test.tools;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 
 public final class TestData {

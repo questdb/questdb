@@ -23,7 +23,7 @@
 
 package com.questdb;
 
-import com.questdb.misc.Interval;
+import com.questdb.std.time.Interval;
 import com.questdb.model.Quote;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;

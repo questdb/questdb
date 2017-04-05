@@ -27,7 +27,7 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Chars;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.misc.Files;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CompositePath;

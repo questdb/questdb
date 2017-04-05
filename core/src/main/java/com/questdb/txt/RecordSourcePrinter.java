@@ -25,7 +25,7 @@ package com.questdb.txt;
 
 import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;

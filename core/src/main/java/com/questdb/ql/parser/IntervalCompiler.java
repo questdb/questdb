@@ -25,8 +25,8 @@ package com.questdb.ql.parser;
 
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Dates;
-import com.questdb.misc.Interval;
+import com.questdb.std.time.Dates;
+import com.questdb.std.time.Interval;
 import com.questdb.misc.Numbers;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;

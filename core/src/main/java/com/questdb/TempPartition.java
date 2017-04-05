@@ -23,7 +23,7 @@
 
 package com.questdb;
 
-import com.questdb.misc.Interval;
+import com.questdb.std.time.Interval;
 import com.questdb.store.Lock;
 import com.questdb.store.LockManager;
 

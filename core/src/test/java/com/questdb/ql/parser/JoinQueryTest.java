@@ -31,7 +31,7 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.misc.Chars;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.impl.NoRowIdRecordSource;

@@ -1,8 +1,9 @@
-package com.questdb.std;
+package com.questdb.std.time;
 
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Chars;
-import com.questdb.misc.Dates;
+import com.questdb.std.IntList;
+import com.questdb.std.ObjList;
 import com.questdb.misc.Numbers;
 
 public class DateFormatImpl implements DateFormat {
@@ -57,6 +58,7 @@ public class DateFormatImpl implements DateFormat {
         int second = 0;
         int millis = 0;
         int era = 1;
+        int timezone = -1;
 
         int hourType = HOUR_24;
 
@@ -296,6 +298,13 @@ public class DateFormatImpl implements DateFormat {
                     pos += Numbers.decodeLen(l);
                     break;
 
+                // TIMEZONE
+                case DateFormatCompiler.OP_TIME_ZONE_SHORT:
+                    l = locale.matchZone(in, pos, hi);
+                    timezone = Numbers.decodeInt(l);
+                    pos += Numbers.decodeLen(l);
+                    break;
+
                 // SEPARATORS
                 default:
                     String delimiter = delimiters.getQuick(-op - 1);
@@ -347,13 +356,19 @@ public class DateFormatImpl implements DateFormat {
             throw NumericException.INSTANCE;
         }
 
-        return Dates.yearMillis(year, leap)
+        long datetime = Dates.yearMillis(year, leap)
                 + Dates.monthOfYearMillis(month, leap)
                 + (day - 1) * Dates.DAY_MILLIS
                 + hour * Dates.HOUR_MILLIS
                 + minute * Dates.MINUTE_MILLIS
                 + second * Dates.SECOND_MILLIS
                 + millis;
+
+        if (timezone > -1) {
+            datetime -= locale.getZoneRules(timezone).getOffset(datetime);
+        }
+
+        return datetime;
     }
 
     private static void assertRemaining(int pos, int hi) throws NumericException {

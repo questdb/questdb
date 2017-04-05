@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl.aggregation;
 
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;

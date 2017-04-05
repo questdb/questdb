@@ -1,7 +1,9 @@
-package com.questdb.std;
+package com.questdb.std.time;
 
 import com.questdb.ex.NumericException;
-import com.questdb.misc.Dates;
+import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.IntHashSet;
+import com.questdb.std.time.*;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -56,6 +58,12 @@ public class DateFormatCompilerTest {
     @Test
     public void testDayOneDigit() throws Exception {
         assertThat("dyyyy", "2014-01-03T00:00:00.000Z", "32014");
+    }
+
+    @Test
+    public void testEra() throws Exception {
+        assertThat("E, dd-MM-yyyy G", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 AD");
+        assertThat("E, dd-MM-yyyy G", "-2013-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 BC");
     }
 
     @Test
@@ -253,15 +261,46 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testTimeZone1() throws Exception {
+        assertThat("dd-MM-yy HH:m z", "2010-09-03T18:54:00.000Z", "03-09-10 14:54 EST");
+    }
+
+    @Test
+    public void testTimeZone2() throws Exception {
+        assertThat("dd-MM-yy HH:m z", "2010-09-03T18:50:00.000Z", "03-09-10 21:50 MSK");
+    }
+
+    @Test
+    public void testTimeZone3() throws Exception {
+        assertThat("dd-MM-yy HH:m z", "2010-09-03T20:50:00.000Z", "03-09-10 21:50 BST");
+    }
+
+    @Test
+    public void testTimeZone4() throws Exception {
+        DateFormat format = compiler.create("dd-MM-yy HH:m z");
+        TestUtils.assertEquals("2010-09-03T21:01:00.000Z", Dates.toString(format.parse("03-09-10 23:01 Hora de verano de Sudáfrica", DateLocale.LOCALES.get("es-PA"))));
+    }
+
+    @Test
+    public void testTimeZone5() throws Exception {
+        DateFormat format = compiler.create("dd-MM-yy HH:m [z]");
+        TestUtils.assertEquals("2010-09-03T21:01:00.000Z", Dates.toString(format.parse("03-09-10 23:01 [Hora de verano de Sudáfrica]", DateLocale.LOCALES.get("es-PA"))));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testTooLongInput() throws Exception {
+        assertThat("E, dd-MM-yyyy G", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 ADD");
+    }
+
+    @Test
     public void testTwoDigitYear() throws Exception {
         assertThat("MMyy", "2010-11-01T00:00:00.000Z", "1110");
         assertThat("MM, yy", "2010-11-01T00:00:00.000Z", "11, 10");
     }
 
     @Test
-    public void testWeekdayLong() throws Exception {
-        assertThat("E, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014");
-        assertThat("EE, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014");
+    public void testWeekdayDigit() throws Exception {
+        assertThat("u, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "5, 03-04-2014");
     }
 
     @Test(expected = NumericException.class)
@@ -275,19 +314,9 @@ public class DateFormatCompilerTest {
     }
 
     @Test
-    public void testWeekdayDigit() throws Exception {
-        assertThat("u, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "5, 03-04-2014");
-    }
-
-    @Test
-    public void testEra() throws Exception {
-        assertThat("E, dd-MM-yyyy G", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 AD");
-        assertThat("E, dd-MM-yyyy G", "-2013-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 BC");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testTooLongInput() throws Exception {
-        assertThat("E, dd-MM-yyyy G", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 ADD");
+    public void testWeekdayLong() throws Exception {
+        assertThat("E, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014");
+        assertThat("EE, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014");
     }
 
     @Test

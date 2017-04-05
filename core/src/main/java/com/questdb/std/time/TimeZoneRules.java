@@ -21,10 +21,11 @@
  *
  ******************************************************************************/
 
-package com.questdb.std;
+package com.questdb.std.time;
 
-import com.questdb.misc.Dates;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.LongList;
+import com.questdb.std.ObjList;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -44,8 +45,8 @@ public class TimeZoneRules {
     private final int[] wallOffsets;
     private final long firstWall;
     private final long lastWall;
-    private long standardOffset;
     private final int historyOverlapCheckCutoff;
+    private long standardOffset;
 
     public TimeZoneRules(ZoneRules rules) {
         final long[] savingsInstantTransition = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITION);
@@ -66,7 +67,7 @@ public class TimeZoneRules {
                     dt.getNano() / 1000);
         }
         cutoffTransition = historicTransitions.getLast();
-        historyOverlapCheckCutoff = historicTransitions.size()-1;
+        historyOverlapCheckCutoff = historicTransitions.size() - 1;
 
 
         ZoneOffsetTransitionRule[] lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getUnsafe().getObject(rules, LAST_RULES);
@@ -105,7 +106,7 @@ public class TimeZoneRules {
         for (int i = 0, n = wallOffsets.length; i < n; i++) {
             this.wallOffsets[i] = wallOffsets[i].getTotalSeconds();
         }
-        this.firstWall = this.wallOffsets[0]*Dates.SECOND_MILLIS;
+        this.firstWall = this.wallOffsets[0] * Dates.SECOND_MILLIS;
         this.lastWall = this.wallOffsets[wallOffsets.length - 1] * Dates.SECOND_MILLIS;
     }
 

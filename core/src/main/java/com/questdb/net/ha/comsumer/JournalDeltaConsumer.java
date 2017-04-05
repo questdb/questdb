@@ -28,7 +28,7 @@ import com.questdb.Partition;
 import com.questdb.ex.IncompatibleJournalException;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
-import com.questdb.misc.Interval;
+import com.questdb.std.time.Interval;
 import com.questdb.net.ha.AbstractChannelConsumer;
 import com.questdb.net.ha.model.JournalServerState;
 import com.questdb.std.ObjList;

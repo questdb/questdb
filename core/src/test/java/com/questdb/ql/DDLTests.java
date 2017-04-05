@@ -34,6 +34,7 @@ import com.questdb.misc.*;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.DirectInputStream;
+import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;

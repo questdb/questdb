@@ -23,7 +23,7 @@
 
 package com.questdb.ql.ops.conv;
 
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;

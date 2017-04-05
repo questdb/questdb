@@ -39,6 +39,8 @@ import com.questdb.mp.SPSequence;
 import com.questdb.mp.Sequence;
 import com.questdb.query.ResultSet;
 import com.questdb.std.PeekingListIterator;
+import com.questdb.std.time.Dates;
+import com.questdb.std.time.Interval;
 import com.questdb.store.*;
 import com.questdb.txt.sink.FlexBufferSink;
 

@@ -23,7 +23,7 @@
 
 package com.questdb;
 
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.model.TestEntity;
 import com.questdb.query.ResultSet;
 import com.questdb.test.tools.AbstractTest;

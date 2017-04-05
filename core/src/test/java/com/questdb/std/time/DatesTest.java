@@ -21,9 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.misc;
+package com.questdb.std.time;
 
 import com.questdb.ex.NumericException;
+import com.questdb.std.time.Dates;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;

@@ -26,7 +26,7 @@ package com.questdb.ql.parser;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Rnd;
 import org.junit.BeforeClass;

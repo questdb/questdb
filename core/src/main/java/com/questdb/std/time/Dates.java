@@ -21,9 +21,11 @@
  *
  ******************************************************************************/
 
-package com.questdb.misc;
+package com.questdb.std.time;
 
 import com.questdb.ex.NumericException;
+import com.questdb.misc.Chars;
+import com.questdb.misc.Numbers;
 import com.questdb.std.LongList;
 import com.questdb.std.str.CharSink;
 import com.questdb.txt.sink.StringSink;
@@ -34,6 +36,14 @@ final public class Dates {
     public static final long HOUR_MILLIS = 3600000L;
     public static final long MINUTE_MILLIS = 60000;
     public static final long SECOND_MILLIS = 1000;
+    public static final int STATE_INIT = 0;
+    public static final int STATE_UTC = 1;
+    public static final int STATE_GMT = 2;
+    public static final int STATE_HOUR = 3;
+    public static final int STATE_DELIM = 4;
+    public static final int STATE_MINUTE = 5;
+    public static final int STATE_END = 6;
+    public static final int STATE_SIGN = 7;
     private static final long AVG_YEAR_MILLIS = (long) (365.2425 * DAY_MILLIS);
     private static final long YEAR_MILLIS = 365 * DAY_MILLIS;
     private static final long LEAP_YEAR_MILLIS = 366 * DAY_MILLIS;
@@ -283,6 +293,12 @@ final public class Dates {
         append0(sink, getDayOfMonth(millis, y, m, l));
     }
 
+    public static int getDayOfMonth(long millis, int year, int month, boolean leap) {
+        long dateMillis = yearMillis(year, leap);
+        dateMillis += monthOfYearMillis(month, leap);
+        return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;
+    }
+
     /**
      * Days in a given month. This method expects you to know if month is in leap year.
      *
@@ -319,6 +335,119 @@ final public class Dates {
                 : ((i < 273 * 84375)
                 ? ((i < 212 * 84375) ? 7 : (i < 243 * 84375) ? 8 : 9)
                 : ((i < 304 * 84375) ? 10 : (i < 334 * 84375) ? 11 : 12)));
+    }
+
+    public static long parseOffset(CharSequence in, int lo, int hi) {
+        int p = lo;
+        int state = STATE_INIT;
+        boolean negative = false;
+        int hour = 0;
+        int minute = 0;
+
+        try {
+            OUT:
+            while (p < hi) {
+                char c = in.charAt(p);
+
+                switch (state) {
+                    case STATE_INIT:
+                        switch (c) {
+                            case 'U':
+                            case 'u':
+                                state = STATE_UTC;
+                                break;
+                            case 'G':
+                            case 'g':
+                                state = STATE_GMT;
+                                break;
+                            case '+':
+                                negative = false;
+                                state = STATE_HOUR;
+                                break;
+                            case '-':
+                                negative = true;
+                                state = STATE_HOUR;
+                                break;
+                            default:
+                                if (c >= '0' && c <= '9') {
+                                    state = STATE_HOUR;
+                                    p--;
+                                } else {
+                                    return Long.MIN_VALUE;
+                                }
+                                break;
+                        }
+                        p++;
+                        break;
+                    case STATE_UTC:
+                        if (p > hi - 2 || !Chars.equalsIgnoreCase(in, p, p + 2, "tc", 0, 2)) {
+                            return Long.MIN_VALUE;
+                        }
+                        state = STATE_SIGN;
+                        p += 2;
+                        break;
+                    case STATE_GMT:
+                        if (p > hi - 2 || !Chars.equalsIgnoreCase(in, p, p + 2, "mt", 0, 2)) {
+                            return Long.MIN_VALUE;
+                        }
+                        state = STATE_SIGN;
+                        p += 2;
+                        break;
+                    case STATE_SIGN:
+                        switch (c) {
+                            case '+':
+                                negative = false;
+                                break;
+                            case '-':
+                                negative = true;
+                                break;
+                            default:
+                                return Long.MIN_VALUE;
+                        }
+                        p++;
+                        state = STATE_HOUR;
+                        break;
+                    case STATE_HOUR:
+                        if (c >= '0' && c <= '9' && p < hi - 1) {
+                            hour = Numbers.parseInt(in, p, p + 2);
+                        } else {
+                            return Long.MIN_VALUE;
+                        }
+                        state = STATE_DELIM;
+                        p += 2;
+                        break;
+                    case STATE_DELIM:
+                        if (c == ':') {
+                            state = STATE_MINUTE;
+                            p++;
+                        } else if (c >= '0' && c <= '9') {
+                            state = STATE_MINUTE;
+                        } else {
+                            return Long.MIN_VALUE;
+                        }
+                        break;
+                    case STATE_MINUTE:
+                        if (c >= '0' && c <= '9' && p < hi - 1) {
+                            minute = Numbers.parseInt(in, p, p + 2);
+                        } else {
+                            return Long.MIN_VALUE;
+                        }
+                        state = STATE_END;
+                        break OUT;
+                }
+            }
+        } catch (NumericException e) {
+            return Long.MIN_VALUE;
+        }
+
+        switch (state) {
+            case STATE_DELIM:
+            case STATE_END:
+                long millis = hour * HOUR_MILLIS + minute * MINUTE_MILLIS;
+                return negative ? -millis : millis;
+            default:
+                return Long.MIN_VALUE;
+        }
     }
 
     /**
@@ -764,12 +893,6 @@ final public class Dates {
         }
 
         throw NumericException.INSTANCE;
-    }
-
-    public static int getDayOfMonth(long millis, int year, int month, boolean leap) {
-        long dateMillis = yearMillis(year, leap);
-        dateMillis += monthOfYearMillis(month, leap);
-        return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;
     }
 
     private static int getDayOfWeek(long millis) {

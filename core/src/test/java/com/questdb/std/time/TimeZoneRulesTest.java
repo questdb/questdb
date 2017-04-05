@@ -1,6 +1,7 @@
-package com.questdb.std;
+package com.questdb.std.time;
 
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
+import com.questdb.std.time.TimeZoneRules;
 import org.junit.Assert;
 import org.junit.Test;
 

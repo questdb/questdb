@@ -33,7 +33,7 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Chars;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.std.LongList;

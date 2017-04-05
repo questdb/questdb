@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.misc;
+package com.questdb.std.time;
 
 import com.questdb.PartitionBy;
 import com.questdb.ex.JournalUnsupportedTypeException;

@@ -26,7 +26,7 @@ package com.questdb;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.iter.*;
-import com.questdb.misc.Interval;
+import com.questdb.std.time.Interval;
 import com.questdb.misc.Rows;
 import com.questdb.query.OrderedResultSetBuilder;
 import com.questdb.std.ObjList;

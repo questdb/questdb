@@ -29,6 +29,7 @@ import com.questdb.misc.*;
 import com.questdb.std.IntObjHashMap;
 import com.questdb.std.Mutable;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.time.Dates;
 import com.questdb.txt.sink.AbstractCharSink;
 
 import java.io.Closeable;

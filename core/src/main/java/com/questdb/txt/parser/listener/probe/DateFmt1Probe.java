@@ -24,7 +24,7 @@
 package com.questdb.txt.parser.listener.probe;
 
 import com.questdb.ex.NumericException;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.txt.ImportedColumnMetadata;
 import com.questdb.txt.ImportedColumnType;
 

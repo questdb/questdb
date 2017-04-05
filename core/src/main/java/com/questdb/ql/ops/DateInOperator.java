@@ -25,7 +25,7 @@ package com.questdb.ql.ops;
 
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.parser.QueryError;

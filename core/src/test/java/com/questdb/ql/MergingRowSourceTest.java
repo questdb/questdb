@@ -26,7 +26,7 @@ package com.questdb.ql;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalRecordSource;

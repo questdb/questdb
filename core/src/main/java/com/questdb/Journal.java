@@ -39,6 +39,8 @@ import com.questdb.query.spi.QueryImpl;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjObjHashMap;
+import com.questdb.std.time.Dates;
+import com.questdb.std.time.Interval;
 import com.questdb.store.*;
 
 import java.io.Closeable;

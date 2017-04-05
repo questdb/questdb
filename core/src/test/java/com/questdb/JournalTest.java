@@ -28,7 +28,7 @@ import com.questdb.ex.NumericException;
 import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.misc.Dates;
+import com.questdb.std.time.Dates;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
 import com.questdb.misc.Rows;
