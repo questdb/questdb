@@ -32,7 +32,7 @@ import java.time.ZoneOffset;
 import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 
-public class TimeZoneRulesImpl {
+public class TimeZoneRulesImpl implements TimeZoneRules {
     public static final long SAVING_INSTANT_TRANSITION;
     public static final long STANDARD_OFFSETS;
     public static final long LAST_RULES;
@@ -110,13 +110,14 @@ public class TimeZoneRulesImpl {
         this.lastWall = this.wallOffsets[wallOffsets.length - 1] * Dates.SECOND_MILLIS;
     }
 
-    public long getOffset(long millis) {
+    @Override
+    public long getOffset(long millis, int year, boolean leap) {
         if (standardOffset != Long.MIN_VALUE) {
             return standardOffset;
         }
 
         if (ruleCount > 0 && millis > cutoffTransition) {
-            return fromRules(millis);
+            return fromRules(millis, year, leap);
         }
 
         if (millis > cutoffTransition) {
@@ -154,9 +155,7 @@ public class TimeZoneRulesImpl {
         }
     }
 
-    private long fromRules(long millis) {
-        int year = Dates.getYear(millis);
-        boolean leap = Dates.isLeapYear(year);
+    private long fromRules(long millis, int year, boolean leap) {
 
         int offset = 0;
 

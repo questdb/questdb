@@ -2,9 +2,9 @@ package com.questdb.std.time;
 
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Chars;
+import com.questdb.misc.Numbers;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
-import com.questdb.misc.Numbers;
 
 public class DateFormatImpl implements DateFormat {
     public static final int HOUR_24 = 1;
@@ -59,6 +59,7 @@ public class DateFormatImpl implements DateFormat {
         int millis = 0;
         int era = 1;
         int timezone = -1;
+        long offset = Long.MIN_VALUE;
 
         int hourType = HOUR_24;
 
@@ -300,8 +301,13 @@ public class DateFormatImpl implements DateFormat {
 
                 // TIMEZONE
                 case DateFormatCompiler.OP_TIME_ZONE_SHORT:
-                    l = locale.matchZone(in, pos, hi);
-                    timezone = Numbers.decodeInt(l);
+                    l = Dates.parseOffset(in, pos, hi);
+                    if (l == Long.MIN_VALUE) {
+                        l = locale.matchZone(in, pos, hi);
+                        timezone = Numbers.decodeInt(l);
+                    } else {
+                        offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
+                    }
                     pos += Numbers.decodeLen(l);
                     break;
 
@@ -365,7 +371,9 @@ public class DateFormatImpl implements DateFormat {
                 + millis;
 
         if (timezone > -1) {
-            datetime -= locale.getZoneRules(timezone).getOffset(datetime);
+            datetime -= locale.getZoneRules(timezone).getOffset(datetime, year, leap);
+        } else if (offset > Long.MIN_VALUE) {
+            datetime -= offset;
         }
 
         return datetime;

@@ -286,6 +286,21 @@ public class DateFormatCompilerTest {
         TestUtils.assertEquals("2010-09-03T21:01:00.000Z", Dates.toString(format.parse("03-09-10 23:01 [Hora de verano de Sudáfrica]", DateLocaleFactory.INSTANCE.getDateLocale("es-PA"))));
     }
 
+    @Test
+    public void testTimeZone6() throws Exception {
+        assertThat("dd-MM-yy HH:m z", "2010-09-03T17:35:00.000Z", "03-09-10 21:50 +04:15");
+    }
+
+    @Test
+    public void testTimeZone7() throws Exception {
+        assertThat("dd-MM-yy HH:m z", "2010-09-04T05:50:00.000Z", "03-09-10 21:50 UTC-08:00");
+    }
+
+    @Test
+    public void testTimeZone8() throws Exception {
+        assertThat("dd-MM-yy HH:m z", "2010-09-04T07:50:00.000Z", "03-09-10 21:50 -10");
+    }
+
     @Test(expected = NumericException.class)
     public void testTooLongInput() throws Exception {
         assertThat("E, dd-MM-yyyy G", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 ADD");

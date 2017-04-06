@@ -337,119 +337,6 @@ final public class Dates {
                 : ((i < 304 * 84375) ? 10 : (i < 334 * 84375) ? 11 : 12)));
     }
 
-    public static long parseOffset(CharSequence in, int lo, int hi) {
-        int p = lo;
-        int state = STATE_INIT;
-        boolean negative = false;
-        int hour = 0;
-        int minute = 0;
-
-        try {
-            OUT:
-            while (p < hi) {
-                char c = in.charAt(p);
-
-                switch (state) {
-                    case STATE_INIT:
-                        switch (c) {
-                            case 'U':
-                            case 'u':
-                                state = STATE_UTC;
-                                break;
-                            case 'G':
-                            case 'g':
-                                state = STATE_GMT;
-                                break;
-                            case '+':
-                                negative = false;
-                                state = STATE_HOUR;
-                                break;
-                            case '-':
-                                negative = true;
-                                state = STATE_HOUR;
-                                break;
-                            default:
-                                if (c >= '0' && c <= '9') {
-                                    state = STATE_HOUR;
-                                    p--;
-                                } else {
-                                    return Long.MIN_VALUE;
-                                }
-                                break;
-                        }
-                        p++;
-                        break;
-                    case STATE_UTC:
-                        if (p > hi - 2 || !Chars.equalsIgnoreCase(in, p, p + 2, "tc", 0, 2)) {
-                            return Long.MIN_VALUE;
-                        }
-                        state = STATE_SIGN;
-                        p += 2;
-                        break;
-                    case STATE_GMT:
-                        if (p > hi - 2 || !Chars.equalsIgnoreCase(in, p, p + 2, "mt", 0, 2)) {
-                            return Long.MIN_VALUE;
-                        }
-                        state = STATE_SIGN;
-                        p += 2;
-                        break;
-                    case STATE_SIGN:
-                        switch (c) {
-                            case '+':
-                                negative = false;
-                                break;
-                            case '-':
-                                negative = true;
-                                break;
-                            default:
-                                return Long.MIN_VALUE;
-                        }
-                        p++;
-                        state = STATE_HOUR;
-                        break;
-                    case STATE_HOUR:
-                        if (c >= '0' && c <= '9' && p < hi - 1) {
-                            hour = Numbers.parseInt(in, p, p + 2);
-                        } else {
-                            return Long.MIN_VALUE;
-                        }
-                        state = STATE_DELIM;
-                        p += 2;
-                        break;
-                    case STATE_DELIM:
-                        if (c == ':') {
-                            state = STATE_MINUTE;
-                            p++;
-                        } else if (c >= '0' && c <= '9') {
-                            state = STATE_MINUTE;
-                        } else {
-                            return Long.MIN_VALUE;
-                        }
-                        break;
-                    case STATE_MINUTE:
-                        if (c >= '0' && c <= '9' && p < hi - 1) {
-                            minute = Numbers.parseInt(in, p, p + 2);
-                        } else {
-                            return Long.MIN_VALUE;
-                        }
-                        state = STATE_END;
-                        break OUT;
-                }
-            }
-        } catch (NumericException e) {
-            return Long.MIN_VALUE;
-        }
-
-        switch (state) {
-            case STATE_DELIM:
-            case STATE_END:
-                long millis = hour * HOUR_MILLIS + minute * MINUTE_MILLIS;
-                return negative ? -millis : millis;
-            default:
-                return Long.MIN_VALUE;
-        }
-    }
-
     /**
      * Calculates year number from millis.
      *
@@ -771,6 +658,121 @@ final public class Dates {
                     + 59 * MINUTE_MILLIS
                     + 59 * SECOND_MILLIS
                     + 999);
+        }
+    }
+
+    public static long parseOffset(CharSequence in, int lo, int hi) {
+        int p = lo;
+        int state = STATE_INIT;
+        boolean negative = false;
+        int hour = 0;
+        int minute = 0;
+
+        try {
+            OUT:
+            while (p < hi) {
+                char c = in.charAt(p);
+
+                switch (state) {
+                    case STATE_INIT:
+                        switch (c) {
+                            case 'U':
+                            case 'u':
+                                state = STATE_UTC;
+                                break;
+                            case 'G':
+                            case 'g':
+                                state = STATE_GMT;
+                                break;
+                            case '+':
+                                negative = false;
+                                state = STATE_HOUR;
+                                break;
+                            case '-':
+                                negative = true;
+                                state = STATE_HOUR;
+                                break;
+                            default:
+                                if (c >= '0' && c <= '9') {
+                                    state = STATE_HOUR;
+                                    p--;
+                                } else {
+                                    return Long.MIN_VALUE;
+                                }
+                                break;
+                        }
+                        p++;
+                        break;
+                    case STATE_UTC:
+                        if (p > hi - 2 || !Chars.equalsIgnoreCase(in, p, p + 2, "tc", 0, 2)) {
+                            return Long.MIN_VALUE;
+                        }
+                        state = STATE_SIGN;
+                        p += 2;
+                        break;
+                    case STATE_GMT:
+                        if (p > hi - 2 || !Chars.equalsIgnoreCase(in, p, p + 2, "mt", 0, 2)) {
+                            return Long.MIN_VALUE;
+                        }
+                        state = STATE_SIGN;
+                        p += 2;
+                        break;
+                    case STATE_SIGN:
+                        switch (c) {
+                            case '+':
+                                negative = false;
+                                break;
+                            case '-':
+                                negative = true;
+                                break;
+                            default:
+                                return Long.MIN_VALUE;
+                        }
+                        p++;
+                        state = STATE_HOUR;
+                        break;
+                    case STATE_HOUR:
+                        if (c >= '0' && c <= '9' && p < hi - 1) {
+                            hour = Numbers.parseInt(in, p, p + 2);
+                        } else {
+                            return Long.MIN_VALUE;
+                        }
+                        state = STATE_DELIM;
+                        p += 2;
+                        break;
+                    case STATE_DELIM:
+                        if (c == ':') {
+                            state = STATE_MINUTE;
+                            p++;
+                        } else if (c >= '0' && c <= '9') {
+                            state = STATE_MINUTE;
+                        } else {
+                            return Long.MIN_VALUE;
+                        }
+                        break;
+                    case STATE_MINUTE:
+                        if (c >= '0' && c <= '9' && p < hi - 1) {
+                            minute = Numbers.parseInt(in, p, p + 2);
+                        } else {
+                            return Long.MIN_VALUE;
+                        }
+                        p += 2;
+                        state = STATE_END;
+                        break OUT;
+                }
+            }
+        } catch (NumericException e) {
+            return Long.MIN_VALUE;
+        }
+
+        switch (state) {
+            case STATE_DELIM:
+            case STATE_END:
+                int min = hour * 60 + minute;
+                long r = ((long) (p - lo) << 32) | min;
+                return negative ? -r : r;
+            default:
+                return Long.MIN_VALUE;
         }
     }
 

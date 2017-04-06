@@ -50,7 +50,7 @@ public class TimeZoneRulesImplTest {
                 // add any extra time
                 expected += (changed - millis) / 1000;
 
-                long offset = rules.getOffset(millis);
+                long offset = rules.getOffset(millis, y, leap);
 
                 try {
                     Assert.assertEquals(expected, offset / 1000);
@@ -85,7 +85,8 @@ public class TimeZoneRulesImplTest {
 
         while (millis < deadline) {
             for (int i = 0, n = zones.size(); i < n; i++) {
-                zoneRules.get(i).getOffset(millis);
+                int y = Dates.getYear(millis);
+                zoneRules.get(i).getOffset(millis, y, Dates.isLeapYear(y));
             }
             millis += Dates.DAY_MILLIS;
         }
@@ -110,7 +111,7 @@ public class TimeZoneRulesImplTest {
         long changed = Dates.toMillis(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * 1000;
         // add any extra time
         expected += (changed - millis) / 1000;
-        long offset = rules.getOffset(millis);
+        long offset = rules.getOffset(millis, y, Dates.isLeapYear(y));
 
         try {
             Assert.assertEquals(expected, offset / 1000);

@@ -8,7 +8,7 @@ public class TimeZoneRuleFactory {
 
     public static final TimeZoneRuleFactory INSTANCE = new TimeZoneRuleFactory();
 
-    private final CharSequenceObjHashMap<TimeZoneRulesImpl> ruleMap = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<TimeZoneRules> ruleMap = new CharSequenceObjHashMap<>();
 
     public TimeZoneRuleFactory() {
         for (String z : ZoneId.getAvailableZoneIds()) {
@@ -16,7 +16,7 @@ public class TimeZoneRuleFactory {
         }
     }
 
-    public TimeZoneRulesImpl getTimeZoneRules(CharSequence id) {
+    public TimeZoneRules getTimeZoneRules(CharSequence id) {
         return ruleMap.get(id);
     }
 }

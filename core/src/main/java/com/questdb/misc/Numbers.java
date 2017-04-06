@@ -422,6 +422,18 @@ public final class Numbers {
                         -1));                          // (0.0, -0.0) or (NaN, !NaN)
     }
 
+    public static int decodeInt(long val) {
+        return val < 0 ? -((int) (-val & 0xffffffffL)) : (int) (val & 0xffffffffL);
+    }
+
+    public static int decodeLen(long val) {
+        return (int) ((val > 0 ? val : -val) >> 32);
+    }
+
+    public static long encodeIntAndLen(int value, int len) {
+        return (((long) len) << 32L) | (value);
+    }
+
     public static void main(String[] args) throws NumericException {
         System.out.println(Numbers.roundUp(-0.234567809802242442424242423122388, 13));
         System.out.println(Numbers.roundDown(-0.234567809802242442424242423122388, 13));
@@ -458,8 +470,16 @@ public final class Numbers {
         return parseInt0(sequence, p, lim);
     }
 
-    private static boolean notDigit(char c) {
-        return c < '0' || c > '9';
+    public static int parseIntQuiet(CharSequence sequence) {
+        try {
+            if (sequence == null || Chars.equals("NaN", sequence)) {
+                return Integer.MIN_VALUE;
+            }
+            return parseInt0(sequence, 0, sequence.length());
+        } catch (NumericException e) {
+            return Integer.MIN_VALUE;
+        }
+
     }
 
     public static long parseIntSafely(CharSequence sequence, final int p, int lim) throws NumericException {
@@ -498,19 +518,7 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
-        return encodeIntAndLen(negative ? val : -val, i-p);
-    }
-
-    public static int parseIntQuiet(CharSequence sequence) {
-        try {
-            if (sequence == null || Chars.equals("NaN", sequence)) {
-                return Integer.MIN_VALUE;
-            }
-            return parseInt0(sequence, 0, sequence.length());
-        } catch (NumericException e) {
-            return Integer.MIN_VALUE;
-        }
-
+        return encodeIntAndLen(negative ? val : -val, i - p);
     }
 
     public static int parseIntSize(CharSequence sequence) throws NumericException {
@@ -575,6 +583,10 @@ public final class Numbers {
             return roundUp0(value, scale);
         }
         throw NumericException.INSTANCE;
+    }
+
+    private static boolean notDigit(char c) {
+        return c < '0' || c > '9';
     }
 
     private static double roundHalfUp0(double value, int scale) throws NumericException {
@@ -789,6 +801,9 @@ public final class Numbers {
         }
     }
 
+
+    //////////////////////
+
     private static int parseHexInt(CharSequence sequence, final int p, int lim) throws NumericException {
 
         if (lim == p) {
@@ -917,9 +932,6 @@ public final class Numbers {
         sink.put((char) ('0' + (c %= 100) / 10));
         sink.put((char) ('0' + (c % 10)));
     }
-
-
-    //////////////////////
 
     private static void appendLong11(CharSink sink, long i) {
         long c;
@@ -1193,18 +1205,6 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
-    }
-
-    public static long encodeIntAndLen(int value, int len) {
-        return (((long) len) << 32L) | (value);
-    }
-
-    public static int decodeInt(long val) {
-        return (int) (val & 0xffffffffL);
-    }
-
-    public static int decodeLen(long val) {
-        return (int) (val >> 32);
     }
 
     static {

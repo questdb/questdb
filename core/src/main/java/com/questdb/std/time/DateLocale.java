@@ -1,6 +1,7 @@
 package com.questdb.std.time;
 
 import com.questdb.ex.NumericException;
+import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.IntObjHashMap;
 import com.questdb.std.Lexer;
@@ -17,7 +18,7 @@ public class DateLocale {
     private final IntObjHashMap<List<CharSequence>> amspms = new IntObjHashMap<>();
     private final IntObjHashMap<List<CharSequence>> eras = new IntObjHashMap<>();
     private final IntObjHashMap<List<CharSequence>> zones = new IntObjHashMap<>();
-    private final ObjList<TimeZoneRulesImpl> rules = new ObjList<>();
+    private final ObjList<TimeZoneRules> rules = new ObjList<>();
 
     public DateLocale(DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory) {
         index(symbols.getMonths(), months);
@@ -29,7 +30,7 @@ public class DateLocale {
         indexZones(symbols.getZoneStrings(), timeZoneRuleFactory);
     }
 
-    public TimeZoneRulesImpl getZoneRules(int index) {
+    public TimeZoneRules getZoneRules(int index) {
         return rules.getQuick(index);
     }
 
@@ -113,7 +114,7 @@ public class DateLocale {
         for (int i = 0, n = zones.length; i < n; i++) {
             String[] zNames = zones[i];
             String key = zNames[0];
-            TimeZoneRulesImpl rules = timeZoneRuleFactory.getTimeZoneRules(key);
+            TimeZoneRules rules = timeZoneRuleFactory.getTimeZoneRules(key);
             if (rules == null) {
                 String alias = ZoneId.SHORT_IDS.get(key);
 
@@ -125,8 +126,14 @@ public class DateLocale {
                 rules = timeZoneRuleFactory.getTimeZoneRules(alias);
 
                 if (rules == null) {
-                    System.out.println("no match for alias: " + alias + ", key: " + key);
-                    continue;
+                    // try to parse alias as an offset
+                    long offset = Dates.parseOffset(alias, 0, alias.length());
+                    if (offset != Long.MIN_VALUE) {
+                        rules = new FixedTimeZoneRule(Numbers.decodeInt(offset) * Dates.MINUTE_MILLIS);
+                    } else {
+                        System.out.println("no match for alias: " + alias + ", key: " + key);
+                        continue;
+                    }
                 }
             }
 
