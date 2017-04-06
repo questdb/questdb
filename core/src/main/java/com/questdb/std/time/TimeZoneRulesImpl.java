@@ -32,7 +32,7 @@ import java.time.ZoneOffset;
 import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 
-public class TimeZoneRules {
+public class TimeZoneRulesImpl {
     public static final long SAVING_INSTANT_TRANSITION;
     public static final long STANDARD_OFFSETS;
     public static final long LAST_RULES;
@@ -48,7 +48,7 @@ public class TimeZoneRules {
     private final int historyOverlapCheckCutoff;
     private long standardOffset;
 
-    public TimeZoneRules(ZoneRules rules) {
+    public TimeZoneRulesImpl(ZoneRules rules) {
         final long[] savingsInstantTransition = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITION);
 
         if (savingsInstantTransition.length == 0) {

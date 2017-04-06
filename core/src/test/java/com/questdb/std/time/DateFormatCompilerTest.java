@@ -3,7 +3,6 @@ package com.questdb.std.time;
 import com.questdb.ex.NumericException;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
-import com.questdb.std.time.*;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -278,13 +277,13 @@ public class DateFormatCompilerTest {
     @Test
     public void testTimeZone4() throws Exception {
         DateFormat format = compiler.create("dd-MM-yy HH:m z");
-        TestUtils.assertEquals("2010-09-03T21:01:00.000Z", Dates.toString(format.parse("03-09-10 23:01 Hora de verano de Sudáfrica", DateLocale.LOCALES.get("es-PA"))));
+        TestUtils.assertEquals("2010-09-03T21:01:00.000Z", Dates.toString(format.parse("03-09-10 23:01 Hora de verano de Sudáfrica", DateLocaleFactory.INSTANCE.getDateLocale("es-PA"))));
     }
 
     @Test
     public void testTimeZone5() throws Exception {
         DateFormat format = compiler.create("dd-MM-yy HH:m [z]");
-        TestUtils.assertEquals("2010-09-03T21:01:00.000Z", Dates.toString(format.parse("03-09-10 23:01 [Hora de verano de Sudáfrica]", DateLocale.LOCALES.get("es-PA"))));
+        TestUtils.assertEquals("2010-09-03T21:01:00.000Z", Dates.toString(format.parse("03-09-10 23:01 [Hora de verano de Sudáfrica]", DateLocaleFactory.INSTANCE.getDateLocale("es-PA"))));
     }
 
     @Test(expected = NumericException.class)
@@ -327,6 +326,6 @@ public class DateFormatCompilerTest {
 
     private void assertThat(String pattern, String expected, String input) throws NumericException {
         DateFormat format = compiler.create(pattern);
-        TestUtils.assertEquals(expected, Dates.toString(format.parse(input, DateLocale.LOCALES.get("en-GB"))));
+        TestUtils.assertEquals(expected, Dates.toString(format.parse(input, DateLocaleFactory.INSTANCE.getDateLocale("en-GB"))));
     }
 }

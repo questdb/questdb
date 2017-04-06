@@ -8,15 +8,15 @@ public class TimeZoneRuleFactory {
 
     public static final TimeZoneRuleFactory INSTANCE = new TimeZoneRuleFactory();
 
-    private final CharSequenceObjHashMap<TimeZoneRules> ruleMap = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<TimeZoneRulesImpl> ruleMap = new CharSequenceObjHashMap<>();
 
     public TimeZoneRuleFactory() {
         for (String z : ZoneId.getAvailableZoneIds()) {
-            ruleMap.put(z, new TimeZoneRules(ZoneId.of(z).getRules()));
+            ruleMap.put(z, new TimeZoneRulesImpl(ZoneId.of(z).getRules()));
         }
     }
 
-    public TimeZoneRules get(CharSequence locale) {
-        return ruleMap.get(locale);
+    public TimeZoneRulesImpl getTimeZoneRules(CharSequence id) {
+        return ruleMap.get(id);
     }
 }

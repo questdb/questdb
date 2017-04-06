@@ -1,7 +1,5 @@
 package com.questdb.std.time;
 
-import com.questdb.std.time.Dates;
-import com.questdb.std.time.TimeZoneRules;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -13,7 +11,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
-public class TimeZoneRulesTest {
+public class TimeZoneRulesImplTest {
 
     @Test
     public void testCompatibility() throws Exception {
@@ -21,12 +19,12 @@ public class TimeZoneRulesTest {
         List<String> zoneList = new ArrayList<>(allZones);
         Collections.sort(zoneList);
         List<ZoneId> zones = new ArrayList<>(zoneList.size());
-        List<TimeZoneRules> zoneRules = new ArrayList<>(zoneList.size());
+        List<TimeZoneRulesImpl> zoneRules = new ArrayList<>(zoneList.size());
 
         for (String z : zoneList) {
             ZoneId zone = ZoneId.of(z);
             zones.add(zone);
-            zoneRules.add(new TimeZoneRules(zone.getRules()));
+            zoneRules.add(new TimeZoneRulesImpl(zone.getRules()));
         }
 
         long millis = Dates.toMillis(1900, 1, 1, 0, 0);
@@ -42,7 +40,7 @@ public class TimeZoneRulesTest {
 
             for (int i = 0, n = zones.size(); i < n; i++) {
                 ZoneId zone = zones.get(i);
-                TimeZoneRules rules = zoneRules.get(i);
+                TimeZoneRulesImpl rules = zoneRules.get(i);
 
                 ZonedDateTime zdt = dt.atZone(zone);
 
@@ -74,12 +72,12 @@ public class TimeZoneRulesTest {
         List<String> zoneList = new ArrayList<>(allZones);
         Collections.sort(zoneList);
         List<ZoneId> zones = new ArrayList<>(zoneList.size());
-        List<TimeZoneRules> zoneRules = new ArrayList<>(zoneList.size());
+        List<TimeZoneRulesImpl> zoneRules = new ArrayList<>(zoneList.size());
 
         for (String z : zoneList) {
             ZoneId zone = ZoneId.of(z);
             zones.add(zone);
-            zoneRules.add(new TimeZoneRules(zone.getRules()));
+            zoneRules.add(new TimeZoneRulesImpl(zone.getRules()));
         }
 
         long millis = Dates.toMillis(1900, 1, 1, 0, 0);
@@ -96,7 +94,7 @@ public class TimeZoneRulesTest {
     @Test
     public void testSingle() throws Exception {
         ZoneId zone = ZoneId.of("GMT");
-        TimeZoneRules rules = new TimeZoneRules(zone.getRules());
+        TimeZoneRulesImpl rules = new TimeZoneRulesImpl(zone.getRules());
 
         int y = 2017;
         int m = 3;

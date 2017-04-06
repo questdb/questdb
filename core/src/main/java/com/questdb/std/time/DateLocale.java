@@ -2,64 +2,34 @@ package com.questdb.std.time;
 
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.*;
+import com.questdb.std.IntObjHashMap;
+import com.questdb.std.Lexer;
+import com.questdb.std.ObjList;
 
 import java.text.DateFormatSymbols;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
-public class DateLocale extends DateFormatSymbols {
-    public static final CharSequenceObjHashMap<DateLocale> LOCALES = new CharSequenceObjHashMap<>();
+public class DateLocale {
     private final IntObjHashMap<List<CharSequence>> months = new IntObjHashMap<>();
     private final IntObjHashMap<List<CharSequence>> weekdays = new IntObjHashMap<>();
     private final IntObjHashMap<List<CharSequence>> amspms = new IntObjHashMap<>();
     private final IntObjHashMap<List<CharSequence>> eras = new IntObjHashMap<>();
     private final IntObjHashMap<List<CharSequence>> zones = new IntObjHashMap<>();
-    private final ObjList<TimeZoneRules> rules = new ObjList<>();
+    private final ObjList<TimeZoneRulesImpl> rules = new ObjList<>();
 
-    public DateLocale(Locale locale) {
-        super(locale);
-        index(this.getMonths(), months);
-        index(this.getShortMonths(), months);
-        index(this.getWeekdays(), weekdays);
-        index(this.getShortWeekdays(), weekdays);
-        index(this.getAmPmStrings(), amspms);
-        index(this.getEras(), eras);
-
-        String[][] zones = this.getZoneStrings();
-        int index = 0;
-        for (int i = 0, n = zones.length; i < n; i++) {
-            String[] zNames = zones[i];
-            String key = zNames[0];
-            TimeZoneRules rules = TimeZoneRuleFactory.INSTANCE.get(key);
-            if (rules == null) {
-                String alias = ZoneId.SHORT_IDS.get(key);
-
-                if (alias == null) {
-                    System.out.println("no match: " + key);
-                    continue;
-                }
-                rules = TimeZoneRuleFactory.INSTANCE.get(alias);
-
-                if (rules == null) {
-                    System.out.println("no match for alias: " + alias + ", key: " + key);
-                    continue;
-                }
-            }
-
-            this.rules.add(rules);
-
-            for (int k = 0, m = zNames.length; k < m; k++) {
-                defineToken(zNames[k], index, this.zones);
-            }
-
-            index++;
-        }
+    public DateLocale(DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory) {
+        index(symbols.getMonths(), months);
+        index(symbols.getShortMonths(), months);
+        index(symbols.getWeekdays(), weekdays);
+        index(symbols.getShortWeekdays(), weekdays);
+        index(symbols.getAmPmStrings(), amspms);
+        index(symbols.getEras(), eras);
+        indexZones(symbols.getZoneStrings(), timeZoneRuleFactory);
     }
 
-    public TimeZoneRules getZoneRules(int index) {
+    public TimeZoneRulesImpl getZoneRules(int index) {
         return rules.getQuick(index);
     }
 
@@ -138,9 +108,35 @@ public class DateLocale extends DateFormatSymbols {
         throw NumericException.INSTANCE;
     }
 
-    static {
-        for (Locale l : Locale.getAvailableLocales()) {
-            LOCALES.put(l.toLanguageTag(), new DateLocale(l));
+    private void indexZones(String[][] zones, TimeZoneRuleFactory timeZoneRuleFactory) {
+        int index = 0;
+        for (int i = 0, n = zones.length; i < n; i++) {
+            String[] zNames = zones[i];
+            String key = zNames[0];
+            TimeZoneRulesImpl rules = timeZoneRuleFactory.getTimeZoneRules(key);
+            if (rules == null) {
+                String alias = ZoneId.SHORT_IDS.get(key);
+
+                if (alias == null) {
+                    System.out.println("no match: " + key);
+                    continue;
+                }
+
+                rules = timeZoneRuleFactory.getTimeZoneRules(alias);
+
+                if (rules == null) {
+                    System.out.println("no match for alias: " + alias + ", key: " + key);
+                    continue;
+                }
+            }
+
+            this.rules.add(rules);
+
+            for (int k = 0, m = zNames.length; k < m; k++) {
+                defineToken(zNames[k], index, this.zones);
+            }
+
+            index++;
         }
     }
 }
