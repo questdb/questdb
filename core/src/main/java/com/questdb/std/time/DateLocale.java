@@ -19,15 +19,33 @@ public class DateLocale {
     private final IntObjHashMap<List<CharSequence>> eras = new IntObjHashMap<>();
     private final IntObjHashMap<List<CharSequence>> zones = new IntObjHashMap<>();
     private final ObjList<TimeZoneRules> rules = new ObjList<>();
+    private final String[] monthArray;
+    private final String[] shortMonthArray;
+    private final String[] weekdayArray;
+    private final String[] shortWeekdayArray;
+    private final String[] ampmArray;
+    private final String[] eraArray;
 
     public DateLocale(DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory) {
-        index(symbols.getMonths(), months);
-        index(symbols.getShortMonths(), months);
-        index(symbols.getWeekdays(), weekdays);
-        index(symbols.getShortWeekdays(), weekdays);
-        index(symbols.getAmPmStrings(), amspms);
-        index(symbols.getEras(), eras);
+        index(monthArray = symbols.getMonths(), months);
+        index(shortMonthArray = symbols.getShortMonths(), months);
+        index(weekdayArray = symbols.getWeekdays(), weekdays);
+        index(shortWeekdayArray = symbols.getShortWeekdays(), weekdays);
+        index(ampmArray = symbols.getAmPmStrings(), amspms);
+        index(eraArray = symbols.getEras(), eras);
         indexZones(symbols.getZoneStrings(), timeZoneRuleFactory);
+    }
+
+    public String getAMPM(int index) {
+        return Unsafe.arrayGet(ampmArray, index);
+    }
+
+    public String getWeekday(int index) {
+        return Unsafe.arrayGet(weekdayArray, index);
+    }
+
+    public String getShortWeekday(int index) {
+        return Unsafe.arrayGet(shortWeekdayArray, index);
     }
 
     public TimeZoneRules getZoneRules(int index) {
@@ -48,6 +66,18 @@ public class DateLocale {
 
     public long matchWeekday(CharSequence content, int lo, int hi) throws NumericException {
         return findToken(content, lo, hi, weekdays);
+    }
+
+    public String getEra(int index) {
+        return Unsafe.arrayGet(eraArray, index);
+    }
+
+    public String getMonth(int index) {
+        return Unsafe.arrayGet(monthArray, index);
+    }
+
+    public String getMonthShort(int index) {
+        return Unsafe.arrayGet(shortMonthArray, index);
     }
 
     public long matchZone(CharSequence content, int lo, int hi) throws NumericException {

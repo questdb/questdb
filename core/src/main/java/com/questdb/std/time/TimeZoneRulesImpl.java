@@ -170,12 +170,12 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
             int dow = zr.dow;
             long date;
             if (dom < 0) {
-                date = Dates.toMillis(year, month, Dates.getDaysPerMonth(month, leap) + 1 + dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MILLIS;
+                date = Dates.toMillis(year, leap, month, Dates.getDaysPerMonth(month, leap) + 1 + dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MILLIS;
                 if (dow > -1) {
                     date = Dates.previousOrSameDayOfWeek(date, dow);
                 }
             } else {
-                date = Dates.toMillis(year, month, dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MILLIS;
+                date = Dates.toMillis(year, leap, month, dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MILLIS;
                 if (dow > -1) {
                     date = Dates.nextOrSameDayOfWeek(date, dow);
                 }

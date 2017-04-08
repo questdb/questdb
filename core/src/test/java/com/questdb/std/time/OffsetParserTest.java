@@ -77,6 +77,16 @@ public class OffsetParserTest {
     }
 
     @Test
+    public void testLargeHour() throws Exception {
+        assertError("UTC+24:00");
+    }
+
+    @Test
+    public void testLargeMinute() throws Exception {
+        assertError("UTC+12:60");
+    }
+
+    @Test
     public void testMissingHour() throws Exception {
         assertError("UTC+");
     }

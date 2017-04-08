@@ -82,9 +82,9 @@ final public class Dates {
         if (months == 0) {
             return millis;
         }
-        boolean l;
-        int y = getYear(millis);
-        int m = getMonthOfYear(millis, y, l = isLeapYear(y));
+        int y = Dates.getYear(millis);
+        boolean l = Dates.isLeapYear(y);
+        int m = getMonthOfYear(millis, y, l);
         int _y;
         int _m = m - 1 + months;
         if (_m > -1) {
@@ -144,15 +144,44 @@ final public class Dates {
 
     }
 
+    public static void append0(CharSink sink, int val) {
+        if (Math.abs(val) < 10) {
+            sink.put('0');
+        }
+        Numbers.append(sink, val);
+    }
+
+    public static void append00(CharSink sink, int val) {
+        int v = Math.abs(val);
+        if (v < 10) {
+            sink.put('0').put('0');
+        } else if (v < 100) {
+            sink.put('0');
+        }
+        Numbers.append(sink, val);
+    }
+
+    public static void append000(CharSink sink, int val) {
+        int v = Math.abs(val);
+        if (v < 10) {
+            sink.put('0').put('0').put('0');
+        } else if (v < 100) {
+            sink.put('0').put('0');
+        } else if (v < 1000) {
+            sink.put('0');
+        }
+        Numbers.append(sink, val);
+    }
+
     // YYYY-MM-DDThh:mm:ss.mmmmZ
     public static void appendDateTime(CharSink sink, long millis) {
         if (millis == Long.MIN_VALUE) {
             return;
         }
-        int y = getYear(millis);
-        boolean l = isLeapYear(y);
+        int y = Dates.getYear(millis);
+        boolean l = Dates.isLeapYear(y);
         int m = getMonthOfYear(millis, y, l);
-        append0000(sink, y);
+        append000(sink, y);
         append0(sink.put('-'), m);
         append0(sink.put('-'), getDayOfMonth(millis, y, m, l));
         append0(sink.put('T'), getHourOfDay(millis));
@@ -249,7 +278,7 @@ final public class Dates {
                 .put(MONTHS_OF_YEAR[m - 1])
                 .put(' ');
 
-        append0000(sink, y);
+        append000(sink, y);
         sink.put(' ');
         append0(sink, getHourOfDay(millis));
         sink.put(':');
@@ -310,6 +339,30 @@ final public class Dates {
         return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
     }
 
+    public static int getHourOfDay(long millis) {
+        if (millis > -1) {
+            return (int) ((millis / HOUR_MILLIS) % DAY_HOURS);
+        } else {
+            return DAY_HOURS - 1 + (int) (((millis + 1) / HOUR_MILLIS) % DAY_HOURS);
+        }
+    }
+
+    public static int getMillisOfSecond(long millis) {
+        if (millis > -1) {
+            return (int) (millis % 1000);
+        } else {
+            return 1000 - 1 + (int) ((millis + 1) % 1000);
+        }
+    }
+
+    public static int getMinuteOfHour(long millis) {
+        if (millis > -1) {
+            return (int) ((millis / MINUTE_MILLIS) % HOUR_MINUTES);
+        } else {
+            return HOUR_MINUTES - 1 + (int) (((millis + 1) / MINUTE_MILLIS) % HOUR_MINUTES);
+        }
+    }
+
     /**
      * Calculates month of year from absolute millis.
      *
@@ -335,6 +388,14 @@ final public class Dates {
                 : ((i < 273 * 84375)
                 ? ((i < 212 * 84375) ? 7 : (i < 243 * 84375) ? 8 : 9)
                 : ((i < 304 * 84375) ? 10 : (i < 334 * 84375) ? 11 : 12)));
+    }
+
+    public static int getSecondOfMinute(long millis) {
+        if (millis > -1) {
+            return (int) ((millis / SECOND_MILLIS) % MINUTE_SECONDS);
+        } else {
+            return MINUTE_SECONDS - 1 + (int) (((millis + 1) / SECOND_MILLIS) % MINUTE_SECONDS);
+        }
     }
 
     /**
@@ -768,6 +829,9 @@ final public class Dates {
         switch (state) {
             case STATE_DELIM:
             case STATE_END:
+                if (hour > 23 || minute > 59) {
+                    return Long.MIN_VALUE;
+                }
                 int min = hour * 60 + minute;
                 long r = ((long) (p - lo) << 32) | min;
                 return negative ? -r : r;
@@ -836,8 +900,11 @@ final public class Dates {
     }
 
     public static long toMillis(int y, int m, int d, int h, int mi) {
-        boolean l = isLeapYear(y);
-        return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS + h * HOUR_MILLIS + mi * MINUTE_MILLIS;
+        return toMillis(y, isLeapYear(y), m, d, h, mi);
+    }
+
+    public static long toMillis(int y, boolean leap, int m, int d, int h, int mi) {
+        return yearMillis(y, leap) + monthOfYearMillis(m, leap) + (d - 1) * DAY_MILLIS + h * HOUR_MILLIS + mi * MINUTE_MILLIS;
     }
 
     public static String toString(long millis) {
@@ -897,7 +964,7 @@ final public class Dates {
         throw NumericException.INSTANCE;
     }
 
-    private static int getDayOfWeek(long millis) {
+    public static int getDayOfWeek(long millis) {
         // 1970-01-01 is Thursday.
         long d;
         if (millis >= 0) {
@@ -911,36 +978,18 @@ final public class Dates {
         return 1 + (int) ((d + 3) % 7);
     }
 
-    private static int getHourOfDay(long millis) {
-        if (millis > -1) {
-            return (int) ((millis / HOUR_MILLIS) % DAY_HOURS);
+    public static int getDayOfWeekSundayFirst(long millis) {
+        // 1970-01-01 is Thursday.
+        long d;
+        if (millis >= 0) {
+            d = millis / DAY_MILLIS;
         } else {
-            return DAY_HOURS - 1 + (int) (((millis + 1) / HOUR_MILLIS) % DAY_HOURS);
+            d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
+            if (d < -4) {
+                return 7 + (int) ((d + 5) % 7);
+            }
         }
-    }
-
-    private static int getMillisOfSecond(long millis) {
-        if (millis > -1) {
-            return (int) (millis % 1000);
-        } else {
-            return 1000 - 1 + (int) ((millis + 1) % 1000);
-        }
-    }
-
-    private static int getMinuteOfHour(long millis) {
-        if (millis > -1) {
-            return (int) ((millis / MINUTE_MILLIS) % HOUR_MINUTES);
-        } else {
-            return HOUR_MINUTES - 1 + (int) (((millis + 1) / MINUTE_MILLIS) % HOUR_MINUTES);
-        }
-    }
-
-    private static int getSecondOfMinute(long millis) {
-        if (millis > -1) {
-            return (int) ((millis / SECOND_MILLIS) % MINUTE_SECONDS);
-        } else {
-            return MINUTE_SECONDS - 1 + (int) (((millis + 1) / SECOND_MILLIS) % MINUTE_SECONDS);
-        }
+        return 1 + (int) ((d + 4) % 7);
     }
 
     private static long getTime(long millis) {
@@ -1075,35 +1124,6 @@ final public class Dates {
             throw NumericException.INSTANCE;
         }
         return Numbers.parseInt(s, lo, hi);
-    }
-
-    private static void append0(CharSink sink, int val) {
-        if (Math.abs(val) < 10) {
-            sink.put('0');
-        }
-        Numbers.append(sink, val);
-    }
-
-    private static void append00(CharSink sink, int val) {
-        int v = Math.abs(val);
-        if (v < 10) {
-            sink.put('0').put('0');
-        } else if (v < 100) {
-            sink.put('0');
-        }
-        Numbers.append(sink, val);
-    }
-
-    private static void append0000(CharSink sink, int val) {
-        int v = Math.abs(val);
-        if (v < 10) {
-            sink.put('0').put('0').put('0');
-        } else if (v < 100) {
-            sink.put('0').put('0');
-        } else if (v < 1000) {
-            sink.put('0');
-        }
-        Numbers.append(sink, val);
     }
 
     private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {

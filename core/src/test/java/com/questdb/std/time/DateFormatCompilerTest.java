@@ -4,13 +4,19 @@ import com.questdb.ex.NumericException;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
 import com.questdb.test.tools.TestUtils;
+import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
 public class DateFormatCompilerTest {
 
     private static final DateFormatCompiler compiler = new DateFormatCompiler();
+    private static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDateLocale("en-GB");
+    private final static StringSink sink = new StringSink();
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -63,6 +69,272 @@ public class DateFormatCompilerTest {
     public void testEra() throws Exception {
         assertThat("E, dd-MM-yyyy G", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 AD");
         assertThat("E, dd-MM-yyyy G", "-2013-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 BC");
+    }
+
+    @Test
+    public void testFormatAMPM() throws Exception {
+        assertFormat("PM, 31", "a, dd", "2017-03-31T14:00:00.000Z");
+        assertFormat("PM, 31", "a, dd", "2017-03-31T12:00:00.000Z");
+        assertFormat("AM, 31", "a, dd", "2017-03-31T00:00:00.000Z");
+        assertFormat("AM, 31", "a, dd", "2017-03-31T11:59:59.999Z");
+    }
+
+    @Test
+    public void testFormatDay() throws Exception {
+        assertFormat("03", "dd", "2014-04-03T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatHour23() throws Exception {
+        assertFormat("PM, 14", "a, HH", "2017-03-31T14:00:00.000Z");
+        assertFormat("PM, 12", "a, HH", "2017-03-31T12:00:00.000Z");
+        assertFormat("AM, 03", "a, HH", "2017-03-31T03:00:00.000Z");
+        assertFormat("AM, 11", "a, HH", "2017-03-31T11:59:59.999Z");
+
+        assertFormat("14", "HH", "2017-03-31T14:00:00.000Z");
+        assertFormat("12", "HH", "2017-03-31T12:00:00.000Z");
+        assertFormat("03", "HH", "2017-03-31T03:00:00.000Z");
+        assertFormat("11", "HH", "2017-03-31T11:59:59.999Z");
+    }
+
+    @Test
+    public void testFormatHour23OneDigit() throws Exception {
+        assertFormat("PM, 14", "a, H", "2017-03-31T14:00:00.000Z");
+        assertFormat("PM, 12", "a, H", "2017-03-31T12:00:00.000Z");
+        assertFormat("AM, 3", "a, H", "2017-03-31T03:00:00.000Z");
+        assertFormat("AM, 11", "a, H", "2017-03-31T11:59:59.999Z");
+
+        assertFormat("14", "H", "2017-03-31T14:00:00.000Z");
+        assertFormat("12", "H", "2017-03-31T12:00:00.000Z");
+        assertFormat("3", "H", "2017-03-31T03:00:00.000Z");
+        assertFormat("11", "H", "2017-03-31T11:59:59.999Z");
+    }
+
+    @Test
+    public void testFormatHour24() throws Exception {
+        assertFormat("PM, 15", "a, kk", "2017-03-31T14:00:00.000Z");
+        assertFormat("PM, 13", "a, kk", "2017-03-31T12:00:00.000Z");
+        assertFormat("AM, 04", "a, kk", "2017-03-31T03:00:00.000Z");
+        assertFormat("AM, 12", "a, kk", "2017-03-31T11:59:59.999Z");
+
+        assertFormat("15", "kk", "2017-03-31T14:00:00.000Z");
+        assertFormat("13", "kk", "2017-03-31T12:00:00.000Z");
+        assertFormat("04", "kk", "2017-03-31T03:00:00.000Z");
+        assertFormat("12", "kk", "2017-03-31T11:59:59.999Z");
+    }
+
+    @Test
+    public void testFormatHour24OneDigit() throws Exception {
+        assertFormat("PM, 15", "a, k", "2017-03-31T14:00:00.000Z");
+        assertFormat("PM, 13", "a, k", "2017-03-31T12:00:00.000Z");
+        assertFormat("AM, 4", "a, k", "2017-03-31T03:00:00.000Z");
+        assertFormat("AM, 12", "a, k", "2017-03-31T11:59:59.999Z");
+
+        assertFormat("15", "k", "2017-03-31T14:00:00.000Z");
+        assertFormat("13", "k", "2017-03-31T12:00:00.000Z");
+        assertFormat("4", "k", "2017-03-31T03:00:00.000Z");
+        assertFormat("12", "k", "2017-03-31T11:59:59.999Z");
+    }
+
+    @Test
+    public void testFormatHourTwelve() throws Exception {
+        assertFormat("PM, 03", "a, hh", "2017-03-31T14:00:00.000Z");
+        assertFormat("PM, 01", "a, hh", "2017-03-31T12:00:00.000Z");
+        assertFormat("AM, 04", "a, hh", "2017-03-31T03:00:00.000Z");
+        assertFormat("AM, 12", "a, hh", "2017-03-31T11:59:59.999Z");
+
+        assertFormat("03", "hh", "2017-03-31T14:00:00.000Z");
+        assertFormat("01", "hh", "2017-03-31T12:00:00.000Z");
+        assertFormat("04", "hh", "2017-03-31T03:00:00.000Z");
+        assertFormat("12", "hh", "2017-03-31T11:59:59.999Z");
+    }
+
+    @Test
+    public void testFormatHourTwelveOneDigit() throws Exception {
+        assertFormat("PM, 3", "a, h", "2017-03-31T14:00:00.000Z");
+        assertFormat("PM, 1", "a, h", "2017-03-31T12:00:00.000Z");
+        assertFormat("AM, 4", "a, h", "2017-03-31T03:00:00.000Z");
+        assertFormat("AM, 12", "a, h", "2017-03-31T11:59:59.999Z");
+
+        assertFormat("3", "h", "2017-03-31T14:00:00.000Z");
+        assertFormat("1", "h", "2017-03-31T12:00:00.000Z");
+        assertFormat("4", "h", "2017-03-31T03:00:00.000Z");
+        assertFormat("12", "h", "2017-03-31T11:59:59.999Z");
+    }
+
+    @Test
+    public void testFormatHourZeroEleven() throws Exception {
+        assertFormat("PM, 02", "a, KK", "2017-03-31T14:00:00.000Z");
+        assertFormat("PM, 00", "a, KK", "2017-03-31T12:00:00.000Z");
+        assertFormat("AM, 03", "a, KK", "2017-03-31T03:00:00.000Z");
+        assertFormat("AM, 11", "a, KK", "2017-03-31T11:59:59.999Z");
+
+        assertFormat("02", "KK", "2017-03-31T14:00:00.000Z");
+        assertFormat("00", "KK", "2017-03-31T12:00:00.000Z");
+        assertFormat("03", "KK", "2017-03-31T03:00:00.000Z");
+        assertFormat("11", "KK", "2017-03-31T11:59:59.999Z");
+    }
+
+    @Test
+    public void testFormatHourZeroElevenOneDigit() throws Exception {
+        SimpleDateFormat sdf = new SimpleDateFormat("kk a");
+        long millis = Dates.parseDateTime("2017-03-31T00:00:00.000Z");
+        System.out.println(sdf.format(new Date(millis)));
+
+        assertFormat("PM, 2", "a, K", "2017-03-31T14:00:00.000Z");
+        assertFormat("PM, 0", "a, K", "2017-03-31T12:00:00.000Z");
+        assertFormat("AM, 3", "a, K", "2017-03-31T03:00:00.000Z");
+        assertFormat("AM, 11", "a, K", "2017-03-31T11:59:59.999Z");
+
+        assertFormat("2", "K", "2017-03-31T14:00:00.000Z");
+        assertFormat("0", "K", "2017-03-31T12:00:00.000Z");
+        assertFormat("3", "K", "2017-03-31T03:00:00.000Z");
+        assertFormat("11", "K", "2017-03-31T11:59:59.999Z");
+    }
+
+    @Test
+    public void testFormatMillis() throws Exception {
+        assertFormat("033", "SSS", "2017-03-31T14:00:05.033Z");
+        assertFormat("579", "SSS", "2017-03-31T12:00:59.579Z");
+    }
+
+    @Test
+    public void testFormatMillisOneDigit() throws Exception {
+        assertFormat("15", "S", "2017-03-31T14:05:03.015Z");
+        assertFormat("459", "S", "2017-03-31T12:59:45.459Z");
+    }
+
+    @Test
+    public void testFormatMinute() throws Exception {
+        assertFormat("05", "mm", "2017-03-31T14:05:00.000Z");
+        assertFormat("59", "mm", "2017-03-31T12:59:00.000Z");
+    }
+
+    @Test
+    public void testFormatMinuteOneDigit() throws Exception {
+        assertFormat("5", "m", "2017-03-31T14:05:00.000Z");
+        assertFormat("59", "m", "2017-03-31T12:59:00.000Z");
+    }
+
+    @Test
+    public void testFormatMonthName() throws Exception {
+        assertFormat("09, April", "dd, MMMM", "2017-04-09T00:00:00.000Z");
+        assertFormat("09, December", "dd, MMMM", "2017-12-09T00:00:00.000Z");
+        assertFormat("09, January", "dd, MMMM", "2017-01-09T00:00:00.000Z");
+
+        assertFormat("April", "MMMM", "2017-04-09T00:00:00.000Z");
+        assertFormat("December", "MMMM", "2017-12-09T00:00:00.000Z");
+        assertFormat("January", "MMMM", "2017-01-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatMonthOneDigit() throws Exception {
+        assertFormat("09, 4", "dd, M", "2017-04-09T00:00:00.000Z");
+        assertFormat("09, 12", "dd, M", "2017-12-09T00:00:00.000Z");
+        assertFormat("09, 1", "dd, M", "2017-01-09T00:00:00.000Z");
+
+        assertFormat("4", "M", "2017-04-09T00:00:00.000Z");
+        assertFormat("12", "M", "2017-12-09T00:00:00.000Z");
+        assertFormat("1", "M", "2017-01-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatMonthTwoDigits() throws Exception {
+        assertFormat("09, 04", "dd, MM", "2017-04-09T00:00:00.000Z");
+        assertFormat("09, 12", "dd, MM", "2017-12-09T00:00:00.000Z");
+        assertFormat("09, 01", "dd, MM", "2017-01-09T00:00:00.000Z");
+
+        assertFormat("04", "MM", "2017-04-09T00:00:00.000Z");
+        assertFormat("12", "MM", "2017-12-09T00:00:00.000Z");
+        assertFormat("01", "MM", "2017-01-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatSecond() throws Exception {
+        assertFormat("05", "ss", "2017-03-31T14:00:05.000Z");
+        assertFormat("59", "ss", "2017-03-31T12:00:59.000Z");
+    }
+
+    @Test
+    public void testFormatSecondOneDigit() throws Exception {
+        assertFormat("3", "s", "2017-03-31T14:05:03.000Z");
+        assertFormat("45", "s", "2017-03-31T12:59:45.000Z");
+    }
+
+    @Test
+    public void testFormatShortDay() throws Exception {
+        assertFormat("3", "d", "2014-04-03T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatShortMonthName() throws Exception {
+        assertFormat("09, Apr", "dd, MMM", "2017-04-09T00:00:00.000Z");
+        assertFormat("09, Dec", "dd, MMM", "2017-12-09T00:00:00.000Z");
+        assertFormat("09, Jan", "dd, MMM", "2017-01-09T00:00:00.000Z");
+
+        assertFormat("Apr", "MMM", "2017-04-09T00:00:00.000Z");
+        assertFormat("Dec", "MMM", "2017-12-09T00:00:00.000Z");
+        assertFormat("Jan", "MMM", "2017-01-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatShortWeekday() throws Exception {
+        assertFormat("09, Sun", "dd, E", "2017-04-09T00:00:00.000Z");
+        assertFormat("10, Mon", "dd, E", "2017-04-10T00:00:00.000Z");
+        assertFormat("11, Tue", "dd, E", "2017-04-11T00:00:00.000Z");
+        assertFormat("12, Wed", "dd, E", "2017-04-12T00:00:00.000Z");
+        assertFormat("13, Thu", "dd, E", "2017-04-13T00:00:00.000Z");
+        assertFormat("14, Fri", "dd, E", "2017-04-14T00:00:00.000Z");
+        assertFormat("15, Sat", "dd, E", "2017-04-15T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatWeekday() throws Exception {
+        assertFormat("09, Sunday", "dd, EE", "2017-04-09T00:00:00.000Z");
+        assertFormat("10, Monday", "dd, EE", "2017-04-10T00:00:00.000Z");
+        assertFormat("11, Tuesday", "dd, EE", "2017-04-11T00:00:00.000Z");
+        assertFormat("12, Wednesday", "dd, EE", "2017-04-12T00:00:00.000Z");
+        assertFormat("13, Thursday", "dd, EE", "2017-04-13T00:00:00.000Z");
+        assertFormat("14, Friday", "dd, EE", "2017-04-14T00:00:00.000Z");
+        assertFormat("15, Saturday", "dd, EE", "2017-04-15T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatWeekdayDigit() throws Exception {
+        assertFormat("09, 1", "dd, u", "2017-04-09T00:00:00.000Z");
+        assertFormat("10, 2", "dd, u", "2017-04-10T00:00:00.000Z");
+        assertFormat("11, 3", "dd, u", "2017-04-11T00:00:00.000Z");
+        assertFormat("12, 4", "dd, u", "2017-04-12T00:00:00.000Z");
+        assertFormat("13, 5", "dd, u", "2017-04-13T00:00:00.000Z");
+        assertFormat("14, 6", "dd, u", "2017-04-14T00:00:00.000Z");
+        assertFormat("15, 7", "dd, u", "2017-04-15T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatYearFourDigits() throws Exception {
+        assertFormat("09, 2017", "dd, yyyy", "2017-04-09T00:00:00.000Z");
+        assertFormat("2017", "yyyy", "2017-04-09T00:00:00.000Z");
+
+        assertFormat("09, 0007", "dd, yyyy", "0007-04-09T00:00:00.000Z");
+        assertFormat("0007", "yyyy", "0007-04-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatYearOneDigit() throws Exception {
+        assertFormat("09, 2017", "dd, y", "2017-04-09T00:00:00.000Z");
+        assertFormat("2017", "y", "2017-04-09T00:00:00.000Z");
+
+        assertFormat("09, 7", "dd, y", "0007-04-09T00:00:00.000Z");
+        assertFormat("7", "y", "0007-04-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatYearTwoDigits() throws Exception {
+        assertFormat("09, 17", "dd, yy", "2017-04-09T00:00:00.000Z");
+        assertFormat("17", "yy", "2017-04-09T00:00:00.000Z");
+
+        assertFormat("09, 07", "dd, yy", "0007-04-09T00:00:00.000Z");
+        assertFormat("07", "yy", "0007-04-09T00:00:00.000Z");
     }
 
     @Test
@@ -339,8 +611,14 @@ public class DateFormatCompilerTest {
         assertThat("EE, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
     }
 
+    private void assertFormat(String expected, String format, String date) throws NumericException {
+        sink.clear();
+        compiler.create(format).append(Dates.parseDateTime(date), defaultLocale, sink);
+        TestUtils.assertEquals(expected, sink);
+    }
+
     private void assertThat(String pattern, String expected, String input) throws NumericException {
         DateFormat format = compiler.create(pattern);
-        TestUtils.assertEquals(expected, Dates.toString(format.parse(input, DateLocaleFactory.INSTANCE.getDateLocale("en-GB"))));
+        TestUtils.assertEquals(expected, Dates.toString(format.parse(input, defaultLocale)));
     }
 }

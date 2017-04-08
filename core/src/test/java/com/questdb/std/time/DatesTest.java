@@ -24,7 +24,6 @@
 package com.questdb.std.time;
 
 import com.questdb.ex.NumericException;
-import com.questdb.std.time.Dates;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
@@ -339,6 +338,16 @@ public class DatesTest {
         long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
         Dates.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 4));
         TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testDayOfWeek() throws Exception {
+        long millis = Dates.parseDateTime("1893-03-19T17:16:30.192Z");
+        Assert.assertEquals(7, Dates.getDayOfWeek(millis));
+        Assert.assertEquals(1, Dates.getDayOfWeekSundayFirst(millis));
+        millis = Dates.parseDateTime("2017-04-09T17:16:30.192Z");
+        Assert.assertEquals(7, Dates.getDayOfWeek(millis));
+        Assert.assertEquals(1, Dates.getDayOfWeekSundayFirst(millis));
     }
 
     private void assertTrue(String date) throws NumericException {
