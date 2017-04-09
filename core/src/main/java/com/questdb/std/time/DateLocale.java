@@ -9,15 +9,13 @@ import com.questdb.std.ObjList;
 
 import java.text.DateFormatSymbols;
 import java.time.ZoneId;
-import java.util.ArrayList;
-import java.util.List;
 
 public class DateLocale {
-    private final IntObjHashMap<List<CharSequence>> months = new IntObjHashMap<>();
-    private final IntObjHashMap<List<CharSequence>> weekdays = new IntObjHashMap<>();
-    private final IntObjHashMap<List<CharSequence>> amspms = new IntObjHashMap<>();
-    private final IntObjHashMap<List<CharSequence>> eras = new IntObjHashMap<>();
-    private final IntObjHashMap<List<CharSequence>> zones = new IntObjHashMap<>();
+    private final IntObjHashMap<ObjList<CharSequence>> months = new IntObjHashMap<>();
+    private final IntObjHashMap<ObjList<CharSequence>> weekdays = new IntObjHashMap<>();
+    private final IntObjHashMap<ObjList<CharSequence>> amspms = new IntObjHashMap<>();
+    private final IntObjHashMap<ObjList<CharSequence>> eras = new IntObjHashMap<>();
+    private final IntObjHashMap<ObjList<CharSequence>> zones = new IntObjHashMap<>();
     private final ObjList<TimeZoneRules> rules = new ObjList<>();
     private final String[] monthArray;
     private final String[] shortMonthArray;
@@ -40,12 +38,28 @@ public class DateLocale {
         return Unsafe.arrayGet(ampmArray, index);
     }
 
-    public String getWeekday(int index) {
-        return Unsafe.arrayGet(weekdayArray, index);
+    public String getEra(int index) {
+        return Unsafe.arrayGet(eraArray, index);
+    }
+
+    public String getMonth(int index) {
+        return Unsafe.arrayGet(monthArray, index);
+    }
+
+    public String getMonthShort(int index) {
+        return Unsafe.arrayGet(shortMonthArray, index);
+    }
+
+    public TimeZoneRules getRules(CharSequence timeZoneName) throws NumericException {
+        return getZoneRules(Numbers.decodeInt(matchZone(timeZoneName, 0, timeZoneName.length())));
     }
 
     public String getShortWeekday(int index) {
         return Unsafe.arrayGet(shortWeekdayArray, index);
+    }
+
+    public String getWeekday(int index) {
+        return Unsafe.arrayGet(weekdayArray, index);
     }
 
     public TimeZoneRules getZoneRules(int index) {
@@ -68,48 +82,32 @@ public class DateLocale {
         return findToken(content, lo, hi, weekdays);
     }
 
-    public String getEra(int index) {
-        return Unsafe.arrayGet(eraArray, index);
-    }
-
-    public String getMonth(int index) {
-        return Unsafe.arrayGet(monthArray, index);
-    }
-
-    public String getMonthShort(int index) {
-        return Unsafe.arrayGet(shortMonthArray, index);
-    }
-
     public long matchZone(CharSequence content, int lo, int hi) throws NumericException {
         return findToken(content, lo, hi, zones);
     }
 
-    public TimeZoneRules getRules(CharSequence timeZoneName) throws NumericException {
-        return getZoneRules(Numbers.decodeInt(matchZone(timeZoneName, 0, timeZoneName.length())));
-    }
-
-    private static void index(String[] tokens, IntObjHashMap<List<CharSequence>> map) {
+    private static void index(String[] tokens, IntObjHashMap<ObjList<CharSequence>> map) {
         for (int i = 0, n = tokens.length; i < n; i++) {
             defineToken(Unsafe.arrayGet(tokens, i), i, map);
         }
     }
 
-    private static void defineToken(String token, int pos, IntObjHashMap<List<CharSequence>> map) {
+    private static void defineToken(String token, int pos, IntObjHashMap<ObjList<CharSequence>> map) {
         if (token.length() == 0) {
             return;
         }
 
         char c0 = Character.toUpperCase(token.charAt(0));
-        List<CharSequence> l = map.get(c0);
+        ObjList<CharSequence> l = map.get(c0);
         if (l == null) {
-            l = new ArrayList<>();
+            l = new ObjList<>();
             map.put(c0, l);
         }
         l.add(((char) pos) + token.toUpperCase());
         l.sort(Lexer.COMPARATOR);
     }
 
-    private static long findToken(CharSequence content, int lo, int hi, IntObjHashMap<List<CharSequence>> map) throws NumericException {
+    private static long findToken(CharSequence content, int lo, int hi, IntObjHashMap<ObjList<CharSequence>> map) throws NumericException {
 
         if (lo >= hi) {
             throw NumericException.INSTANCE;
@@ -117,7 +115,7 @@ public class DateLocale {
 
         char c = Character.toUpperCase(content.charAt(lo));
 
-        List<CharSequence> l = map.get(c);
+        ObjList<CharSequence> l = map.get(c);
         if (l == null) {
             throw NumericException.INSTANCE;
         }

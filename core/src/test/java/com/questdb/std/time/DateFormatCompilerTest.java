@@ -455,7 +455,9 @@ public class DateFormatCompilerTest {
         String text = "Thu, 09 Mar 2017 15:29:16 GMT";
         DateFormat fmt = compiler.create("E, dd MMM yyyy HH:mm:ss Z");
         long millis = fmt.parse(text, defaultLocale);
-        System.out.println(Dates.toString(millis));
+        sink.clear();
+        Dates.appendDateTime(sink, millis);
+        TestUtils.assertEquals("2017-03-09T15:29:16.000Z", sink);
     }
 
     @Test

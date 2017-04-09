@@ -1,5 +1,6 @@
 package com.questdb.std.time;
 
+import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.CharSequenceObjHashMap;
 
 import java.text.DateFormatSymbols;
@@ -11,6 +12,7 @@ public class DateLocaleFactory {
     private final CharSequenceObjHashMap<DateLocale> dateLocales = new CharSequenceObjHashMap<>();
 
     public DateLocaleFactory(TimeZoneRuleFactory timeZoneRuleFactory) {
+        CharSequenceHashSet cache = new CharSequenceHashSet();
         for (Locale l : Locale.getAvailableLocales()) {
             dateLocales.put(l.toLanguageTag(), new DateLocale(new DateFormatSymbols(l), timeZoneRuleFactory));
         }
