@@ -8,6 +8,11 @@ public class FixedTimeZoneRule implements TimeZoneRules {
     }
 
     @Override
+    public long getOffset(long millis) {
+        return offset;
+    }
+
+    @Override
     public long getOffset(long millis, int year, boolean leap) {
         return offset;
     }

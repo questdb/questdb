@@ -111,6 +111,12 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
     }
 
     @Override
+    public long getOffset(long millis) {
+        int y = Dates.getYear(millis);
+        return getOffset(millis, y, Dates.isLeapYear(y));
+    }
+
+    @Override
     public long getOffset(long millis, int year, boolean leap) {
         if (standardOffset != Long.MIN_VALUE) {
             return standardOffset;

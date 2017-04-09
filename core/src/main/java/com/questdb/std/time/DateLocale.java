@@ -84,6 +84,10 @@ public class DateLocale {
         return findToken(content, lo, hi, zones);
     }
 
+    public TimeZoneRules getRules(CharSequence timeZoneName) throws NumericException {
+        return getZoneRules(Numbers.decodeInt(matchZone(timeZoneName, 0, timeZoneName.length())));
+    }
+
     private static void index(String[] tokens, IntObjHashMap<List<CharSequence>> map) {
         for (int i = 0, n = tokens.length; i < n; i++) {
             defineToken(Unsafe.arrayGet(tokens, i), i, map);

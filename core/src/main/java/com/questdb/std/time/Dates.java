@@ -328,6 +328,34 @@ final public class Dates {
         return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;
     }
 
+    public static int getDayOfWeek(long millis) {
+        // 1970-01-01 is Thursday.
+        long d;
+        if (millis >= 0) {
+            d = millis / DAY_MILLIS;
+        } else {
+            d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
+            if (d < -3) {
+                return 7 + (int) ((d + 4) % 7);
+            }
+        }
+        return 1 + (int) ((d + 3) % 7);
+    }
+
+    public static int getDayOfWeekSundayFirst(long millis) {
+        // 1970-01-01 is Thursday.
+        long d;
+        if (millis >= 0) {
+            d = millis / DAY_MILLIS;
+        } else {
+            d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
+            if (d < -4) {
+                return 7 + (int) ((d + 5) % 7);
+            }
+        }
+        return 1 + (int) ((d + 4) % 7);
+    }
+
     /**
      * Days in a given month. This method expects you to know if month is in leap year.
      *
@@ -964,34 +992,6 @@ final public class Dates {
         throw NumericException.INSTANCE;
     }
 
-    public static int getDayOfWeek(long millis) {
-        // 1970-01-01 is Thursday.
-        long d;
-        if (millis >= 0) {
-            d = millis / DAY_MILLIS;
-        } else {
-            d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
-            if (d < -3) {
-                return 7 + (int) ((d + 4) % 7);
-            }
-        }
-        return 1 + (int) ((d + 3) % 7);
-    }
-
-    public static int getDayOfWeekSundayFirst(long millis) {
-        // 1970-01-01 is Thursday.
-        long d;
-        if (millis >= 0) {
-            d = millis / DAY_MILLIS;
-        } else {
-            d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
-            if (d < -4) {
-                return 7 + (int) ((d + 5) % 7);
-            }
-        }
-        return 1 + (int) ((d + 4) % 7);
-    }
-
     private static long getTime(long millis) {
         return millis < 0 ? DAY_MILLIS - 1 + (millis % DAY_MILLIS) : millis % DAY_MILLIS;
     }
@@ -1002,7 +1002,12 @@ final public class Dates {
         if (lim - p < 20) {
             throw NumericException.INSTANCE;
         }
-        int year = Numbers.parseInt(seq, p, p += 4);
+        int year;
+        if (seq.charAt(p) == '-') {
+            year = Numbers.parseInt(seq, p, p += 5);
+        } else {
+            year = Numbers.parseInt(seq, p, p += 4);
+        }
         checkChar(seq, p++, lim, '-');
         int month = Numbers.parseInt(seq, p, p += 2);
         checkRange(month, 1, 12);

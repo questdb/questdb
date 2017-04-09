@@ -85,8 +85,7 @@ public class TimeZoneRulesImplTest {
 
         while (millis < deadline) {
             for (int i = 0, n = zones.size(); i < n; i++) {
-                int y = Dates.getYear(millis);
-                zoneRules.get(i).getOffset(millis, y, Dates.isLeapYear(y));
+                zoneRules.get(i).getOffset(millis);
             }
             millis += Dates.DAY_MILLIS;
         }

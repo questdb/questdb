@@ -9,9 +9,6 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
-
 public class DateFormatCompilerTest {
 
     private static final DateFormatCompiler compiler = new DateFormatCompiler();
@@ -80,8 +77,26 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testFormatBSTtoMSK() throws Exception {
+        DateFormat fmt = compiler.create("dd-MM-yyyy HH:mm:ss Z");
+        String targetTimezoneName = "MSK";
+
+        long millis = fmt.parse("06-04-2017 01:09:30 BST", defaultLocale);
+        millis += defaultLocale.getRules(targetTimezoneName).getOffset(millis);
+        sink.clear();
+        fmt.append(millis, defaultLocale, targetTimezoneName, sink);
+        TestUtils.assertEquals("06-04-2017 03:09:30 MSK", sink);
+    }
+
+    @Test
     public void testFormatDay() throws Exception {
         assertFormat("03", "dd", "2014-04-03T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatEra() throws Exception {
+        assertFormat("AD", "G", "2017-04-09T00:00:00.000Z");
+        assertFormat("BC", "G", "-1024-04-09T00:00:00.000Z");
     }
 
     @Test
@@ -177,10 +192,6 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testFormatHourZeroElevenOneDigit() throws Exception {
-        SimpleDateFormat sdf = new SimpleDateFormat("kk a");
-        long millis = Dates.parseDateTime("2017-03-31T00:00:00.000Z");
-        System.out.println(sdf.format(new Date(millis)));
-
         assertFormat("PM, 2", "a, K", "2017-03-31T14:00:00.000Z");
         assertFormat("PM, 0", "a, K", "2017-03-31T12:00:00.000Z");
         assertFormat("AM, 3", "a, K", "2017-03-31T03:00:00.000Z");
@@ -286,6 +297,11 @@ public class DateFormatCompilerTest {
         assertFormat("13, Thu", "dd, E", "2017-04-13T00:00:00.000Z");
         assertFormat("14, Fri", "dd, E", "2017-04-14T00:00:00.000Z");
         assertFormat("15, Sat", "dd, E", "2017-04-15T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatTimezone() throws Exception {
+        assertFormat("GMT", "z", "2014-04-03T00:00:00.000Z");
     }
 
     @Test
@@ -432,6 +448,14 @@ public class DateFormatCompilerTest {
 
         assertThat("kkMMy", "2010-09-01T03:00:00.000Z", "040910");
         assertThat("kkMMy", "2010-09-01T22:00:00.000Z", "230910");
+    }
+
+    @Test
+    public void testHttpFormat() throws Exception {
+        String text = "Thu, 09 Mar 2017 15:29:16 GMT";
+        DateFormat fmt = compiler.create("E, dd MMM yyyy HH:mm:ss Z");
+        long millis = fmt.parse(text, defaultLocale);
+        System.out.println(Dates.toString(millis));
     }
 
     @Test
@@ -613,7 +637,7 @@ public class DateFormatCompilerTest {
 
     private void assertFormat(String expected, String format, String date) throws NumericException {
         sink.clear();
-        compiler.create(format).append(Dates.parseDateTime(date), defaultLocale, sink);
+        compiler.create(format).append(Dates.parseDateTime(date), defaultLocale, "GMT", sink);
         TestUtils.assertEquals(expected, sink);
     }
 

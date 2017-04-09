@@ -45,7 +45,7 @@ public class DateFormatImpl implements DateFormat {
     }
 
     @Override
-    public void append(long datetime, DateLocale locale, CharSink sink) throws NumericException {
+    public void append(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) throws NumericException {
         int day = -1;
         int month = -1;
         int year = Integer.MIN_VALUE;
@@ -352,6 +352,7 @@ public class DateFormatImpl implements DateFormat {
                 case DateFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
                 case DateFormatCompiler.OP_TIME_ZONE_LONG:
                 case DateFormatCompiler.OP_TIME_ZONE_RFC_822:
+                    sink.put(timeZoneName);
                     break;
 
                 // SEPARATORS
