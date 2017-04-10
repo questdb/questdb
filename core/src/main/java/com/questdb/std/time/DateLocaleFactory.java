@@ -14,7 +14,8 @@ public class DateLocaleFactory {
     public DateLocaleFactory(TimeZoneRuleFactory timeZoneRuleFactory) {
         CharSequenceHashSet cache = new CharSequenceHashSet();
         for (Locale l : Locale.getAvailableLocales()) {
-            dateLocales.put(l.toLanguageTag(), new DateLocale(new DateFormatSymbols(l), timeZoneRuleFactory));
+            dateLocales.put(l.toLanguageTag(), new DateLocale(new DateFormatSymbols(l), timeZoneRuleFactory, cache));
+            cache.clear();
         }
     }
 

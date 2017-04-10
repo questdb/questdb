@@ -3,12 +3,9 @@ package com.questdb.std.time;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.IntObjHashMap;
-import com.questdb.std.Lexer;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
 
 import java.text.DateFormatSymbols;
-import java.time.ZoneId;
 
 public class DateLocale {
     private final IntObjHashMap<ObjList<CharSequence>> months = new IntObjHashMap<>();
@@ -16,22 +13,23 @@ public class DateLocale {
     private final IntObjHashMap<ObjList<CharSequence>> amspms = new IntObjHashMap<>();
     private final IntObjHashMap<ObjList<CharSequence>> eras = new IntObjHashMap<>();
     private final IntObjHashMap<ObjList<CharSequence>> zones = new IntObjHashMap<>();
-    private final ObjList<TimeZoneRules> rules = new ObjList<>();
     private final String[] monthArray;
     private final String[] shortMonthArray;
     private final String[] weekdayArray;
     private final String[] shortWeekdayArray;
     private final String[] ampmArray;
     private final String[] eraArray;
+    private final TimeZoneRuleFactory factory;
 
-    public DateLocale(DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory) {
+    DateLocale(DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory, @Transient CharSequenceHashSet cache) {
+        this.factory = timeZoneRuleFactory;
         index(monthArray = symbols.getMonths(), months);
         index(shortMonthArray = symbols.getShortMonths(), months);
         index(weekdayArray = symbols.getWeekdays(), weekdays);
         index(shortWeekdayArray = symbols.getShortWeekdays(), weekdays);
         index(ampmArray = symbols.getAmPmStrings(), amspms);
         index(eraArray = symbols.getEras(), eras);
-        indexZones(symbols.getZoneStrings(), timeZoneRuleFactory);
+        indexZones(symbols.getZoneStrings(), timeZoneRuleFactory, cache);
     }
 
     public String getAMPM(int index) {
@@ -63,7 +61,7 @@ public class DateLocale {
     }
 
     public TimeZoneRules getZoneRules(int index) {
-        return rules.getQuick(index);
+        return factory.getTimeZoneRulesQuick(index);
     }
 
     public long matchAMPM(CharSequence content, int lo, int hi) throws NumericException {
@@ -141,41 +139,23 @@ public class DateLocale {
         throw NumericException.INSTANCE;
     }
 
-    private void indexZones(String[][] zones, TimeZoneRuleFactory timeZoneRuleFactory) {
-        int index = 0;
+    private void indexZones(String[][] zones, TimeZoneRuleFactory timeZoneRuleFactory, CharSequenceHashSet cache) {
         for (int i = 0, n = zones.length; i < n; i++) {
             String[] zNames = zones[i];
             String key = zNames[0];
-            TimeZoneRules rules = timeZoneRuleFactory.getTimeZoneRules(key);
-            if (rules == null) {
-                String alias = ZoneId.SHORT_IDS.get(key);
 
-                if (alias == null) {
-                    System.out.println("no match: " + key);
-                    continue;
-                }
-
-                rules = timeZoneRuleFactory.getTimeZoneRules(alias);
-
-                if (rules == null) {
-                    // try to parse alias as an offset
-                    long offset = Dates.parseOffset(alias, 0, alias.length());
-                    if (offset != Long.MIN_VALUE) {
-                        rules = new FixedTimeZoneRule(Numbers.decodeInt(offset) * Dates.MINUTE_MILLIS);
-                    } else {
-                        System.out.println("no match for alias: " + alias + ", key: " + key);
-                        continue;
-                    }
-                }
+            int index = timeZoneRuleFactory.getTimeZoneRulesIndex(key);
+            if (index == -1) {
+                continue;
             }
 
-            this.rules.add(rules);
-
-            for (int k = 0, m = zNames.length; k < m; k++) {
-                defineToken(zNames[k], index, this.zones);
+            for (int k = 1, m = zNames.length; k < m; k++) {
+                String name = zNames[k];
+                // we already added this name, skip
+                if (cache.add(name)) {
+                    defineToken(name, index, this.zones);
+                }
             }
-
-            index++;
         }
     }
 }

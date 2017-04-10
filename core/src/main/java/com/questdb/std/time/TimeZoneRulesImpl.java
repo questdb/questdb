@@ -46,9 +46,11 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
     private final long firstWall;
     private final long lastWall;
     private final int historyOverlapCheckCutoff;
+    private final String id;
     private long standardOffset;
 
-    public TimeZoneRulesImpl(ZoneRules rules) {
+    public TimeZoneRulesImpl(String id, ZoneRules rules) {
+        this.id = id;
         final long[] savingsInstantTransition = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITION);
 
         if (savingsInstantTransition.length == 0) {
@@ -131,6 +133,11 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
         }
 
         return fromHistory(millis);
+    }
+
+    @Override
+    public String getId() {
+        return id;
     }
 
     private long fromHistory(long millis) {
