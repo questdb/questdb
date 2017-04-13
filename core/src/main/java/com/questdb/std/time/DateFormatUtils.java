@@ -2,32 +2,16 @@ package com.questdb.std.time;
 
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Chars;
-import com.questdb.misc.Numbers;
 
 public class DateFormatUtils {
-    public static void assertChar(char c, CharSequence in, int pos, int hi) throws NumericException {
+    static void assertChar(char c, CharSequence in, int pos, int hi) throws NumericException {
         assertRemaining(pos, hi);
         if (in.charAt(pos) != c) {
             throw NumericException.INSTANCE;
         }
     }
 
-    static int assertString(CharSequence delimiter, int len, CharSequence in, int pos, int hi) throws NumericException {
-        assertRemaining(pos + len - 1, hi);
-        if (!Chars.equals(delimiter, in, pos, pos + len)) {
-            throw NumericException.INSTANCE;
-        }
-        return pos + len;
-    }
-
-    public static void assertRemaining(int pos, int hi) throws NumericException {
-        if (pos < hi) {
-            return;
-        }
-        throw NumericException.INSTANCE;
-    }
-
-    public static long computeMillis(int year, int month, int day, int hour, int minute, int second, int millis, int timezone, long offset, DateLocale locale, int pos, int hi) throws NumericException {
+    static long computeMillis(int year, int month, int day, int hour, int minute, int second, int millis, int timezone, long offset, DateLocale locale, int pos, int hi) throws NumericException {
         // extra input
         if (pos < hi) {
             throw NumericException.INSTANCE;
@@ -64,5 +48,20 @@ public class DateFormatUtils {
         }
 
         return datetime;
+    }
+
+    static int assertString(CharSequence delimiter, int len, CharSequence in, int pos, int hi) throws NumericException {
+        assertRemaining(pos + len - 1, hi);
+        if (!Chars.equals(delimiter, in, pos, pos + len)) {
+            throw NumericException.INSTANCE;
+        }
+        return pos + len;
+    }
+
+    static void assertRemaining(int pos, int hi) throws NumericException {
+        if (pos < hi) {
+            return;
+        }
+        throw NumericException.INSTANCE;
     }
 }

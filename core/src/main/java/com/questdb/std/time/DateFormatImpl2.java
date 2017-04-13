@@ -74,7 +74,7 @@ public class DateFormatImpl2 extends AbstractDateFormat {
         l = locale.matchMonth(in, pos, hi);
         month = Numbers.decodeInt(l) + 1;
         pos += Numbers.decodeLen(l);
-/*
+
         DateFormatUtils.assertChar(' ', in, pos++, hi);
 
         // yyyy
@@ -82,7 +82,7 @@ public class DateFormatImpl2 extends AbstractDateFormat {
         year = Numbers.parseInt(in, pos, pos += 4);
 
         DateFormatUtils.assertChar(' ', in, pos++, hi);
-
+/*
         // HH
         DateFormatUtils.assertRemaining(pos + 1, hi);
         hour = Numbers.parseInt(in, pos, pos += 2);
@@ -102,17 +102,17 @@ public class DateFormatImpl2 extends AbstractDateFormat {
 //        DateFormatUtils.assertChar(' ', in, pos, hi);
 //        pos++;
 //
-//        // z
-//        l = Dates.parseOffset(in, pos, hi);
-//        if (l == Long.MIN_VALUE) {
-//            l = locale.matchZone(in, pos, hi);
-//            timezone = Numbers.decodeInt(l);
-//            pos += Numbers.decodeLen(l);
-//        } else {
-//            offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
-//            pos += Numbers.decodeLen(l);
-//        }
 */
+
+        // z
+        l = Dates.parseOffset(in, pos, hi);
+        if (l == Long.MIN_VALUE) {
+            l = locale.matchZone(in, pos, hi);
+            timezone = Numbers.decodeInt(l);
+        } else {
+            offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
+        }
+        pos += Numbers.decodeLen(l);
 
         return 0;
 //        return DateFormatUtils.computeMillis(

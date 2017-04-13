@@ -132,7 +132,7 @@ public class DateFormatCompiler {
     private DateFormat compile(IntList ops, ObjList<String> delims) {
         asm.clear();
         asm.setupPool();
-        int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/std/time/DateFormatAsm"));
         int superclassIndex = asm.poolClass(AbstractDateFormat.class);
         int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
         int dateFormatUtilsClassIndex = asm.poolClass(DateFormatUtils.class);
@@ -140,6 +140,7 @@ public class DateFormatCompiler {
         int datesClassIndex = asm.poolClass(Dates.class);
         int numericExceptionClassIndex = asm.poolClass(NumericException.class);
         int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
+        int minMillisIndex = asm.poolLongConst(Dates.MINUTE_MILLIS);
 
         int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
         int matchWeekdayIndex = asm.poolMethod(dateLocaleClassIndex, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
@@ -151,6 +152,7 @@ public class DateFormatCompiler {
         int assertStringIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
         int assertCharIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertChar", "(CLjava/lang/CharSequence;II)V");
         int computeMillisIndex = asm.poolMethod(dateFormatUtilsClassIndex, "computeMillis", "(IIIIIIIIJLcom/questdb/std/time/DateLocale;II)J");
+        int parseOffsetIndex = asm.poolMethod(datesClassIndex, "parseOffset", "(Ljava/lang/CharSequence;II)J");
 
         int parseNameIndex = asm.poolUtf8("parse");
         int parseSigIndex = asm.poolUtf8("(Ljava/lang/CharSequence;IILcom/questdb/std/time/DateLocale;)J");
@@ -184,44 +186,45 @@ public class DateFormatCompiler {
         asm.startMethod(0x01, parseNameIndex, parseSigIndex, 13, 18);
 
         // define stack variables
-        // int day;
-        // int month;
-        // int year;
-        // int hour;
-        // int minute;
-        // int second;
-        // int millis = 0;
-        // int pos = lo;
-        // long l;
-        // int timezone = -1;
-        // long offset = Long.MIN_VALUE;
-
         // when pattern is not used a default value must be assigned
+
+        // int day = 1
         asm.iconst(1);
         asm.istore(5);
 
+        // int month = 1
         asm.iconst(1);
         asm.istore(6);
 
+        // int year = 1970
         asm.iconst(1970);
         asm.istore(7);
 
+        // int hour = 0
         asm.iconst(0);
         asm.istore(8);
 
+        // int minute = 0;
         asm.iconst(0);
         asm.istore(9);
 
+        // int second = 0
         asm.iconst(0);
         asm.istore(10);
 
-        //
+        // int millis = 0
         asm.iconst(0);
         asm.istore(11);
+
+        // int pos = lo
         asm.iload(2);
         asm.istore(12);
+
+        // int timezone = -1
         asm.iconst(-1);
         asm.istore(15);
+
+        // long offset = Long.MIN_VALUE
         asm.ldc2_w(minLongIndex);
         asm.lstore(16);
 
@@ -284,11 +287,15 @@ public class DateFormatCompiler {
                     asm.istore(12);
                     break;
                 case OP_YEAR_FOUR_DIGITS:
-                    asm.iload(2);
+                    asm.iload(12);
                     asm.iconst(3);
                     asm.iadd();
+
+                    // load "hi"
                     asm.iload(3);
                     asm.invokeStatic(assertRemainingIndex);
+
+                    // load "in"
                     asm.aload(1);
                     asm.iload(12);
                     asm.iinc(12, 4);
@@ -339,7 +346,71 @@ public class DateFormatCompiler {
                     asm.invokeStatic(parseIntIndex);
                     asm.istore(10);
                     break;
+
+                case DateFormatCompiler.OP_TIME_ZONE_SHORT:
+                case DateFormatCompiler.OP_TIME_ZONE_GMT_BASED:
+                case DateFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
+                case DateFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
+                case DateFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
+                case DateFormatCompiler.OP_TIME_ZONE_LONG:
+                case DateFormatCompiler.OP_TIME_ZONE_RFC_822:
+//                    l = Dates.parseOffset(in, pos, hi);
+//                    if (l == Long.MIN_VALUE) {
+//                        l = locale.matchZone(in, pos, hi);
+//                        timezone = Numbers.decodeInt(l);
+//                        pos += Numbers.decodeLen(l);
+//                    } else {
+//                        offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
+//                        pos += Numbers.decodeLen(l);
+//                    }
+
+                    asm.aload(1);
+                    asm.iload(12);
+                    asm.iload(3);
+                    asm.invokeStatic(parseOffsetIndex);
+                    asm.istore(13);
+
+                    asm.lload(13);
+                    asm.ldc2_w(minLongIndex);
+                    asm.lcmp();
+                    int branch1 = asm.ifne();
+
+                    //
+                    asm.aload(4);
+                    asm.aload(1);
+                    asm.iload(12);
+                    asm.iload(3);
+                    asm.invokeVirtual(0); // matchzone
+                    asm.lstore(13);
+
+                    //
+                    asm.lload(13);
+                    asm.invokeStatic(decodeIntIndex);
+                    asm.istore(15);
+                    int branch2 = asm.goto_();
+
+                    //                    FRAME FULL [com/questdb/std/time/DateFormatImpl2 java/lang/CharSequence I I com/questdb/std/time/DateLocale I I I I I I I I J I J] []
+                    asm.setJmp(branch1, asm.position());
+
+                    asm.lload(13);
+                    asm.invokeStatic(decodeIntIndex);
+                    asm.i2l();
+                    asm.ldc(minMillisIndex);
+                    asm.lmul();
+                    asm.lstore(16);
+//                    FRAME SAME
+                    asm.setJmp(branch2, asm.position());
+
+                    asm.iload(12);
+                    asm.iload(13);
+                    asm.invokeStatic(decodeLenIndex);
+                    asm.iadd();
+                    asm.istore(12);
+                    break;
                 default:
+                    if (op > 0) {
+                        throw new IllegalArgumentException("Not yet supported: " + op);
+                    }
                     String delimiter = delims.getQuick(-op - 1);
                     int len = delimiter.length();
                     if (len == 1) {

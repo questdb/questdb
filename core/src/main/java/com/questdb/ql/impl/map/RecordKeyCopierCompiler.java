@@ -151,7 +151,7 @@ public class RecordKeyCopierCompiler {
             }
         }
 
-        asm.put(BytecodeAssembler.return_);
+        asm.return_();
         asm.endMethodCode();
 
         // exceptions

@@ -108,32 +108,28 @@ public class ComparatorCompiler {
             if (i > 0) {
                 asm.iload(2);
                 // last one does not jump
-                branches.add(asm.position());
-                asm.put(BytecodeAssembler.ifne);
-                asm.putShort(0);
+                branches.add(asm.ifne());
             }
             asm.aload(0);
-            asm.put(BytecodeAssembler.getfield);
-            asm.putShort(fieldIndices.getQuick(i));
+            asm.getfield(fieldIndices.getQuick(i));
             asm.aload(1);
             int index = keyColumns.getQuick(i);
             asm.iconst((index > 0 ? index : -index) - 1);
             asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 1);
             asm.invokeStatic(comparatorAccessorIndices.getQuick(i));
             if (index < 0) {
-                asm.put(BytecodeAssembler.ineg);
+                asm.ineg();
             }
             asm.istore(2);
         }
         int p = asm.position();
         asm.iload(2);
-        asm.put(BytecodeAssembler.ireturn);
+        asm.ireturn();
 
 
         // update ifne jumps to jump to "p" position
         for (int i = 0, n = branches.size(); i < n; i++) {
-            int ifneOffset = branches.getQuick(i);
-            asm.putShort(ifneOffset + 1, p - ifneOffset);
+            asm.setJmp(branches.getQuick(i), p);
         }
 
         asm.endMethodCode();
@@ -186,10 +182,9 @@ public class ComparatorCompiler {
             // make sure column index is valid in case of "descending sort" flag
             asm.iconst((index > 0 ? index : -index) - 1);
             asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), 1);
-            asm.put(BytecodeAssembler.putfield);
-            asm.putShort(fieldIndices.getQuick(i));
+            asm.putfield(fieldIndices.getQuick(i));
         }
-        asm.put(BytecodeAssembler.return_);
+        asm.return_();
         asm.endMethodCode();
         // exceptions
         asm.putShort(0);

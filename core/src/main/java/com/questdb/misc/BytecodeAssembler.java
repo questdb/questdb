@@ -34,12 +34,6 @@ import java.nio.ByteOrder;
 
 public class BytecodeAssembler implements Mutable {
 
-    public static final int ineg = 0x74;
-    public static final int ifne = 154;
-    public static final int ireturn = 172;
-    public static final int return_ = 177;
-    public static final int getfield = 180;
-    public static final int putfield = 181;
     public static final int i2l = 0x85;
     public static final int i2f = 0x86;
     public static final int i2d = 0x87;
@@ -54,6 +48,8 @@ public class BytecodeAssembler implements Mutable {
     public static final int d2f = 0x90;
     public static final int i2b = 0x91;
     public static final int i2s = 0x93;
+    private static final int getfield = 180;
+    private static final int putfield = 181;
     private static final int invokevirtual = 182;
     private static final int invokestatic = 184;
     private static final int invokeinterface = 185;
@@ -76,7 +72,6 @@ public class BytecodeAssembler implements Mutable {
     private static final int ldc2_w = 0x14;
     private static final int iinc = 0x84;
 
-    private static final int iadd = 0x60;
     private static final int lload = 0x16;
     private static final int lload_0 = 0x1e;
     private static final int lload_1 = 0x1f;
@@ -90,8 +85,8 @@ public class BytecodeAssembler implements Mutable {
     private static final int iload_3 = 0x1d;
     private static final int iconst_m1 = 2;
     private static final int iconst_0 = 3;
-    private static final int bipush = 16;
-    private static final int sipush = 17;
+    private static final int bipush = 0x10;
+    private static final int sipush = 0x11;
     private static final int invokespecial = 183;
     private static final int O_POOL_COUNT = 8;
 
@@ -112,24 +107,7 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void aload(int value) {
-        switch (value) {
-            case 0:
-                put(aload_0);
-                break;
-            case 1:
-                put(aload_1);
-                break;
-            case 2:
-                put(aload_2);
-                break;
-            case 3:
-                put(aload_3);
-                break;
-            default:
-                put(aload);
-                put(value);
-                break;
-        }
+        optimisedIO(aload_0, aload_1, aload_2, aload_3, aload, value);
     }
 
     @Override
@@ -152,29 +130,17 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void defineDefaultConstructor() {
-        // constructor method entry
-        startMethod(1, defaultConstructorNameIndex, defaultConstructorDescIndex, 1, 1);
-        // code
-        put(aload_0);
-        put(invokespecial);
-        putShort(defaultConstructorMethodIndex);
-        put(return_);
-        endMethodCode();
-        // exceptions
-        putShort(0);
-        // attribute count
-        putShort(0);
-        endMethod();
+        defineDefaultConstructor(defaultConstructorMethodIndex);
     }
 
     public void defineDefaultConstructor(int superIndex) {
         // constructor method entry
         startMethod(1, defaultConstructorNameIndex, defaultConstructorDescIndex, 1, 1);
         // code
-        put(aload_0);
+        aload(0);
         put(invokespecial);
         putShort(superIndex);
-        put(return_);
+        return_();
         endMethodCode();
         // exceptions
         putShort(0);
@@ -220,8 +186,24 @@ public class BytecodeAssembler implements Mutable {
         return buf.get(pos);
     }
 
+    public void getfield(int index) {
+        put(getfield);
+        putShort(index);
+    }
+
+    public int goto_() {
+        put(0xa7);
+        int pos = position();
+        putShort(0);
+        return pos;
+    }
+
+    public void i2l() {
+        putShort(i2l);
+    }
+
     public void iadd() {
-        put(iadd);
+        put(0x60);
     }
 
     public void iconst(int v) {
@@ -241,6 +223,13 @@ public class BytecodeAssembler implements Mutable {
         }
     }
 
+    public int ifne() {
+        put(0x9a);
+        int pos = position();
+        putShort(0);
+        return pos;
+    }
+
     public void iinc(int index, int inc) {
         put(iinc);
         put(index);
@@ -248,24 +237,11 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void iload(int value) {
-        switch (value) {
-            case 0:
-                put(iload_0);
-                break;
-            case 1:
-                put(iload_1);
-                break;
-            case 2:
-                put(iload_2);
-                break;
-            case 3:
-                put(iload_3);
-                break;
-            default:
-                put(iload);
-                put(value);
-                break;
-        }
+        optimisedIO(iload_0, iload_1, iload_2, iload_3, iload, value);
+    }
+
+    public void ineg() {
+        put(0x74);
     }
 
     public void invokeInterface(int interfaceIndex, int argCount) {
@@ -285,25 +261,16 @@ public class BytecodeAssembler implements Mutable {
         putShort(index);
     }
 
+    public void ireturn() {
+        put(0xac);
+    }
+
     public void istore(int value) {
-        switch (value) {
-            case 0:
-                put(istore_0);
-                break;
-            case 1:
-                put(istore_1);
-                break;
-            case 2:
-                put(istore_2);
-                break;
-            case 3:
-                put(istore_3);
-                break;
-            default:
-                put(istore);
-                put(value);
-                break;
-        }
+        optimisedIO(istore_0, istore_1, istore_2, istore_3, istore, value);
+    }
+
+    public void lcmp() {
+        put(0x94);
     }
 
     public void ldc(int index) {
@@ -317,24 +284,11 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void lload(int value) {
-        switch (value) {
-            case 0:
-                put(lload_0);
-                break;
-            case 1:
-                put(lload_1);
-                break;
-            case 2:
-                put(lload_2);
-                break;
-            case 3:
-                put(lload_3);
-                break;
-            default:
-                put(lload);
-                put(value);
-                break;
-        }
+        optimisedIO(lload_0, lload_1, lload_2, lload_3, lload, value);
+    }
+
+    public void lmul() {
+        put(0x69);
     }
 
     @SuppressWarnings("unchecked")
@@ -349,24 +303,7 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void lstore(int value) {
-        switch (value) {
-            case 0:
-                put(lstore_0);
-                break;
-            case 1:
-                put(lstore_1);
-                break;
-            case 2:
-                put(lstore_2);
-                break;
-            case 3:
-                put(lstore_3);
-                break;
-            default:
-                put(lstore);
-                put(value);
-                break;
-        }
+        optimisedIO(lstore_0, lstore_1, lstore_2, lstore_3, lstore, value);
     }
 
     public <T> T newInstance(Class<T> hostAndType) throws IllegalAccessException, InstantiationException {
@@ -494,6 +431,19 @@ public class BytecodeAssembler implements Mutable {
         putInt(lenPos, position() - lenPos - 4);
     }
 
+    public void putfield(int index) {
+        put(putfield);
+        putShort(index);
+    }
+
+    public void return_() {
+        put(0xb1);
+    }
+
+    public void setJmp(int branch, int target) {
+        putShort(branch, target - branch + 1);
+    }
+
     public void setupPool() {
         // magic
         putInt(0xCAFEBABE);
@@ -537,6 +487,27 @@ public class BytecodeAssembler implements Mutable {
         this.methodCut2 = position();
         putInt(0);
 
+    }
+
+    private void optimisedIO(int code0, int code1, int code2, int code3, int code, int value) {
+        switch (value) {
+            case 0:
+                put(code0);
+                break;
+            case 1:
+                put(code1);
+                break;
+            case 2:
+                put(code2);
+                break;
+            case 3:
+                put(code3);
+                break;
+            default:
+                put(code);
+                put(value);
+                break;
+        }
     }
 
     private int poolRef(int op, int name, int type) {

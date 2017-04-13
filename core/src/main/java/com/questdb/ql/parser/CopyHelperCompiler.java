@@ -111,11 +111,11 @@ public class CopyHelperCompiler {
                     asm.invokeInterface(rGetInt, 1);
                     switch (to.getColumnQuick(i).getType()) {
                         case ColumnType.LONG:
-                            asm.put(BytecodeAssembler.i2l);
+                            asm.i2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            asm.put(BytecodeAssembler.i2l);
+                            asm.i2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.SHORT:
@@ -370,7 +370,7 @@ public class CopyHelperCompiler {
             }
         }
 
-        asm.put(BytecodeAssembler.return_);
+        asm.return_();
         asm.endMethodCode();
 
         // exceptions

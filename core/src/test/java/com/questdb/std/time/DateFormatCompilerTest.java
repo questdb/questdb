@@ -41,6 +41,17 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testBasicParserCompiler() throws Exception {
+        DateFormat fmt = compiler.create("E, dd MMM yyyy HH:mm:ss", false);
+        String utcPattern = "yyyy-MM-ddTHH:mm:ss.SSSz";
+        DateFormat utc = compiler.create(utcPattern, true);
+        long millis = fmt.parse("Mon, 08 Apr 2017 23:11:10", defaultLocale);
+        sink.clear();
+        utc.append(millis, defaultLocale, "Z", sink);
+        TestUtils.assertEquals("2017-04-08T23:11:10.000Z", sink);
+    }
+
+    @Test
     public void testDayGreedy() throws Exception {
         assertThat("d, MM-yy", "2011-10-03T00:00:00.000Z", "3, 10-11");
         assertThat("d, MM-yy", "2011-10-03T00:00:00.000Z", "03, 10-11");
