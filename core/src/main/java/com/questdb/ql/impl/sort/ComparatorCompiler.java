@@ -92,7 +92,7 @@ public class ComparatorCompiler {
         asm.putShort(0);
 
         try {
-            return (RecordComparator) asm.loadClass(ComparatorCompiler.class).newInstance();
+            return asm.newInstance(RecordComparator.class);
         } catch (Exception e) {
             throw new JournalRuntimeException("Cannot instantiate comparator: ", e);
         }
@@ -106,27 +106,27 @@ public class ComparatorCompiler {
         int codeStart = asm.position();
         for (int i = 0; i < sz; i++) {
             if (i > 0) {
-                asm.put(BytecodeAssembler.iload_2);
+                asm.iload(2);
                 // last one does not jump
                 branches.add(asm.position());
                 asm.put(BytecodeAssembler.ifne);
                 asm.putShort(0);
             }
-            asm.put(BytecodeAssembler.aload_0);
+            asm.aload(0);
             asm.put(BytecodeAssembler.getfield);
             asm.putShort(fieldIndices.getQuick(i));
-            asm.put(BytecodeAssembler.aload_1);
+            asm.aload(1);
             int index = keyColumns.getQuick(i);
-            asm.putConstant((index > 0 ? index : -index) - 1);
+            asm.iconst((index > 0 ? index : -index) - 1);
             asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 1);
             asm.invokeStatic(comparatorAccessorIndices.getQuick(i));
             if (index < 0) {
                 asm.put(BytecodeAssembler.ineg);
             }
-            asm.put(BytecodeAssembler.istore_2);
+            asm.istore(2);
         }
         int p = asm.position();
-        asm.put(BytecodeAssembler.iload_2);
+        asm.iload(2);
         asm.put(BytecodeAssembler.ireturn);
 
 
@@ -180,11 +180,11 @@ public class ComparatorCompiler {
     private void instrumentSetLeftMethod(int nameIndex, int descIndex, IntList keyColumns) {
         asm.startMethod(0x01, nameIndex, descIndex, 3, 2);
         for (int i = 0, n = keyColumns.size(); i < n; i++) {
-            asm.put(BytecodeAssembler.aload_0);
-            asm.put(BytecodeAssembler.aload_1);
+            asm.aload(0);
+            asm.aload(1);
             int index = keyColumns.getQuick(i);
             // make sure column index is valid in case of "descending sort" flag
-            asm.putConstant((index > 0 ? index : -index) - 1);
+            asm.iconst((index > 0 ? index : -index) - 1);
             asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), 1);
             asm.put(BytecodeAssembler.putfield);
             asm.putShort(fieldIndices.getQuick(i));
@@ -302,9 +302,8 @@ public class ComparatorCompiler {
 
             int comparatorIndex = comparatorMap.get(comparatorClass.getName());
             if (comparatorIndex == -1) {
-                int cc = asm.poolClass(comparatorClass);
                 int nt = asm.poolNameAndType(compareMethodIndex, comparatorDesc == null ? asm.poolUtf8().put('(').put(fieldType).put(fieldType).put(")I").$() : asm.poolUtf8(comparatorDesc));
-                comparatorIndex = asm.poolMethod(cc, nt);
+                comparatorIndex = asm.poolMethod(asm.poolClass(comparatorClass), nt);
             }
             comparatorAccessorIndices.add(comparatorIndex);
         }

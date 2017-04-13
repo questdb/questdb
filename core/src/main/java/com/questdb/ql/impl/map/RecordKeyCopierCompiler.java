@@ -65,16 +65,16 @@ public class RecordKeyCopierCompiler {
         int rGetSym = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getSym"), asm.poolUtf8("(I)Ljava/lang/String;")));
 
         //
-        int wPutInt = asm.poolMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putInt"), asm.poolUtf8("(I)V")));
+        int wPutInt = asm.poolMethod(writerClassIndex, "putInt", "(I)V");
         int wIntLong = asm.poolUtf8("(J)V");
         int wPutLong = asm.poolMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putLong"), wIntLong));
         //
-        int wPutByte = asm.poolMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putByte"), asm.poolUtf8("(B)V")));
-        int wPutShort = asm.poolMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putShort"), asm.poolUtf8("(S)V")));
-        int wPutBool = asm.poolMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putBool"), asm.poolUtf8("(Z)V")));
-        int wPutFloat = asm.poolMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putFloat"), asm.poolUtf8("(F)V")));
-        int wPutDouble = asm.poolMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putDouble"), asm.poolUtf8("(D)V")));
-        int wPutStr = asm.poolMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putStr"), asm.poolUtf8("(Ljava/lang/CharSequence;)V")));
+        int wPutByte = asm.poolMethod(writerClassIndex, "putByte", "(B)V");
+        int wPutShort = asm.poolMethod(writerClassIndex, "putShort", "(S)V");
+        int wPutBool = asm.poolMethod(writerClassIndex, "putBool", "(Z)V");
+        int wPutFloat = asm.poolMethod(writerClassIndex, "putFloat", "(F)V");
+        int wPutDouble = asm.poolMethod(writerClassIndex, "putDouble", "(D)V");
+        int wPutStr = asm.poolMethod(writerClassIndex, "putStr", "(Ljava/lang/CharSequence;)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lcom/questdb/ql/Record;Lcom/questdb/ql/impl/map/DirectMap$KeyWriter;)V");
@@ -96,9 +96,9 @@ public class RecordKeyCopierCompiler {
         for (int i = 0; i < n; i++) {
 
             int index = columns.getQuick(i);
-            asm.put(BytecodeAssembler.aload_2);
-            asm.put(BytecodeAssembler.aload_1);
-            asm.putConstant(index);
+            asm.aload(2);
+            asm.aload(1);
+            asm.iconst(index);
 
             switch (meta.getColumnQuick(index).getType()) {
                 case ColumnType.INT:
@@ -169,7 +169,7 @@ public class RecordKeyCopierCompiler {
         asm.putShort(0);
 
         try {
-            return (RecordKeyCopier) asm.loadClass(this.getClass()).newInstance();
+            return asm.newInstance(RecordKeyCopier.class);
         } catch (Exception e) {
             throw new JournalRuntimeException("Cannot instantiate comparator: ", e);
         }

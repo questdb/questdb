@@ -17,7 +17,7 @@ public class DateFormatCompilerTest {
 
     @BeforeClass
     public static void setUp() throws Exception {
-        DateFormatImpl.updateReferenceYear(Dates.toMillis(1997, 1, 1, 0, 0));
+        GenericDateFormat.updateReferenceYear(Dates.toMillis(1997, 1, 1, 0, 0));
     }
 
     @Test(expected = NumericException.class)
@@ -78,7 +78,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testFormatBSTtoMSK() throws Exception {
-        DateFormat fmt = compiler.create("dd-MM-yyyy HH:mm:ss Z");
+        DateFormat fmt = get("dd-MM-yyyy HH:mm:ss Z");
         String targetTimezoneName = "MSK";
 
         long millis = fmt.parse("06-04-2017 01:09:30 BST", defaultLocale);
@@ -86,6 +86,7 @@ public class DateFormatCompilerTest {
         sink.clear();
         fmt.append(millis, defaultLocale, targetTimezoneName, sink);
         TestUtils.assertEquals("06-04-2017 03:09:30 MSK", sink);
+//        assertThat("dd-MM-yyyy HH:mm:ss Z", "06-04-2017 03:09:30 MSK", "06-04-2017 01:09:30 BST");
     }
 
     @Test
@@ -363,15 +364,15 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testGreedyYear2() throws Exception {
-        long referenceYear = DateFormatImpl.getReferenceYear();
+        long referenceYear = GenericDateFormat.getReferenceYear();
         try {
-            DateFormatImpl.updateReferenceYear(Dates.toMillis(2015, 1, 20, 0, 0));
+            GenericDateFormat.updateReferenceYear(Dates.toMillis(2015, 1, 20, 0, 0));
             assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
             assertThat("y-MM", "2006-03-01T00:00:00.000Z", "06-03");
             assertThat("y-MM", "1955-03-01T00:00:00.000Z", "55-03");
             assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
         } finally {
-            DateFormatImpl.updateReferenceYear(referenceYear);
+            GenericDateFormat.updateReferenceYear(referenceYear);
         }
     }
 
@@ -452,12 +453,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testHttpFormat() throws Exception {
-        String text = "Thu, 09 Mar 2017 15:29:16 GMT";
-        DateFormat fmt = compiler.create("E, dd MMM yyyy HH:mm:ss Z");
-        long millis = fmt.parse(text, defaultLocale);
-        sink.clear();
-        Dates.appendDateTime(sink, millis);
-        TestUtils.assertEquals("2017-03-09T15:29:16.000Z", sink);
+        assertThat("E, dd MMM yyyy HH:mm:ss", "2017-04-05T14:55:10.000Z", "Mon, 05 Apr 2017 14:55:10");
     }
 
     @Test
@@ -574,14 +570,12 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testTimeZone4() throws Exception {
-        DateFormat format = compiler.create("dd-MM-yy HH:m z");
-        TestUtils.assertEquals("2010-09-03T21:01:00.000Z", Dates.toString(format.parse("03-09-10 23:01 Hora de verano de Sudáfrica", DateLocaleFactory.INSTANCE.getDateLocale("es-PA"))));
+        assertThat("dd-MM-yy HH:m z", "2010-09-03T21:01:00.000Z", "03-09-10 23:01 Hora de verano de Sudáfrica", "es-PA");
     }
 
     @Test
     public void testTimeZone5() throws Exception {
-        DateFormat format = compiler.create("dd-MM-yy HH:m [z]");
-        TestUtils.assertEquals("2010-09-03T21:01:00.000Z", Dates.toString(format.parse("03-09-10 23:01 [Hora de verano de Sudáfrica]", DateLocaleFactory.INSTANCE.getDateLocale("es-PA"))));
+        assertThat("dd-MM-yy HH:m [z]", "2010-09-03T21:01:00.000Z", "03-09-10 23:01 [Hora de verano de Sudáfrica]", "es-PA");
     }
 
     @Test
@@ -637,14 +631,26 @@ public class DateFormatCompilerTest {
         assertThat("EE, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
     }
 
-    private void assertFormat(String expected, String format, String date) throws NumericException {
+    private static DateFormat get(CharSequence pattern) {
+        return compiler.create(pattern, true);
+    }
+
+    private void assertFormat(String expected, String pattern, String date) throws NumericException {
         sink.clear();
-        compiler.create(format).append(Dates.parseDateTime(date), defaultLocale, "GMT", sink);
+        get(pattern).append(Dates.parseDateTime(date), defaultLocale, "GMT", sink);
         TestUtils.assertEquals(expected, sink);
     }
 
+    private void assertThat(String pattern, String expected, String input, CharSequence localeId) throws NumericException {
+        assertThat(pattern, expected, input, DateLocaleFactory.INSTANCE.getDateLocale(localeId));
+    }
+
     private void assertThat(String pattern, String expected, String input) throws NumericException {
-        DateFormat format = compiler.create(pattern);
-        TestUtils.assertEquals(expected, Dates.toString(format.parse(input, defaultLocale)));
+        assertThat(pattern, expected, input, defaultLocale);
+    }
+
+    private void assertThat(String pattern, String expected, String input, DateLocale locale) throws NumericException {
+        DateFormat format = get(pattern);
+        TestUtils.assertEquals(expected, Dates.toString(format.parse(input, locale)));
     }
 }

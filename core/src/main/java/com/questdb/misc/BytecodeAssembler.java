@@ -34,20 +34,12 @@ import java.nio.ByteOrder;
 
 public class BytecodeAssembler implements Mutable {
 
-    public static final int iload_2 = 28;
-    public static final int aload_0 = 42;
     public static final int ineg = 0x74;
-    public static final int aload_1 = 43;
-    public static final int aload_2 = 44;
-    public static final int istore_2 = 61;
     public static final int ifne = 154;
     public static final int ireturn = 172;
     public static final int return_ = 177;
     public static final int getfield = 180;
     public static final int putfield = 181;
-    public static final int invokevirtual = 182;
-    public static final int invokestatic = 184;
-    public static final int invokeinterface = 185;
     public static final int i2l = 0x85;
     public static final int i2f = 0x86;
     public static final int i2d = 0x87;
@@ -62,6 +54,41 @@ public class BytecodeAssembler implements Mutable {
     public static final int d2f = 0x90;
     public static final int i2b = 0x91;
     public static final int i2s = 0x93;
+    private static final int invokevirtual = 182;
+    private static final int invokestatic = 184;
+    private static final int invokeinterface = 185;
+    private static final int aload = 0x19;
+    private static final int aload_0 = 0x2a;
+    private static final int aload_1 = 0x2b;
+    private static final int aload_2 = 0x2c;
+    private static final int aload_3 = 0x2d;
+    private static final int istore = 0x36;
+    private static final int istore_0 = 0x3b;
+    private static final int istore_1 = 0x3c;
+    private static final int istore_2 = 0x3d;
+    private static final int istore_3 = 0x3e;
+    private static final int lstore = 0x37;
+    private static final int lstore_0 = 0x3f;
+    private static final int lstore_1 = 0x40;
+    private static final int lstore_2 = 0x41;
+    private static final int lstore_3 = 0x42;
+    private static final int ldc = 0x12;
+    private static final int ldc2_w = 0x14;
+    private static final int iinc = 0x84;
+
+    private static final int iadd = 0x60;
+    private static final int lload = 0x16;
+    private static final int lload_0 = 0x1e;
+    private static final int lload_1 = 0x1f;
+    private static final int lload_2 = 0x20;
+    private static final int lload_3 = 0x21;
+
+    private static final int iload = 0x15;
+    private static final int iload_0 = 0x1a;
+    private static final int iload_1 = 0x1b;
+    private static final int iload_2 = 0x1c;
+    private static final int iload_3 = 0x1d;
+    private static final int iconst_m1 = 2;
     private static final int iconst_0 = 3;
     private static final int bipush = 16;
     private static final int sipush = 17;
@@ -84,6 +111,27 @@ public class BytecodeAssembler implements Mutable {
         this.poolCount = 1;
     }
 
+    public void aload(int value) {
+        switch (value) {
+            case 0:
+                put(aload_0);
+                break;
+            case 1:
+                put(aload_1);
+                break;
+            case 2:
+                put(aload_2);
+                break;
+            case 3:
+                put(aload_3);
+                break;
+            default:
+                put(aload);
+                put(value);
+                break;
+        }
+    }
+
     @Override
     public void clear() {
         this.buf.clear();
@@ -91,12 +139,16 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void defineClass(int flags, int thisClassIndex) {
+        defineClass(flags, thisClassIndex, objectClassIndex);
+    }
+
+    public void defineClass(int flags, int thisClassIndex, int superclassIndex) {
         // access flags
         putShort(flags);
         // this class index
         putShort(thisClassIndex);
         // super class
-        putShort(objectClassIndex);
+        putShort(superclassIndex);
     }
 
     public void defineDefaultConstructor() {
@@ -106,6 +158,22 @@ public class BytecodeAssembler implements Mutable {
         put(aload_0);
         put(invokespecial);
         putShort(defaultConstructorMethodIndex);
+        put(return_);
+        endMethodCode();
+        // exceptions
+        putShort(0);
+        // attribute count
+        putShort(0);
+        endMethod();
+    }
+
+    public void defineDefaultConstructor(int superIndex) {
+        // constructor method entry
+        startMethod(1, defaultConstructorNameIndex, defaultConstructorDescIndex, 1, 1);
+        // code
+        put(aload_0);
+        put(invokespecial);
+        putShort(superIndex);
         put(return_);
         endMethodCode();
         // exceptions
@@ -152,6 +220,54 @@ public class BytecodeAssembler implements Mutable {
         return buf.get(pos);
     }
 
+    public void iadd() {
+        put(iadd);
+    }
+
+    public void iconst(int v) {
+        if (v == -1) {
+            put(iconst_m1);
+        } else if (v > -1 && v < 6) {
+            put(iconst_0 + v);
+        } else if (v < 0) {
+            put(sipush);
+            putShort(v);
+        } else if (v < 128) {
+            put(bipush);
+            put(v);
+        } else {
+            put(sipush);
+            putShort(v);
+        }
+    }
+
+    public void iinc(int index, int inc) {
+        put(iinc);
+        put(index);
+        put(inc);
+    }
+
+    public void iload(int value) {
+        switch (value) {
+            case 0:
+                put(iload_0);
+                break;
+            case 1:
+                put(iload_1);
+                break;
+            case 2:
+                put(iload_2);
+                break;
+            case 3:
+                put(iload_3);
+                break;
+            default:
+                put(iload);
+                put(value);
+                break;
+        }
+    }
+
     public void invokeInterface(int interfaceIndex, int argCount) {
         put(invokeinterface);
         putShort(interfaceIndex);
@@ -169,11 +285,93 @@ public class BytecodeAssembler implements Mutable {
         putShort(index);
     }
 
+    public void istore(int value) {
+        switch (value) {
+            case 0:
+                put(istore_0);
+                break;
+            case 1:
+                put(istore_1);
+                break;
+            case 2:
+                put(istore_2);
+                break;
+            case 3:
+                put(istore_3);
+                break;
+            default:
+                put(istore);
+                put(value);
+                break;
+        }
+    }
+
+    public void ldc(int index) {
+        put(ldc);
+        put(index);
+    }
+
+    public void ldc2_w(int index) {
+        put(ldc2_w);
+        putShort(index);
+    }
+
+    public void lload(int value) {
+        switch (value) {
+            case 0:
+                put(lload_0);
+                break;
+            case 1:
+                put(lload_1);
+                break;
+            case 2:
+                put(lload_2);
+                break;
+            case 3:
+                put(lload_3);
+                break;
+            default:
+                put(lload);
+                put(value);
+                break;
+        }
+    }
+
     @SuppressWarnings("unchecked")
     public <T> Class<T> loadClass(Class<?> host) {
         byte b[] = new byte[position()];
         System.arraycopy(buf.array(), 0, b, 0, b.length);
         return (Class<T>) Unsafe.getUnsafe().defineAnonymousClass(host, b, null);
+    }
+
+    public void lreturn() {
+        put(0xad);
+    }
+
+    public void lstore(int value) {
+        switch (value) {
+            case 0:
+                put(lstore_0);
+                break;
+            case 1:
+                put(lstore_1);
+                break;
+            case 2:
+                put(lstore_2);
+                break;
+            case 3:
+                put(lstore_3);
+                break;
+            default:
+                put(lstore);
+                put(value);
+                break;
+        }
+    }
+
+    public <T> T newInstance(Class<T> hostAndType) throws IllegalAccessException, InstantiationException {
+        Class<T> x = loadClass(hostAndType);
+        return x.newInstance();
     }
 
     public int poolClass(int classIndex) {
@@ -209,12 +407,30 @@ public class BytecodeAssembler implements Mutable {
         return poolRef(0x0B, classIndex, nameAndTypeIndex);
     }
 
+    public int poolLongConst(long value) {
+        put(0x05);
+        putLong(value);
+        int index = poolCount;
+        poolCount += 2;
+        return index;
+    }
+
     public int poolMethod(int classIndex, int nameAndTypeIndex) {
         return poolRef(0x0A, classIndex, nameAndTypeIndex);
     }
 
+    public int poolMethod(int classIndex, CharSequence methodName, CharSequence signature) {
+        return poolMethod(classIndex, poolNameAndType(poolUtf8(methodName), poolUtf8(signature)));
+    }
+
     public int poolNameAndType(int nameIndex, int typeIndex) {
         return poolRef(0x0C, nameIndex, typeIndex);
+    }
+
+    public int poolStringConst(int utf8Index) {
+        put(0x8);
+        putShort(utf8Index);
+        return poolCount++;
     }
 
     public Utf8Appender poolUtf8() {
@@ -246,19 +462,11 @@ public class BytecodeAssembler implements Mutable {
         buf.put((byte) b);
     }
 
-    public void putConstant(int v) {
-        if (v > -1 && v < 6) {
-            put(iconst_0 + v);
-        } else if (v < 0) {
-            put(sipush);
-            putShort(v);
-        } else if (v < 128) {
-            put(bipush);
-            put(v);
-        } else {
-            put(sipush);
-            putShort(v);
+    public void putLong(long value) {
+        if (buf.remaining() < 4) {
+            resize();
         }
+        buf.putLong(value);
     }
 
     public void putShort(int v) {

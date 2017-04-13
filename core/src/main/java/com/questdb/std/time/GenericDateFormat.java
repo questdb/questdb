@@ -7,7 +7,7 @@ import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 
-public class DateFormatImpl implements DateFormat {
+public class GenericDateFormat extends AbstractDateFormat {
     public static final int HOUR_24 = 1;
     public static final int HOUR_AM = 2;
     public static final int HOUR_PM = 3;
@@ -19,7 +19,7 @@ public class DateFormatImpl implements DateFormat {
     private final IntList compiledOps;
     private final ObjList<String> delimiters;
 
-    public DateFormatImpl(IntList compiledOps, ObjList<String> delimiters) {
+    public GenericDateFormat(IntList compiledOps, ObjList<String> delimiters) {
         this.compiledOps = compiledOps;
         this.delimiters = delimiters;
     }
@@ -29,7 +29,7 @@ public class DateFormatImpl implements DateFormat {
     }
 
     public static void updateReferenceYear(long millis) {
-        DateFormatImpl.referenceYear = millis;
+        GenericDateFormat.referenceYear = millis;
 
         int referenceYear = Dates.getYear(millis);
         int centuryOffset = referenceYear % 100;
@@ -361,11 +361,6 @@ public class DateFormatImpl implements DateFormat {
                     break;
             }
         }
-    }
-
-    @Override
-    public long parse(CharSequence in, DateLocale locale) throws NumericException {
-        return parse(in, 0, in.length(), locale);
     }
 
     @Override

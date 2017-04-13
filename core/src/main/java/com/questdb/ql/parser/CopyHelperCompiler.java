@@ -28,7 +28,6 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.sort.ComparatorCompiler;
 import com.questdb.store.ColumnType;
 
 public class CopyHelperCompiler {
@@ -102,10 +101,10 @@ public class CopyHelperCompiler {
                 continue;
             }
 
-            asm.put(BytecodeAssembler.aload_2);
-            asm.putConstant(i);
-            asm.put(BytecodeAssembler.aload_1);
-            asm.putConstant(i);
+            asm.aload(2);
+            asm.iconst(i);
+            asm.aload(1);
+            asm.iconst(i);
 
             switch (from.getColumnQuick(i).getType()) {
                 case ColumnType.INT:
@@ -389,7 +388,7 @@ public class CopyHelperCompiler {
         asm.putShort(0);
 
         try {
-            return (CopyHelper) asm.loadClass(ComparatorCompiler.class).newInstance();
+            return asm.newInstance(CopyHelper.class);
         } catch (Exception e) {
             throw new JournalRuntimeException("Cannot instantiate comparator: ", e);
         }

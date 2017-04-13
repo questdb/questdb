@@ -24,6 +24,9 @@
 package com.questdb.std.time;
 
 
+import com.questdb.ex.NumericException;
+import com.questdb.misc.BytecodeAssembler;
+import com.questdb.misc.Numbers;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.IntList;
 import com.questdb.std.Lexer;
@@ -79,6 +82,7 @@ public class DateFormatCompiler {
     static final CharSequenceIntHashMap opMap;
     static final ObjList<String> opList;
     private final Lexer lexer;
+    private final BytecodeAssembler asm = new BytecodeAssembler();
 
     public DateFormatCompiler() {
         this.lexer = new Lexer();
@@ -87,11 +91,11 @@ public class DateFormatCompiler {
         }
     }
 
-    public DateFormat create(CharSequence sequence) {
-        return create(sequence, 0, sequence.length());
+    public DateFormat create(CharSequence sequence, boolean generic) {
+        return create(sequence, 0, sequence.length(), generic);
     }
 
-    public DateFormat create(CharSequence sequence, int lo, int hi) {
+    public DateFormat create(CharSequence sequence, int lo, int hi, boolean generic) {
         this.lexer.setContent(sequence, lo, hi);
         IntList compiled = new IntList();
         ObjList<String> delimiters = new ObjList<>();
@@ -117,12 +121,293 @@ public class DateFormatCompiler {
 
         // make last operation "greedy"
         makeLastOpGreedy(compiled);
-        return new DateFormatImpl(compiled, delimiters);
+        return generic ? new GenericDateFormat(compiled, delimiters) : compile(compiled, delimiters);
     }
 
     private static void addOp(String op, int opDayTwoDigits) {
         opMap.put(op, opDayTwoDigits);
         opList.add(op);
+    }
+
+    private DateFormat compile(IntList ops, ObjList<String> delims) {
+        asm.clear();
+        asm.setupPool();
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
+        int superclassIndex = asm.poolClass(AbstractDateFormat.class);
+        int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
+        int dateFormatUtilsClassIndex = asm.poolClass(DateFormatUtils.class);
+        int numbersClassIndex = asm.poolClass(Numbers.class);
+        int datesClassIndex = asm.poolClass(Dates.class);
+        int numericExceptionClassIndex = asm.poolClass(NumericException.class);
+        int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
+
+        int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
+        int matchWeekdayIndex = asm.poolMethod(dateLocaleClassIndex, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
+        int matchMonthIndex = asm.poolMethod(dateLocaleClassIndex, "matchMonth", "(Ljava/lang/CharSequence;II)J");
+        int decodeLenIndex = asm.poolMethod(numbersClassIndex, "decodeLen", "(J)I");
+        int decodeIntIndex = asm.poolMethod(numbersClassIndex, "decodeInt", "(J)I");
+        int assertRemainingIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertRemaining", "(II)V");
+        int parseIntIndex = asm.poolMethod(numbersClassIndex, "parseInt", "(Ljava/lang/CharSequence;II)I");
+        int assertStringIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
+        int assertCharIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertChar", "(CLjava/lang/CharSequence;II)V");
+        int computeMillisIndex = asm.poolMethod(dateFormatUtilsClassIndex, "computeMillis", "(IIIIIIIIJLcom/questdb/std/time/DateLocale;II)J");
+
+        int parseNameIndex = asm.poolUtf8("parse");
+        int parseSigIndex = asm.poolUtf8("(Ljava/lang/CharSequence;IILcom/questdb/std/time/DateLocale;)J");
+
+        // pool only delimiters over 1 char in length
+        // when delimiter is 1 char we would use shorter code path
+        // that doesn't require constant
+        IntList delimIndices = new IntList(delims.size());
+        for (int i = 0, n = delims.size(); i < n; i++) {
+            String delim = delims.getQuick(i);
+            if (delim.length() > 1) {
+                delimIndices.add(asm.poolStringConst(asm.poolUtf8(delim)));
+            } else {
+                // keep indexes in both lists the same
+                delimIndices.add(-1);
+            }
+        }
+
+        asm.finishPool();
+
+        asm.defineClass(1, thisClassIndex, superclassIndex);
+        // interface count
+        asm.putShort(0);
+        // field count
+        asm.putShort(0);
+        // method count
+        asm.putShort(2);
+        asm.defineDefaultConstructor(superIndex);
+
+        // public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException
+        asm.startMethod(0x01, parseNameIndex, parseSigIndex, 13, 18);
+
+        // define stack variables
+        // int day;
+        // int month;
+        // int year;
+        // int hour;
+        // int minute;
+        // int second;
+        // int millis = 0;
+        // int pos = lo;
+        // long l;
+        // int timezone = -1;
+        // long offset = Long.MIN_VALUE;
+
+        // when pattern is not used a default value must be assigned
+        asm.iconst(1);
+        asm.istore(5);
+
+        asm.iconst(1);
+        asm.istore(6);
+
+        asm.iconst(1970);
+        asm.istore(7);
+
+        asm.iconst(0);
+        asm.istore(8);
+
+        asm.iconst(0);
+        asm.istore(9);
+
+        asm.iconst(0);
+        asm.istore(10);
+
+        //
+        asm.iconst(0);
+        asm.istore(11);
+        asm.iload(2);
+        asm.istore(12);
+        asm.iconst(-1);
+        asm.istore(15);
+        asm.ldc2_w(minLongIndex);
+        asm.lstore(16);
+
+        for (int i = 0, n = ops.size(); i < n; i++) {
+            int op = ops.getQuick(i);
+            switch (op) {
+                case OP_DAY_NAME_SHORT:
+                    // l = locale.matchWeekday(in, pos, hi);
+                    // pos += Numbers.decodeLen(l);
+
+                    asm.aload(4);
+                    asm.aload(1);
+                    asm.iload(12);
+                    asm.iload(3);
+                    asm.invokeVirtual(matchWeekdayIndex);
+                    asm.lstore(13);
+                    asm.iload(12);
+                    asm.lload(13);
+                    asm.invokeStatic(decodeLenIndex);
+                    asm.iadd();
+                    asm.istore(12);
+                    break;
+                case OP_DAY_TWO_DIGITS:
+                    // DateFormatUtils.assertRemaining(pos + 1, hi);
+                    // day = Numbers.parseInt(in, pos, pos += 2);
+
+                    asm.iload(12);
+                    asm.iconst(1);
+                    asm.iadd();
+                    asm.iload(3);
+                    asm.invokeStatic(assertRemainingIndex);
+                    asm.aload(1);
+                    asm.iload(12);
+                    asm.iinc(12, 2);
+                    asm.iload(12);
+                    asm.invokeStatic(parseIntIndex);
+                    asm.istore(5);
+                    break;
+                case OP_MONTH_SHORT_NAME:
+                    // l = locale.matchMonth(in, pos, hi);
+                    // month = Numbers.decodeInt(l) + 1;
+                    // pos += Numbers.decodeLen(l);
+
+                    asm.aload(4);
+                    asm.aload(1);
+                    asm.iload(12);
+                    asm.iload(3);
+                    asm.invokeVirtual(matchMonthIndex);
+                    asm.lstore(13);
+                    asm.lload(13);
+                    asm.invokeStatic(decodeIntIndex);
+                    asm.iconst(1);
+                    asm.iadd();
+                    asm.istore(6);
+
+                    asm.iload(12);
+                    asm.lload(13);
+                    asm.invokeStatic(decodeLenIndex);
+                    asm.iadd();
+                    asm.istore(12);
+                    break;
+                case OP_YEAR_FOUR_DIGITS:
+                    asm.iload(2);
+                    asm.iconst(3);
+                    asm.iadd();
+                    asm.iload(3);
+                    asm.invokeStatic(assertRemainingIndex);
+                    asm.aload(1);
+                    asm.iload(12);
+                    asm.iinc(12, 4);
+                    asm.iload(12);
+                    asm.invokeStatic(parseIntIndex);
+                    asm.istore(7);
+                    break;
+                case OP_HOUR_24_TWO_DIGITS:
+                    asm.iload(12);
+                    asm.iconst(1);
+                    asm.iadd();
+                    asm.iload(3);
+                    asm.invokeStatic(assertRemainingIndex);
+
+                    asm.aload(1);
+                    asm.iload(12);
+                    asm.iinc(12, 2);
+                    asm.iload(12);
+                    asm.invokeStatic(parseIntIndex);
+                    asm.istore(8);
+                    break;
+                case OP_MINUTE_TWO_DIGITS:
+                    asm.iload(12);
+                    asm.iconst(1);
+                    asm.iadd();
+                    asm.iload(3);
+                    asm.invokeStatic(assertRemainingIndex);
+
+                    asm.aload(1);
+                    asm.iload(12);
+                    asm.iinc(12, 2);
+                    asm.iload(12);
+                    asm.invokeStatic(parseIntIndex);
+                    asm.istore(9);
+                    break;
+
+                case OP_SECOND_TWO_DIGITS:
+                    asm.iload(12);
+                    asm.iconst(1);
+                    asm.iadd();
+                    asm.iload(3);
+                    asm.invokeStatic(assertRemainingIndex);
+
+                    asm.aload(1);
+                    asm.iload(12);
+                    asm.iinc(12, 2);
+                    asm.iload(12);
+                    asm.invokeStatic(parseIntIndex);
+                    asm.istore(10);
+                    break;
+                default:
+                    String delimiter = delims.getQuick(-op - 1);
+                    int len = delimiter.length();
+                    if (len == 1) {
+                        // DateFormatUtils.assertChar(' ', in, pos++, hi);
+                        asm.iconst(delimiter.charAt(0));
+                        asm.aload(1);
+                        asm.iload(12);
+                        asm.iinc(12, 1);
+                        asm.iload(3);
+                        asm.invokeStatic(assertCharIndex);
+                    } else {
+                        // pos = DateFormatUtils.assertString(", ", 2, in, pos, hi);
+                        asm.ldc(delimIndices.getQuick(-op - 1));
+                        asm.iconst(len);
+                        asm.aload(1);
+                        asm.iload(12);
+                        asm.iload(3);
+                        asm.invokeStatic(assertStringIndex);
+                        asm.istore(12);
+                    }
+            }
+        }
+//        return DateFormatUtils.computeMillis(
+//                year,
+//                month,
+//                day,
+//                hour,
+//                minute,
+//                second,
+//                millis,
+//                timezone,
+//                offset,
+//                locale,
+//                pos,
+//                hi
+//        );
+
+        asm.iload(7);
+        asm.iload(6);
+        asm.iload(5);
+        asm.iload(8);
+        asm.iload(9);
+        asm.iload(10);
+        asm.iload(11);
+        asm.iload(15);
+        asm.lload(16);
+        asm.aload(4);
+        asm.iload(12);
+        asm.iload(3);
+        asm.invokeStatic(computeMillisIndex);
+        asm.lreturn();
+        asm.endMethodCode();
+
+        // exceptions
+        asm.putShort(0);
+        // attributes
+        asm.putShort(0);
+        asm.endMethod();
+
+        // class attribute count
+        asm.putShort(0);
+
+
+        try {
+            return asm.newInstance(DateFormat.class);
+        } catch (Exception e) {
+            throw new Error(e);
+        }
     }
 
     private int makeGreedy(int oldOp) {
