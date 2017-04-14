@@ -78,7 +78,21 @@ public class DateFormatCompiler {
     public static final int OP_MINUTE_GREEDY = 144;
     public static final int OP_SECOND_GREEDY = 145;
     public static final int OP_MILLIS_GREEDY = 146;
-
+    public static final int P_INPUT_STR = 1;
+    public static final int P_LO = 2;
+    public static final int P_HI = 3;
+    public static final int P_LOCALE = 4;
+    public static final int LOCAL_DAY = 5;
+    public static final int LOCAL_MONTH = 6;
+    public static final int LOCAL_YEAR = 7;
+    public static final int LOCAL_HOUR = 8;
+    public static final int LOCAL_MINUTE = 9;
+    public static final int LOCAL_SECOND = 10;
+    public static final int LOCAL_MILLIS = 11;
+    public static final int LOCAL_POS = 12;
+    public static final int LOCAL_TEMP_LONG = 13;
+    public static final int LOCAL_TIMEZONE = 15;
+    public static final int LOCAL_OFFSET = 16;
     static final CharSequenceIntHashMap opMap;
     static final ObjList<String> opList;
     private final Lexer lexer;
@@ -133,11 +147,13 @@ public class DateFormatCompiler {
         asm.clear();
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/std/time/DateFormatAsm"));
+        int stackMapTableIndex = asm.poolUtf8("StackMapTable");
         int superclassIndex = asm.poolClass(AbstractDateFormat.class);
         int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
         int dateFormatUtilsClassIndex = asm.poolClass(DateFormatUtils.class);
         int numbersClassIndex = asm.poolClass(Numbers.class);
         int datesClassIndex = asm.poolClass(Dates.class);
+        int charSequenceClassIndex = asm.poolClass(CharSequence.class);
         int numericExceptionClassIndex = asm.poolClass(NumericException.class);
         int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
         int minMillisIndex = asm.poolLongConst(Dates.MINUTE_MILLIS);
@@ -145,6 +161,7 @@ public class DateFormatCompiler {
         int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
         int matchWeekdayIndex = asm.poolMethod(dateLocaleClassIndex, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
         int matchMonthIndex = asm.poolMethod(dateLocaleClassIndex, "matchMonth", "(Ljava/lang/CharSequence;II)J");
+        int matchZoneIndex = asm.poolMethod(dateLocaleClassIndex, "matchZone", "(Ljava/lang/CharSequence;II)J");
         int decodeLenIndex = asm.poolMethod(numbersClassIndex, "decodeLen", "(J)I");
         int decodeIntIndex = asm.poolMethod(numbersClassIndex, "decodeInt", "(J)I");
         int assertRemainingIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertRemaining", "(II)V");
@@ -190,43 +207,45 @@ public class DateFormatCompiler {
 
         // int day = 1
         asm.iconst(1);
-        asm.istore(5);
+        asm.istore(LOCAL_DAY);
 
         // int month = 1
         asm.iconst(1);
-        asm.istore(6);
+        asm.istore(LOCAL_MONTH);
 
         // int year = 1970
         asm.iconst(1970);
-        asm.istore(7);
+        asm.istore(LOCAL_YEAR);
 
         // int hour = 0
         asm.iconst(0);
-        asm.istore(8);
+        asm.istore(LOCAL_HOUR);
 
         // int minute = 0;
         asm.iconst(0);
-        asm.istore(9);
+        asm.istore(LOCAL_MINUTE);
 
         // int second = 0
         asm.iconst(0);
-        asm.istore(10);
+        asm.istore(LOCAL_SECOND);
 
         // int millis = 0
         asm.iconst(0);
-        asm.istore(11);
+        asm.istore(LOCAL_MILLIS);
 
         // int pos = lo
-        asm.iload(2);
-        asm.istore(12);
+        asm.iload(P_LO);
+        asm.istore(LOCAL_POS);
 
         // int timezone = -1
         asm.iconst(-1);
-        asm.istore(15);
+        asm.istore(LOCAL_TIMEZONE);
 
         // long offset = Long.MIN_VALUE
         asm.ldc2_w(minLongIndex);
-        asm.lstore(16);
+        asm.lstore(LOCAL_OFFSET);
+
+        IntList frameOffsets = new IntList();
 
         for (int i = 0, n = ops.size(); i < n; i++) {
             int op = ops.getQuick(i);
@@ -235,116 +254,58 @@ public class DateFormatCompiler {
                     // l = locale.matchWeekday(in, pos, hi);
                     // pos += Numbers.decodeLen(l);
 
-                    asm.aload(4);
-                    asm.aload(1);
-                    asm.iload(12);
-                    asm.iload(3);
+                    asm.aload(P_LOCALE);
+                    asm.aload(P_INPUT_STR);
+                    asm.iload(LOCAL_POS);
+                    asm.iload(P_HI);
                     asm.invokeVirtual(matchWeekdayIndex);
-                    asm.lstore(13);
-                    asm.iload(12);
-                    asm.lload(13);
+                    asm.lstore(LOCAL_TEMP_LONG);
+                    asm.iload(LOCAL_POS);
+                    asm.lload(LOCAL_TEMP_LONG);
                     asm.invokeStatic(decodeLenIndex);
                     asm.iadd();
-                    asm.istore(12);
+                    asm.istore(LOCAL_POS);
                     break;
                 case OP_DAY_TWO_DIGITS:
                     // DateFormatUtils.assertRemaining(pos + 1, hi);
                     // day = Numbers.parseInt(in, pos, pos += 2);
-
-                    asm.iload(12);
-                    asm.iconst(1);
-                    asm.iadd();
-                    asm.iload(3);
-                    asm.invokeStatic(assertRemainingIndex);
-                    asm.aload(1);
-                    asm.iload(12);
-                    asm.iinc(12, 2);
-                    asm.iload(12);
-                    asm.invokeStatic(parseIntIndex);
-                    asm.istore(5);
+                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_DAY);
                     break;
                 case OP_MONTH_SHORT_NAME:
                     // l = locale.matchMonth(in, pos, hi);
                     // month = Numbers.decodeInt(l) + 1;
                     // pos += Numbers.decodeLen(l);
 
-                    asm.aload(4);
-                    asm.aload(1);
-                    asm.iload(12);
-                    asm.iload(3);
+                    asm.aload(P_LOCALE);
+                    asm.aload(P_INPUT_STR);
+                    asm.iload(LOCAL_POS);
+                    asm.iload(P_HI);
                     asm.invokeVirtual(matchMonthIndex);
-                    asm.lstore(13);
-                    asm.lload(13);
+                    asm.lstore(LOCAL_TEMP_LONG);
+                    asm.lload(LOCAL_TEMP_LONG);
                     asm.invokeStatic(decodeIntIndex);
                     asm.iconst(1);
                     asm.iadd();
-                    asm.istore(6);
+                    asm.istore(LOCAL_MONTH);
 
-                    asm.iload(12);
-                    asm.lload(13);
+                    asm.iload(LOCAL_POS);
+                    asm.lload(LOCAL_TEMP_LONG);
                     asm.invokeStatic(decodeLenIndex);
                     asm.iadd();
-                    asm.istore(12);
+                    asm.istore(LOCAL_POS);
                     break;
                 case OP_YEAR_FOUR_DIGITS:
-                    asm.iload(12);
-                    asm.iconst(3);
-                    asm.iadd();
-
-                    // load "hi"
-                    asm.iload(3);
-                    asm.invokeStatic(assertRemainingIndex);
-
-                    // load "in"
-                    asm.aload(1);
-                    asm.iload(12);
-                    asm.iinc(12, 4);
-                    asm.iload(12);
-                    asm.invokeStatic(parseIntIndex);
-                    asm.istore(7);
+                    parseDigits(assertRemainingIndex, parseIntIndex, 4, LOCAL_YEAR);
                     break;
                 case OP_HOUR_24_TWO_DIGITS:
-                    asm.iload(12);
-                    asm.iconst(1);
-                    asm.iadd();
-                    asm.iload(3);
-                    asm.invokeStatic(assertRemainingIndex);
-
-                    asm.aload(1);
-                    asm.iload(12);
-                    asm.iinc(12, 2);
-                    asm.iload(12);
-                    asm.invokeStatic(parseIntIndex);
-                    asm.istore(8);
+                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);
                     break;
                 case OP_MINUTE_TWO_DIGITS:
-                    asm.iload(12);
-                    asm.iconst(1);
-                    asm.iadd();
-                    asm.iload(3);
-                    asm.invokeStatic(assertRemainingIndex);
-
-                    asm.aload(1);
-                    asm.iload(12);
-                    asm.iinc(12, 2);
-                    asm.iload(12);
-                    asm.invokeStatic(parseIntIndex);
-                    asm.istore(9);
+                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_MINUTE);
                     break;
 
                 case OP_SECOND_TWO_DIGITS:
-                    asm.iload(12);
-                    asm.iconst(1);
-                    asm.iadd();
-                    asm.iload(3);
-                    asm.invokeStatic(assertRemainingIndex);
-
-                    asm.aload(1);
-                    asm.iload(12);
-                    asm.iinc(12, 2);
-                    asm.iload(12);
-                    asm.invokeStatic(parseIntIndex);
-                    asm.istore(10);
+                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_SECOND);
                     break;
 
                 case DateFormatCompiler.OP_TIME_ZONE_SHORT:
@@ -354,58 +315,61 @@ public class DateFormatCompiler {
                 case DateFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
                 case DateFormatCompiler.OP_TIME_ZONE_LONG:
                 case DateFormatCompiler.OP_TIME_ZONE_RFC_822:
-//                    l = Dates.parseOffset(in, pos, hi);
-//                    if (l == Long.MIN_VALUE) {
-//                        l = locale.matchZone(in, pos, hi);
-//                        timezone = Numbers.decodeInt(l);
-//                        pos += Numbers.decodeLen(l);
-//                    } else {
-//                        offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
-//                        pos += Numbers.decodeLen(l);
-//                    }
 
-                    asm.aload(1);
-                    asm.iload(12);
-                    asm.iload(3);
+                    // l = Dates.parseOffset(in, pos, hi);
+                    // if (l == Long.MIN_VALUE) {
+                    //     l = locale.matchZone(in, pos, hi);
+                    //     timezone = Numbers.decodeInt(l);
+                    //     pos += Numbers.decodeLen(l);
+                    // } else {
+                    //     offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
+                    //     pos += Numbers.decodeLen(l);
+                    // }
+
+                    asm.aload(P_INPUT_STR);
+                    asm.iload(LOCAL_POS);
+                    asm.iload(P_HI);
                     asm.invokeStatic(parseOffsetIndex);
-                    asm.istore(13);
+                    asm.lstore(LOCAL_TEMP_LONG);
 
-                    asm.lload(13);
+                    asm.lload(LOCAL_TEMP_LONG);
                     asm.ldc2_w(minLongIndex);
                     asm.lcmp();
                     int branch1 = asm.ifne();
 
                     //
-                    asm.aload(4);
-                    asm.aload(1);
-                    asm.iload(12);
-                    asm.iload(3);
-                    asm.invokeVirtual(0); // matchzone
-                    asm.lstore(13);
+                    asm.aload(P_LOCALE);
+                    asm.aload(P_INPUT_STR);
+                    asm.iload(LOCAL_POS);
+                    asm.iload(P_HI);
+                    asm.invokeVirtual(matchZoneIndex); // matchzone
+                    asm.lstore(LOCAL_TEMP_LONG);
 
                     //
-                    asm.lload(13);
+                    asm.lload(LOCAL_TEMP_LONG);
                     asm.invokeStatic(decodeIntIndex);
-                    asm.istore(15);
+                    asm.istore(LOCAL_TIMEZONE);
                     int branch2 = asm.goto_();
 
-                    //                    FRAME FULL [com/questdb/std/time/DateFormatImpl2 java/lang/CharSequence I I com/questdb/std/time/DateLocale I I I I I I I I J I J] []
+                    // FRAME FULL [com/questdb/std/time/DateFormatImpl2 java/lang/CharSequence I I com/questdb/std/time/DateLocale I I I I I I I I J I J] []
+                    frameOffsets.add(asm.position());
                     asm.setJmp(branch1, asm.position());
 
-                    asm.lload(13);
+                    asm.lload(LOCAL_TEMP_LONG);
                     asm.invokeStatic(decodeIntIndex);
                     asm.i2l();
-                    asm.ldc(minMillisIndex);
+                    asm.ldc2_w(minMillisIndex);
                     asm.lmul();
-                    asm.lstore(16);
-//                    FRAME SAME
+                    asm.lstore(LOCAL_OFFSET);
+                    // FRAME SAME
+                    frameOffsets.add(asm.position());
                     asm.setJmp(branch2, asm.position());
 
-                    asm.iload(12);
-                    asm.iload(13);
+                    asm.iload(LOCAL_POS);
+                    asm.lload(LOCAL_TEMP_LONG);
                     asm.invokeStatic(decodeLenIndex);
                     asm.iadd();
-                    asm.istore(12);
+                    asm.istore(LOCAL_POS);
                     break;
                 default:
                     if (op > 0) {
@@ -416,20 +380,20 @@ public class DateFormatCompiler {
                     if (len == 1) {
                         // DateFormatUtils.assertChar(' ', in, pos++, hi);
                         asm.iconst(delimiter.charAt(0));
-                        asm.aload(1);
-                        asm.iload(12);
-                        asm.iinc(12, 1);
-                        asm.iload(3);
+                        asm.aload(P_INPUT_STR);
+                        asm.iload(LOCAL_POS);
+                        asm.iinc(LOCAL_POS, 1);
+                        asm.iload(P_HI);
                         asm.invokeStatic(assertCharIndex);
                     } else {
                         // pos = DateFormatUtils.assertString(", ", 2, in, pos, hi);
                         asm.ldc(delimIndices.getQuick(-op - 1));
                         asm.iconst(len);
-                        asm.aload(1);
-                        asm.iload(12);
-                        asm.iload(3);
+                        asm.aload(P_INPUT_STR);
+                        asm.iload(LOCAL_POS);
+                        asm.iload(P_HI);
                         asm.invokeStatic(assertStringIndex);
-                        asm.istore(12);
+                        asm.istore(LOCAL_POS);
                     }
             }
         }
@@ -448,18 +412,18 @@ public class DateFormatCompiler {
 //                hi
 //        );
 
-        asm.iload(7);
-        asm.iload(6);
-        asm.iload(5);
-        asm.iload(8);
-        asm.iload(9);
-        asm.iload(10);
-        asm.iload(11);
-        asm.iload(15);
-        asm.lload(16);
-        asm.aload(4);
-        asm.iload(12);
-        asm.iload(3);
+        asm.iload(LOCAL_YEAR);
+        asm.iload(LOCAL_MONTH);
+        asm.iload(LOCAL_DAY);
+        asm.iload(LOCAL_HOUR);
+        asm.iload(LOCAL_MINUTE);
+        asm.iload(LOCAL_SECOND);
+        asm.iload(LOCAL_MILLIS);
+        asm.iload(LOCAL_TIMEZONE);
+        asm.lload(LOCAL_OFFSET);
+        asm.aload(P_LOCALE);
+        asm.iload(LOCAL_POS);
+        asm.iload(P_HI);
         asm.invokeStatic(computeMillisIndex);
         asm.lreturn();
         asm.endMethodCode();
@@ -467,7 +431,44 @@ public class DateFormatCompiler {
         // exceptions
         asm.putShort(0);
         // attributes
-        asm.putShort(0);
+        asm.putShort(1);
+
+        int n = frameOffsets.size();
+        asm.startStackMapTables(stackMapTableIndex, n);
+        for (int i = 0; i < n; i += 2) {
+            // process in pairs
+            // first frame is FULL
+            asm.put(0xff);
+            int p = frameOffsets.getQuick(i);
+            asm.putShort(p - asm.getCodeStart());
+            //                    FRAME FULL [com/questdb/std/time/DateFormatImpl2 java/lang/CharSequence I I com/questdb/std/time/DateLocale I I I I I I I I J I J] []
+            // 16 local variables
+            asm.putShort(16);
+            asm.putITEM_Object(thisClassIndex);
+            asm.putITEM_Object(charSequenceClassIndex);
+            asm.putITEM_Integer();
+            asm.putITEM_Integer();
+            asm.putITEM_Object(dateLocaleClassIndex);
+            asm.putITEM_Integer();
+            asm.putITEM_Integer();
+            asm.putITEM_Integer();
+            asm.putITEM_Integer();
+            asm.putITEM_Integer();
+            asm.putITEM_Integer();
+            asm.putITEM_Integer();
+            asm.putITEM_Integer();
+            asm.putITEM_Long();
+            asm.putITEM_Integer();
+            asm.putITEM_Long();
+
+            // 0 stack
+            asm.putShort(0);
+
+            // second frame is SAME
+            asm.put(frameOffsets.getQuick(i + 1) - p - 1);
+        }
+        asm.endStackMapTables();
+
         asm.endMethod();
 
         // class attribute count
@@ -519,6 +520,25 @@ public class DateFormatCompiler {
                 }
             }
         }
+    }
+
+    private void parseDigits(int assertRemainingIndex, int parseIntIndex, int digitCount, int target) {
+        asm.iload(LOCAL_POS);
+        asm.iconst(digitCount - 1);
+        asm.iadd();
+        asm.iload(P_HI);
+        asm.invokeStatic(assertRemainingIndex);
+
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.iinc(LOCAL_POS, digitCount);
+        asm.iload(LOCAL_POS);
+        asm.invokeStatic(parseIntIndex);
+        asm.istore(target);
+    }
+
+    private void parseTwoDigits(int assertRemainingIndex, int parseIntIndex, int target) {
+        parseDigits(assertRemainingIndex, parseIntIndex, 2, target);
     }
 
     static {

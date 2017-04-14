@@ -48,7 +48,6 @@ public class BytecodeAssembler implements Mutable {
     public static final int d2f = 0x90;
     public static final int i2b = 0x91;
     public static final int i2s = 0x93;
-    private static final int getfield = 180;
     private static final int putfield = 181;
     private static final int invokevirtual = 182;
     private static final int invokestatic = 184;
@@ -98,8 +97,9 @@ public class BytecodeAssembler implements Mutable {
     private int defaultConstructorDescIndex;
     private int defaultConstructorMethodIndex;
     private int codeAttributeIndex;
-    private int methodCut1;
-    private int methodCut2;
+    private int codeAttributeStart;
+    private int codeStart;
+    private int stackMapTableCut;
 
     public BytecodeAssembler() {
         this.buf = ByteBuffer.allocate(1024).order(ByteOrder.BIG_ENDIAN);
@@ -171,23 +171,23 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void endMethod() {
-        putInt(methodCut1, position() - methodCut1 - 4);
+        putInt(codeAttributeStart - 4, position() - codeAttributeStart);
     }
 
     public void endMethodCode() {
-        putInt(methodCut2, position() - methodCut2 - 4);
+        putInt(codeStart - 4, position() - codeStart);
+    }
+
+    public void endStackMapTables() {
+        putInt(stackMapTableCut, position() - stackMapTableCut - 4);
     }
 
     public void finishPool() {
         putShort(O_POOL_COUNT, poolCount);
     }
 
-    public byte get(int pos) {
-        return buf.get(pos);
-    }
-
     public void getfield(int index) {
-        put(getfield);
+        put(0xb4);
         putShort(index);
     }
 
@@ -399,6 +399,19 @@ public class BytecodeAssembler implements Mutable {
         buf.put((byte) b);
     }
 
+    public void putITEM_Integer() {
+        put(0x01);
+    }
+
+    public void putITEM_Long() {
+        put(0x04);
+    }
+
+    public void putITEM_Object(int classIndex) {
+        put(0x07);
+        putShort(classIndex);
+    }
+
     public void putLong(long value) {
         if (buf.remaining() < 4) {
             resize();
@@ -410,25 +423,16 @@ public class BytecodeAssembler implements Mutable {
         putShort((short) v);
     }
 
-    public void putShort(int pos, int v) {
-        buf.putShort(pos, (short) v);
+    public void putCodeOffset(int pos) {
+        putShort(pos - codeStart);
     }
 
-    public void putStackMapAppendInt(int stackMapTableIndex, int position) {
-        putShort(stackMapTableIndex);
-        int lenPos = position();
-        // length - we will come back here
-        putInt(0);
-        // number of entries
-        putShort(1);
-        // frame type APPEND
-        put(0xFC);
-        // offset delta - points at branch target
-        putShort(position);
-        // type: int
-        put(0x01);
-        // fix attribute length
-        putInt(lenPos, position() - lenPos - 4);
+    public int getCodeStart() {
+        return codeStart;
+    }
+
+    public void putShort(int pos, int v) {
+        buf.putShort(pos, (short) v);
     }
 
     public void putfield(int index) {
@@ -474,19 +478,27 @@ public class BytecodeAssembler implements Mutable {
         // code
         putShort(codeAttributeIndex);
 
-        // come back to this later
-        this.methodCut1 = position();
         // attribute len
         putInt(0);
+        // come back to this later
+        this.codeAttributeStart = position();
         // max stack
         putShort(maxStack);
         // max locals
         putShort(maxLocal);
 
         // code len
-        this.methodCut2 = position();
         putInt(0);
+        this.codeStart = position();
+    }
 
+    public void startStackMapTables(int attributeNameIndex, int frameCount) {
+        putShort(attributeNameIndex);
+        this.stackMapTableCut = position();
+        // length - we will come back here
+        putInt(0);
+        // number of entries
+        putShort(frameCount);
     }
 
     private void optimisedIO(int code0, int code1, int code2, int code3, int code, int value) {

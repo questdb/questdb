@@ -17,7 +17,8 @@ public class DateFormatCompilerTest {
 
     @BeforeClass
     public static void setUp() throws Exception {
-        GenericDateFormat.updateReferenceYear(Dates.toMillis(1997, 1, 1, 0, 0));
+        DateFormatUtils.init();
+        DateFormatUtils.updateReferenceYear(Dates.toMillis(1997, 1, 1, 0, 0));
     }
 
     @Test(expected = NumericException.class)
@@ -42,10 +43,10 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testBasicParserCompiler() throws Exception {
-        DateFormat fmt = compiler.create("E, dd MMM yyyy HH:mm:ss", false);
+        DateFormat fmt = compiler.create("E, dd MMM yyyy HH:mm:ss Z", false);
         String utcPattern = "yyyy-MM-ddTHH:mm:ss.SSSz";
         DateFormat utc = compiler.create(utcPattern, true);
-        long millis = fmt.parse("Mon, 08 Apr 2017 23:11:10", defaultLocale);
+        long millis = fmt.parse("Mon, 08 Apr 2017 23:11:10 UTC", defaultLocale);
         sink.clear();
         utc.append(millis, defaultLocale, "Z", sink);
         TestUtils.assertEquals("2017-04-08T23:11:10.000Z", sink);
@@ -375,15 +376,15 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testGreedyYear2() throws Exception {
-        long referenceYear = GenericDateFormat.getReferenceYear();
+        long referenceYear = DateFormatUtils.getReferenceYear();
         try {
-            GenericDateFormat.updateReferenceYear(Dates.toMillis(2015, 1, 20, 0, 0));
+            DateFormatUtils.updateReferenceYear(Dates.toMillis(2015, 1, 20, 0, 0));
             assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
             assertThat("y-MM", "2006-03-01T00:00:00.000Z", "06-03");
             assertThat("y-MM", "1955-03-01T00:00:00.000Z", "55-03");
             assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
         } finally {
-            GenericDateFormat.updateReferenceYear(referenceYear);
+            DateFormatUtils.updateReferenceYear(referenceYear);
         }
     }
 

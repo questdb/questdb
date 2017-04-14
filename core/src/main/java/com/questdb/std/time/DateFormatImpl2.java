@@ -4,37 +4,9 @@ import com.questdb.ex.NumericException;
 import com.questdb.misc.Numbers;
 import com.questdb.std.str.CharSink;
 
+import static com.questdb.std.time.DateFormatUtils.HOUR_24;
+
 public class DateFormatImpl2 extends AbstractDateFormat {
-    private static long referenceYear;
-    private static int thisCenturyLimit;
-    private static int thisCenturyLow;
-    private static int prevCenturyLow;
-    private static long newYear;
-
-    public static long getReferenceYear() {
-        return referenceYear;
-    }
-
-    public static void main(String[] args) throws NumericException {
-        DateFormatImpl2 fmt = new DateFormatImpl2();
-        fmt.parse("Mon, 07 Jun 2017 15:37:40 GMT", DateLocaleFactory.INSTANCE.getDateLocale("en-GB"));
-    }
-
-    public static void updateReferenceYear(long millis) {
-        DateFormatImpl2.referenceYear = millis;
-
-        int referenceYear = Dates.getYear(millis);
-        int centuryOffset = referenceYear % 100;
-        thisCenturyLimit = centuryOffset + 20;
-        if (thisCenturyLimit > 100) {
-            thisCenturyLimit = thisCenturyLimit % 100;
-            thisCenturyLow = referenceYear - centuryOffset + 100;
-        } else {
-            thisCenturyLow = referenceYear - centuryOffset;
-        }
-        prevCenturyLow = thisCenturyLow - 100;
-        newYear = Dates.endOfYear(referenceYear);
-    }
 
     @Override
     public void append(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) throws NumericException {
@@ -54,9 +26,17 @@ public class DateFormatImpl2 extends AbstractDateFormat {
         long l;
         int timezone = -1;
         long offset = 0;
+        int hourType = HOUR_24;
+        int era = 1;
+
         // E
         l = locale.matchWeekday(in, pos, hi);
         pos += Numbers.decodeLen(l);
+
+//        l = locale.matchAMPM(in, pos, hi);
+//        hourType = Numbers.decodeInt(l) == 0 ? DateFormatUtils.HOUR_AM : DateFormatUtils.HOUR_PM;
+//        pos += Numbers.decodeLen(l);
+//
 
 /*
         // random chars
@@ -99,10 +79,10 @@ public class DateFormatImpl2 extends AbstractDateFormat {
         DateFormatUtils.assertRemaining(pos + 1, hi);
         second = Numbers.parseInt(in, pos, pos += 2);
 
-//        DateFormatUtils.assertChar(' ', in, pos, hi);
-//        pos++;
 //
 */
+        DateFormatUtils.assertChar(' ', in, pos, hi);
+        pos++;
 
         // z
         l = Dates.parseOffset(in, pos, hi);
@@ -114,29 +94,21 @@ public class DateFormatImpl2 extends AbstractDateFormat {
         }
         pos += Numbers.decodeLen(l);
 
-        return 0;
-//        return DateFormatUtils.computeMillis(
-//                year,
-//                month,
-//                day,
-//                hour,
-//                minute,
-//                second,
-//                millis,
-//                timezone,
-//                offset,
-//                locale,
-//                pos,
-//                hi
-//        );
-    }
+        DateFormatUtils.assertNoTail(pos, hi);
 
-    @Override
-    public long parse(CharSequence in, DateLocale locale) throws NumericException {
-        return parse(in, 0, in.length(), locale);
-    }
-
-    static {
-        updateReferenceYear(System.currentTimeMillis());
+        return DateFormatUtils.compute(
+                locale,
+                era,
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                millis,
+                timezone,
+                offset,
+                hourType
+        );
     }
 }

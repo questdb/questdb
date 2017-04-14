@@ -103,7 +103,6 @@ public class ComparatorCompiler {
         int sz = keyColumns.size();
         asm.startMethod(0x01, nameIndex, descIndex, sz + 3, 3);
 
-        int codeStart = asm.position();
         for (int i = 0; i < sz; i++) {
             if (i > 0) {
                 asm.iload(2);
@@ -143,7 +142,14 @@ public class ComparatorCompiler {
         asm.putShort(1);
         // verification to ensure that return type is int and there is correct
         // value present on stack
-        asm.putStackMapAppendInt(stackMapTableIndex, p - codeStart);
+        asm.startStackMapTables(stackMapTableIndex, 1);
+        // frame type APPEND
+        asm.put(0xFC);
+        // offset delta - points at branch target
+        asm.putShort(p - asm.getCodeStart());
+        // type: int
+        asm.putITEM_Integer();
+        asm.endStackMapTables();
         asm.endMethod();
     }
 

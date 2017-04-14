@@ -7,41 +7,15 @@ import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 
+import static com.questdb.std.time.DateFormatUtils.*;
+
 public class GenericDateFormat extends AbstractDateFormat {
-    public static final int HOUR_24 = 1;
-    public static final int HOUR_AM = 2;
-    public static final int HOUR_PM = 3;
-    private static long referenceYear;
-    private static int thisCenturyLimit;
-    private static int thisCenturyLow;
-    private static int prevCenturyLow;
-    private static long newYear;
     private final IntList compiledOps;
     private final ObjList<String> delimiters;
 
     public GenericDateFormat(IntList compiledOps, ObjList<String> delimiters) {
         this.compiledOps = compiledOps;
         this.delimiters = delimiters;
-    }
-
-    public static long getReferenceYear() {
-        return referenceYear;
-    }
-
-    public static void updateReferenceYear(long millis) {
-        GenericDateFormat.referenceYear = millis;
-
-        int referenceYear = Dates.getYear(millis);
-        int centuryOffset = referenceYear % 100;
-        thisCenturyLimit = centuryOffset + 20;
-        if (thisCenturyLimit > 100) {
-            thisCenturyLimit = thisCenturyLimit % 100;
-            thisCenturyLow = referenceYear - centuryOffset + 100;
-        } else {
-            thisCenturyLow = referenceYear - centuryOffset;
-        }
-        prevCenturyLow = thisCenturyLow - 100;
-        newYear = Dates.endOfYear(referenceYear);
     }
 
     @Override
@@ -644,72 +618,8 @@ public class GenericDateFormat extends AbstractDateFormat {
             }
         }
 
-        // extra input
-        if (pos < hi) {
-            throw NumericException.INSTANCE;
-        }
+        assertNoTail(pos, hi);
 
-        if (era == 0) {
-            year = -(year - 1);
-        }
-
-        boolean leap = Dates.isLeapYear(year);
-
-        // wrong month
-        if (month < 1 || month > 12) {
-            throw NumericException.INSTANCE;
-        }
-
-        switch (hourType) {
-            case HOUR_PM:
-                hour += 12;
-            case HOUR_24:
-                // wrong hour
-                if (hour < 0 || hour > 23) {
-                    throw NumericException.INSTANCE;
-                }
-                break;
-            default:
-                // wrong 12-hour clock hour
-                if (hour < 0 || hour > 11) {
-                    throw NumericException.INSTANCE;
-                }
-        }
-
-        // wrong day of month
-        if (day < 1 || day > Dates.getDaysPerMonth(month, leap)) {
-            throw NumericException.INSTANCE;
-        }
-
-        long datetime = Dates.yearMillis(year, leap)
-                + Dates.monthOfYearMillis(month, leap)
-                + (day - 1) * Dates.DAY_MILLIS
-                + hour * Dates.HOUR_MILLIS
-                + minute * Dates.MINUTE_MILLIS
-                + second * Dates.SECOND_MILLIS
-                + millis;
-
-        if (timezone > -1) {
-            datetime -= locale.getZoneRules(timezone).getOffset(datetime, year, leap);
-        } else if (offset > Long.MIN_VALUE) {
-            datetime -= offset;
-        }
-
-        return datetime;
-    }
-
-    private static void assertRemaining(int pos, int hi) throws NumericException {
-        if (pos < hi) {
-            return;
-        }
-        throw NumericException.INSTANCE;
-    }
-
-    private int adjustYear(int year) {
-        return (year < thisCenturyLimit ? thisCenturyLow : prevCenturyLow) + year;
-    }
-
-    static {
-        updateReferenceYear(System.currentTimeMillis());
+        return compute(locale, era, year, month, day, hour, minute, second, millis, timezone, offset, hourType);
     }
 }
