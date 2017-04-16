@@ -7,6 +7,8 @@ import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 
+import java.text.NumberFormat;
+
 import static com.questdb.std.time.DateFormatUtils.*;
 
 public class GenericDateFormat extends AbstractDateFormat {
@@ -361,7 +363,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                 // AM/PM
                 case DateFormatCompiler.OP_AM_PM:
                     l = locale.matchAMPM(in, pos, hi);
-                    hourType = Numbers.decodeInt(l) == 0 ? HOUR_AM : HOUR_PM;
+                    hourType = Numbers.decodeInt(l);
                     pos += Numbers.decodeLen(l);
                     break;
 
@@ -525,7 +527,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
 
                 case DateFormatCompiler.OP_DAY_OF_WEEK:
-                    assertRemaining(pos + 1, hi);
+                    assertRemaining(pos, hi);
                     // ignore weekday
                     Numbers.parseInt(in, pos, ++pos);
                     break;
@@ -568,14 +570,9 @@ public class GenericDateFormat extends AbstractDateFormat {
                     year = Numbers.parseInt(in, pos, pos += 4);
                     break;
                 case DateFormatCompiler.OP_YEAR_GREEDY:
-                    l = Numbers.parseIntSafely(in, pos, hi);
-                    len = Numbers.decodeLen(l);
-                    if (len == 2) {
-                        year = adjustYear(Numbers.decodeInt(l));
-                    } else {
-                        year = Numbers.decodeInt(l);
-                    }
-                    pos += len;
+                    l = DateFormatUtils.parseYearGreedy(in, pos, hi);
+                    year = Numbers.decodeInt(l);
+                    pos += Numbers.decodeLen(l);
                     break;
 
                 // ERA

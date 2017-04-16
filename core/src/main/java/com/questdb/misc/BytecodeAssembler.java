@@ -110,6 +110,11 @@ public class BytecodeAssembler implements Mutable {
         optimisedIO(aload_0, aload_1, aload_2, aload_3, aload, value);
     }
 
+    public void append_frame(int itemCount, int offset) {
+        put(0xfc + itemCount - 1);
+        putShort(offset);
+    }
+
     @Override
     public void clear() {
         this.buf.clear();
@@ -186,16 +191,22 @@ public class BytecodeAssembler implements Mutable {
         putShort(O_POOL_COUNT, poolCount);
     }
 
+    public void full_frame(int offset) {
+        put(0xff);
+        putShort(offset);
+    }
+
+    public int getCodeStart() {
+        return codeStart;
+    }
+
     public void getfield(int index) {
         put(0xb4);
         putShort(index);
     }
 
     public int goto_() {
-        put(0xa7);
-        int pos = position();
-        putShort(0);
-        return pos;
+        return genericGoto(0xa7);
     }
 
     public void i2l() {
@@ -221,6 +232,13 @@ public class BytecodeAssembler implements Mutable {
             put(sipush);
             putShort(v);
         }
+    }
+
+    public int if_icmpne() {
+        put(0xa0);
+        int pos = position();
+        putShort(0);
+        return pos;
     }
 
     public int ifne() {
@@ -269,8 +287,16 @@ public class BytecodeAssembler implements Mutable {
         optimisedIO(istore_0, istore_1, istore_2, istore_3, istore, value);
     }
 
+    public void isub() {
+        put(0x64);
+    }
+
     public void lcmp() {
         put(0x94);
+    }
+
+    public void lconst_0() {
+        put(0x09);
     }
 
     public void ldc(int index) {
@@ -388,6 +414,10 @@ public class BytecodeAssembler implements Mutable {
         return this.poolCount++;
     }
 
+    public void pop() {
+        put(0x57);
+    }
+
     public int position() {
         return buf.position();
     }
@@ -397,6 +427,10 @@ public class BytecodeAssembler implements Mutable {
             resize();
         }
         buf.put((byte) b);
+    }
+
+    public void putCodeOffset(int pos) {
+        putShort(pos - codeStart);
     }
 
     public void putITEM_Integer() {
@@ -423,14 +457,6 @@ public class BytecodeAssembler implements Mutable {
         putShort((short) v);
     }
 
-    public void putCodeOffset(int pos) {
-        putShort(pos - codeStart);
-    }
-
-    public int getCodeStart() {
-        return codeStart;
-    }
-
     public void putShort(int pos, int v) {
         buf.putShort(pos, (short) v);
     }
@@ -442,6 +468,15 @@ public class BytecodeAssembler implements Mutable {
 
     public void return_() {
         put(0xb1);
+    }
+
+    public void same_frame(int offset) {
+        if (offset < 64) {
+            put(offset);
+        } else {
+            put(251);
+            putShort(offset);
+        }
     }
 
     public void setJmp(int branch, int target) {
@@ -499,6 +534,13 @@ public class BytecodeAssembler implements Mutable {
         putInt(0);
         // number of entries
         putShort(frameCount);
+    }
+
+    private int genericGoto(int cmd) {
+        put(cmd);
+        int pos = position();
+        putShort(0);
+        return pos;
     }
 
     private void optimisedIO(int code0, int code1, int code2, int code3, int code, int value) {

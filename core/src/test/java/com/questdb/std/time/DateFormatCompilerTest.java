@@ -43,13 +43,13 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testBasicParserCompiler() throws Exception {
-        DateFormat fmt = compiler.create("E, dd MMM yyyy HH:mm:ss Z", false);
+        DateFormat fmt = compiler.create("E, dd MMM yyyy a KK:m:s.S Z", false);
         String utcPattern = "yyyy-MM-ddTHH:mm:ss.SSSz";
         DateFormat utc = compiler.create(utcPattern, true);
-        long millis = fmt.parse("Mon, 08 Apr 2017 23:11:10 UTC", defaultLocale);
+        long millis = fmt.parse("Mon, 08 Apr 2017 PM 11:11:10.123 UTC", defaultLocale);
         sink.clear();
         utc.append(millis, defaultLocale, "Z", sink);
-        TestUtils.assertEquals("2017-04-08T23:11:10.000Z", sink);
+        TestUtils.assertEquals("2017-04-08T23:11:10.123Z", sink);
     }
 
     @Test
@@ -664,5 +664,8 @@ public class DateFormatCompilerTest {
     private void assertThat(String pattern, String expected, String input, DateLocale locale) throws NumericException {
         DateFormat format = get(pattern);
         TestUtils.assertEquals(expected, Dates.toString(format.parse(input, locale)));
+
+        DateFormat compiled = compiler.create(pattern, false);
+        TestUtils.assertEquals(expected, Dates.toString(compiled.parse(input, locale)));
     }
 }

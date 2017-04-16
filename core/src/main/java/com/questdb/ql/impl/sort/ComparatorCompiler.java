@@ -144,10 +144,7 @@ public class ComparatorCompiler {
         // value present on stack
         asm.startStackMapTables(stackMapTableIndex, 1);
         // frame type APPEND
-        asm.put(0xFC);
-        // offset delta - points at branch target
-        asm.putShort(p - asm.getCodeStart());
-        // type: int
+        asm.append_frame(1, p - asm.getCodeStart());
         asm.putITEM_Integer();
         asm.endStackMapTables();
         asm.endMethod();
