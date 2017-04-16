@@ -23,6 +23,7 @@
 
 package com.questdb.misc;
 
+import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.Mutable;
 import com.questdb.std.str.CharSink;
 import com.questdb.txt.sink.AbstractCharSink;
@@ -100,6 +101,7 @@ public class BytecodeAssembler implements Mutable {
     private int codeAttributeStart;
     private int codeStart;
     private int stackMapTableCut;
+    private CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();
 
     public BytecodeAssembler() {
         this.buf = ByteBuffer.allocate(1024).order(ByteOrder.BIG_ENDIAN);
@@ -119,6 +121,7 @@ public class BytecodeAssembler implements Mutable {
     public void clear() {
         this.buf.clear();
         this.poolCount = 1;
+        this.utf8Cache.clear();
     }
 
     public void defineClass(int flags, int thisClassIndex) {
@@ -235,17 +238,11 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public int if_icmpne() {
-        put(0xa0);
-        int pos = position();
-        putShort(0);
-        return pos;
+        return genericGoto(0xa0);
     }
 
     public int ifne() {
-        put(0x9a);
-        int pos = position();
-        putShort(0);
-        return pos;
+        return genericGoto(0x9a);
     }
 
     public void iinc(int index, int inc) {
@@ -405,13 +402,19 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public int poolUtf8(CharSequence cs) {
-        put(0x01);
-        int n;
-        putShort(n = cs.length());
-        for (int i = 0; i < n; i++) {
-            put(cs.charAt(i));
+        int cachedIndex = utf8Cache.get(cs);
+        if (cachedIndex == -1) {
+            put(0x01);
+            int n;
+            putShort(n = cs.length());
+            for (int i = 0; i < n; i++) {
+                put(cs.charAt(i));
+            }
+            utf8Cache.put(cs, poolCount);
+            return this.poolCount++;
         }
-        return this.poolCount++;
+
+        return cachedIndex;
     }
 
     public void pop() {
@@ -427,10 +430,6 @@ public class BytecodeAssembler implements Mutable {
             resize();
         }
         buf.put((byte) b);
-    }
-
-    public void putCodeOffset(int pos) {
-        putShort(pos - codeStart);
     }
 
     public void putITEM_Integer() {

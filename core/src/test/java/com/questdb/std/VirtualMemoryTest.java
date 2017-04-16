@@ -335,7 +335,6 @@ public class VirtualMemoryTest {
                     Assert.assertEquals(rnd.nextByte(), bsview.byteAt(j));
                 }
             }
-            System.out.println(total);
         }
     }
 
