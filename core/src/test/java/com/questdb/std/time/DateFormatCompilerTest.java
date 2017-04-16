@@ -70,6 +70,11 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testQuote() throws Exception {
+        assertThat("yyyy'y'ddMM", "2010-03-10T00:00:00.000Z", "2010y1003");
+    }
+
+    @Test
     public void testDayOneDigit() throws Exception {
         assertThat("dyyyy", "2014-01-03T00:00:00.000Z", "32014");
     }

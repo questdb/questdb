@@ -128,6 +128,24 @@ public final class Chars {
         return true;
     }
 
+    public static boolean equals(CharSequence l, int lLo, int lHi, CharSequence r, int rLo, int rHi) {
+        if (l == r) {
+            return true;
+        }
+
+        int ll = lHi - lLo;
+        if (ll != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (l.charAt(i + lLo) != r.charAt(i + rLo)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean equals(CharSequence l, char r) {
         return l.length() == 1 && l.charAt(0) == r;
     }

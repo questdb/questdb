@@ -46,11 +46,19 @@ public class DateFormatUtils {
     }
 
     static int assertString(CharSequence delimiter, int len, CharSequence in, int pos, int hi) throws NumericException {
-        assertRemaining(pos + len - 1, hi);
-        if (!Chars.equals(delimiter, in, pos, pos + len)) {
-            throw NumericException.INSTANCE;
+        if (delimiter.charAt(0) == '\'' && delimiter.charAt(len - 1) == '\'') {
+            assertRemaining(pos + len - 3, hi);
+            if (!Chars.equals(delimiter, 1, len - 1, in, pos, pos + len - 2)) {
+                throw NumericException.INSTANCE;
+            }
+            return pos + len - 2;
+        } else {
+            assertRemaining(pos + len - 1, hi);
+            if (!Chars.equals(delimiter, in, pos, pos + len)) {
+                throw NumericException.INSTANCE;
+            }
+            return pos + len;
         }
-        return pos + len;
     }
 
     static void assertRemaining(int pos, int hi) throws NumericException {

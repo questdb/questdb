@@ -1,13 +1,10 @@
 package com.questdb.std.time;
 
 import com.questdb.ex.NumericException;
-import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
-
-import java.text.NumberFormat;
 
 import static com.questdb.std.time.DateFormatUtils.*;
 
@@ -605,12 +602,11 @@ public class GenericDateFormat extends AbstractDateFormat {
                 default:
                     String delimiter = delimiters.getQuick(-op - 1);
                     len = delimiter.length();
-                    assertRemaining(pos + len - 1, hi);
-                    // unexpected separator character
-                    if (!Chars.equals(delimiter, in, pos, pos + len)) {
-                        throw NumericException.INSTANCE;
+                    if (len == 1) {
+                        DateFormatUtils.assertChar(delimiter.charAt(0), in, pos++, hi);
+                    } else {
+                        pos = DateFormatUtils.assertString(delimiter, len, in, pos, hi);
                     }
-                    pos += len;
                     break;
             }
         }
