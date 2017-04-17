@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.map;
 
-import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.ql.Record;
@@ -43,7 +42,7 @@ public class RecordKeyCopierCompiler {
     }
 
     public RecordKeyCopier compile(RecordMetadata meta, @Transient IntList columns, boolean symAsString) {
-        asm.clear();
+        asm.init(RecordKeyCopier.class);
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
         int interfaceClassIndex = asm.poolClass(RecordKeyCopier.class);
@@ -168,10 +167,6 @@ public class RecordKeyCopierCompiler {
         // class attribute count
         asm.putShort(0);
 
-        try {
-            return asm.newInstance(RecordKeyCopier.class);
-        } catch (Exception e) {
-            throw new JournalRuntimeException("Cannot instantiate comparator: ", e);
-        }
+        return asm.newInstance();
     }
 }

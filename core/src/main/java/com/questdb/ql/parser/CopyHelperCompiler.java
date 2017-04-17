@@ -24,7 +24,6 @@
 package com.questdb.ql.parser;
 
 import com.questdb.JournalEntryWriter;
-import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.ql.Record;
@@ -39,7 +38,7 @@ public class CopyHelperCompiler {
 
     public CopyHelper compile(RecordMetadata from, RecordMetadata to) {
         int tsIndex = to.getTimestampIndex();
-        asm.clear();
+        asm.init(CopyHelper.class);
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
         int interfaceClassIndex = asm.poolClass(CopyHelper.class);
@@ -387,10 +386,6 @@ public class CopyHelperCompiler {
         // class attribute count
         asm.putShort(0);
 
-        try {
-            return asm.newInstance(CopyHelper.class);
-        } catch (Exception e) {
-            throw new JournalRuntimeException("Cannot instantiate comparator: ", e);
-        }
+        return asm.newInstance();
     }
 }

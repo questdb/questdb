@@ -23,7 +23,6 @@
 
 package com.questdb.ql.impl.sort;
 
-import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.JournalUnsupportedTypeException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.BytecodeAssembler;
@@ -57,8 +56,9 @@ public class ComparatorCompiler {
 
         assert keyColumnIndices.size() < QueryParser.MAX_ORDER_BY_COLUMNS;
 
-        asm.clear();
+        asm.init(RecordComparator.class);
         asm.setupPool();
+
         int stackMapTableIndex = asm.poolUtf8("StackMapTable");
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
         int interfaceClassIndex = asm.poolClass(RecordComparator.class);
@@ -90,12 +90,7 @@ public class ComparatorCompiler {
 
         // class attribute count
         asm.putShort(0);
-
-        try {
-            return asm.newInstance(RecordComparator.class);
-        } catch (Exception e) {
-            throw new JournalRuntimeException("Cannot instantiate comparator: ", e);
-        }
+        return asm.newInstance();
     }
 
     private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, IntList keyColumns) {

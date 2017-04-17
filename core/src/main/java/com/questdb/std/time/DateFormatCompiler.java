@@ -35,51 +35,51 @@ import static com.questdb.std.time.DateFormatUtils.HOUR_24;
 import static com.questdb.std.time.DateFormatUtils.HOUR_AM;
 
 public class DateFormatCompiler {
-    public static final int OP_ERA = 1;
-    public static final int OP_YEAR_ONE_DIGIT = 2;
-    public static final int OP_YEAR_TWO_DIGITS = 3;
-    public static final int OP_YEAR_FOUR_DIGITS = 4;
-    public static final int OP_MONTH_ONE_DIGIT = 5;
-    public static final int OP_MONTH_TWO_DIGITS = 6;
-    public static final int OP_MONTH_SHORT_NAME = 7;
-    public static final int OP_MONTH_LONG_NAME = 8;
-    public static final int OP_DAY_ONE_DIGIT = 9;
-    public static final int OP_DAY_TWO_DIGITS = 10;
-    public static final int OP_DAY_NAME_SHORT = 11;
-    public static final int OP_DAY_NAME_LONG = 12;
-    public static final int OP_DAY_OF_WEEK = 13;
-    public static final int OP_AM_PM = 14;
-    public static final int OP_HOUR_24_ONE_DIGIT = 15;
-    public static final int OP_HOUR_24_TWO_DIGITS = 32;
-    public static final int OP_HOUR_24_ONE_DIGIT_ONE_BASED = 16;
-    public static final int OP_HOUR_24_TWO_DIGITS_ONE_BASED = 33;
-    public static final int OP_HOUR_12_ONE_DIGIT = 17;
-    public static final int OP_HOUR_12_TWO_DIGITS = 34;
-    public static final int OP_HOUR_12_ONE_DIGIT_ONE_BASED = 18;
-    public static final int OP_HOUR_12_TWO_DIGITS_ONE_BASED = 35;
-    public static final int OP_MINUTE_ONE_DIGIT = 19;
-    public static final int OP_MINUTE_TWO_DIGITS = 29;
-    public static final int OP_SECOND_ONE_DIGIT = 20;
-    public static final int OP_SECOND_TWO_DIGITS = 30;
-    public static final int OP_MILLIS_ONE_DIGIT = 21;
-    public static final int OP_MILLIS_THREE_DIGITS = 31;
-    public static final int OP_TIME_ZONE_GMT_BASED = 22;
-    public static final int OP_TIME_ZONE_SHORT = 23;
-    public static final int OP_TIME_ZONE_LONG = 24;
-    public static final int OP_TIME_ZONE_RFC_822 = 25;
-    public static final int OP_TIME_ZONE_ISO_8601_1 = 26;
-    public static final int OP_TIME_ZONE_ISO_8601_2 = 27;
-    public static final int OP_TIME_ZONE_ISO_8601_3 = 28;
-    public static final int OP_YEAR_GREEDY = 132;
-    public static final int OP_MONTH_GREEDY = 135;
-    public static final int OP_DAY_GREEDY = 139;
-    public static final int OP_HOUR_24_GREEDY = 140;
-    public static final int OP_HOUR_24_GREEDY_ONE_BASED = 141;
-    public static final int OP_HOUR_12_GREEDY = 142;
-    public static final int OP_HOUR_12_GREEDY_ONE_BASED = 143;
-    public static final int OP_MINUTE_GREEDY = 144;
-    public static final int OP_SECOND_GREEDY = 145;
-    public static final int OP_MILLIS_GREEDY = 146;
+    static final int OP_ERA = 1;
+    static final int OP_YEAR_ONE_DIGIT = 2;
+    static final int OP_YEAR_TWO_DIGITS = 3;
+    static final int OP_YEAR_FOUR_DIGITS = 4;
+    static final int OP_MONTH_ONE_DIGIT = 5;
+    static final int OP_MONTH_TWO_DIGITS = 6;
+    static final int OP_MONTH_SHORT_NAME = 7;
+    static final int OP_MONTH_LONG_NAME = 8;
+    static final int OP_DAY_ONE_DIGIT = 9;
+    static final int OP_DAY_TWO_DIGITS = 10;
+    static final int OP_DAY_NAME_SHORT = 11;
+    static final int OP_DAY_NAME_LONG = 12;
+    static final int OP_DAY_OF_WEEK = 13;
+    static final int OP_AM_PM = 14;
+    static final int OP_HOUR_24_ONE_DIGIT = 15;
+    static final int OP_HOUR_24_TWO_DIGITS = 32;
+    static final int OP_HOUR_24_ONE_DIGIT_ONE_BASED = 16;
+    static final int OP_HOUR_24_TWO_DIGITS_ONE_BASED = 33;
+    static final int OP_HOUR_12_ONE_DIGIT = 17;
+    static final int OP_HOUR_12_TWO_DIGITS = 34;
+    static final int OP_HOUR_12_ONE_DIGIT_ONE_BASED = 18;
+    static final int OP_HOUR_12_TWO_DIGITS_ONE_BASED = 35;
+    static final int OP_MINUTE_ONE_DIGIT = 19;
+    static final int OP_MINUTE_TWO_DIGITS = 29;
+    static final int OP_SECOND_ONE_DIGIT = 20;
+    static final int OP_SECOND_TWO_DIGITS = 30;
+    static final int OP_MILLIS_ONE_DIGIT = 21;
+    static final int OP_MILLIS_THREE_DIGITS = 31;
+    static final int OP_TIME_ZONE_GMT_BASED = 22;
+    static final int OP_TIME_ZONE_SHORT = 23;
+    static final int OP_TIME_ZONE_LONG = 24;
+    static final int OP_TIME_ZONE_RFC_822 = 25;
+    static final int OP_TIME_ZONE_ISO_8601_1 = 26;
+    static final int OP_TIME_ZONE_ISO_8601_2 = 27;
+    static final int OP_TIME_ZONE_ISO_8601_3 = 28;
+    static final int OP_YEAR_GREEDY = 132;
+    static final int OP_MONTH_GREEDY = 135;
+    static final int OP_DAY_GREEDY = 139;
+    static final int OP_HOUR_24_GREEDY = 140;
+    static final int OP_HOUR_24_GREEDY_ONE_BASED = 141;
+    static final int OP_HOUR_12_GREEDY = 142;
+    static final int OP_HOUR_12_GREEDY_ONE_BASED = 143;
+    static final int OP_MINUTE_GREEDY = 144;
+    static final int OP_SECOND_GREEDY = 145;
+    static final int OP_MILLIS_GREEDY = 146;
     static final CharSequenceIntHashMap opMap;
     static final ObjList<String> opList;
     private static final int P_INPUT_STR = 1;
@@ -101,6 +101,8 @@ public class DateFormatCompiler {
     private static final int LOCAL_ERA = 19;
     private final Lexer lexer;
     private final BytecodeAssembler asm = new BytecodeAssembler();
+    private final IntList ops = new IntList();
+    private final ObjList<String> delimiters = new ObjList<>();
 
     public DateFormatCompiler() {
         this.lexer = new Lexer();
@@ -109,37 +111,48 @@ public class DateFormatCompiler {
         }
     }
 
-    public DateFormat create(CharSequence sequence, boolean generic) {
-        return create(sequence, 0, sequence.length(), generic);
+    public DateFormat compile(CharSequence sequence, boolean generic) {
+        return compile(sequence, 0, sequence.length(), generic);
     }
 
-    public DateFormat create(CharSequence sequence, int lo, int hi, boolean generic) {
+    public DateFormat compile(CharSequence sequence, int lo, int hi, boolean generic) {
         this.lexer.setContent(sequence, lo, hi);
-        IntList compiled = new IntList();
-        ObjList<String> delimiters = new ObjList<>();
+
+        IntList ops;
+        ObjList<String> delimiters;
+
+        if (generic) {
+            ops = new IntList();
+            delimiters = new ObjList<>();
+        } else {
+            ops = this.ops;
+            delimiters = this.delimiters;
+            ops.clear();
+            delimiters.clear();
+        }
 
         while (this.lexer.hasNext()) {
             CharSequence cs = lexer.next();
             int op = opMap.get(cs);
             if (op == -1) {
-                makeLastOpGreedy(compiled);
+                makeLastOpGreedy(ops);
                 delimiters.add(cs.toString());
-                compiled.add(-(delimiters.size()));
+                ops.add(-(delimiters.size()));
             } else {
                 switch (op) {
                     case OP_AM_PM:
-                        makeLastOpGreedy(compiled);
+                        makeLastOpGreedy(ops);
                         break;
                     default:
                         break;
                 }
-                compiled.add(op);
+                ops.add(op);
             }
         }
 
         // make last operation "greedy"
-        makeLastOpGreedy(compiled);
-        return generic ? new GenericDateFormat(compiled, delimiters) : compile(compiled, delimiters);
+        makeLastOpGreedy(ops);
+        return generic ? new GenericDateFormat(ops, delimiters) : compile(ops, delimiters);
     }
 
     private static void addOp(String op, int opDayTwoDigits) {
@@ -154,8 +167,8 @@ public class DateFormatCompiler {
         asm.istore(LOCAL_POS);
     }
 
-    private DateFormat compile(IntList ops, ObjList<String> delims) {
-        asm.clear();
+    private DateFormat compile(IntList ops, ObjList<String> delimiters) {
+        asm.init(DateFormat.class);
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/std/time/DateFormatAsm"));
         int stackMapTableIndex = asm.poolUtf8("StackMapTable");
@@ -195,9 +208,9 @@ public class DateFormatCompiler {
         // pool only delimiters over 1 char in length
         // when delimiter is 1 char we would use shorter code path
         // that doesn't require constant
-        IntList delimIndices = new IntList(delims.size());
-        for (int i = 0, n = delims.size(); i < n; i++) {
-            String delim = delims.getQuick(i);
+        IntList delimIndices = new IntList(delimiters.size());
+        for (int i = 0, n = delimiters.size(); i < n; i++) {
+            String delim = delimiters.getQuick(i);
             if (delim.length() > 1) {
                 delimIndices.add(asm.poolStringConst(asm.poolUtf8(delim)));
             } else {
@@ -631,7 +644,7 @@ public class DateFormatCompiler {
                     if (op > 0) {
                         throw new IllegalArgumentException("Not yet supported: " + op);
                     }
-                    String delimiter = delims.getQuick(-op - 1);
+                    String delimiter = delimiters.getQuick(-op - 1);
                     int len = delimiter.length();
                     if (len == 1) {
                         // DateFormatUtils.assertChar(' ', in, pos++, hi);
@@ -741,11 +754,7 @@ public class DateFormatCompiler {
         // class attribute count
         asm.putShort(0);
 
-        try {
-            return asm.newInstance(DateFormat.class);
-        } catch (Exception e) {
-            throw new Error(e);
-        }
+        return asm.newInstance();
     }
 
     private void decodeInt(int decodeIntIndex) {

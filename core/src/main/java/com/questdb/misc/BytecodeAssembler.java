@@ -23,8 +23,10 @@
 
 package com.questdb.misc;
 
+import com.questdb.ex.BytecodeException;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.std.Mutable;
 import com.questdb.std.str.CharSink;
 import com.questdb.txt.sink.AbstractCharSink;
 
@@ -33,7 +35,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-public class BytecodeAssembler implements Mutable {
+public class BytecodeAssembler {
 
     public static final int i2l = 0x85;
     public static final int i2f = 0x86;
@@ -49,6 +51,9 @@ public class BytecodeAssembler implements Mutable {
     public static final int d2f = 0x90;
     public static final int i2b = 0x91;
     public static final int i2s = 0x93;
+
+    private static final Log LOG = LogFactory.getLog(BytecodeAssembler.class);
+
     private static final int putfield = 181;
     private static final int invokevirtual = 182;
     private static final int invokestatic = 184;
@@ -91,6 +96,7 @@ public class BytecodeAssembler implements Mutable {
     private static final int O_POOL_COUNT = 8;
 
     private final Utf8Appender utf8Appender = new Utf8Appender();
+    private final CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();
     private ByteBuffer buf;
     private int poolCount;
     private int objectClassIndex;
@@ -101,10 +107,10 @@ public class BytecodeAssembler implements Mutable {
     private int codeAttributeStart;
     private int codeStart;
     private int stackMapTableCut;
-    private CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();
+    private Class<?> host;
 
     public BytecodeAssembler() {
-        this.buf = ByteBuffer.allocate(1024).order(ByteOrder.BIG_ENDIAN);
+        this.buf = ByteBuffer.allocate(1024 * 1024).order(ByteOrder.BIG_ENDIAN);
         this.poolCount = 1;
     }
 
@@ -115,13 +121,6 @@ public class BytecodeAssembler implements Mutable {
     public void append_frame(int itemCount, int offset) {
         put(0xfc + itemCount - 1);
         putShort(offset);
-    }
-
-    @Override
-    public void clear() {
-        this.buf.clear();
-        this.poolCount = 1;
-        this.utf8Cache.clear();
     }
 
     public void defineClass(int flags, int thisClassIndex) {
@@ -183,6 +182,11 @@ public class BytecodeAssembler implements Mutable {
     }
 
     public void endMethodCode() {
+        int len = position() - codeStart;
+        if (len > 64 * 1024) {
+            LOG.error().$("Too much input to generate ").$(host.getName()).$(". Bytecode is too long").$();
+            throw BytecodeException.INSTANCE;
+        }
         putInt(codeStart - 4, position() - codeStart);
     }
 
@@ -259,6 +263,13 @@ public class BytecodeAssembler implements Mutable {
         put(0x74);
     }
 
+    public void init(Class<?> host) {
+        this.host = host;
+        this.buf.clear();
+        this.poolCount = 1;
+        this.utf8Cache.clear();
+    }
+
     public void invokeInterface(int interfaceIndex, int argCount) {
         put(invokeinterface);
         putShort(interfaceIndex);
@@ -329,9 +340,14 @@ public class BytecodeAssembler implements Mutable {
         optimisedIO(lstore_0, lstore_1, lstore_2, lstore_3, lstore, value);
     }
 
-    public <T> T newInstance(Class<T> hostAndType) throws IllegalAccessException, InstantiationException {
-        Class<T> x = loadClass(hostAndType);
-        return x.newInstance();
+    public <T> T newInstance() {
+        Class<T> x = loadClass(host);
+        try {
+            return x.newInstance();
+        } catch (Exception e) {
+            LOG.error().$("Failed to create an instance of ").$(host.getName()).$(", cause: ").$(e).$();
+            throw BytecodeException.INSTANCE;
+        }
     }
 
     public int poolClass(int classIndex) {

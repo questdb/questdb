@@ -1,5 +1,6 @@
 package com.questdb.std.time;
 
+import com.questdb.ex.BytecodeException;
 import com.questdb.ex.NumericException;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
@@ -43,9 +44,9 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testBasicParserCompiler() throws Exception {
-        DateFormat fmt = compiler.create("E, dd MMM yyyy a KK:m:s.S Z", false);
+        DateFormat fmt = compiler.compile("E, dd MMM yyyy a KK:m:s.S Z", false);
         String utcPattern = "yyyy-MM-ddTHH:mm:ss.SSSz";
-        DateFormat utc = compiler.create(utcPattern, true);
+        DateFormat utc = compiler.compile(utcPattern, true);
         long millis = fmt.parse("Mon, 08 Apr 2017 PM 11:11:10.123 UTC", defaultLocale);
         sink.clear();
         utc.append(millis, defaultLocale, "Z", sink);
@@ -67,11 +68,6 @@ public class DateFormatCompilerTest {
     @Test
     public void testDayMonthYearNoDelim() throws Exception {
         assertThat("yyyyddMM", "2010-03-10T00:00:00.000Z", "20101003");
-    }
-
-    @Test
-    public void testQuote() throws Exception {
-        assertThat("yyyy'y'ddMM", "2010-03-10T00:00:00.000Z", "2010y1003");
     }
 
     @Test
@@ -483,6 +479,15 @@ public class DateFormatCompilerTest {
         assertThat("dd-MM-yyyy", "", "29-02-2015");
     }
 
+    @Test(expected = BytecodeException.class)
+    public void testLongPattern() throws Exception {
+        StringBuffer b = new StringBuffer();
+        for (int i = 0; i < 570; i++) {
+            b.append("KK").append(' ').append('Z').append(',');
+        }
+        compiler.compile(b, false);
+    }
+
     @Test
     public void testMillisGreedy() throws Exception {
         assertThat("ddMMy HH:mm:ss.S", "1978-03-19T21:20:45.678Z", "190378 21:20:45.678");
@@ -548,6 +553,11 @@ public class DateFormatCompilerTest {
             Assert.assertTrue(codeSet.add(code));
             Assert.assertTrue(nameSet.add(name));
         }
+    }
+
+    @Test
+    public void testQuote() throws Exception {
+        assertThat("yyyy'y'ddMM", "2010-03-10T00:00:00.000Z", "2010y1003");
     }
 
     @Test
@@ -649,7 +659,7 @@ public class DateFormatCompilerTest {
     }
 
     private static DateFormat get(CharSequence pattern) {
-        return compiler.create(pattern, true);
+        return compiler.compile(pattern, true);
     }
 
     private void assertFormat(String expected, String pattern, String date) throws NumericException {
@@ -670,7 +680,7 @@ public class DateFormatCompilerTest {
         DateFormat format = get(pattern);
         TestUtils.assertEquals(expected, Dates.toString(format.parse(input, locale)));
 
-        DateFormat compiled = compiler.create(pattern, false);
+        DateFormat compiled = compiler.compile(pattern, false);
         TestUtils.assertEquals(expected, Dates.toString(compiled.parse(input, locale)));
     }
 }
