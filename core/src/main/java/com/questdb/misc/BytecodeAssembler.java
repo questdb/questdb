@@ -461,6 +461,10 @@ public class BytecodeAssembler {
         putShort(classIndex);
     }
 
+    public void putITEM_Top() {
+        put(0);
+    }
+
     public void putLong(long value) {
         if (buf.remaining() < 4) {
             resize();
