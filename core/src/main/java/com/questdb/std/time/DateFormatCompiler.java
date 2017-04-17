@@ -97,13 +97,14 @@ public class DateFormatCompiler {
     private static final int LOCAL_OFFSET = 16;
     private static final int LOCAL_HOUR_TYPE = 18;
     private static final int LOCAL_ERA = 19;
-    private final Lexer lexer;
+    private final Lexer lexer = new Lexer();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final IntList ops = new IntList();
     private final ObjList<String> delimiters = new ObjList<>();
+    private final IntList delimiterIndexes = new IntList();
+    private final LongList frameOffsets = new LongList();
 
     public DateFormatCompiler() {
-        this.lexer = new Lexer();
         for (int i = 0, n = opList.size(); i < n; i++) {
             lexer.defineSymbol(opList.getQuick(i));
         }
@@ -165,6 +166,12 @@ public class DateFormatCompiler {
         asm.istore(LOCAL_POS);
     }
 
+    /**
+     * Bytecode is assembled from fragments of switch() statement in GenericDateFormat. Compilation removes loop/switch
+     * and does not include code that wouldn't be relevant for the given pattern. Main performance benefit however comes
+     * from removing redundant local variable initialization code. For example year has to be defaulted to 1970 when
+     * it isn't present in the pattern and does not have to be defaulted at all when it is.
+     */
     private DateFormat compile(IntList ops, ObjList<String> delimiters) {
         asm.init(DateFormat.class);
         asm.setupPool();
@@ -206,14 +213,14 @@ public class DateFormatCompiler {
         // pool only delimiters over 1 char in length
         // when delimiter is 1 char we would use shorter code path
         // that doesn't require constant
-        IntList delimIndices = new IntList(delimiters.size());
+        delimiterIndexes.clear();
         for (int i = 0, n = delimiters.size(); i < n; i++) {
-            String delim = delimiters.getQuick(i);
-            if (delim.length() > 1) {
-                delimIndices.add(asm.poolStringConst(asm.poolUtf8(delim)));
+            String delimiter = delimiters.getQuick(i);
+            if (delimiter.length() > 1) {
+                delimiterIndexes.add(asm.poolStringConst(asm.poolUtf8(delimiter)));
             } else {
                 // keep indexes in both lists the same
-                delimIndices.add(-1);
+                delimiterIndexes.add(-1);
             }
         }
 
@@ -255,7 +262,7 @@ public class DateFormatCompiler {
                 parseOffsetIndex,
                 parseNameIndex,
                 parseSigIndex,
-                delimIndices
+                delimiterIndexes
         );
 
 
@@ -342,8 +349,7 @@ public class DateFormatCompiler {
             asm.lstore(LOCAL_TEMP_LONG);
         }
 
-        LongList frameOffsets = new LongList();
-
+        frameOffsets.clear();
         for (int i = 0, n = ops.size(); i < n; i++) {
             int op = ops.getQuick(i);
             switch (op) {
@@ -425,7 +431,7 @@ public class DateFormatCompiler {
                     // }
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);
-                    setHourType(frameOffsets, HOUR_AM, stackState);
+                    setHourType(HOUR_AM, stackState);
                     break;
                 case OP_HOUR_12_TWO_DIGITS:
                     // assertRemaining(pos + 1, hi);
@@ -435,7 +441,7 @@ public class DateFormatCompiler {
                     // }
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);
-                    setHourType(frameOffsets, HOUR_AM, stackState);
+                    setHourType(HOUR_AM, stackState);
                     break;
 
                 case OP_HOUR_12_GREEDY:
@@ -448,7 +454,7 @@ public class DateFormatCompiler {
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);
-                    setHourType(frameOffsets, HOUR_AM, stackState);
+                    setHourType(HOUR_AM, stackState);
                     break;
                 // HOUR (1-12)
                 case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
@@ -459,7 +465,7 @@ public class DateFormatCompiler {
                     // }
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);
-                    setHourType(frameOffsets, HOUR_AM, stackState);
+                    setHourType(HOUR_AM, stackState);
                     break;
 
                 case OP_HOUR_12_TWO_DIGITS_ONE_BASED:
@@ -470,7 +476,7 @@ public class DateFormatCompiler {
                     //}
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2, LOCAL_HOUR);
-                    setHourType(frameOffsets, HOUR_AM, stackState);
+                    setHourType(HOUR_AM, stackState);
                     break;
 
                 case OP_HOUR_12_GREEDY_ONE_BASED:
@@ -493,7 +499,7 @@ public class DateFormatCompiler {
                     asm.isub();
                     asm.istore(LOCAL_HOUR);
                     addTempToPos(decodeLenIndex);
-                    setHourType(frameOffsets, HOUR_AM, stackState);
+                    setHourType(HOUR_AM, stackState);
                     break;
                 // HOUR (0-23)
                 case OP_HOUR_24_ONE_DIGIT:
@@ -782,22 +788,6 @@ public class DateFormatCompiler {
         asm.iload(LOCAL_POS);
         asm.iload(P_HI);
         asm.invokeStatic(assertNoTailIndex);
-
-//        return DateFormatUtils.computeMillis(
-//                year,
-//                month,
-//                day,
-//                hour,
-//                minute,
-//                second,
-//                millis,
-//                timezone,
-//                offset,
-//                locale,
-//                pos,
-//                hi
-//        );
-
         asm.aload(P_LOCALE);
         asm.iload(LOCAL_ERA);
         asm.iload(LOCAL_YEAR);
@@ -1127,7 +1117,7 @@ public class DateFormatCompiler {
         parseDigits(assertRemainingIndex, parseIntIndex, 2, target);
     }
 
-    private void setHourType(LongList frameOffsets, int hourType, int stackState) {
+    private void setHourType(int hourType, int stackState) {
         asm.iload(LOCAL_HOUR_TYPE);
         asm.iconst(HOUR_24);
         int branch = asm.if_icmpne();

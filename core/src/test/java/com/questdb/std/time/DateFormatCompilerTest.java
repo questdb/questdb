@@ -482,7 +482,7 @@ public class DateFormatCompilerTest {
     @Test(expected = BytecodeException.class)
     public void testLongPattern() throws Exception {
         StringBuffer b = new StringBuffer();
-        for (int i = 0; i < 570; i++) {
+        for (int i = 0; i < 1000; i++) {
             b.append("KK").append(' ').append('Z').append(',');
         }
         compiler.compile(b, false);
