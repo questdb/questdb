@@ -287,6 +287,10 @@ public class BytecodeAssembler {
         putShort(index);
     }
 
+    public void irem() {
+        put(0x70);
+    }
+
     public void ireturn() {
         put(0xac);
     }
@@ -381,6 +385,10 @@ public class BytecodeAssembler {
 
     public int poolInterfaceMethod(int classIndex, int nameAndTypeIndex) {
         return poolRef(0x0B, classIndex, nameAndTypeIndex);
+    }
+
+    public int poolInterfaceMethod(int classIndex, String name, String sig) {
+        return poolInterfaceMethod(classIndex, poolNameAndType(poolUtf8(name), poolUtf8(sig)));
     }
 
     public int poolLongConst(long value) {

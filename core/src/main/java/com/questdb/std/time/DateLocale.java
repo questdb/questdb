@@ -44,12 +44,12 @@ public class DateLocale {
         return Unsafe.arrayGet(monthArray, index);
     }
 
-    public String getMonthShort(int index) {
-        return Unsafe.arrayGet(shortMonthArray, index);
-    }
-
     public TimeZoneRules getRules(CharSequence timeZoneName) throws NumericException {
         return getZoneRules(Numbers.decodeInt(matchZone(timeZoneName, 0, timeZoneName.length())));
+    }
+
+    public String getShortMonth(int index) {
+        return Unsafe.arrayGet(shortMonthArray, index);
     }
 
     public String getShortWeekday(int index) {

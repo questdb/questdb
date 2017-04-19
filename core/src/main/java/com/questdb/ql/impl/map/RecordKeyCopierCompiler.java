@@ -49,7 +49,7 @@ public class RecordKeyCopierCompiler {
         int recordClassIndex = asm.poolClass(Record.class);
         int writerClassIndex = asm.poolClass(DirectMap.KeyWriter.class);
 
-        int rGetInt = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getInt"), asm.poolUtf8("(I)I")));
+        int rGetInt = asm.poolInterfaceMethod(recordClassIndex, "getInt", "(I)I");
         // shared sig
         int rIntLong = asm.poolUtf8("(I)J");
         int rGetLong = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getLong"), rIntLong));

@@ -270,21 +270,26 @@ final public class Dates {
         int y = getYear(millis);
         boolean l = isLeapYear(y);
         int m = getMonthOfYear(millis, y, l);
+        int d = getDayOfMonth(millis, y, m, l);
+        int dow = getDayOfWeek(millis) - 1;
+        int h = getHourOfDay(millis);
+        int min = getMinuteOfHour(millis);
+        int s = getSecondOfMinute(millis);
         sink
-                .put(DAYS_OF_WEEK[getDayOfWeek(millis) - 1])
+                .put(DAYS_OF_WEEK[dow])
                 .put(", ")
-                .put(getDayOfMonth(millis, y, m, l))
+                .put(d)
                 .put(' ')
                 .put(MONTHS_OF_YEAR[m - 1])
                 .put(' ');
 
         append000(sink, y);
         sink.put(' ');
-        append0(sink, getHourOfDay(millis));
+        append0(sink, h);
         sink.put(':');
-        append0(sink, getMinuteOfHour(millis));
+        append0(sink, min);
         sink.put(':');
-        append0(sink, getSecondOfMinute(millis));
+        append0(sink, s);
         sink.put(' ').put("GMT");
     }
 

@@ -46,10 +46,10 @@ public class DateFormatCompilerTest {
     public void testBasicParserCompiler() throws Exception {
         DateFormat fmt = compiler.compile("E, dd MMM yyyy a KK:m:s.S Z", false);
         String utcPattern = "yyyy-MM-ddTHH:mm:ss.SSSz";
-        DateFormat utc = compiler.compile(utcPattern, true);
+        DateFormat utc = compiler.compile(utcPattern, false);
         long millis = fmt.parse("Mon, 08 Apr 2017 PM 11:11:10.123 UTC", defaultLocale);
         sink.clear();
-        utc.append(millis, defaultLocale, "Z", sink);
+        utc.format(millis, defaultLocale, "Z", sink);
         TestUtils.assertEquals("2017-04-08T23:11:10.123Z", sink);
     }
 
@@ -97,7 +97,7 @@ public class DateFormatCompilerTest {
         long millis = fmt.parse("06-04-2017 01:09:30 BST", defaultLocale);
         millis += defaultLocale.getRules(targetTimezoneName).getOffset(millis);
         sink.clear();
-        fmt.append(millis, defaultLocale, targetTimezoneName, sink);
+        fmt.format(millis, defaultLocale, targetTimezoneName, sink);
         TestUtils.assertEquals("06-04-2017 03:09:30 MSK", sink);
 //        assertThat("dd-MM-yyyy HH:mm:ss Z", "06-04-2017 03:09:30 MSK", "06-04-2017 01:09:30 BST");
     }
@@ -664,7 +664,10 @@ public class DateFormatCompilerTest {
 
     private void assertFormat(String expected, String pattern, String date) throws NumericException {
         sink.clear();
-        get(pattern).append(Dates.parseDateTime(date), defaultLocale, "GMT", sink);
+        get(pattern).format(Dates.parseDateTime(date), defaultLocale, "GMT", sink);
+        TestUtils.assertEquals(expected, sink);
+        sink.clear();
+        compiler.compile(pattern, false).format(Dates.parseDateTime(date), defaultLocale, "GMT", sink);
         TestUtils.assertEquals(expected, sink);
     }
 

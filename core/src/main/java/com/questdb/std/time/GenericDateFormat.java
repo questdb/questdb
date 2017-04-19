@@ -18,7 +18,7 @@ public class GenericDateFormat extends AbstractDateFormat {
     }
 
     @Override
-    public void append(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) throws NumericException {
+    public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) throws NumericException {
         int day = -1;
         int month = -1;
         int year = Integer.MIN_VALUE;
@@ -38,11 +38,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(datetime);
                     }
-                    if (hour < 12) {
-                        sink.put(locale.getAMPM(0));
-                    } else {
-                        sink.put(locale.getAMPM(1));
-                    }
+                    DateFormatUtils.appendAmPm(sink, hour, locale);
                     break;
 
                 // MILLIS
@@ -101,22 +97,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(datetime);
                     }
-                    if (hour < 12) {
-                        sink.put(hour);
-                    } else {
-                        sink.put(hour - 12);
-                    }
+                    appendHour12(sink, hour);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS:
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(datetime);
                     }
-                    if (hour < 12) {
-                        Dates.append0(sink, hour);
-                    } else {
-                        Dates.append0(sink, hour - 12);
-                    }
+                    appendHour12Padded(sink, hour);
                     break;
 
                 // HOUR (1-12)
@@ -125,22 +113,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(datetime);
                     }
-                    if (hour < 12) {
-                        sink.put(hour + 1);
-                    } else {
-                        sink.put(hour - 11);
-                    }
+                    appendHour121(sink, hour);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(datetime);
                     }
-                    if (hour < 12) {
-                        Dates.append0(sink, hour + 1);
-                    } else {
-                        Dates.append0(sink, hour - 11);
-                    }
+                    appendHour121Padded(sink, hour);
                     break;
 
                 // HOUR (0-23)
@@ -264,7 +244,7 @@ public class GenericDateFormat extends AbstractDateFormat {
 
                         month = Dates.getMonthOfYear(datetime, year, leap);
                     }
-                    sink.put(locale.getMonthShort(month - 1));
+                    sink.put(locale.getShortMonth(month - 1));
                     break;
                 case DateFormatCompiler.OP_MONTH_LONG_NAME:
                     if (month == -1) {
@@ -309,12 +289,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                         year = Dates.getYear(datetime);
                         leap = Dates.isLeapYear(year);
                     }
-                    if (year < 0) {
-                        sink.put(locale.getEra(0));
-                    } else {
-                        sink.put(locale.getEra(1));
-                    }
-
+                    appendEra(sink, year, locale);
                     break;
 
                 // TIMEZONE

@@ -27,6 +27,7 @@ package com.questdb.std.time;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.misc.Numbers;
 import com.questdb.std.*;
+import com.questdb.std.str.CharSink;
 
 import static com.questdb.std.time.DateFormatUtils.HOUR_24;
 import static com.questdb.std.time.DateFormatUtils.HOUR_AM;
@@ -79,11 +80,23 @@ public class DateFormatCompiler {
     static final int OP_MILLIS_GREEDY = 146;
     static final CharSequenceIntHashMap opMap;
     static final ObjList<String> opList;
+    private static final int FA_LOCAL_DATETIME = 1;
+    private static final int FA_LOCAL_SINK = 5;
+    private static final int FA_LOCAL_LOCALE = 3;
+    private static final int FA_LOCAL_TIMEZONE = 4;
+    private static final int FA_SECOND_MILLIS = 1;
+    private static final int FA_SECOND = 2;
+    private static final int FA_MINUTE = 3;
+    private static final int FA_HOUR = 4;
+    private static final int FA_DAY = 5;
+    private static final int FA_MONTH = 6;
+    private static final int FA_YEAR = 7;
+    private static final int FA_LEAP = 8;
+    private static final int FA_DAY_OF_WEEK = 10;
     private static final int P_INPUT_STR = 1;
     private static final int P_LO = 2;
     private static final int P_HI = 3;
     private static final int P_LOCALE = 4;
-
     private static final int LOCAL_DAY = 5;
     private static final int LOCAL_MONTH = 6;
     private static final int LOCAL_YEAR = 7;
@@ -97,12 +110,14 @@ public class DateFormatCompiler {
     private static final int LOCAL_OFFSET = 16;
     private static final int LOCAL_HOUR_TYPE = 18;
     private static final int LOCAL_ERA = 19;
+    private static final int FORMAT_METHOD_STACK_START = 6;
     private final Lexer lexer = new Lexer();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final IntList ops = new IntList();
     private final ObjList<String> delimiters = new ObjList<>();
     private final IntList delimiterIndexes = new IntList();
     private final LongList frameOffsets = new LongList();
+    private final int[] fmtAttributeIndex = new int[32];
 
     public DateFormatCompiler() {
         for (int i = 0, n = opList.size(); i < n; i++) {
@@ -166,113 +181,322 @@ public class DateFormatCompiler {
         asm.istore(LOCAL_POS);
     }
 
-    /**
-     * Bytecode is assembled from fragments of switch() statement in GenericDateFormat. Compilation removes loop/switch
-     * and does not include code that wouldn't be relevant for the given pattern. Main performance benefit however comes
-     * from removing redundant local variable initialization code. For example year has to be defaulted to 1970 when
-     * it isn't present in the pattern and does not have to be defaulted at all when it is.
-     */
-    private DateFormat compile(IntList ops, ObjList<String> delimiters) {
-        asm.init(DateFormat.class);
-        asm.setupPool();
-        int thisClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/std/time/DateFormatAsm"));
-        int stackMapTableIndex = asm.poolUtf8("StackMapTable");
-        int superclassIndex = asm.poolClass(AbstractDateFormat.class);
-        int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
-        int dateFormatUtilsClassIndex = asm.poolClass(DateFormatUtils.class);
-        int numbersClassIndex = asm.poolClass(Numbers.class);
-        int datesClassIndex = asm.poolClass(Dates.class);
-        int charSequenceClassIndex = asm.poolClass(CharSequence.class);
-        int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
-        int minMillisIndex = asm.poolLongConst(Dates.MINUTE_MILLIS);
+    private void assembleFormatMethod(IntList ops, ObjList<String> delimiters, int getWeekdayIndex, int getShortWeekdayIndex, int getMonthIndex, int getShortMonthIndex, int appendEraIndex, int appendAmPmIndex, int appendHour12Index, int appendHour12PaddedIndex, int appendHour121Index, int appendHour121PaddedIndex, int getYearIndex, int isLeapYearIndex, int getMonthOfYearIndex, int getDayOfMonthIndex, int getHourOfDayIndex, int getMinuteOfHourIndex, int getSecondOfMinuteIndex, int getMillisOfSecondIndex, int getDayOfWeekIndex, int append000Index, int append00Index, int append0Index, int sinkPutIntIndex, int sinkPutStrIndex, int sinkPutChrIndex, int formatNameIndex, int formatSigIndex) {
+        int formatAttributes = computeFormatAttributes(ops);
+        asm.startMethod(0x01, formatNameIndex, formatSigIndex, 6, FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes));
 
-        int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
-        int matchWeekdayIndex = asm.poolMethod(dateLocaleClassIndex, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
-        int matchMonthIndex = asm.poolMethod(dateLocaleClassIndex, "matchMonth", "(Ljava/lang/CharSequence;II)J");
-        int matchZoneIndex = asm.poolMethod(dateLocaleClassIndex, "matchZone", "(Ljava/lang/CharSequence;II)J");
-        int matchAMPMIndex = asm.poolMethod(dateLocaleClassIndex, "matchAMPM", "(Ljava/lang/CharSequence;II)J");
-        int matchEraIndex = asm.poolMethod(dateLocaleClassIndex, "matchEra", "(Ljava/lang/CharSequence;II)J");
+        assembleFormatMethodStack(
+                formatAttributes,
+                getYearIndex,
+                isLeapYearIndex,
+                getMonthOfYearIndex,
+                getDayOfMonthIndex,
+                getHourOfDayIndex,
+                getMinuteOfHourIndex,
+                getSecondOfMinuteIndex,
+                getMillisOfSecondIndex,
+                getDayOfWeekIndex
+        );
 
-        int parseIntSafelyIndex = asm.poolMethod(numbersClassIndex, "parseIntSafely", "(Ljava/lang/CharSequence;II)J");
+        for (int i = 0, n = ops.size(); i < n; i++) {
+            int op = ops.getQuick(i);
+            switch (op) {
+                // AM/PM
+                case DateFormatCompiler.OP_AM_PM:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_HOUR]);
+                    asm.aload(FA_LOCAL_LOCALE);
+                    asm.invokeStatic(appendAmPmIndex);
+                    break;
+                // MILLIS
+                case DateFormatCompiler.OP_MILLIS_ONE_DIGIT:
+                case DateFormatCompiler.OP_MILLIS_GREEDY:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_SECOND_MILLIS]);
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
+                case DateFormatCompiler.OP_MILLIS_THREE_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_SECOND_MILLIS]);
+                    asm.invokeStatic(append00Index);
+                    break;
+                // SECOND
+                case DateFormatCompiler.OP_SECOND_ONE_DIGIT:
+                case DateFormatCompiler.OP_SECOND_GREEDY:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_SECOND]);
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
+                case DateFormatCompiler.OP_SECOND_TWO_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_SECOND]);
+                    asm.invokeStatic(append0Index);
+                    break;
+                // MINUTE
+                case DateFormatCompiler.OP_MINUTE_ONE_DIGIT:
+                case DateFormatCompiler.OP_MINUTE_GREEDY:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_MINUTE]);
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
+                case DateFormatCompiler.OP_MINUTE_TWO_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_MINUTE]);
+                    asm.invokeStatic(append0Index);
+                    break;
+                // HOUR (0-11)
+                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case DateFormatCompiler.OP_HOUR_12_GREEDY:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_HOUR]);
+                    asm.invokeStatic(appendHour12Index);
+                    break;
 
-        int decodeLenIndex = asm.poolMethod(numbersClassIndex, "decodeLen", "(J)I");
-        int decodeIntIndex = asm.poolMethod(numbersClassIndex, "decodeInt", "(J)I");
-        int assertRemainingIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertRemaining", "(II)V");
-        int assertNoTailIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertNoTail", "(II)V");
-        int parseIntIndex = asm.poolMethod(numbersClassIndex, "parseInt", "(Ljava/lang/CharSequence;II)I");
-        int assertStringIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
-        int assertCharIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertChar", "(CLjava/lang/CharSequence;II)V");
-        int computeMillisIndex = asm.poolMethod(dateFormatUtilsClassIndex, "compute", "(Lcom/questdb/std/time/DateLocale;IIIIIIIIIJI)J");
-        int adjustYearIndex = asm.poolMethod(dateFormatUtilsClassIndex, "adjustYear", "(I)I");
-        int parseYearGreedyIndex = asm.poolMethod(dateFormatUtilsClassIndex, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
-        int parseOffsetIndex = asm.poolMethod(datesClassIndex, "parseOffset", "(Ljava/lang/CharSequence;II)J");
+                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_HOUR]);
+                    asm.invokeStatic(appendHour12PaddedIndex);
+                    break;
 
-        int parseNameIndex = asm.poolUtf8("parse");
-        int parseSigIndex = asm.poolUtf8("(Ljava/lang/CharSequence;IILcom/questdb/std/time/DateLocale;)J");
+                // HOUR (1-12)
+                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_HOUR]);
+                    asm.invokeStatic(appendHour121Index);
+                    break;
 
-        // pool only delimiters over 1 char in length
-        // when delimiter is 1 char we would use shorter code path
-        // that doesn't require constant
-        delimiterIndexes.clear();
-        for (int i = 0, n = delimiters.size(); i < n; i++) {
-            String delimiter = delimiters.getQuick(i);
-            if (delimiter.length() > 1) {
-                delimiterIndexes.add(asm.poolStringConst(asm.poolUtf8(delimiter)));
-            } else {
-                // keep indexes in both lists the same
-                delimiterIndexes.add(-1);
+                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_HOUR]);
+                    asm.invokeStatic(appendHour121PaddedIndex);
+                    break;
+                // HOUR (0-23)
+                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case DateFormatCompiler.OP_HOUR_24_GREEDY:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_HOUR]);
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
+                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_HOUR]);
+                    asm.invokeStatic(append0Index);
+                    break;
+
+                // HOUR (1 - 24)
+                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_HOUR]);
+                    asm.iconst(1);
+                    asm.iadd();
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
+
+                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_HOUR]);
+                    asm.iconst(1);
+                    asm.iadd();
+                    asm.invokeStatic(append0Index);
+                    break;
+                // DAY
+                case DateFormatCompiler.OP_DAY_ONE_DIGIT:
+                case DateFormatCompiler.OP_DAY_GREEDY:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_DAY]);
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
+                case DateFormatCompiler.OP_DAY_TWO_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_DAY]);
+                    asm.invokeStatic(append0Index);
+                    break;
+                case DateFormatCompiler.OP_DAY_NAME_LONG:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.aload(FA_LOCAL_LOCALE);
+                    asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);
+                    asm.invokeVirtual(getWeekdayIndex);
+                    asm.invokeInterface(sinkPutStrIndex, 1);
+                    asm.pop();
+                    break;
+                case DateFormatCompiler.OP_DAY_NAME_SHORT:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.aload(FA_LOCAL_LOCALE);
+                    asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);
+                    asm.invokeVirtual(getShortWeekdayIndex);
+                    asm.invokeInterface(sinkPutStrIndex, 1);
+                    asm.pop();
+                    break;
+                case DateFormatCompiler.OP_DAY_OF_WEEK:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_DAY_OF_WEEK]);
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
+                // MONTH
+                case DateFormatCompiler.OP_MONTH_ONE_DIGIT:
+                case DateFormatCompiler.OP_MONTH_GREEDY:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_MONTH]);
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
+                case DateFormatCompiler.OP_MONTH_TWO_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_MONTH]);
+                    asm.invokeStatic(append0Index);
+                    break;
+                case DateFormatCompiler.OP_MONTH_SHORT_NAME:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.aload(FA_LOCAL_LOCALE);
+                    asm.iload(fmtAttributeIndex[FA_MONTH]);
+                    asm.iconst(1);
+                    asm.isub();
+                    asm.invokeVirtual(getShortMonthIndex);
+                    asm.invokeInterface(sinkPutStrIndex, 1);
+                    asm.pop();
+                    break;
+                case DateFormatCompiler.OP_MONTH_LONG_NAME:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.aload(FA_LOCAL_LOCALE);
+                    asm.iload(fmtAttributeIndex[FA_MONTH]);
+                    asm.iconst(1);
+                    asm.isub();
+                    asm.invokeVirtual(getMonthIndex);
+                    asm.invokeInterface(sinkPutStrIndex, 1);
+                    asm.pop();
+                    break;
+                // YEAR
+                case DateFormatCompiler.OP_YEAR_ONE_DIGIT:
+                case DateFormatCompiler.OP_YEAR_GREEDY:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_YEAR]);
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
+                case DateFormatCompiler.OP_YEAR_TWO_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_YEAR]);
+                    asm.iconst(100);
+                    asm.irem();
+                    asm.invokeStatic(append0Index);
+                    break;
+                case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_YEAR]);
+                    asm.invokeStatic(append000Index);
+                    break;
+                // ERA
+                case DateFormatCompiler.OP_ERA:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_YEAR]);
+                    asm.aload(FA_LOCAL_LOCALE);
+                    asm.invokeStatic(appendEraIndex);
+                    break;
+
+                // TIMEZONE
+                case DateFormatCompiler.OP_TIME_ZONE_SHORT:
+                case DateFormatCompiler.OP_TIME_ZONE_GMT_BASED:
+                case DateFormatCompiler.OP_TIME_ZONE_ISO_8601_1:
+                case DateFormatCompiler.OP_TIME_ZONE_ISO_8601_2:
+                case DateFormatCompiler.OP_TIME_ZONE_ISO_8601_3:
+                case DateFormatCompiler.OP_TIME_ZONE_LONG:
+                case DateFormatCompiler.OP_TIME_ZONE_RFC_822:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.aload(FA_LOCAL_TIMEZONE);
+                    asm.invokeInterface(sinkPutStrIndex, 1);
+                    break;
+                // SEPARATORS
+                default:
+                    if (op < 0) {
+                        String delimiter = delimiters.getQuick(-op - 1);
+                        if (delimiter.length() > 1) {
+                            asm.aload(FA_LOCAL_SINK);
+                            asm.ldc(delimiterIndexes.getQuick(-op - 1));
+                            asm.invokeInterface(sinkPutStrIndex, 1);
+                            asm.pop();
+                        } else {
+                            asm.aload(FA_LOCAL_SINK);
+                            asm.iconst(delimiter.charAt(0));
+                            asm.invokeInterface(sinkPutChrIndex, 1);
+                            asm.pop();
+                        }
+                    }
+                    break;
+
             }
         }
 
-        asm.finishPool();
 
-        asm.defineClass(1, thisClassIndex, superclassIndex);
-        // interface count
+        asm.return_();
+        asm.endMethodCode();
         asm.putShort(0);
-        // field count
         asm.putShort(0);
-        // method count
-        asm.putShort(2);
-        asm.defineDefaultConstructor(superIndex);
-        compileParseMethod(
-                ops,
-                delimiters,
-                thisClassIndex,
-                stackMapTableIndex,
-                dateLocaleClassIndex,
-                charSequenceClassIndex,
-                minLongIndex,
-                minMillisIndex,
-                matchWeekdayIndex,
-                matchMonthIndex,
-                matchZoneIndex,
-                matchAMPMIndex,
-                matchEraIndex,
-                parseIntSafelyIndex,
-                decodeLenIndex,
-                decodeIntIndex,
-                assertRemainingIndex,
-                assertNoTailIndex,
-                parseIntIndex,
-                assertStringIndex,
-                assertCharIndex,
-                computeMillisIndex,
-                adjustYearIndex,
-                parseYearGreedyIndex,
-                parseOffsetIndex,
-                parseNameIndex,
-                parseSigIndex,
-                delimiterIndexes
-        );
-
-
-        // class attribute count
-        asm.putShort(0);
-
-        return asm.newInstance();
+        asm.endMethod();
     }
 
-    private void compileParseMethod(IntList ops, ObjList<String> delimiters, int thisClassIndex, int stackMapTableIndex, int dateLocaleClassIndex, int charSequenceClassIndex, int minLongIndex, int minMillisIndex, int matchWeekdayIndex, int matchMonthIndex, int matchZoneIndex, int matchAMPMIndex, int matchEraIndex, int parseIntSafelyIndex, int decodeLenIndex, int decodeIntIndex, int assertRemainingIndex, int assertNoTailIndex, int parseIntIndex, int assertStringIndex, int assertCharIndex, int computeMillisIndex, int adjustYearIndex, int parseYearGreedyIndex, int parseOffsetIndex, int parseNameIndex, int parseSigIndex, IntList delimIndices) {
+    private void assembleFormatMethodStack(int formatAttributes, int getYearIndex, int isLeapYearIndex, int getMonthOfYearIndex, int getDayOfMonthIndex, int getHourOfDayIndex, int getMinuteOfHourIndex, int getSecondOfMinuteIndex, int getMillisOfSecondIndex, int getDayOfWeekIndex) {
+        int index = FORMAT_METHOD_STACK_START;
+        if (invokeConvertMillis(formatAttributes, FA_YEAR, getYearIndex, index)) {
+            fmtAttributeIndex[FA_YEAR] = index++;
+        }
+
+        if ((formatAttributes & (1 << FA_LEAP)) != 0) {
+            asm.iload(fmtAttributeIndex[FA_YEAR]);
+            asm.invokeStatic(isLeapYearIndex);
+            asm.istore(index);
+            fmtAttributeIndex[FA_LEAP] = index++;
+        }
+
+        if ((formatAttributes & (1 << FA_MONTH)) != 0) {
+            asm.lload(FA_LOCAL_DATETIME);
+            asm.iload(fmtAttributeIndex[FA_YEAR]);
+            asm.iload(fmtAttributeIndex[FA_LEAP]);
+            asm.invokeStatic(getMonthOfYearIndex);
+            asm.istore(index);
+            fmtAttributeIndex[FA_MONTH] = index++;
+        }
+
+        if ((formatAttributes & (1 << FA_DAY)) != 0) {
+            asm.lload(FA_LOCAL_DATETIME);
+            asm.iload(fmtAttributeIndex[FA_YEAR]);
+            asm.iload(fmtAttributeIndex[FA_MONTH]);
+            asm.iload(fmtAttributeIndex[FA_LEAP]);
+            asm.invokeStatic(getDayOfMonthIndex);
+            asm.istore(index);
+            fmtAttributeIndex[FA_DAY] = index++;
+        }
+
+        if (invokeConvertMillis(formatAttributes, FA_HOUR, getHourOfDayIndex, index)) {
+            fmtAttributeIndex[FA_HOUR] = index++;
+        }
+
+        if (invokeConvertMillis(formatAttributes, FA_MINUTE, getMinuteOfHourIndex, index)) {
+            fmtAttributeIndex[FA_MINUTE] = index++;
+        }
+
+        if (invokeConvertMillis(formatAttributes, FA_SECOND, getSecondOfMinuteIndex, index)) {
+            fmtAttributeIndex[FA_SECOND] = index++;
+        }
+
+        if (invokeConvertMillis(formatAttributes, FA_SECOND_MILLIS, getMillisOfSecondIndex, index)) {
+            fmtAttributeIndex[FA_SECOND_MILLIS] = index++;
+        }
+
+        if (invokeConvertMillis(formatAttributes, FA_DAY_OF_WEEK, getDayOfWeekIndex, index)) {
+            fmtAttributeIndex[FA_DAY_OF_WEEK] = index;
+        }
+    }
+
+    private void assembleParseMethod(IntList ops, ObjList<String> delimiters, int thisClassIndex, int stackMapTableIndex, int dateLocaleClassIndex, int charSequenceClassIndex, int minLongIndex, int minMillisIndex, int matchWeekdayIndex, int matchMonthIndex, int matchZoneIndex, int matchAMPMIndex, int matchEraIndex, int parseIntSafelyIndex, int decodeLenIndex, int decodeIntIndex, int assertRemainingIndex, int assertNoTailIndex, int parseIntIndex, int assertStringIndex, int assertCharIndex, int computeMillisIndex, int adjustYearIndex, int parseYearGreedyIndex, int parseOffsetIndex, int parseNameIndex, int parseSigIndex, IntList delimIndices) {
 
         int stackState = computeParseMethodStack(ops);
 
@@ -758,9 +982,6 @@ public class DateFormatCompiler {
 
                     break;
                 default:
-                    if (op > 0) {
-                        throw new IllegalArgumentException("Not yet supported: " + op);
-                    }
                     String delimiter = delimiters.getQuick(-op - 1);
                     int len = delimiter.length();
                     if (len == 1) {
@@ -919,6 +1140,259 @@ public class DateFormatCompiler {
         asm.endMethod();
     }
 
+    /**
+     * Bytecode is assembled from fragments of switch() statement in GenericDateFormat. Compilation removes loop/switch
+     * and does not include code that wouldn't be relevant for the given pattern. Main performance benefit however comes
+     * from removing redundant local variable initialization code. For example year has to be defaulted to 1970 when
+     * it isn't present in the pattern and does not have to be defaulted at all when it is.
+     */
+    private DateFormat compile(IntList ops, ObjList<String> delimiters) {
+        asm.init(DateFormat.class);
+        asm.setupPool();
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/std/time/DateFormatAsm"));
+        int stackMapTableIndex = asm.poolUtf8("StackMapTable");
+        int superclassIndex = asm.poolClass(AbstractDateFormat.class);
+        int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
+        int dateFormatUtilsClassIndex = asm.poolClass(DateFormatUtils.class);
+        int numbersClassIndex = asm.poolClass(Numbers.class);
+        int datesClassIndex = asm.poolClass(Dates.class);
+        int charSequenceClassIndex = asm.poolClass(CharSequence.class);
+        int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
+        int minMillisIndex = asm.poolLongConst(Dates.MINUTE_MILLIS);
+        int sinkIndex = asm.poolClass(CharSink.class);
+
+        int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
+        int matchWeekdayIndex = asm.poolMethod(dateLocaleClassIndex, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
+        int matchMonthIndex = asm.poolMethod(dateLocaleClassIndex, "matchMonth", "(Ljava/lang/CharSequence;II)J");
+        int matchZoneIndex = asm.poolMethod(dateLocaleClassIndex, "matchZone", "(Ljava/lang/CharSequence;II)J");
+        int matchAMPMIndex = asm.poolMethod(dateLocaleClassIndex, "matchAMPM", "(Ljava/lang/CharSequence;II)J");
+        int matchEraIndex = asm.poolMethod(dateLocaleClassIndex, "matchEra", "(Ljava/lang/CharSequence;II)J");
+        int getWeekdayIndex = asm.poolMethod(dateLocaleClassIndex, "getWeekday", "(I)Ljava/lang/String;");
+        int getShortWeekdayIndex = asm.poolMethod(dateLocaleClassIndex, "getShortWeekday", "(I)Ljava/lang/String;");
+        int getMonthIndex = asm.poolMethod(dateLocaleClassIndex, "getMonth", "(I)Ljava/lang/String;");
+        int getShortMonthIndex = asm.poolMethod(dateLocaleClassIndex, "getShortMonth", "(I)Ljava/lang/String;");
+
+        int parseIntSafelyIndex = asm.poolMethod(numbersClassIndex, "parseIntSafely", "(Ljava/lang/CharSequence;II)J");
+        int decodeLenIndex = asm.poolMethod(numbersClassIndex, "decodeLen", "(J)I");
+        int decodeIntIndex = asm.poolMethod(numbersClassIndex, "decodeInt", "(J)I");
+        int parseIntIndex = asm.poolMethod(numbersClassIndex, "parseInt", "(Ljava/lang/CharSequence;II)I");
+
+        int assertRemainingIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertRemaining", "(II)V");
+        int assertNoTailIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertNoTail", "(II)V");
+        int assertStringIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
+        int assertCharIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertChar", "(CLjava/lang/CharSequence;II)V");
+        int computeMillisIndex = asm.poolMethod(dateFormatUtilsClassIndex, "compute", "(Lcom/questdb/std/time/DateLocale;IIIIIIIIIJI)J");
+        int adjustYearIndex = asm.poolMethod(dateFormatUtilsClassIndex, "adjustYear", "(I)I");
+        int parseYearGreedyIndex = asm.poolMethod(dateFormatUtilsClassIndex, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
+        int appendEraIndex = asm.poolMethod(dateFormatUtilsClassIndex, "appendEra", "(Lcom/questdb/std/str/CharSink;ILcom/questdb/std/time/DateLocale;)V");
+        int appendAmPmIndex = asm.poolMethod(dateFormatUtilsClassIndex, "appendAmPm", "(Lcom/questdb/std/str/CharSink;ILcom/questdb/std/time/DateLocale;)V");
+        int appendHour12Index = asm.poolMethod(dateFormatUtilsClassIndex, "appendHour12", "(Lcom/questdb/std/str/CharSink;I)V");
+        int appendHour12PaddedIndex = asm.poolMethod(dateFormatUtilsClassIndex, "appendHour12Padded", "(Lcom/questdb/std/str/CharSink;I)V");
+        int appendHour121Index = asm.poolMethod(dateFormatUtilsClassIndex, "appendHour121", "(Lcom/questdb/std/str/CharSink;I)V");
+        int appendHour121PaddedIndex = asm.poolMethod(dateFormatUtilsClassIndex, "appendHour121Padded", "(Lcom/questdb/std/str/CharSink;I)V");
+
+        int parseOffsetIndex = asm.poolMethod(datesClassIndex, "parseOffset", "(Ljava/lang/CharSequence;II)J");
+        int getYearIndex = asm.poolMethod(datesClassIndex, "getYear", "(J)I");
+        int isLeapYearIndex = asm.poolMethod(datesClassIndex, "isLeapYear", "(I)Z");
+        int getMonthOfYearIndex = asm.poolMethod(datesClassIndex, "getMonthOfYear", "(JIZ)I");
+        int getDayOfMonthIndex = asm.poolMethod(datesClassIndex, "getDayOfMonth", "(JIIZ)I");
+        int getHourOfDayIndex = asm.poolMethod(datesClassIndex, "getHourOfDay", "(J)I");
+        int getMinuteOfHourIndex = asm.poolMethod(datesClassIndex, "getMinuteOfHour", "(J)I");
+        int getSecondOfMinuteIndex = asm.poolMethod(datesClassIndex, "getSecondOfMinute", "(J)I");
+        int getMillisOfSecondIndex = asm.poolMethod(datesClassIndex, "getMillisOfSecond", "(J)I");
+        int getDayOfWeekIndex = asm.poolMethod(datesClassIndex, "getDayOfWeekSundayFirst", "(J)I");
+        int append000Index = asm.poolMethod(datesClassIndex, "append000", "(Lcom/questdb/std/str/CharSink;I)V");
+        int append00Index = asm.poolMethod(datesClassIndex, "append00", "(Lcom/questdb/std/str/CharSink;I)V");
+        int append0Index = asm.poolMethod(datesClassIndex, "append0", "(Lcom/questdb/std/str/CharSink;I)V");
+
+        int sinkPutIntIndex = asm.poolInterfaceMethod(sinkIndex, "put", "(I)Lcom/questdb/std/str/CharSink;");
+        int sinkPutStrIndex = asm.poolInterfaceMethod(sinkIndex, "put", "(Ljava/lang/CharSequence;)Lcom/questdb/std/str/CharSink;");
+        int sinkPutChrIndex = asm.poolInterfaceMethod(sinkIndex, "put", "(C)Lcom/questdb/std/str/CharSink;");
+
+        int parseNameIndex = asm.poolUtf8("parse");
+        int parseSigIndex = asm.poolUtf8("(Ljava/lang/CharSequence;IILcom/questdb/std/time/DateLocale;)J");
+        int formatNameIndex = asm.poolUtf8("format");
+        int formatSigIndex = asm.poolUtf8("(JLcom/questdb/std/time/DateLocale;Ljava/lang/CharSequence;Lcom/questdb/std/str/CharSink;)V");
+
+        // pool only delimiters over 1 char in length
+        // when delimiter is 1 char we would use shorter code path
+        // that doesn't require constant
+        delimiterIndexes.clear();
+        for (int i = 0, n = delimiters.size(); i < n; i++) {
+            String delimiter = delimiters.getQuick(i);
+            if (delimiter.length() > 1) {
+                delimiterIndexes.add(asm.poolStringConst(asm.poolUtf8(delimiter)));
+            } else {
+                // keep indexes in both lists the same
+                delimiterIndexes.add(-1);
+            }
+        }
+
+        asm.finishPool();
+
+        asm.defineClass(1, thisClassIndex, superclassIndex);
+        // interface count
+        asm.putShort(0);
+        // field count
+        asm.putShort(0);
+        // method count
+        asm.putShort(3);
+        asm.defineDefaultConstructor(superIndex);
+
+        assembleParseMethod(
+                ops,
+                delimiters,
+                thisClassIndex,
+                stackMapTableIndex,
+                dateLocaleClassIndex,
+                charSequenceClassIndex,
+                minLongIndex,
+                minMillisIndex,
+                matchWeekdayIndex,
+                matchMonthIndex,
+                matchZoneIndex,
+                matchAMPMIndex,
+                matchEraIndex,
+                parseIntSafelyIndex,
+                decodeLenIndex,
+                decodeIntIndex,
+                assertRemainingIndex,
+                assertNoTailIndex,
+                parseIntIndex,
+                assertStringIndex,
+                assertCharIndex,
+                computeMillisIndex,
+                adjustYearIndex,
+                parseYearGreedyIndex,
+                parseOffsetIndex,
+                parseNameIndex,
+                parseSigIndex,
+                delimiterIndexes
+        );
+
+        assembleFormatMethod(
+                ops,
+                delimiters,
+                getWeekdayIndex,
+                getShortWeekdayIndex,
+                getMonthIndex,
+                getShortMonthIndex,
+                appendEraIndex,
+                appendAmPmIndex,
+                appendHour12Index,
+                appendHour12PaddedIndex,
+                appendHour121Index,
+                appendHour121PaddedIndex,
+                getYearIndex,
+                isLeapYearIndex,
+                getMonthOfYearIndex,
+                getDayOfMonthIndex,
+                getHourOfDayIndex,
+                getMinuteOfHourIndex,
+                getSecondOfMinuteIndex,
+                getMillisOfSecondIndex,
+                getDayOfWeekIndex,
+                append000Index,
+                append00Index,
+                append0Index,
+                sinkPutIntIndex,
+                sinkPutStrIndex,
+                sinkPutChrIndex,
+                formatNameIndex,
+                formatSigIndex
+        );
+
+        // class attribute count
+        asm.putShort(0);
+
+        return asm.newInstance();
+    }
+
+    private int computeFormatAttributes(IntList ops) {
+        int attributes = 0;
+        for (int i = 0, n = ops.size(); i < n; i++) {
+            switch (ops.getQuick(i)) {
+                // AM/PM
+                case DateFormatCompiler.OP_AM_PM:
+                    attributes |= (1 << FA_HOUR);
+                    break;
+                // MILLIS
+                case DateFormatCompiler.OP_MILLIS_ONE_DIGIT:
+                case DateFormatCompiler.OP_MILLIS_GREEDY:
+                case DateFormatCompiler.OP_MILLIS_THREE_DIGITS:
+                    attributes |= (1 << FA_SECOND_MILLIS);
+                    break;
+                // SECOND
+                case DateFormatCompiler.OP_SECOND_ONE_DIGIT:
+                case DateFormatCompiler.OP_SECOND_GREEDY:
+                case DateFormatCompiler.OP_SECOND_TWO_DIGITS:
+                    attributes |= (1 << FA_SECOND);
+                    break;
+                // MINUTE
+                case DateFormatCompiler.OP_MINUTE_ONE_DIGIT:
+                case DateFormatCompiler.OP_MINUTE_GREEDY:
+                case DateFormatCompiler.OP_MINUTE_TWO_DIGITS:
+                    attributes |= (1 << FA_MINUTE);
+                    break;
+                // HOUR
+                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT:
+                case DateFormatCompiler.OP_HOUR_12_GREEDY:
+                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS:
+                case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case DateFormatCompiler.OP_HOUR_24_GREEDY:
+                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
+                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
+                    attributes |= (1 << FA_HOUR);
+                    break;
+
+                // DAY OF MONTH
+                case DateFormatCompiler.OP_DAY_ONE_DIGIT:
+                case DateFormatCompiler.OP_DAY_GREEDY:
+                case DateFormatCompiler.OP_DAY_TWO_DIGITS:
+                    attributes |= (1 << FA_DAY);
+                    attributes |= (1 << FA_MONTH);
+                    attributes |= (1 << FA_YEAR);
+                    attributes |= (1 << FA_LEAP);
+                    break;
+                // DAY OF WEEK
+                case DateFormatCompiler.OP_DAY_NAME_LONG:
+                case DateFormatCompiler.OP_DAY_NAME_SHORT:
+                case DateFormatCompiler.OP_DAY_OF_WEEK:
+                    attributes |= (1 << FA_DAY_OF_WEEK);
+                    break;
+                // MONTH
+                case DateFormatCompiler.OP_MONTH_ONE_DIGIT:
+                case DateFormatCompiler.OP_MONTH_GREEDY:
+                case DateFormatCompiler.OP_MONTH_TWO_DIGITS:
+                case DateFormatCompiler.OP_MONTH_SHORT_NAME:
+                case DateFormatCompiler.OP_MONTH_LONG_NAME:
+                    attributes |= (1 << FA_MONTH);
+                    attributes |= (1 << FA_YEAR);
+                    attributes |= (1 << FA_LEAP);
+                    break;
+                // YEAR
+                case DateFormatCompiler.OP_YEAR_ONE_DIGIT:
+                case DateFormatCompiler.OP_YEAR_GREEDY:
+                case DateFormatCompiler.OP_YEAR_TWO_DIGITS:
+                case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
+                    attributes |= (1 << FA_YEAR);
+                    break;
+                // ERA
+                case DateFormatCompiler.OP_ERA:
+                    attributes |= (1 << FA_YEAR);
+                    break;
+                default:
+                    break;
+            }
+        }
+        return attributes;
+    }
+
     /*
      * For each operation code in given operation list determine which stack slots can be left uninitialized. Set bits
      * in the result integer will represent these stack slots. Bits positions are values of LOCAL_ constants.
@@ -1015,6 +1489,16 @@ public class DateFormatCompiler {
     private void decodeInt(int decodeIntIndex) {
         asm.lload(LOCAL_TEMP_LONG);
         asm.invokeStatic(decodeIntIndex);
+    }
+
+    private boolean invokeConvertMillis(int formatAttributes, int bit, int funcIndex, int stackIndex) {
+        if ((formatAttributes & (1 << bit)) != 0) {
+            asm.lload(FA_LOCAL_DATETIME);
+            asm.invokeStatic(funcIndex);
+            asm.istore(stackIndex);
+            return true;
+        }
+        return false;
     }
 
     private void invokeMatch(int matchIndex) {

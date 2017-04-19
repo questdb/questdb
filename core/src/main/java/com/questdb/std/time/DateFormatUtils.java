@@ -3,6 +3,7 @@ package com.questdb.std.time;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
+import com.questdb.std.str.CharSink;
 
 public class DateFormatUtils {
     public static final int HOUR_24 = 2;
@@ -36,6 +37,14 @@ public class DateFormatUtils {
         }
         prevCenturyLow = thisCenturyLow - 100;
         newYear = Dates.endOfYear(referenceYear);
+    }
+
+    static void appendAmPm(CharSink sink, int hour, DateLocale locale) {
+        if (hour < 12) {
+            sink.put(locale.getAMPM(0));
+        } else {
+            sink.put(locale.getAMPM(1));
+        }
     }
 
     static void assertChar(char c, CharSequence in, int pos, int hi) throws NumericException {
@@ -152,6 +161,46 @@ public class DateFormatUtils {
 
     static int adjustYear(int year) {
         return (year < thisCenturyLimit ? thisCenturyLow : prevCenturyLow) + year;
+    }
+
+    static void appendHour12(CharSink sink, int hour) {
+        if (hour < 12) {
+            sink.put(hour);
+        } else {
+            sink.put(hour - 12);
+        }
+    }
+
+    static void appendHour12Padded(CharSink sink, int hour) {
+        if (hour < 12) {
+            Dates.append0(sink, hour);
+        } else {
+            Dates.append0(sink, hour - 12);
+        }
+    }
+
+    static void appendHour121Padded(CharSink sink, int hour) {
+        if (hour < 12) {
+            Dates.append0(sink, hour + 1);
+        } else {
+            Dates.append0(sink, hour - 11);
+        }
+    }
+
+    static void appendHour121(CharSink sink, int hour) {
+        if (hour < 12) {
+            sink.put(hour + 1);
+        } else {
+            sink.put(hour - 11);
+        }
+    }
+
+    static void appendEra(CharSink sink, int year, DateLocale locale) {
+        if (year < 0) {
+            sink.put(locale.getEra(0));
+        } else {
+            sink.put(locale.getEra(1));
+        }
     }
 
     static {
