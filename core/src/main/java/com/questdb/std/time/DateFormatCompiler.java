@@ -496,7 +496,7 @@ public class DateFormatCompiler {
         }
     }
 
-    private void assembleParseMethod(IntList ops, ObjList<String> delimiters, int thisClassIndex, int stackMapTableIndex, int dateLocaleClassIndex, int charSequenceClassIndex, int minLongIndex, int minMillisIndex, int matchWeekdayIndex, int matchMonthIndex, int matchZoneIndex, int matchAMPMIndex, int matchEraIndex, int parseIntSafelyIndex, int decodeLenIndex, int decodeIntIndex, int assertRemainingIndex, int assertNoTailIndex, int parseIntIndex, int assertStringIndex, int assertCharIndex, int computeMillisIndex, int adjustYearIndex, int parseYearGreedyIndex, int parseOffsetIndex, int parseNameIndex, int parseSigIndex, IntList delimIndices) {
+    private void assembleParseMethod(IntList ops, ObjList<String> delimiters, int thisClassIndex, int stackMapTableIndex, int dateLocaleClassIndex, int charSequenceClassIndex, int minLongIndex, int minMillisIndex, int matchWeekdayIndex, int matchMonthIndex, int matchZoneIndex, int matchAMPMIndex, int matchEraIndex, int parseIntSafelyIndex, int decodeLenIndex, int decodeIntIndex, int assertRemainingIndex, int assertNoTailIndex, int parseIntIndex, int assertStringIndex, int assertCharIndex, int computeMillisIndex, int adjustYearIndex, int parseYearGreedyIndex, int parseOffsetIndex, int parseNameIndex, int parseSigIndex, IntList delimIndices, int charAtIndex) {
 
         int stackState = computeParseMethodStack(ops);
 
@@ -888,12 +888,69 @@ public class DateFormatCompiler {
                     asm.invokeStatic(adjustYearIndex);
                     asm.istore(LOCAL_YEAR);
                     break;
-                case OP_YEAR_FOUR_DIGITS:
+                case OP_YEAR_FOUR_DIGITS: {
                     // assertRemaining(pos + 3, hi);
                     // year = Numbers.parseInt(in, pos, pos += 4);
+//                    stackState &= ~(1 << LOCAL_YEAR);
+//                    parseDigits(assertRemainingIndex, parseIntIndex, 4, LOCAL_YEAR);
+
+
+                    // if (pos < hi && in.charAt(pos) == '-') {
+                    //    assertRemaining(pos + 4, hi);
+                    //    year = -Numbers.parseInt(in, pos + 1, pos += 5);
+                    //} else {
+                    //    assertRemaining(pos + 3, hi);
+                    //    year = Numbers.parseInt(in, pos, pos += 4);
+                    //}
+                    asm.iload(LOCAL_POS);
+                    asm.iload(P_HI);
+                    int b1 = asm.if_icmpge();
+                    asm.aload(P_INPUT_STR);
+                    asm.iload(LOCAL_POS);
+                    asm.invokeInterface(charAtIndex, 1); //charAt
+                    asm.iconst('-');
+                    int b2 = asm.if_icmpne();
+                    asm.iload(LOCAL_POS);
+                    asm.iconst(4);
+                    asm.iadd();
+                    asm.iload(P_HI);
+                    asm.invokeStatic(assertRemainingIndex);
+                    asm.aload(P_INPUT_STR);
+                    asm.iload(LOCAL_POS);
+                    asm.iconst(1);
+                    asm.iadd();
+                    asm.iinc(LOCAL_POS, 5);
+                    asm.iload(LOCAL_POS);
+                    asm.invokeStatic(parseIntIndex);
+                    asm.ineg();
+                    asm.istore(LOCAL_YEAR);
+                    int b3 = asm.goto_();
+
+                    int p = asm.position();
+                    frameOffsets.add((((long) p) << 32) | stackState);
+                    asm.setJmp(b1, p);
+                    asm.setJmp(b2, p);
+
+                    asm.iload(LOCAL_POS);
+                    asm.iconst(3);
+                    asm.iadd();
+                    asm.iload(P_HI);
+                    asm.invokeStatic(assertRemainingIndex);
+
+                    asm.aload(P_INPUT_STR);
+                    asm.iload(LOCAL_POS);
+                    asm.iinc(LOCAL_POS, 4);
+                    asm.iload(LOCAL_POS);
+                    asm.invokeStatic(parseIntIndex);
+                    asm.istore(LOCAL_YEAR);
+
                     stackState &= ~(1 << LOCAL_YEAR);
-                    parseDigits(assertRemainingIndex, parseIntIndex, 4, LOCAL_YEAR);
-                    break;
+
+                    p = asm.position();
+                    frameOffsets.add((((long) p) << 32) | stackState);
+                    asm.setJmp(b3, p);
+                }
+                break;
                 case OP_YEAR_GREEDY:
                     // l = Numbers.parseIntSafely(in, pos, hi);
                     // len = Numbers.decodeLen(l);
@@ -1160,6 +1217,7 @@ public class DateFormatCompiler {
         int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
         int minMillisIndex = asm.poolLongConst(Dates.MINUTE_MILLIS);
         int sinkIndex = asm.poolClass(CharSink.class);
+        int charSequenceIndex = asm.poolClass(CharSequence.class);
 
         int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
         int matchWeekdayIndex = asm.poolMethod(dateLocaleClassIndex, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
@@ -1208,6 +1266,8 @@ public class DateFormatCompiler {
         int sinkPutIntIndex = asm.poolInterfaceMethod(sinkIndex, "put", "(I)Lcom/questdb/std/str/CharSink;");
         int sinkPutStrIndex = asm.poolInterfaceMethod(sinkIndex, "put", "(Ljava/lang/CharSequence;)Lcom/questdb/std/str/CharSink;");
         int sinkPutChrIndex = asm.poolInterfaceMethod(sinkIndex, "put", "(C)Lcom/questdb/std/str/CharSink;");
+
+        int charAtIndex = asm.poolInterfaceMethod(charSequenceClassIndex, "charAt", "(I)C");
 
         int parseNameIndex = asm.poolUtf8("parse");
         int parseSigIndex = asm.poolUtf8("(Ljava/lang/CharSequence;IILcom/questdb/std/time/DateLocale;)J");
@@ -1267,7 +1327,8 @@ public class DateFormatCompiler {
                 parseOffsetIndex,
                 parseNameIndex,
                 parseSigIndex,
-                delimiterIndexes
+                delimiterIndexes,
+                charAtIndex
         );
 
         assembleFormatMethod(

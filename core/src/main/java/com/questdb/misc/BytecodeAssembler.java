@@ -241,6 +241,10 @@ public class BytecodeAssembler {
         }
     }
 
+    public int if_icmpge() {
+        return genericGoto(0xa2);
+    }
+
     public int if_icmpne() {
         return genericGoto(0xa0);
     }

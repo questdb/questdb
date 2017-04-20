@@ -541,6 +541,19 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testNegativeYear() throws Exception {
+        assertThat("yyyy MMM dd", "-2010-09-01T00:00:00.000Z", "-2010 Sep 01");
+
+        DateFormat fmt1 = compiler.compile("G yyyy MMM", true);
+        DateFormat fmt2 = compiler.compile("yyyy MMM dd", true);
+
+        long millis = fmt2.parse("-2010 Sep 01", defaultLocale);
+        sink.clear();
+        fmt1.format(millis, defaultLocale, "Z", sink);
+        TestUtils.assertEquals("BC -2010 Sep", sink);
+    }
+
+    @Test
     public void testOperationUniqueness() throws Exception {
 
         Assert.assertTrue(DateFormatCompiler.opList.size() > 0);
