@@ -25,10 +25,10 @@ package com.questdb.ql.ops;
 
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.std.time.Dates;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.parser.QueryError;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.ColumnType;
 
 public class DateInOperator extends AbstractVirtualColumn implements Function {
@@ -81,9 +81,9 @@ public class DateInOperator extends AbstractVirtualColumn implements Function {
                         }
 
                         if (pos == 1) {
-                            lo = Dates.parseDateTime(cs) - 1;
+                            lo = DateFormatUtils.parseDateTime(cs) - 1;
                         } else {
-                            hi = Dates.parseDateTime(cs) + 1;
+                            hi = DateFormatUtils.parseDateTime(cs) + 1;
                         }
                     } catch (NumericException e) {
                         throw QueryError.$(arg.getPosition(), "Not a date");

@@ -556,6 +556,11 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testParseUtc() throws Exception {
+        assertThat(DateFormatUtils.UTC_PATTERN, "2011-10-03T00:00:00.000Z", "2011-10-03T00:00:00.000Z");
+    }
+
+    @Test
     public void testQuote() throws Exception {
         assertThat("yyyy'y'ddMM", "2010-03-10T00:00:00.000Z", "2010y1003");
     }
@@ -664,10 +669,10 @@ public class DateFormatCompilerTest {
 
     private void assertFormat(String expected, String pattern, String date) throws NumericException {
         sink.clear();
-        get(pattern).format(Dates.parseDateTime(date), defaultLocale, "GMT", sink);
+        get(pattern).format(DateFormatUtils.parseDateTime(date), defaultLocale, "GMT", sink);
         TestUtils.assertEquals(expected, sink);
         sink.clear();
-        compiler.compile(pattern, false).format(Dates.parseDateTime(date), defaultLocale, "GMT", sink);
+        compiler.compile(pattern, false).format(DateFormatUtils.parseDateTime(date), defaultLocale, "GMT", sink);
         TestUtils.assertEquals(expected, sink);
     }
 

@@ -24,10 +24,10 @@
 package com.questdb.ql.parser;
 
 import com.questdb.ex.ParserException;
-import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.Interval;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -47,73 +47,73 @@ public class IntervalCompilerTest {
 
     @Test
     public void testIntersectContain2() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
 
-        b.add(Dates.parseDateTime("2016-03-10T09:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T13:30:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T09:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T13:30:00.000Z"));
 
         assertIntersect("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]");
     }
 
     @Test
     public void testIntersectMergeOverlap() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
 
-        b.add(Dates.parseDateTime("2016-03-10T11:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
 
         assertIntersect("[Interval{lo=2016-03-10T11:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]");
     }
 
     @Test
     public void testIntersectMergeOverlap2() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000"));
-        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
 
-        b.add(Dates.parseDateTime("2016-03-10T11:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
 
         assertIntersect("[Interval{lo=2016-03-10T11:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]");
     }
 
     @Test
     public void testIntersectNoOverlap() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T16:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T16:00:00.000Z"));
 
-        b.add(Dates.parseDateTime("2016-03-10T13:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T13:30:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T13:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T13:30:00.000Z"));
 
         assertIntersect("[]");
     }
 
     @Test
     public void testIntersectSame() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
 
-        b.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
 
         assertIntersect("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]");
     }
 
     @Test
     public void testIntersectTwoOverlapOne2() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
 
 
-        a.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T16:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T16:00:00.000Z"));
 
 
-        b.add(Dates.parseDateTime("2016-03-10T11:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T15:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T15:00:00.000Z"));
 
         assertIntersect("[Interval{lo=2016-03-10T11:00:00.000Z, hi=2016-03-10T12:00:00.000Z},Interval{lo=2016-03-10T14:00:00.000Z, hi=2016-03-10T15:00:00.000Z}]");
     }
@@ -122,9 +122,9 @@ public class IntervalCompilerTest {
     public void testMergeIntervals() throws Exception {
         ObjList<Interval> a = new ObjList<>();
         ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T14:00:00.000Z"), Dates.parseDateTime("2016-03-10T16:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T11:00:00.000Z"), Dates.parseDateTime("2016-03-10T15:00:00.000Z")));
+        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z")));
+        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T16:00:00.000Z")));
+        b.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T15:00:00.000Z")));
         Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T16:00:00.000Z}]", IntervalCompiler.union(a, b).toString());
     }
 
@@ -251,14 +251,14 @@ public class IntervalCompilerTest {
 
     @Test
     public void testSubtractClipNone() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
 
-        a.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T15:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T15:00:00.000Z"));
 
-        b.add(Dates.parseDateTime("2016-03-10T13:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T13:30:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T13:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T13:30:00.000Z"));
 
         IntervalCompiler.subtract(a, b, out);
         Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z},Interval{lo=2016-03-10T14:00:00.000Z, hi=2016-03-10T15:00:00.000Z}]",
@@ -267,14 +267,14 @@ public class IntervalCompilerTest {
 
     @Test
     public void testSubtractClipTwo() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
 
-        a.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T15:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T15:00:00.000Z"));
 
-        b.add(Dates.parseDateTime("2016-03-10T11:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T14:30:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T14:30:00.000Z"));
 
         IntervalCompiler.subtract(a, b, out);
         Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T10:59:59.999Z},Interval{lo=2016-03-10T14:30:00.001Z, hi=2016-03-10T15:00:00.000Z}]", IntervalCompiler.asIntervalStr(out));
@@ -282,11 +282,11 @@ public class IntervalCompilerTest {
 
     @Test
     public void testSubtractConsume() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T11:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
 
-        b.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T14:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
 
         IntervalCompiler.subtract(a, b, out);
         Assert.assertEquals("[]", IntervalCompiler.asIntervalStr(out));
@@ -294,10 +294,10 @@ public class IntervalCompilerTest {
 
     @Test
     public void testSubtractMakeHole() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T10:30:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T11:30:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T10:30:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T11:30:00.000Z"));
 
         IntervalCompiler.subtract(a, b, out);
         Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T10:29:59.999Z},Interval{lo=2016-03-10T11:30:00.001Z, hi=2016-03-10T12:00:00.000Z}]", IntervalCompiler.asIntervalStr(out));
@@ -305,10 +305,10 @@ public class IntervalCompilerTest {
 
     @Test
     public void testSubtractSame() throws Exception {
-        a.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T10:00:00.000Z"));
-        b.add(Dates.parseDateTime("2016-03-10T12:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
+        b.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
 
         IntervalCompiler.subtract(a, b, out);
         Assert.assertEquals("[]", IntervalCompiler.asIntervalStr(out));
@@ -318,8 +318,8 @@ public class IntervalCompilerTest {
     public void testUnionContain() throws Exception {
         ObjList<Interval> a = new ObjList<>();
         ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T09:00:00.000Z"), Dates.parseDateTime("2016-03-10T13:30:00.000Z")));
+        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z")));
+        b.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T09:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T13:30:00.000Z")));
         Assert.assertEquals("[Interval{lo=2016-03-10T09:00:00.000Z, hi=2016-03-10T13:30:00.000Z}]", IntervalCompiler.union(a, b).toString());
     }
 
@@ -327,8 +327,8 @@ public class IntervalCompilerTest {
     public void testUnionContiguous() throws Exception {
         ObjList<Interval> a = new ObjList<>();
         ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:59:59.999Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T13:00:00.000Z"), Dates.parseDateTime("2016-03-10T14:00:00.000Z")));
+        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:59:59.999Z")));
+        b.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T13:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z")));
         Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T14:00:00.000Z}]", IntervalCompiler.union(a, b).toString());
     }
 
@@ -336,8 +336,8 @@ public class IntervalCompilerTest {
     public void testUnionNonOverlapping() throws Exception {
         ObjList<Interval> a = new ObjList<>();
         ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T13:00:00.000Z"), Dates.parseDateTime("2016-03-10T15:00:00.000Z")));
+        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z")));
+        b.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T13:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T15:00:00.000Z")));
         Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z},Interval{lo=2016-03-10T13:00:00.000Z, hi=2016-03-10T15:00:00.000Z}]", IntervalCompiler.union(a, b).toString());
         Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z},Interval{lo=2016-03-10T13:00:00.000Z, hi=2016-03-10T15:00:00.000Z}]", IntervalCompiler.union(b, a).toString());
     }
@@ -346,8 +346,8 @@ public class IntervalCompilerTest {
     public void testUnionSame() throws Exception {
         ObjList<Interval> a = new ObjList<>();
         ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(Dates.parseDateTime("2016-03-10T10:00:00.000Z"), Dates.parseDateTime("2016-03-10T12:00:00.000Z")));
+        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z")));
+        b.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z")));
         Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]", IntervalCompiler.union(a, b).toString());
     }
 

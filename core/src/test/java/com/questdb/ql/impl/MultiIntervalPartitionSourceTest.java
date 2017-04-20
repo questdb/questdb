@@ -24,10 +24,11 @@
 package com.questdb.ql.impl;
 
 import com.questdb.JournalWriter;
-import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.questdb.std.LongList;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.Dates;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
@@ -42,14 +43,14 @@ public class MultiIntervalPartitionSourceTest extends AbstractTest {
         StringSink sink = new StringSink();
 
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
-            TestUtils.generateQuoteData(w, 600, Dates.parseDateTime("2014-03-10T02:00:00.000Z"), Dates.MINUTE_MILLIS);
+            TestUtils.generateQuoteData(w, 600, DateFormatUtils.parseDateTime("2014-03-10T02:00:00.000Z"), Dates.MINUTE_MILLIS);
             w.commit();
 
             RecordSourcePrinter p = new RecordSourcePrinter(sink);
 
             LongList intervals = new LongList();
-            intervals.add(Dates.parseDateTime("2014-03-10T07:00:00.000Z"));
-            intervals.add(Dates.parseDateTime("2014-03-10T07:15:00.000Z"));
+            intervals.add(DateFormatUtils.parseDateTime("2014-03-10T07:00:00.000Z"));
+            intervals.add(DateFormatUtils.parseDateTime("2014-03-10T07:15:00.000Z"));
 
             p.print(
                     new JournalRecordSource(

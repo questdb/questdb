@@ -23,12 +23,12 @@
 
 package com.questdb.ql.ops.conv;
 
-import com.questdb.std.time.Dates;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.ColumnType;
 import com.questdb.txt.sink.StringSink;
 
@@ -44,19 +44,19 @@ public class DtoA4Function extends AbstractUnaryOperator {
     @Override
     public CharSequence getFlyweightStr(Record rec) {
         sinkA.clear();
-        Dates.formatMMMDYYYY(sinkA, value.getDate(rec));
+        DateFormatUtils.formatMMMDYYYY(sinkA, value.getDate(rec));
         return sinkA;
     }
 
     @Override
     public CharSequence getFlyweightStrB(Record rec) {
         sinkB.clear();
-        Dates.formatMMMDYYYY(sinkB, value.getDate(rec));
+        DateFormatUtils.formatMMMDYYYY(sinkB, value.getDate(rec));
         return sinkB;
     }
 
     @Override
     public void getStr(Record rec, CharSink sink) {
-        Dates.formatMMMDYYYY(sink, value.getDate(rec));
+        DateFormatUtils.formatMMMDYYYY(sink, value.getDate(rec));
     }
 }

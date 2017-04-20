@@ -60,7 +60,6 @@ final public class Dates {
     private static final String[] DAYS_OF_WEEK = {
             "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
     };
-
     private static final long[] MIN_MONTH_OF_YEAR_MILLIS = new long[12];
     private static final long[] MAX_MONTH_OF_YEAR_MILLIS = new long[12];
     private static final String[] MONTHS_OF_YEAR = {
@@ -173,24 +172,6 @@ final public class Dates {
         Numbers.append(sink, val);
     }
 
-    // YYYY-MM-DDThh:mm:ss.mmmmZ
-    public static void appendDateTime(CharSink sink, long millis) {
-        if (millis == Long.MIN_VALUE) {
-            return;
-        }
-        int y = Dates.getYear(millis);
-        boolean l = Dates.isLeapYear(y);
-        int m = getMonthOfYear(millis, y, l);
-        append000(sink, y);
-        append0(sink.put('-'), m);
-        append0(sink.put('-'), getDayOfMonth(millis, y, m, l));
-        append0(sink.put('T'), getHourOfDay(millis));
-        append0(sink.put(':'), getMinuteOfHour(millis));
-        append0(sink.put(':'), getSecondOfMinute(millis));
-        append00(sink.put("."), getMillisOfSecond(millis));
-        sink.put("Z");
-    }
-
     public static long ceilDD(long millis) {
         int y, m;
         boolean l;
@@ -254,77 +235,6 @@ final public class Dates {
     public static long floorYYYY(long millis) {
         int y;
         return yearMillis(y = getYear(millis), isLeapYear(y));
-    }
-
-    // YYYY-MM-DD
-    public static void formatDashYYYYMMDD(CharSink sink, long millis) {
-        int y = getYear(millis);
-        boolean l = isLeapYear(y);
-        int m = getMonthOfYear(millis, y, l);
-        Numbers.append(sink, y);
-        append0(sink.put('-'), m);
-        append0(sink.put('-'), getDayOfMonth(millis, y, m, l));
-    }
-
-    public static void formatHTTP(CharSink sink, long millis) {
-        int y = getYear(millis);
-        boolean l = isLeapYear(y);
-        int m = getMonthOfYear(millis, y, l);
-        int d = getDayOfMonth(millis, y, m, l);
-        int dow = getDayOfWeek(millis) - 1;
-        int h = getHourOfDay(millis);
-        int min = getMinuteOfHour(millis);
-        int s = getSecondOfMinute(millis);
-        sink
-                .put(DAYS_OF_WEEK[dow])
-                .put(", ")
-                .put(d)
-                .put(' ')
-                .put(MONTHS_OF_YEAR[m - 1])
-                .put(' ');
-
-        append000(sink, y);
-        sink.put(' ');
-        append0(sink, h);
-        sink.put(':');
-        append0(sink, min);
-        sink.put(':');
-        append0(sink, s);
-        sink.put(' ').put("GMT");
-    }
-
-    public static void formatMMMDYYYY(CharSink sink, long millis) {
-        int y = getYear(millis);
-        boolean l = isLeapYear(y);
-        int m = getMonthOfYear(millis, y, l);
-        sink.put(MONTHS_OF_YEAR[m - 1])
-                .put(' ')
-                .put(getDayOfMonth(millis, y, m, l))
-                .put(' ')
-                .put(y);
-    }
-
-    // YYYY
-    public static void formatYYYY(CharSink sink, long millis) {
-        Numbers.append(sink, getYear(millis));
-    }
-
-    // YYYY-MM
-    public static void formatYYYYMM(CharSink sink, long millis) {
-        int y = getYear(millis);
-        int m = getMonthOfYear(millis, y, isLeapYear(y));
-        Numbers.append(sink, y);
-        append0(sink.put('-'), m);
-    }
-
-    // YYYYMMDD
-    public static void formatYYYYMMDD(CharSink sink, long millis) {
-        int y = getYear(millis);
-        boolean l = isLeapYear(y);
-        int m = getMonthOfYear(millis, y, l);
-        Numbers.append(sink, y);
-        append0(sink, m);
-        append0(sink, getDayOfMonth(millis, y, m, l));
     }
 
     public static int getDayOfMonth(long millis, int year, int month, boolean leap) {
@@ -486,42 +396,6 @@ final public class Dates {
             return millis + (dow - thisDow) * DAY_MILLIS;
         } else {
             return millis + (7 - (thisDow - dow)) * DAY_MILLIS;
-        }
-    }
-
-    // YYYY-MM-DDThh:mm:ss.mmm
-    public static long parseDateTime(CharSequence seq) throws NumericException {
-        return parseDateTime(seq, 0, seq.length());
-    }
-
-    public static long parseDateTimeFmt1(CharSequence seq) throws NumericException {
-        return parseDateTimeFmt1(seq, 0, seq.length());
-    }
-
-    public static long parseDateTimeFmt2(CharSequence seq) throws NumericException {
-        return parseDateTimeFmt2(seq, 0, seq.length());
-    }
-
-    public static long parseDateTimeFmt3(CharSequence seq) throws NumericException {
-        int lim = seq.length();
-        int p = 0;
-        int day = int0(seq, p, p += 2, lim);
-        checkChar(seq, p++, lim, '/');
-        int month = int0(seq, p, p += 2, lim);
-        checkRange(month, 1, 12);
-        checkChar(seq, p++, lim, '/');
-        int year = int0(seq, p, p + 4, lim);
-        boolean l = isLeapYear(year);
-        checkRange(day, 1, getDaysPerMonth(month, l));
-        return yearMillis(year, l) + monthOfYearMillis(month, l) + (day - 1) * DAY_MILLIS;
-    }
-
-    // YYYY-MM-DDThh:mm:ss.mmm
-    public static long parseDateTimeQuiet(CharSequence seq) {
-        try {
-            return parseDateTime(seq, 0, seq.length());
-        } catch (NumericException e) {
-            return Long.MIN_VALUE;
         }
     }
 
@@ -778,6 +652,10 @@ final public class Dates {
                             case 'g':
                                 state = STATE_GMT;
                                 break;
+                            case 'Z':
+                            case 'z':
+                                state = STATE_END;
+                                break;
                             case '+':
                                 negative = false;
                                 state = STATE_HOUR;
@@ -873,52 +751,6 @@ final public class Dates {
         }
     }
 
-    public static long parseTime24(CharSequence seq) throws NumericException {
-        int lim = seq.length();
-        int p = 0;
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
-        int hour = Numbers.parseInt(seq, p, p += 2);
-        int sec = 0;
-        int min = 0;
-        int mil = 0;
-        checkRange(hour, 0, 23);
-        if (p < lim && seq.charAt(p) == ':') {
-
-            checkChar(seq, p++, lim, ':');
-            if (p + 2 > lim) {
-                throw NumericException.INSTANCE;
-            }
-            min = Numbers.parseInt(seq, p, p += 2);
-            checkRange(min, 0, 59);
-
-            if (p < lim && seq.charAt(p) == ':') {
-                checkChar(seq, p++, lim, ':');
-                if (p + 2 > lim) {
-                    throw NumericException.INSTANCE;
-                }
-                sec = Numbers.parseInt(seq, p, p += 2);
-                checkRange(sec, 0, 59);
-                if (p < lim && seq.charAt(p) == '.') {
-                    if (p + 4 > lim) {
-                        throw NumericException.INSTANCE;
-                    }
-                    mil = Numbers.parseInt(seq, ++p, p += 3);
-                    checkRange(mil, 0, 999);
-                }
-            }
-        }
-
-        if (p < lim) {
-            checkChar(seq, p, lim, 'Z');
-        }
-        return hour * HOUR_MILLIS
-                + min * MINUTE_MILLIS
-                + sec * SECOND_MILLIS
-                + mil;
-    }
-
     public static long previousOrSameDayOfWeek(long millis, int dow) {
         int thisDow = getDayOfWeek(millis);
         if (thisDow == dow) {
@@ -942,26 +774,8 @@ final public class Dates {
 
     public static String toString(long millis) {
         StringSink sink = new StringSink();
-        Dates.appendDateTime(sink, millis);
+        DateFormatUtils.appendDateTime(sink, millis);
         return sink.toString();
-    }
-
-    public static long tryParse(CharSequence s) throws NumericException {
-        return tryParse(s, 0, s.length());
-    }
-
-    public static long tryParse(CharSequence s, int lo, int lim) throws NumericException {
-        try {
-            return parseDateTime(s, lo, lim);
-        } catch (NumericException ignore) {
-        }
-
-        try {
-            return parseDateTimeFmt1(s, lo, lim);
-        } catch (NumericException ignore) {
-        }
-
-        return parseDateTimeFmt2(s, lo, lim);
     }
 
     /**
@@ -1001,139 +815,9 @@ final public class Dates {
         return millis < 0 ? DAY_MILLIS - 1 + (millis % DAY_MILLIS) : millis % DAY_MILLIS;
     }
 
-    private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
-        // 2016-01-01T00:00:00Z
-        int p = lo;
-        if (lim - p < 20) {
-            throw NumericException.INSTANCE;
-        }
-        int year;
-        if (seq.charAt(p) == '-') {
-            year = Numbers.parseInt(seq, p, p += 5);
-        } else {
-            year = Numbers.parseInt(seq, p, p += 4);
-        }
-        checkChar(seq, p++, lim, '-');
-        int month = Numbers.parseInt(seq, p, p += 2);
-        checkRange(month, 1, 12);
-        checkChar(seq, p++, lim, '-');
-        boolean l = isLeapYear(year);
-        int day = Numbers.parseInt(seq, p, p += 2);
-        checkRange(day, 1, getDaysPerMonth(month, l));
-        checkChar(seq, p++, lim, 'T');
-        int hour = Numbers.parseInt(seq, p, p += 2);
-        checkRange(hour, 0, 23);
-        checkChar(seq, p++, lim, ':');
-        int min = Numbers.parseInt(seq, p, p += 2);
-        checkRange(min, 0, 59);
-        checkChar(seq, p++, lim, ':');
-        int sec = Numbers.parseInt(seq, p, p += 2);
-        checkRange(sec, 0, 59);
-        int mil = 0;
-        if (p < lim && seq.charAt(p) == '.') {
-            if (p + 4 > lim) {
-                throw NumericException.INSTANCE;
-            }
-            mil = Numbers.parseInt(seq, ++p, p += 3);
-            checkRange(mil, 0, 999);
-        }
-
-        if (p < lim) {
-            checkChar(seq, p, lim, 'Z');
-        }
-        return yearMillis(year, l)
-                + monthOfYearMillis(month, l)
-                + (day - 1) * DAY_MILLIS
-                + hour * HOUR_MILLIS
-                + min * MINUTE_MILLIS
-                + sec * SECOND_MILLIS
-                + mil;
-    }
-
-    // YYYY-MM-DD hh:mm:ss
-    private static long parseDateTimeFmt1(CharSequence seq, int lo, int lim) throws NumericException {
-        int p = lo;
-        if (p + 4 > lim) {
-            throw NumericException.INSTANCE;
-        }
-        int year = Numbers.parseInt(seq, p, p += 4);
-        checkChar(seq, p++, lim, '-');
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
-        int month = Numbers.parseInt(seq, p, p += 2);
-        checkRange(month, 1, 12);
-        checkChar(seq, p++, lim, '-');
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
-        boolean l = isLeapYear(year);
-        int day = Numbers.parseInt(seq, p, p += 2);
-        checkRange(day, 1, getDaysPerMonth(month, l));
-        checkChar(seq, p++, lim, ' ');
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
-        int hour = Numbers.parseInt(seq, p, p += 2);
-        checkRange(hour, 0, 23);
-        checkChar(seq, p++, lim, ':');
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
-        int min = Numbers.parseInt(seq, p, p += 2);
-        checkRange(min, 0, 59);
-        checkChar(seq, p++, lim, ':');
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
-        int sec = Numbers.parseInt(seq, p, p + 2);
-        checkRange(sec, 0, 59);
-
-        return yearMillis(year, l)
-                + monthOfYearMillis(month, l)
-                + (day - 1) * DAY_MILLIS
-                + hour * HOUR_MILLIS
-                + min * MINUTE_MILLIS
-                + sec * SECOND_MILLIS;
-    }
-
-    // MM/DD/YYYY
-    private static long parseDateTimeFmt2(CharSequence seq, int lo, int lim) throws NumericException {
-        int p = lo;
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
-        int month = Numbers.parseInt(seq, p, p += 2);
-        checkRange(month, 1, 12);
-        checkChar(seq, p++, lim, '/');
-
-        if (p + 4 > lim) {
-            throw NumericException.INSTANCE;
-        }
-        int year = Numbers.parseInt(seq, p + 3, p + 7);
-        boolean l = isLeapYear(year);
-        if (p + 2 > lim) {
-            throw NumericException.INSTANCE;
-        }
-        int day = Numbers.parseInt(seq, p, p += 2);
-        checkRange(day, 1, getDaysPerMonth(month, l));
-        checkChar(seq, p, lim, '/');
-
-        return yearMillis(year, l)
-                + monthOfYearMillis(month, l)
-                + (day - 1) * DAY_MILLIS;
-    }
-
     private static long toMillis(int y, int m, int d) {
         boolean l = isLeapYear(y);
         return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS;
-    }
-
-    private static int int0(CharSequence s, int lo, int hi, int lim) throws NumericException {
-        if (hi > lim) {
-            throw NumericException.INSTANCE;
-        }
-        return Numbers.parseInt(s, lo, hi);
     }
 
     private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {

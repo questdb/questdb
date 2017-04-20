@@ -27,7 +27,10 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.misc.*;
+import com.questdb.misc.BytecodeAssembler;
+import com.questdb.misc.Chars;
+import com.questdb.misc.Rnd;
+import com.questdb.misc.Unsafe;
 import com.questdb.ql.impl.NoRowIdRecordSource;
 import com.questdb.ql.impl.join.AsOfJoinRecordSource;
 import com.questdb.ql.impl.join.AsOfPartitionedJoinRecordSource;
@@ -35,7 +38,7 @@ import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.time.Dates;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
@@ -89,7 +92,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                     ccy[i] = rnd.nextChars(6).toString();
                 }
 
-                long ts = Dates.parseDateTime("2015-03-10T00:00:00.000Z");
+                long ts = DateFormatUtils.parseDateTime("2015-03-10T00:00:00.000Z");
 
                 for (int i = 0; i < xcount; i++) {
                     JournalEntryWriter w = xw.entryWriter();
@@ -107,7 +110,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                 }
                 xw.commit();
 
-                ts = Dates.parseDateTime("2015-03-10T00:00:00.000Z");
+                ts = DateFormatUtils.parseDateTime("2015-03-10T00:00:00.000Z");
                 for (int i = 0; i < ycount; i++) {
                     JournalEntryWriter w = yw.entryWriter();
                     w.putDate(0, ts += 60000);
@@ -137,37 +140,37 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                         JournalEntryWriter ewa;
 
                         ewa = jwa.entryWriter();
-                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:30:00.000Z"));
+                        ewa.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:30:00.000Z"));
                         ewa.putSym(1, "X");
                         ewa.putDouble(2, 0.538);
                         ewa.append();
 
                         ewa = jwa.entryWriter();
-                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:35:00.000Z"));
+                        ewa.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:35:00.000Z"));
                         ewa.putSym(1, "Y");
                         ewa.putDouble(2, 1.35);
                         ewa.append();
 
                         ewa = jwa.entryWriter();
-                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:37:00.000Z"));
+                        ewa.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:37:00.000Z"));
                         ewa.putSym(1, "Y");
                         ewa.putDouble(2, 1.41);
                         ewa.append();
 
                         ewa = jwa.entryWriter();
-                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:39:00.000Z"));
+                        ewa.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:39:00.000Z"));
                         ewa.putSym(1, "X");
                         ewa.putDouble(2, 0.601);
                         ewa.append();
 
                         ewa = jwa.entryWriter();
-                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:40:00.000Z"));
+                        ewa.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:40:00.000Z"));
                         ewa.putSym(1, "Y");
                         ewa.putDouble(2, 1.26);
                         ewa.append();
 
                         ewa = jwa.entryWriter();
-                        ewa.putDate(0, Dates.parseDateTime("2014-03-12T10:43:00.000Z"));
+                        ewa.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:43:00.000Z"));
                         ewa.putSym(1, "Y");
                         ewa.putDouble(2, 1.29);
                         ewa.append();
@@ -177,37 +180,37 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
                         JournalEntryWriter ewb;
 
                         ewb = jwb.entryWriter();
-                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:27:00.000Z"));
+                        ewb.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:27:00.000Z"));
                         ewb.putSym(1, "X");
                         ewb.putDouble(2, 1100);
                         ewb.append();
 
                         ewb = jwb.entryWriter();
-                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:28:00.000Z"));
+                        ewb.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:28:00.000Z"));
                         ewb.putSym(1, "X");
                         ewb.putDouble(2, 1200);
                         ewb.append();
 
                         ewb = jwb.entryWriter();
-                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:29:00.000Z"));
+                        ewb.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:29:00.000Z"));
                         ewb.putSym(1, "X");
                         ewb.putDouble(2, 1500);
                         ewb.append();
 
                         ewb = jwb.entryWriter();
-                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:34:50.000Z"));
+                        ewb.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:34:50.000Z"));
                         ewb.putSym(1, "Y");
                         ewb.putDouble(2, 130);
                         ewb.append();
 
                         ewb = jwb.entryWriter();
-                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:36:00.000Z"));
+                        ewb.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:36:00.000Z"));
                         ewb.putSym(1, "Y");
                         ewb.putDouble(2, 150);
                         ewb.append();
 
                         ewb = jwb.entryWriter();
-                        ewb.putDate(0, Dates.parseDateTime("2014-03-12T10:41:00.000Z"));
+                        ewb.putDate(0, DateFormatUtils.parseDateTime("2014-03-12T10:41:00.000Z"));
                         ewb.putSym(1, "Y");
                         ewb.putDouble(2, 12000);
                         ewb.append();

@@ -25,8 +25,9 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.Dates;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestData;
 import org.junit.After;
@@ -186,11 +187,11 @@ public class LagTest extends AbstractTest {
     @Test
     public void testLagWorkflow() throws JournalException, NumericException {
 
-        Quote v1 = new Quote().setSym("1").setTimestamp(Dates.parseDateTime("2012-06-10T00:00:00Z"));
-        Quote v2 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-10T10:00:00Z"));
-        Quote v3 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-10T16:00:00Z"));
-        Quote v4 = new Quote().setSym("3").setTimestamp(Dates.parseDateTime("2012-06-10T19:00:00Z"));
-        Quote v5 = new Quote().setSym("4").setTimestamp(Dates.parseDateTime("2012-06-10T22:00:00Z"));
+        Quote v1 = new Quote().setSym("1").setTimestamp(DateFormatUtils.parseDateTime("2012-06-10T00:00:00.000Z"));
+        Quote v2 = new Quote().setSym("2").setTimestamp(DateFormatUtils.parseDateTime("2012-06-10T10:00:00.000Z"));
+        Quote v3 = new Quote().setSym("2").setTimestamp(DateFormatUtils.parseDateTime("2012-06-10T16:00:00.000Z"));
+        Quote v4 = new Quote().setSym("3").setTimestamp(DateFormatUtils.parseDateTime("2012-06-10T19:00:00.000Z"));
+        Quote v5 = new Quote().setSym("4").setTimestamp(DateFormatUtils.parseDateTime("2012-06-10T22:00:00.000Z"));
 
         rw.append(v1);
 
@@ -200,7 +201,7 @@ public class LagTest extends AbstractTest {
         p.append(v4);
         p.append(v5);
 
-        Quote v6 = new Quote().setSym("5").setTimestamp(Dates.parseDateTime("2012-06-11T08:00:00Z"));
+        Quote v6 = new Quote().setSym("5").setTimestamp(DateFormatUtils.parseDateTime("2012-06-11T08:00:00.000Z"));
         List<Quote> data = new ArrayList<>();
         data.add(v6);
         rw.mergeAppend(data);
@@ -221,9 +222,9 @@ public class LagTest extends AbstractTest {
     public void testOpenWithLag() throws JournalException, NumericException {
 
         Partition<Quote> partition = rw.openOrCreateLagPartition();
-        Quote v1 = new Quote().setSym("1").setTimestamp(Dates.parseDateTime("2012-06-11T00:00:00Z"));
-        Quote v2 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-11T10:00:00Z"));
-        Quote v3 = new Quote().setSym("2").setTimestamp(Dates.parseDateTime("2012-06-11T06:00:00Z"));
+        Quote v1 = new Quote().setSym("1").setTimestamp(DateFormatUtils.parseDateTime("2012-06-11T00:00:00.000Z"));
+        Quote v2 = new Quote().setSym("2").setTimestamp(DateFormatUtils.parseDateTime("2012-06-11T10:00:00.000Z"));
+        Quote v3 = new Quote().setSym("2").setTimestamp(DateFormatUtils.parseDateTime("2012-06-11T06:00:00.000Z"));
 
         rw.append(v1);
         partition.append(v2);

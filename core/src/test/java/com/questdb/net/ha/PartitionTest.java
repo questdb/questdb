@@ -26,7 +26,6 @@ package com.questdb.net.ha;
 import com.questdb.JournalWriter;
 import com.questdb.Partition;
 import com.questdb.ex.JournalNetworkException;
-import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.comsumer.JournalClientStateConsumer;
 import com.questdb.net.ha.comsumer.JournalSymbolTableConsumer;
@@ -35,6 +34,7 @@ import com.questdb.net.ha.model.IndexedJournal;
 import com.questdb.net.ha.producer.JournalClientStateProducer;
 import com.questdb.net.ha.producer.JournalSymbolTableProducer;
 import com.questdb.net.ha.producer.PartitionDeltaProducer;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -44,7 +44,7 @@ import org.junit.Test;
 
 public class PartitionTest extends AbstractTest {
 
-    private static final long timestamp = Dates.parseDateTimeQuiet("2013-12-12T00:00:00.000Z");
+    private static final long timestamp = DateFormatUtils.parseDateTimeQuiet("2013-12-12T00:00:00.000Z");
     private JournalWriter<Quote> origin;
     private JournalWriter<Quote> master;
     private JournalWriter<Quote> slave;
@@ -113,7 +113,7 @@ public class PartitionTest extends AbstractTest {
         consumer.read(channel);
         comparePartitions();
 
-        TestUtils.generateQuoteData(master, 200, Dates.parseDateTime("2014-01-01T00:00:00.000Z"));
+        TestUtils.generateQuoteData(master, 200, DateFormatUtils.parseDateTime("2014-01-01T00:00:00.000Z"));
         producer.configure(slave.size());
         producer.write(channel);
         consumer.read(channel);

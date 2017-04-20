@@ -33,13 +33,13 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Chars;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.std.LongList;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.ColumnType;
 import com.questdb.txt.ImportedColumnMetadata;
 import com.questdb.txt.ImportedColumnType;
@@ -156,16 +156,16 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                             w.putFloat(i, Numbers.parseFloat(values.getQuick(i)));
                             break;
                         case ImportedColumnType.DATE_ISO:
-                            w.putDate(i, Dates.parseDateTime(values.getQuick(i)));
+                            w.putDate(i, DateFormatUtils.parseDateTime(values.getQuick(i)));
                             break;
                         case ImportedColumnType.DATE_1:
-                            w.putDate(i, Dates.parseDateTimeFmt1(values.getQuick(i)));
+                            w.putDate(i, DateFormatUtils.parseDateTimeFmt1(values.getQuick(i)));
                             break;
                         case ImportedColumnType.DATE_2:
-                            w.putDate(i, Dates.parseDateTimeFmt2(values.getQuick(i)));
+                            w.putDate(i, DateFormatUtils.parseDateTimeFmt2(values.getQuick(i)));
                             break;
                         case ImportedColumnType.DATE_3:
-                            w.putDate(i, Dates.parseDateTimeFmt3(values.getQuick(i)));
+                            w.putDate(i, DateFormatUtils.parseDateTimeFmt3(values.getQuick(i)));
                             break;
                         case ImportedColumnType.SYMBOL:
                             w.putSym(i, values.getQuick(i));

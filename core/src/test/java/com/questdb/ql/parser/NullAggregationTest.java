@@ -28,9 +28,9 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.std.ObjHashSet;
+import com.questdb.std.time.DateFormatUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -70,7 +70,7 @@ public class NullAggregationTest extends AbstractOptimiserTest {
             ObjHashSet<String> names = getNames(rnd, n);
 
             int mask = n - 1;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();

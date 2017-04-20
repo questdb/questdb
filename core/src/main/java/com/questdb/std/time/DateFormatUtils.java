@@ -9,11 +9,69 @@ public class DateFormatUtils {
     public static final int HOUR_24 = 2;
     public static final int HOUR_PM = 1;
     public static final int HOUR_AM = 0;
+    public static final DateFormat UTC_FORMAT;
+    public static final DateFormat FMT1;
+    public static final DateFormat FMT2;
+    public static final DateFormat FMT3;
+    static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
+    private static final DateFormat FMT4;
+    private static final DateFormat HTTP_FORMAT;
+    private static final DateFormat TIME24;
+    private static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDateLocale("en-GB");
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
     static int prevCenturyLow;
     private static long newYear;
+
+    // YYYY-MM-DDThh:mm:ss.mmmmZ
+    public static void appendDateTime(CharSink sink, long millis) {
+        if (millis == Long.MIN_VALUE) {
+            return;
+        }
+        UTC_FORMAT.format(millis, defaultLocale, "Z", sink);
+    }
+
+    // YYYY-MM-DD
+    public static void formatDashYYYYMMDD(CharSink sink, long millis) {
+        int y = Dates.getYear(millis);
+        boolean l = Dates.isLeapYear(y);
+        int m = Dates.getMonthOfYear(millis, y, l);
+        Numbers.append(sink, y);
+        Dates.append0(sink.put('-'), m);
+        Dates.append0(sink.put('-'), Dates.getDayOfMonth(millis, y, m, l));
+    }
+
+    public static void formatHTTP(CharSink sink, long millis) {
+        HTTP_FORMAT.format(millis, defaultLocale, "GMT", sink);
+    }
+
+    public static void formatMMMDYYYY(CharSink sink, long millis) {
+        FMT4.format(millis, defaultLocale, "Z", sink);
+    }
+
+    // YYYY
+    public static void formatYYYY(CharSink sink, long millis) {
+        Numbers.append(sink, Dates.getYear(millis));
+    }
+
+    // YYYY-MM
+    public static void formatYYYYMM(CharSink sink, long millis) {
+        int y = Dates.getYear(millis);
+        int m = Dates.getMonthOfYear(millis, y, Dates.isLeapYear(y));
+        Numbers.append(sink, y);
+        Dates.append0(sink.put('-'), m);
+    }
+
+    // YYYYMMDD
+    public static void formatYYYYMMDD(CharSink sink, long millis) {
+        int y = Dates.getYear(millis);
+        boolean l = Dates.isLeapYear(y);
+        int m = Dates.getMonthOfYear(millis, y, l);
+        Numbers.append(sink, y);
+        Dates.append0(sink, m);
+        Dates.append0(sink, Dates.getDayOfMonth(millis, y, m, l));
+    }
 
     public static long getReferenceYear() {
         return referenceYear;
@@ -21,6 +79,60 @@ public class DateFormatUtils {
 
     public static void init() {
         // do nothing method to make sure class is loaded and its static code has run
+    }
+
+    public static void main(String[] args) throws NumericException {
+        String s = "2017-04-01T00:00:00.000Z";
+        DateFormat f = new DateFormatCompiler().compile(UTC_PATTERN, true);
+        System.out.println(f.parse(s, defaultLocale));
+    }
+
+    // YYYY-MM-DDThh:mm:ss.mmm
+    public static long parseDateTime(CharSequence seq) throws NumericException {
+        return parseDateTime(seq, 0, seq.length());
+    }
+
+    public static long parseDateTimeFmt1(CharSequence seq) throws NumericException {
+        return parseDateTimeFmt1(seq, 0, seq.length());
+    }
+
+    public static long parseDateTimeFmt2(CharSequence seq) throws NumericException {
+        return parseDateTimeFmt2(seq, 0, seq.length());
+    }
+
+    public static long parseDateTimeFmt3(CharSequence seq) throws NumericException {
+        return FMT3.parse(seq, defaultLocale);
+    }
+
+    // YYYY-MM-DDThh:mm:ss.mmm
+    public static long parseDateTimeQuiet(CharSequence seq) {
+        try {
+            return parseDateTime(seq, 0, seq.length());
+        } catch (NumericException e) {
+            return Long.MIN_VALUE;
+        }
+    }
+
+    public static long parseTime24(CharSequence seq) throws NumericException {
+        return TIME24.parse(seq, defaultLocale);
+    }
+
+    public static long tryParse(CharSequence s) throws NumericException {
+        return tryParse(s, 0, s.length());
+    }
+
+    public static long tryParse(CharSequence s, int lo, int lim) throws NumericException {
+        try {
+            return parseDateTime(s, lo, lim);
+        } catch (NumericException ignore) {
+        }
+
+        try {
+            return parseDateTimeFmt1(s, lo, lim);
+        } catch (NumericException ignore) {
+        }
+
+        return parseDateTimeFmt2(s, lo, lim);
     }
 
     public static void updateReferenceYear(long millis) {
@@ -129,6 +241,18 @@ public class DateFormatUtils {
             throw NumericException.INSTANCE;
         }
 
+        if (hour < 0 || hour > 23) {
+            throw NumericException.INSTANCE;
+        }
+
+        if (minute < 0 || minute > 59) {
+            throw NumericException.INSTANCE;
+        }
+
+        if (second < 0 || second > 59) {
+            throw NumericException.INSTANCE;
+        }
+
         long datetime = Dates.yearMillis(year, leap)
                 + Dates.monthOfYearMillis(month, leap)
                 + (day - 1) * Dates.DAY_MILLIS
@@ -157,6 +281,10 @@ public class DateFormatUtils {
         }
 
         return Numbers.encodeIntAndLen(year, len);
+    }
+
+    static long parseYearFourDigits(CharSequence in, int pos, int hi) throws NumericException {
+        return Numbers.parseIntSafely(in, pos, hi);
     }
 
     static int adjustYear(int year) {
@@ -203,7 +331,29 @@ public class DateFormatUtils {
         }
     }
 
+    private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
+        return UTC_FORMAT.parse(seq, lo, lim, defaultLocale);
+    }
+
+    // YYYY-MM-DD hh:mm:ss
+    static long parseDateTimeFmt1(CharSequence seq, int lo, int lim) throws NumericException {
+        return FMT1.parse(seq, lo, lim, defaultLocale);
+    }
+
+    // MM/DD/YYYY
+    static long parseDateTimeFmt2(CharSequence seq, int lo, int lim) throws NumericException {
+        return FMT2.parse(seq, lo, lim, defaultLocale);
+    }
+
     static {
         updateReferenceYear(System.currentTimeMillis());
+        DateFormatCompiler compiler = new DateFormatCompiler();
+        UTC_FORMAT = compiler.compile(UTC_PATTERN, true);
+        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z", false);
+        FMT1 = compiler.compile("yyyy-MM-dd HH:mm:ss", false);
+        FMT3 = compiler.compile("dd/MM/y", false);
+        FMT2 = compiler.compile("MM/dd/y", false);
+        FMT4 = compiler.compile("MMM d yyyy", false);
+        TIME24 = compiler.compile("H:m", false);
     }
 }

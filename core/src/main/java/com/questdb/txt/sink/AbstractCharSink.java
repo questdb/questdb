@@ -23,13 +23,13 @@
 
 package com.questdb.txt.sink;
 
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.Sinkable;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.time.DateFormatUtils;
 
 import java.util.Set;
 
@@ -102,7 +102,7 @@ public abstract class AbstractCharSink implements CharSink {
 
     @Override
     public CharSink putISODate(long value) {
-        Dates.appendDateTime(this, value);
+        DateFormatUtils.appendDateTime(this, value);
         return this;
     }
 

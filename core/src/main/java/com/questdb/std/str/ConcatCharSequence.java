@@ -23,11 +23,9 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Misc;
 import com.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
 
-public class ConcatCharSequence implements CharSequence {
+public class ConcatCharSequence extends AbstractCharSequence {
     private final ObjList<CharSequence> delegates = new ObjList<>();
     private int len = -1;
     private CharSequence lastSeq;
@@ -84,11 +82,6 @@ public class ConcatCharSequence implements CharSequence {
         return seek(index);
     }
 
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        return null;
-    }
-
     public void surroundWith(CharSequence left, CharSequence right) {
         // assume we have only one delegate
         if (delegates.size() > 0) {
@@ -104,14 +97,6 @@ public class ConcatCharSequence implements CharSequence {
         }
         lastSeq = left;
         lastSeqLen = left.length();
-    }
-
-    @NotNull
-    @Override
-    public String toString() {
-        StringBuilder b = Misc.getThreadLocalBuilder();
-        b.append(this);
-        return b.toString();
     }
 
     private char next(int index) {

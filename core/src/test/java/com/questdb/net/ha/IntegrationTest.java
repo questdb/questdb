@@ -30,11 +30,11 @@ import com.questdb.ex.JournalException;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.JournalEvents;
 import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
@@ -140,7 +140,7 @@ public class IntegrationTest extends AbstractTest {
                             try {
                                 barrier.await();
 
-                                long timestamp = Dates.parseDateTime("2013-09-04T10:00:00.000Z");
+                                long timestamp = DateFormatUtils.parseDateTime("2013-09-04T10:00:00.000Z");
                                 long increment = 1000L;
 
                                 for (int i = 0; i < batchCount; i++) {

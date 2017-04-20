@@ -26,7 +26,7 @@ package com.questdb;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.std.time.Dates;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -53,7 +53,7 @@ public class GenericAppendPerfTest extends AbstractTest {
                 }}
         )) {
             long t = System.nanoTime();
-            TestUtils.generateQuoteDataGeneric(wg, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
+            TestUtils.generateQuoteDataGeneric(wg, TEST_DATA_SIZE, DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             wg.commit();
             long result = System.nanoTime() - t;
             LOG.info().$("generic append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result) / 2).$("ms").$();

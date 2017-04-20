@@ -28,8 +28,8 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Rnd;
+import com.questdb.std.time.DateFormatUtils;
 import org.junit.Test;
 
 public class QueryDateTest extends AbstractOptimiserTest {
@@ -53,8 +53,8 @@ public class QueryDateTest extends AbstractOptimiserTest {
 
             Rnd rnd = new Rnd();
 
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
-            long time1 = Dates.parseDateTime("2015-10-03T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
+            long time1 = DateFormatUtils.parseDateTime("2015-10-03T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();

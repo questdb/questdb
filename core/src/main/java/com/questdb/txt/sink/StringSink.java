@@ -23,11 +23,13 @@
 
 package com.questdb.txt.sink;
 
+import com.questdb.misc.Chars;
 import com.questdb.std.Mutable;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.str.CloneableMutable;
 import org.jetbrains.annotations.NotNull;
 
-public class StringSink extends AbstractCharSink implements CharSequence, Mutable {
+public class StringSink extends AbstractCharSink implements CharSequence, Mutable, CloneableMutable {
     private final StringBuilder builder = new StringBuilder();
 
     public void clear(int pos) {
@@ -36,6 +38,12 @@ public class StringSink extends AbstractCharSink implements CharSequence, Mutabl
 
     public void clear() {
         builder.setLength(0);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> T copy() {
+        return (T) toString();
     }
 
     @Override
@@ -54,6 +62,23 @@ public class StringSink extends AbstractCharSink implements CharSequence, Mutabl
     public CharSink put(char c) {
         builder.append(c);
         return this;
+    }
+
+    @Override
+    public int hashCode() {
+        return Chars.hashCode(builder);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        return obj instanceof CharSequence && Chars.equals(builder, (CharSequence) obj);
+    }
+
+    /* Either IDEA or FireBug complain, annotation galore */
+    @NotNull
+    @Override
+    public String toString() {
+        return builder.toString();
     }
 
     @Override
@@ -76,12 +101,5 @@ public class StringSink extends AbstractCharSink implements CharSequence, Mutabl
             builder.append(c);
         }
         return this;
-    }
-
-    /* Either IDEA or FireBug complain, annotation galore */
-    @NotNull
-    @Override
-    public String toString() {
-        return builder.toString();
     }
 }

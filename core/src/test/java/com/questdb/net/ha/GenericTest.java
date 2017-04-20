@@ -29,13 +29,13 @@ import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
 import com.questdb.ex.JournalConfigurationException;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.ql.RecordSource;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.JournalListener;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
@@ -81,7 +81,7 @@ public class GenericTest extends AbstractTest {
             });
             client.start();
 
-            TestUtils.generateQuoteData(w, 100, Dates.parseDateTime("2015-01-10T12:00:00.000"));
+            TestUtils.generateQuoteData(w, 100, DateFormatUtils.parseDateTime("2015-01-10T12:00:00.000Z"));
             w.commit();
 
             Assert.assertTrue(ready.await(1, TimeUnit.SECONDS));

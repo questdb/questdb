@@ -28,7 +28,6 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Chars;
-import com.questdb.std.time.Dates;
 import com.questdb.ql.model.AliasTranslator;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.IntrinsicModel;
@@ -38,6 +37,7 @@ import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectPool;
 import com.questdb.std.str.FlyweightCharSequence;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.ColumnType;
 
 import java.util.ArrayDeque;
@@ -167,7 +167,7 @@ final class QueryFilterAnalyser {
             }
 
             try {
-                model.intersectIntervals(Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + increment, Long.MAX_VALUE);
+                model.intersectIntervals(DateFormatUtils.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + increment, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } catch (NumericException e) {
@@ -182,7 +182,7 @@ final class QueryFilterAnalyser {
             }
 
             try {
-                model.intersectIntervals(Long.MIN_VALUE, Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - increment);
+                model.intersectIntervals(Long.MIN_VALUE, DateFormatUtils.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - increment);
                 return true;
             } catch (NumericException e) {
                 throw QueryError.$(node.lhs.position, "Not a date");
@@ -234,13 +234,13 @@ final class QueryFilterAnalyser {
             long hiMillis;
 
             try {
-                loMillis = Dates.tryParse(quoteEraser.ofQuoted(lo.token));
+                loMillis = DateFormatUtils.tryParse(quoteEraser.ofQuoted(lo.token));
             } catch (NumericException ignore) {
                 throw QueryError.$(lo.position, "Unknown date format");
             }
 
             try {
-                hiMillis = Dates.tryParse(quoteEraser.ofQuoted(hi.token));
+                hiMillis = DateFormatUtils.tryParse(quoteEraser.ofQuoted(hi.token));
             } catch (NumericException ignore) {
                 throw QueryError.$(hi.position, "Unknown date format");
             }
@@ -315,7 +315,7 @@ final class QueryFilterAnalyser {
                     return false;
                 }
 
-                long hi = Dates.tryParse(quoteEraser.ofQuoted(node.rhs.token)) - inc;
+                long hi = DateFormatUtils.tryParse(quoteEraser.ofQuoted(node.rhs.token)) - inc;
                 model.intersectIntervals(Long.MIN_VALUE, hi);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
@@ -330,7 +330,7 @@ final class QueryFilterAnalyser {
                     return false;
                 }
 
-                long lo = Dates.tryParse(quoteEraser.ofQuoted(node.lhs.token)) + inc;
+                long lo = DateFormatUtils.tryParse(quoteEraser.ofQuoted(node.lhs.token)) + inc;
                 model.intersectIntervals(lo, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
@@ -514,13 +514,13 @@ final class QueryFilterAnalyser {
             long hiMillis;
 
             try {
-                loMillis = Dates.tryParse(quoteEraser.ofQuoted(lo.token));
+                loMillis = DateFormatUtils.tryParse(quoteEraser.ofQuoted(lo.token));
             } catch (NumericException ignore) {
                 throw QueryError.$(lo.position, "Unknown date format");
             }
 
             try {
-                hiMillis = Dates.tryParse(quoteEraser.ofQuoted(hi.token));
+                hiMillis = DateFormatUtils.tryParse(quoteEraser.ofQuoted(hi.token));
             } catch (NumericException ignore) {
                 throw QueryError.$(hi.position, "Unknown date format");
             }

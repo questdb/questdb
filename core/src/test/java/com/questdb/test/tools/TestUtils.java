@@ -34,7 +34,10 @@ import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.iter.JournalIterator;
-import com.questdb.misc.*;
+import com.questdb.misc.ByteBuffers;
+import com.questdb.misc.Chars;
+import com.questdb.misc.Rnd;
+import com.questdb.misc.Unsafe;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.printer.JournalPrinter;
@@ -47,6 +50,7 @@ import com.questdb.ql.model.ExprNode;
 import com.questdb.query.ResultSet;
 import com.questdb.std.IntList;
 import com.questdb.std.LongList;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
 import com.questdb.std.time.Interval;
 import com.questdb.store.ColumnType;
@@ -325,7 +329,7 @@ public final class TestUtils {
 
     public static void generateQuoteData(JournalWriter<Quote> w, int count) throws JournalException, NumericException {
         String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
-        long timestamps[] = {Dates.parseDateTime("2013-09-04T10:00:00.000Z"), Dates.parseDateTime("2013-10-04T10:00:00.000Z"), Dates.parseDateTime("2013-11-04T10:00:00.000Z")};
+        long timestamps[] = {DateFormatUtils.parseDateTime("2013-09-04T10:00:00.000Z"), DateFormatUtils.parseDateTime("2013-10-04T10:00:00.000Z"), DateFormatUtils.parseDateTime("2013-11-04T10:00:00.000Z")};
         Quote q = new Quote();
         Rnd r = new Rnd();
         for (int i = 0; i < count; i++) {
@@ -455,7 +459,7 @@ public final class TestUtils {
     }
 
     public static void generateTestEntityData(JournalWriter<TestEntity> w, int count) throws JournalException, NumericException {
-        generateTestEntityData(w, count, Dates.parseDateTime("2012-05-15T10:55:00.000Z"), count * 100);
+        generateTestEntityData(w, count, DateFormatUtils.parseDateTime("2012-05-15T10:55:00.000Z"), count * 100);
     }
 
     public static long toMemory(CharSequence sequence) {

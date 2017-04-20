@@ -23,8 +23,8 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -61,9 +61,9 @@ public class JournalTest extends AbstractJournalTest {
     public void testConsumerPartitionEdge() throws Exception {
         origin.truncate();
 
-        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-10-01T00:00:00.000Z"));
-        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-11-01T00:00:00.000Z"));
-        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-12-01T00:00:00.000Z"));
+        TestUtils.generateQuoteData(origin, 500, DateFormatUtils.parseDateTime("2013-10-01T00:00:00.000Z"));
+        TestUtils.generateQuoteData(origin, 500, DateFormatUtils.parseDateTime("2013-11-01T00:00:00.000Z"));
+        TestUtils.generateQuoteData(origin, 500, DateFormatUtils.parseDateTime("2013-12-01T00:00:00.000Z"));
 
         master.append(origin.query().all().asResultSet().subset(0, 500));
         master.commit(false, 101L, 10);
@@ -118,8 +118,8 @@ public class JournalTest extends AbstractJournalTest {
     @Test
     public void testEmptyPartitionAdd() throws Exception {
         master.append(origin);
-        master.getAppendPartition(Dates.parseDateTime("2013-12-01T00:00:00.000Z"));
-        master.append(new Quote().setTimestamp(Dates.parseDateTime("2014-01-01T00:00:00.000Z")));
+        master.getAppendPartition(DateFormatUtils.parseDateTime("2013-12-01T00:00:00.000Z"));
+        master.append(new Quote().setTimestamp(DateFormatUtils.parseDateTime("2014-01-01T00:00:00.000Z")));
         master.commit();
         executeSequence(true);
         Assert.assertEquals(master.getPartitionCount(), slave.getPartitionCount());

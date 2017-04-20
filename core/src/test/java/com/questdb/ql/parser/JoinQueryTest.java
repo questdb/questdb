@@ -31,7 +31,6 @@ import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.misc.Chars;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.impl.NoRowIdRecordSource;
@@ -40,6 +39,7 @@ import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.MMappedSymbolTable;
 import com.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -1785,7 +1785,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
                                     )) {
 
                                         final Rnd rnd = new Rnd();
-                                        long time = Dates.parseDateTime("2015-07-10T00:00:00.000Z");
+                                        long time = DateFormatUtils.parseDateTime("2015-07-10T00:00:00.000Z");
 
                                         // statics
                                         int countryCount = 196;

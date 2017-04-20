@@ -33,6 +33,7 @@ import com.questdb.ql.parser.QueryError;
 import com.questdb.regex.Matcher;
 import com.questdb.regex.Pattern;
 import com.questdb.regex.PatternSyntaxException;
+import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.ConcatCharSequence;
 import com.questdb.std.str.FlyweightCharSequence;
@@ -188,7 +189,7 @@ class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
         this.replacePattern = concat;
     }
 
-    private class GroupCharSequence implements CharSequence {
+    private class GroupCharSequence extends AbstractCharSequence {
         private final int lo;
         private final int hi;
         private final int max;
@@ -217,11 +218,6 @@ class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
         @Override
         public char charAt(int index) {
             return base.charAt(index + matcher.groupQuick(lo));
-        }
-
-        @Override
-        public CharSequence subSequence(int start, int end) {
-            return null;
         }
     }
 }

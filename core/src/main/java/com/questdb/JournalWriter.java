@@ -39,6 +39,7 @@ import com.questdb.mp.SPSequence;
 import com.questdb.mp.Sequence;
 import com.questdb.query.ResultSet;
 import com.questdb.std.PeekingListIterator;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
 import com.questdb.std.time.Interval;
 import com.questdb.store.*;
@@ -848,7 +849,7 @@ public class JournalWriter<T> extends Journal<T> {
                         for (int c = 0, cc = m.getColumnCount(); c < cc; c++) {
                             switch (m.getColumnQuick(c).type) {
                                 case ColumnType.DATE:
-                                    Dates.appendDateTime(discardSink, partition.getLong(r, c));
+                                    DateFormatUtils.appendDateTime(discardSink, partition.getLong(r, c));
                                     break;
                                 case ColumnType.DOUBLE:
                                     Numbers.append(discardSink, partition.getDouble(r, c), 12);

@@ -27,13 +27,13 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Chars;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Files;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.DirectCharSequence;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -112,7 +112,7 @@ public class FilesTest {
         Path path = new Path();
         File f = temporaryFolder.newFile();
         Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath())));
-        long t = Dates.parseDateTime("2015-10-17T10:00:00.000Z");
+        long t = DateFormatUtils.parseDateTime("2015-10-17T10:00:00.000Z");
         Assert.assertTrue(Files.setLastModified(path, t));
         Assert.assertEquals(t, Files.getLastModified(path));
     }

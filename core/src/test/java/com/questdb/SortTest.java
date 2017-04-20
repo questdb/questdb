@@ -25,11 +25,11 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.std.time.Dates;
 import com.questdb.model.TestEntity;
 import com.questdb.query.OrderedResultSet;
 import com.questdb.query.ResultSet;
 import com.questdb.query.api.Query;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -45,7 +45,7 @@ public class SortTest extends AbstractTest {
     @Before
     public void setUp() throws Exception {
         w = getFactory().writer(TestEntity.class);
-        TestUtils.generateTestEntityData(w, 1000, Dates.parseDateTime("2012-05-15T10:55:00.000Z"), 100000);
+        TestUtils.generateTestEntityData(w, 1000, DateFormatUtils.parseDateTime("2012-05-15T10:55:00.000Z"), 100000);
         q = w.query();
     }
 

@@ -28,12 +28,13 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.*;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Chars;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.ObjHashSet;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.Dates;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.sink.StringSink;
@@ -909,7 +910,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testInAsColumn() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 
@@ -922,7 +923,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testInAsColumnAliased() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 
@@ -949,7 +950,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, 128);
 
             int mask = 127;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -1171,7 +1172,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
             Rnd rnd = new Rnd();
 
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 1000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -1194,7 +1195,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testIntervalAndIndexHeapSearch() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            TestUtils.generateQuoteData(w, 3600 * 24 * 10, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 
@@ -1235,7 +1236,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testIntervalAndIndexSearch() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            TestUtils.generateQuoteData(w, 3600 * 24 * 10, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
 
             final String expected = "ADM.L\t837.343750000000\t0.061431560665\t2015-02-12T10:00:04.000Z\n" +
@@ -1264,7 +1265,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testIntervalIntrinsicFalse() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24 * 10, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            TestUtils.generateQuoteData(w, 3600 * 24 * 10, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
             assertEmpty("select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00' and timestamp = '2015-02-12T12:00:00'");
         }
@@ -1424,7 +1425,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         assertThat("10000\n", "select count() from tab");
         try (JournalWriter w = getFactory().writer("tab")) {
             w.setSequentialAccess(true);
-            appendNaNs(w, Dates.parseDateTime("2015-10-12T00:00:00.000Z"));
+            appendNaNs(w, DateFormatUtils.parseDateTime("2015-10-12T00:00:00.000Z"));
         }
         assertThat("20000\n", "select count() from tab");
     }
@@ -1474,7 +1475,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testLatestBySym() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 
@@ -1495,7 +1496,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testLatestBySymList() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 
@@ -1507,7 +1508,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testLatestBySymNoFilter() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24, Dates.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
+            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 
@@ -2133,7 +2134,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, 1024);
 
             int mask = 1023;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
 
             for (int i = 0; i < 10000; i++) {
@@ -2200,7 +2201,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, 1024);
 
             int mask = 1023;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
 
             for (int i = 0; i < 10000; i++) {
@@ -2833,7 +2834,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, 128);
 
             int mask = 127;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -2907,7 +2908,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             }
 
             int mask = ids.length - 1;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
 
             for (int i = 0; i < 100000; i++) {
@@ -2976,7 +2977,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, n);
 
             int mask = n - 1;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 100000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -3053,7 +3054,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, n);
 
             int mask = n - 1;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 100000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -3105,7 +3106,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, 1024);
 
             int mask = 1023;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
 
             for (int i = 0; i < 100000; i++) {
@@ -3334,7 +3335,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             }
 
             int mask = 127;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -3368,7 +3369,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, 128);
 
             int mask = 127;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -3406,7 +3407,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             }
 
             int mask = 127;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -3441,7 +3442,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, 128);
 
             int mask = 127;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -3485,7 +3486,7 @@ public class SingleJournalQueryTest extends AbstractTest {
 
             Rnd rnd = new Rnd();
 
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 1000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -3907,7 +3908,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, 128);
 
             int mask = 127;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -3942,16 +3943,16 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testTime24() throws Exception {
         createTabWithNullsAndTime();
-        assertThat("\t2015-03-12T00:00:00.000Z\t2:52\t2015-03-12T00:00:00.000Z\n" +
-                        "\t2015-03-12T00:00:00.000Z\t5:22\t2015-03-12T00:00:00.000Z\n" +
-                        "\t2015-03-12T00:00:00.000Z\t0:14\t2015-03-12T00:00:00.000Z\n" +
+        assertThat("\t2015-03-12T00:00:00.000Z\t2:52\t2015-03-12T02:52:00.000Z\n" +
+                        "\t2015-03-12T00:00:00.000Z\t5:22\t2015-03-12T05:22:00.000Z\n" +
+                        "\t2015-03-12T00:00:00.000Z\t0:14\t2015-03-12T00:14:00.000Z\n" +
                         "\t2015-03-12T00:00:00.000Z\t15:34\t2015-03-12T15:34:00.000Z\n" +
-                        "\t2015-03-12T00:00:00.000Z\t9:5\t2015-03-12T00:00:00.000Z\n" +
+                        "\t2015-03-12T00:00:00.000Z\t9:5\t2015-03-12T09:05:00.000Z\n" +
                         "\t2015-03-12T00:00:00.000Z\t11:43\t2015-03-12T11:43:00.000Z\n" +
-                        "\t2015-03-12T00:00:00.000Z\t14:7\t2015-03-12T00:00:00.000Z\n" +
+                        "\t2015-03-12T00:00:00.000Z\t14:7\t2015-03-12T14:07:00.000Z\n" +
                         "\t2015-03-12T00:00:00.000Z\t19:32\t2015-03-12T19:32:00.000Z\n" +
                         "\t2015-03-12T00:00:00.000Z\t21:49\t2015-03-12T21:49:00.000Z\n" +
-                        "\t2015-03-12T00:00:00.000Z\t7:16\t2015-03-12T00:00:00.000Z\n",
+                        "\t2015-03-12T00:00:00.000Z\t7:16\t2015-03-12T07:16:00.000Z\n",
                 "select id, date, time, date + time24(time) from tab where id = null limit 10");
     }
 
@@ -3986,7 +3987,7 @@ public class SingleJournalQueryTest extends AbstractTest {
         )) {
 
             Rnd rnd = new Rnd();
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
                 if (rnd.nextPositiveInt() % 10 == 0) {
@@ -4212,7 +4213,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, 1024);
 
             int mask = 1023;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -4240,7 +4241,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, 1024);
 
             int mask = 1023;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 100000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -4271,7 +4272,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, n);
 
             int mask = n - 1;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -4298,7 +4299,7 @@ public class SingleJournalQueryTest extends AbstractTest {
                         $ts()
 
         )) {
-            appendNaNs(w, Dates.parseDateTime("2015-03-12T00:00:00.000Z"));
+            appendNaNs(w, DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z"));
         }
     }
 
@@ -4321,7 +4322,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             ObjHashSet<String> names = getNames(rnd, n);
 
             int mask = n - 1;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -4366,7 +4367,7 @@ public class SingleJournalQueryTest extends AbstractTest {
                 $str("time").
                 $date("date"))) {
             Rnd rnd = new Rnd();
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
             for (int i = 0; i < 100; i++) {
                 JournalEntryWriter ew = w.entryWriter();
                 ew.putStr(0, rnd.nextBoolean() ? null : rnd.nextChars(rnd.nextPositiveInt() % 25));
@@ -4398,7 +4399,7 @@ public class SingleJournalQueryTest extends AbstractTest {
             }
 
             int mask = 1023;
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < 10000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
@@ -4422,7 +4423,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     private void tabOfDates() throws JournalException, NumericException {
-        long t = Dates.parseDateTime("2016-10-08T00:00:00.000Z");
+        long t = DateFormatUtils.parseDateTime("2016-10-08T00:00:00.000Z");
         try (JournalWriter w = getFactory().writer(
                 new JournalStructure("tab").
                         $ts().

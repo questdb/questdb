@@ -28,13 +28,13 @@ import com.questdb.ex.NumericException;
 import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
 import com.questdb.misc.Rows;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.query.ResultSet;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.JournalListener;
 import com.questdb.store.SymbolTable;
 import com.questdb.test.tools.AbstractTest;
@@ -53,8 +53,8 @@ public class JournalTest extends AbstractTest {
     @Test(expected = JournalException.class)
     public void testAddPartitionOutOfOrder() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
-            w.getAppendPartition(Dates.parseDateTime("2012-02-10T10:00:00.000Z"));
-            w.getAppendPartition(Dates.parseDateTime("2012-01-10T10:00:00.000Z"));
+            w.getAppendPartition(DateFormatUtils.parseDateTime("2012-02-10T10:00:00.000Z"));
+            w.getAppendPartition(DateFormatUtils.parseDateTime("2012-01-10T10:00:00.000Z"));
         }
     }
 
@@ -163,7 +163,7 @@ public class JournalTest extends AbstractTest {
     @Test
     public void testMaxRowIDOnReader() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
-            TestUtils.generateQuoteData(w, 1000, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            TestUtils.generateQuoteData(w, 1000, DateFormatUtils.parseDateTime("2014-01-30T00:11:00.000Z"), 100000);
             w.commit();
         }
 
@@ -178,7 +178,7 @@ public class JournalTest extends AbstractTest {
         File location;
         final String name = "origin";
         try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, name, SIZE)) {
-            TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            TestUtils.generateQuoteData(origin, SIZE, DateFormatUtils.parseDateTime("2014-01-30T00:11:00.000Z"), 100000);
             origin.commit();
             location = new File(origin.getLocation(), "2014-03");
         }
@@ -192,7 +192,7 @@ public class JournalTest extends AbstractTest {
 
         try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, name)) {
             Assert.assertEquals(25914, origin.size());
-            TestUtils.generateQuoteData(origin, 3000, Dates.parseDateTime("2014-03-30T00:11:00Z"), 10000);
+            TestUtils.generateQuoteData(origin, 3000, DateFormatUtils.parseDateTime("2014-03-30T00:11:00.000Z"), 10000);
             Assert.assertEquals(28914, origin.size());
             origin.rollback();
             Assert.assertEquals(25914, origin.size());
@@ -370,7 +370,7 @@ public class JournalTest extends AbstractTest {
         try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin", SIZE / 12)) {
             try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q", SIZE / 12)) {
 
-                TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+                TestUtils.generateQuoteData(origin, SIZE, DateFormatUtils.parseDateTime("2014-01-30T00:11:00.000Z"), 100000);
                 origin.commit();
 
                 ResultSet<Quote> originRs = origin.query().all().asResultSet();
@@ -405,7 +405,7 @@ public class JournalTest extends AbstractTest {
         try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
             try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
 
-                TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), SIZE);
+                TestUtils.generateQuoteData(origin, SIZE, DateFormatUtils.parseDateTime("2014-01-30T00:11:00.000Z"), SIZE);
                 origin.commit();
 
                 TestJournalListener lsnr = new TestJournalListener();
@@ -421,7 +421,7 @@ public class JournalTest extends AbstractTest {
     public void testTxRefresh() throws Exception {
         int SIZE = 50000;
         try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin", SIZE)) {
-            TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            TestUtils.generateQuoteData(origin, SIZE, DateFormatUtils.parseDateTime("2014-01-30T00:11:00.000Z"), 100000);
             origin.commit();
 
             try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", SIZE)) {
@@ -437,7 +437,7 @@ public class JournalTest extends AbstractTest {
     public void testTxRollbackLag() throws JournalException, NumericException {
         int SIZE = 150000;
         try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin", SIZE)) {
-            TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            TestUtils.generateQuoteData(origin, SIZE, DateFormatUtils.parseDateTime("2014-01-30T00:11:00.000Z"), 100000);
             origin.commit();
 
             try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
@@ -466,14 +466,14 @@ public class JournalTest extends AbstractTest {
     public void testTxRollbackMultiplePartitions() throws Exception {
         int SIZE = 50000;
         try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin", SIZE)) {
-            TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            TestUtils.generateQuoteData(origin, SIZE, DateFormatUtils.parseDateTime("2014-01-30T00:11:00.000Z"), 100000);
             origin.commit();
 
             try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", SIZE)) {
                 w.append(origin);
                 w.commit();
 
-                TestUtils.generateQuoteData(w, 50000, Dates.parseDateTime("2014-03-30T00:11:00Z"), 100000);
+                TestUtils.generateQuoteData(w, 50000, DateFormatUtils.parseDateTime("2014-03-30T00:11:00.000Z"), 100000);
 
                 Assert.assertEquals(100000, w.size());
                 Assert.assertEquals(50000, origin.size());
@@ -488,12 +488,12 @@ public class JournalTest extends AbstractTest {
     public void testTxRollbackSamePartition() throws Exception {
         int SIZE = 50000;
         try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin", SIZE)) {
-            TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            TestUtils.generateQuoteData(origin, SIZE, DateFormatUtils.parseDateTime("2014-01-30T00:11:00.000Z"), 100000);
             origin.commit();
             try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", SIZE)) {
                 w.append(origin);
                 w.commit();
-                TestUtils.generateQuoteData(w, 20, Dates.parseDateTime("2014-03-30T00:11:00Z"), 100);
+                TestUtils.generateQuoteData(w, 20, DateFormatUtils.parseDateTime("2014-03-30T00:11:00.000Z"), 100);
                 Assert.assertEquals(50020, w.size());
                 Assert.assertEquals(50000, origin.size());
                 w.rollback();
@@ -506,7 +506,7 @@ public class JournalTest extends AbstractTest {
     public void testTxRollbackToEmpty() throws Exception {
         int SIZE = 100000;
         try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin", SIZE)) {
-            TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+            TestUtils.generateQuoteData(origin, SIZE, DateFormatUtils.parseDateTime("2014-01-30T00:11:00.000Z"), 100000);
             origin.commit();
 
             try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", SIZE)) {
@@ -531,7 +531,7 @@ public class JournalTest extends AbstractTest {
         try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin", SIZE / 12)) {
             try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q", SIZE / 12)) {
 
-                TestUtils.generateQuoteData(origin, SIZE, Dates.parseDateTime("2014-01-30T00:11:00Z"), 100000);
+                TestUtils.generateQuoteData(origin, SIZE, DateFormatUtils.parseDateTime("2014-01-30T00:11:00.000Z"), 100000);
                 origin.commit();
 
                 ResultSet<Quote> originRs = origin.query().all().asResultSet();

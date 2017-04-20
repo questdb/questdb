@@ -23,13 +23,13 @@
 
 package com.questdb.printer;
 
-import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.printer.appender.Appender;
 import com.questdb.printer.converter.DateConverter;
 import com.questdb.printer.converter.ScaledDoubleConverter;
 import com.questdb.printer.converter.StripCRLFStringConverter;
+import com.questdb.std.time.DateFormatUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -59,7 +59,7 @@ public class PrinterTest {
     @Test
     public void testDateConversion() throws Exception {
 
-        long millis = Dates.parseDateTime("2013-10-11T10:00:00.000Z");
+        long millis = DateFormatUtils.parseDateTime("2013-10-11T10:00:00.000Z");
 
         Quote position1 = new Quote().setBidSize(10).setTimestamp(millis);
         Quote position2 = new Quote().setTimestamp(millis);

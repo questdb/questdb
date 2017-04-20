@@ -23,7 +23,7 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.std.time.Dates;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -35,10 +35,10 @@ public class JournalLagTest extends AbstractJournalTest {
     @Override
     public void setUp() throws Exception {
         super.setUp();
-        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-02-01T00:00:00.000Z"), 100);
-        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-02-01T01:00:00.000Z"), 100);
-        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-02-01T13:00:00.000Z"), 100);
-        TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2013-05-01T00:00:00.000Z"), 100);
+        TestUtils.generateQuoteData(origin, 500, DateFormatUtils.parseDateTime("2013-02-01T00:00:00.000Z"), 100);
+        TestUtils.generateQuoteData(origin, 500, DateFormatUtils.parseDateTime("2013-02-01T01:00:00.000Z"), 100);
+        TestUtils.generateQuoteData(origin, 500, DateFormatUtils.parseDateTime("2013-02-01T13:00:00.000Z"), 100);
+        TestUtils.generateQuoteData(origin, 500, DateFormatUtils.parseDateTime("2013-05-01T00:00:00.000Z"), 100);
     }
 
     @Test

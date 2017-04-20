@@ -23,9 +23,9 @@
 
 package com.questdb.printer.converter;
 
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Unsafe;
 import com.questdb.printer.JournalPrinter;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.txt.sink.StringSink;
 
 public class DateConverter extends AbstractConverter {
@@ -41,7 +41,7 @@ public class DateConverter extends AbstractConverter {
         if (millis == 0) {
             stringBuilder.append(getPrinter().getNullString());
         } else {
-            Dates.appendDateTime(sink, millis);
+            DateFormatUtils.appendDateTime(sink, millis);
             stringBuilder.append(sink);
             sink.clear();
         }

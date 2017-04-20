@@ -26,8 +26,8 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -38,7 +38,7 @@ public class NullTest extends AbstractTest {
     public void tumbleDryNullTest() throws JournalException, NumericException {
         final int TEST_DATA_SIZE = (int) 1E3;
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", 1000)) {
-            long timestamp = Dates.parseDateTime("2013-10-05T10:00:00.000Z");
+            long timestamp = DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z");
             String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
             Quote q = new Quote();
             int increment = 6000;

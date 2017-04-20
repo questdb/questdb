@@ -24,7 +24,7 @@
 package com.questdb.txt.parser.listener.probe;
 
 import com.questdb.ex.NumericException;
-import com.questdb.std.time.Dates;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.txt.ImportedColumnMetadata;
 import com.questdb.txt.ImportedColumnType;
 
@@ -37,7 +37,7 @@ public class DateFmt3Probe implements TypeProbe {
     @Override
     public boolean probe(CharSequence seq) {
         try {
-            Dates.parseDateTimeFmt3(seq);
+            DateFormatUtils.parseDateTimeFmt3(seq);
             return true;
         } catch (NumericException e) {
             return false;

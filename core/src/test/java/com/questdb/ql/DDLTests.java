@@ -34,6 +34,7 @@ import com.questdb.misc.*;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.DirectInputStream;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.AbstractTest;
@@ -624,7 +625,7 @@ public class DDLTests extends AbstractTest {
         try (JournalWriter w = compiler.createWriter(getFactory(), "create table x (a INT, b BYTE, c SHORT, d LONG, e FLOAT, f DOUBLE, g DATE, h BINARY, t DATE, x SYMBOL, z STRING, y BOOLEAN) timestamp(t) record hint 100")) {
             Rnd rnd = new Rnd();
 
-            long t = Dates.parseDateTime("2016-01-10T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2016-01-10T00:00:00.000Z");
 
             for (int i = 0; i < N; i++) {
                 JournalEntryWriter ew = w.entryWriter(t += Dates.DAY_MILLIS);

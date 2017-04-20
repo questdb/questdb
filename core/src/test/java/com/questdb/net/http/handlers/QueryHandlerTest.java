@@ -29,7 +29,6 @@ import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
 import com.questdb.net.http.HttpServer;
@@ -37,6 +36,7 @@ import com.questdb.net.http.QueryResponse;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.ql.parser.AbstractOptimiserTest;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.HttpTestUtils;
 import com.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -272,7 +272,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         )) {
 
             Rnd rnd = new Rnd();
-            long t = Dates.parseDateTime("2015-03-12T00:00:00.000Z");
+            long t = DateFormatUtils.parseDateTime("2015-03-12T00:00:00.000Z");
 
             for (int i = 0; i < count; i++) {
                 JournalEntryWriter ew = w.entryWriter();

@@ -25,12 +25,12 @@ package com.questdb.txt;
 
 import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.ColumnType;
 
 import java.io.IOException;
@@ -86,7 +86,7 @@ public class RecordSourcePrinter {
     private void printColumn(Record r, RecordMetadata m, int i) {
         switch (m.getColumnQuick(i).getType()) {
             case ColumnType.DATE:
-                Dates.appendDateTime(sink, r.getDate(i));
+                DateFormatUtils.appendDateTime(sink, r.getDate(i));
                 break;
             case ColumnType.DOUBLE:
                 Numbers.append(sink, r.getDouble(i), 12);

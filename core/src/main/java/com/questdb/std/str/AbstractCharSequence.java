@@ -26,7 +26,13 @@ package com.questdb.std.str;
 import com.questdb.misc.Misc;
 import org.jetbrains.annotations.NotNull;
 
-public abstract class AbstractCharSequence implements CharSequence {
+public abstract class AbstractCharSequence implements CharSequence, CloneableMutable {
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> T copy() {
+        return (T) this.toString();
+    }
 
     @Override
     public CharSequence subSequence(int start, int end) {

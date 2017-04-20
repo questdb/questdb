@@ -431,12 +431,10 @@ public final class Numbers {
     }
 
     public static long encodeIntAndLen(int value, int len) {
+        if (value < 0) {
+            return -((((long) len) << 32L) | (-value));
+        }
         return (((long) len) << 32L) | (value);
-    }
-
-    public static void main(String[] args) throws NumericException {
-        System.out.println(Numbers.roundUp(-0.234567809802242442424242423122388, 13));
-        System.out.println(Numbers.roundDown(-0.234567809802242442424242423122388, 13));
     }
 
     public static int msb(int value) {
@@ -484,7 +482,7 @@ public final class Numbers {
 
     public static long parseIntSafely(CharSequence sequence, final int p, int lim) throws NumericException {
 
-        if (lim == p || notDigit(sequence.charAt(p))) {
+        if (lim == p) {
             throw NumericException.INSTANCE;
         }
 
@@ -494,7 +492,7 @@ public final class Numbers {
             i++;
         }
 
-        if (i >= lim) {
+        if (i >= lim || notDigit(sequence.charAt(i))) {
             throw NumericException.INSTANCE;
         }
 

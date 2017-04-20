@@ -24,9 +24,10 @@
 package com.questdb;
 
 import com.questdb.ex.JournalException;
-import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 import com.questdb.query.ResultSet;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.Dates;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -82,8 +83,8 @@ public class JournalRefreshTest extends AbstractTest {
         try (JournalWriter<Quote> origin = getFactory().writer(Quote.class, "origin")) {
             try (Journal<Quote> reader = getFactory().reader(Quote.class)) {
 
-                TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T02:00:00.000Z"));
-                TestUtils.generateQuoteData(origin, 500, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
+                TestUtils.generateQuoteData(origin, 500, DateFormatUtils.parseDateTime("2014-02-10T02:00:00.000Z"));
+                TestUtils.generateQuoteData(origin, 500, DateFormatUtils.parseDateTime("2014-02-10T10:00:00.000Z"));
 
                 rw.append(origin.query().all().asResultSet().subset(0, 500));
                 rw.commit();
@@ -117,7 +118,7 @@ public class JournalRefreshTest extends AbstractTest {
             reader.refresh();
             Assert.assertEquals(1001, reader.size());
 
-            TestUtils.generateQuoteData(rw, 302, Dates.parseDateTime("2014-02-10T10:00:00.000Z"));
+            TestUtils.generateQuoteData(rw, 302, DateFormatUtils.parseDateTime("2014-02-10T10:00:00.000Z"));
             reader.refresh();
             Assert.assertEquals(1001, reader.size());
 
@@ -205,7 +206,7 @@ public class JournalRefreshTest extends AbstractTest {
 
     @Test
     public void testTruncateRefresh() throws Exception {
-        TestUtils.generateQuoteData(rw, 1000, Dates.parseDateTime("2013-09-04T10:00:00.000Z"));
+        TestUtils.generateQuoteData(rw, 1000, DateFormatUtils.parseDateTime("2013-09-04T10:00:00.000Z"));
         rw.commit();
 
         try (Journal<Quote> r = getFactory().reader(Quote.class)) {

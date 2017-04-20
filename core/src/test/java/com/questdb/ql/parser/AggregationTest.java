@@ -27,8 +27,8 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Rnd;
+import com.questdb.std.time.DateFormatUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -61,7 +61,7 @@ public class AggregationTest extends AbstractOptimiserTest {
                 employees[i] = rnd.nextString(9);
             }
 
-            long timestamp = Dates.parseDateTime("2014-05-04T10:30:00.000Z");
+            long timestamp = DateFormatUtils.parseDateTime("2014-05-04T10:30:00.000Z");
             int tsIncrement = 10000;
 
             int orderId = 0;
@@ -88,7 +88,7 @@ public class AggregationTest extends AbstractOptimiserTest {
                         $()
         )) {
             Rnd rnd = new Rnd();
-            long timestamp = Dates.parseDateTime("2014-05-04T10:30:00.000Z");
+            long timestamp = DateFormatUtils.parseDateTime("2014-05-04T10:30:00.000Z");
             int tsIncrement = 10000;
             for (int i = 0; i < recordCount; i++) {
                 JournalEntryWriter w = stars.entryWriter(timestamp += tsIncrement);
@@ -110,7 +110,7 @@ public class AggregationTest extends AbstractOptimiserTest {
         )) {
             Rnd rnd = new Rnd();
             double r = Math.sqrt(Double.MAX_VALUE);
-            long timestamp = Dates.parseDateTime("2014-05-04T10:30:00.000Z");
+            long timestamp = DateFormatUtils.parseDateTime("2014-05-04T10:30:00.000Z");
             int tsIncrement = 10000;
             for (int i = 0; i < recordCount; i++) {
                 JournalEntryWriter w = stars.entryWriter(timestamp += tsIncrement);

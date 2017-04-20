@@ -25,8 +25,8 @@ package com.questdb.ql.impl.sys;
 
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
-import com.questdb.std.time.Dates;
 import com.questdb.ql.parser.AbstractOptimiserTest;
+import com.questdb.std.time.DateFormatUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -36,11 +36,11 @@ public class $TabsRecordSourceTest extends AbstractOptimiserTest {
         try (JournalWriter w = compiler.createWriter(FACTORY_CONTAINER.getFactory(), "create table xyz(x int, y string, timestamp date) timestamp(timestamp) partition by MONTH")) {
             JournalEntryWriter ew;
 
-            ew = w.entryWriter(Dates.parseDateTime("2016-01-02T00:00:00.000Z"));
+            ew = w.entryWriter(DateFormatUtils.parseDateTime("2016-01-02T00:00:00.000Z"));
             ew.putInt(0, 0);
             ew.append();
 
-            ew = w.entryWriter(Dates.parseDateTime("2016-02-02T00:00:00.000Z"));
+            ew = w.entryWriter(DateFormatUtils.parseDateTime("2016-02-02T00:00:00.000Z"));
             ew.putInt(0, 1);
             ew.append();
 

@@ -23,9 +23,9 @@
 
 package com.questdb;
 
-import com.questdb.std.time.Dates;
 import com.questdb.model.TestEntity;
 import com.questdb.query.ResultSet;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -53,7 +53,7 @@ public class ResultSetTest extends AbstractTest {
     @Test
     public void testReadPrimitive() throws Exception {
         try (JournalWriter<TestEntity> w = getFactory().writer(TestEntity.class)) {
-            TestUtils.generateTestEntityData(w, 10000, Dates.parseDateTime("2012-05-15T10:55:00.000Z"), 100000);
+            TestUtils.generateTestEntityData(w, 10000, DateFormatUtils.parseDateTime("2012-05-15T10:55:00.000Z"), 100000);
 
             ResultSet<TestEntity> rs = w.query().all().asResultSet();
 

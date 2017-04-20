@@ -26,14 +26,15 @@ package com.questdb;
 import com.questdb.ex.JournalException;
 import com.questdb.iter.ConcurrentIterator;
 import com.questdb.iter.JournalIterator;
-import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
 import com.questdb.model.Quote;
 import com.questdb.query.ResultSet;
 import com.questdb.query.UnorderedResultSet;
 import com.questdb.query.api.Query;
 import com.questdb.query.api.QueryAllBuilder;
 import com.questdb.query.api.QueryHeadBuilder;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.Dates;
+import com.questdb.std.time.Interval;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestData;
 import com.questdb.test.tools.TestUtils;
@@ -44,8 +45,8 @@ import org.junit.Test;
 
 public class QueryTest extends AbstractTest {
 
-    private final long ts1 = Dates.parseDateTimeQuiet("2013-04-28T17:20:00.000Z");
-    private final long ts2 = Dates.parseDateTimeQuiet("2013-05-03T23:43:20.000Z");
+    private final long ts1 = DateFormatUtils.parseDateTimeQuiet("2013-04-28T17:20:00.000Z");
+    private final long ts2 = DateFormatUtils.parseDateTimeQuiet("2013-05-03T23:43:20.000Z");
     private Query<Quote> q;
     private JournalWriter<Quote> w;
 

@@ -36,6 +36,7 @@ package com.questdb.std;
  */
 
 import com.questdb.misc.Unsafe;
+import com.questdb.std.str.CloneableMutable;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.ObjectStreamField;
@@ -1539,15 +1540,20 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
         if (key == null || value == null) throw new NullPointerException();
         int hash = spread(key.hashCode());
         int binCount = 0;
+        Node<K, V> _new = null;
+
         for (Node<K, V>[] tab = table; ; ) {
             Node<K, V> f;
             int n, i, fh;
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {
-                if (casTabAt(tab, i,
-                        new Node<>(hash, key, value, null)))
+                if (_new == null) {
+                    _new = new Node<>(hash, key instanceof CloneableMutable ? ((CloneableMutable) key).copy() : key, value, null);
+                }
+                if (casTabAt(tab, i, _new)) {
                     break;                   // no lock when adding to empty bin
+                }
             } else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
             else {
@@ -1568,15 +1574,18 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
                                 }
                                 Node<K, V> pred = e;
                                 if ((e = e.next) == null) {
-                                    pred.next = new Node<>(hash, key,
-                                            value, null);
+                                    if (_new == null) {
+                                        pred.next = new Node<>(hash, key instanceof CloneableMutable ? ((CloneableMutable) key).copy() : key, value, null);
+                                    } else {
+                                        pred.next = _new;
+                                    }
                                     break;
                                 }
                             }
                         } else if (f instanceof TreeBin) {
                             Node<K, V> p;
                             binCount = 2;
-                            if ((p = ((TreeBin<K, V>) f).putTreeVal(hash, key,
+                            if ((p = ((TreeBin<K, V>) f).putTreeVal(hash, key instanceof CloneableMutable ? ((CloneableMutable) key).copy() : key,
                                     value)) != null) {
                                 oldVal = p.val;
                                 if (!onlyIfAbsent)
@@ -2374,40 +2383,6 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
         }
 
         /**
-         * Returns matching node or null if none. Tries to search
-         * using tree comparisons from root, but continues linear
-         * search when lock not available.
-         */
-        final Node<K, V> find(int h, Object k) {
-            if (k != null) {
-                for (Node<K, V> e = first; e != null; ) {
-                    int s;
-                    K ek;
-                    if (((s = lockState) & (WAITER | WRITER)) != 0) {
-                        if (e.hash == h &&
-                                ((ek = e.key) == k || (ek != null && k.equals(ek))))
-                            return e;
-                        e = e.next;
-                    } else if (U.compareAndSwapInt(this, LOCKSTATE, s,
-                            s + READER)) {
-                        TreeNode<K, V> r, p;
-                        try {
-                            p = ((r = root) == null ? null :
-                                    r.findTreeNode(h, k, null));
-                        } finally {
-                            Thread w;
-                            if (U.getAndAddInt(this, LOCKSTATE, -READER) ==
-                                    (READER | WAITER) && (w = waiter) != null)
-                                LockSupport.unpark(w);
-                        }
-                        return p;
-                    }
-                }
-            }
-            return null;
-        }
-
-        /**
          * Possibly blocks awaiting root lock.
          */
         private void contendedLock() {
@@ -2436,9 +2411,6 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             if (!U.compareAndSwapInt(this, LOCKSTATE, 0, WRITER))
                 contendedLock(); // offload to separate method
         }
-
-        /* ------------------------------------------------------------ */
-        // Red-black tree methods, all adapted from CLR
 
         /**
          * Finds or adds a node.
@@ -2607,7 +2579,6 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             assert checkInvariants(root);
             return false;
         }
-
         /**
          * Releases write lock for tree restructuring.
          */
@@ -2615,9 +2586,43 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             lockState = 0;
         }
 
+        /**
+         * Returns matching node or null if none. Tries to search
+         * using tree comparisons from root, but continues linear
+         * search when lock not available.
+         */
+        final Node<K, V> find(int h, Object k) {
+            if (k != null) {
+                for (Node<K, V> e = first; e != null; ) {
+                    int s;
+                    K ek;
+                    if (((s = lockState) & (WAITER | WRITER)) != 0) {
+                        if (e.hash == h &&
+                                ((ek = e.key) == k || (ek != null && k.equals(ek))))
+                            return e;
+                        e = e.next;
+                    } else if (U.compareAndSwapInt(this, LOCKSTATE, s,
+                            s + READER)) {
+                        TreeNode<K, V> r, p;
+                        try {
+                            p = ((r = root) == null ? null :
+                                    r.findTreeNode(h, k, null));
+                        } finally {
+                            Thread w;
+                            if (U.getAndAddInt(this, LOCKSTATE, -READER) ==
+                                    (READER | WAITER) && (w = waiter) != null)
+                                LockSupport.unpark(w);
+                        }
+                        return p;
+                    }
+                }
+            }
+            return null;
+        }
+
         static {
             try {
-                U = sun.misc.Unsafe.getUnsafe();
+                U = Unsafe.getUnsafe();
                 Class<?> k = TreeBin.class;
                 LOCKSTATE = U.objectFieldOffset
                         (k.getDeclaredField("lockState"));
@@ -2627,6 +2632,9 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
         }
 
 
+
+        /* ------------------------------------------------------------ */
+        // Red-black tree methods, all adapted from CLR
     }
 
     /**
@@ -2912,14 +2920,6 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
         public abstract boolean contains(Object o);
 
         /**
-         * Removes all of the elements from this view, by removing all
-         * the mappings from the map backing this view.
-         */
-        public final void clear() {
-            map.clear();
-        }
-
-        /**
          * Returns an iterator over the elements in this collection.
          * <p>
          * <p>The returned iterator is
@@ -2953,9 +2953,6 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             return (i == n) ? r : Arrays.copyOf(r, i);
         }
 
-        // implementations below rely on concrete classes supplying these
-        // abstract methods
-
         @NotNull
         @SuppressWarnings("unchecked")
         public final <T> T[] toArray(@NotNull T[] a) {
@@ -2986,6 +2983,18 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
             }
             return (i == n) ? r : Arrays.copyOf(r, i);
         }
+
+        /**
+         * Removes all of the elements from this view, by removing all
+         * the mappings from the map backing this view.
+         */
+        public final void clear() {
+            map.clear();
+        }
+
+
+        // implementations below rely on concrete classes supplying these
+        // abstract methods
 
 
         public abstract boolean remove(Object o);

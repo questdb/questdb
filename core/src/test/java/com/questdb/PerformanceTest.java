@@ -30,8 +30,6 @@ import com.questdb.factory.Factory;
 import com.questdb.factory.ReaderFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
 import com.questdb.model.Quote;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
@@ -40,6 +38,8 @@ import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.query.api.QueryAllBuilder;
 import com.questdb.query.api.QueryHeadBuilder;
 import com.questdb.std.LongList;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.Interval;
 import com.questdb.store.KVIndex;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
@@ -66,13 +66,13 @@ public class PerformanceTest extends AbstractTest {
     public void testAllBySymbolValueOverInterval() throws JournalException, NumericException {
 
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
-            TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
+            TestUtils.generateQuoteData(w, TEST_DATA_SIZE, DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
 
         try (Journal<Quote> journal = getFactory().reader(Quote.class)) {
             int count = 1000;
-            Interval interval = new Interval(Dates.parseDateTime("2013-10-15T10:00:00.000Z"), Dates.parseDateTime("2013-10-05T10:00:00.000Z"));
+            Interval interval = new Interval(DateFormatUtils.parseDateTime("2013-10-15T10:00:00.000Z"), DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z"));
             long t = 0;
             QueryAllBuilder<Quote> builder = journal.query().all().withKeys("LLOY.L").slice(interval);
             for (int i = -1000; i < count; i++) {
@@ -90,7 +90,7 @@ public class PerformanceTest extends AbstractTest {
     public void testAllBySymbolValueOverIntervalNew() throws JournalException, ParserException, InterruptedException, NumericException {
 
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
-            TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
+            TestUtils.generateQuoteData(w, TEST_DATA_SIZE, DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
 
@@ -181,7 +181,7 @@ public class PerformanceTest extends AbstractTest {
                 if (i == 0) {
                     t = System.nanoTime();
                 }
-                TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
+                TestUtils.generateQuoteData(w, TEST_DATA_SIZE, DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
                 w.commit();
             }
 
@@ -248,7 +248,7 @@ public class PerformanceTest extends AbstractTest {
     public void testLatestBySymbol() throws JournalException, NumericException {
 
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {
-            TestUtils.generateQuoteData(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
+            TestUtils.generateQuoteData(w, TEST_DATA_SIZE, DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
             w.commit();
         }
 
@@ -276,7 +276,7 @@ public class PerformanceTest extends AbstractTest {
                 if (i == 0) {
                     t = System.nanoTime();
                 }
-                TestUtils.generateQuoteData2(w, TEST_DATA_SIZE, Dates.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
+                TestUtils.generateQuoteData2(w, TEST_DATA_SIZE, DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
                 w.commit();
             }
             long result = System.nanoTime() - t;

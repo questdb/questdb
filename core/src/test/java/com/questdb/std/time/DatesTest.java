@@ -51,110 +51,120 @@ public class DatesTest {
 
     @Test
     public void testAddDaysPrevEpoch() throws Exception {
-        long millis = Dates.parseDateTime("1888-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.addDays(millis, 24));
+        long millis = DateFormatUtils.parseDateTime("1888-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addDays(millis, 24));
         TestUtils.assertEquals("1888-06-05T23:45:51.045Z", sink);
     }
 
     @Test
     public void testAddMonths() throws Exception {
-        long millis = Dates.parseDateTime("2008-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.addMonths(millis, -10));
+        long millis = DateFormatUtils.parseDateTime("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addMonths(millis, -10));
         TestUtils.assertEquals("2007-07-12T23:45:51.045Z", sink);
     }
 
     @Test
     public void testAddMonthsPrevEpoch() throws Exception {
-        long millis = Dates.parseDateTime("1888-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.addMonths(millis, -10));
+        long millis = DateFormatUtils.parseDateTime("1888-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addMonths(millis, -10));
         TestUtils.assertEquals("1887-07-12T23:45:51.045Z", sink);
     }
 
     @Test
     public void testAddYears() throws Exception {
-        long millis = Dates.parseDateTime("1988-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.addYear(millis, 10));
+        long millis = DateFormatUtils.parseDateTime("1988-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addYear(millis, 10));
         TestUtils.assertEquals("1998-05-12T23:45:51.045Z", sink);
     }
 
     @Test
     public void testAddYearsPrevEpoch() throws Exception {
-        long millis = Dates.parseDateTime("1888-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.addYear(millis, 10));
+        long millis = DateFormatUtils.parseDateTime("1888-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addYear(millis, 10));
         TestUtils.assertEquals("1898-05-12T23:45:51.045Z", sink);
     }
 
     @Test
     public void testCeilDD() throws Exception {
-        long millis = Dates.parseDateTime("2008-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.ceilDD(millis));
+        long millis = DateFormatUtils.parseDateTime("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.ceilDD(millis));
         TestUtils.assertEquals("2008-05-12T23:59:59.999Z", sink);
     }
 
     @Test
     public void testCeilDDPrevEpoch() throws Exception {
-        long millis = Dates.parseDateTime("1888-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.ceilDD(millis));
+        long millis = DateFormatUtils.parseDateTime("1888-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.ceilDD(millis));
         TestUtils.assertEquals("1888-05-12T23:59:59.999Z", sink);
     }
 
     @Test
     public void testCeilMM() throws Exception {
-        long millis = Dates.parseDateTime("2008-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.ceilMM(millis));
+        long millis = DateFormatUtils.parseDateTime("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.ceilMM(millis));
         TestUtils.assertEquals("2008-05-31T23:59:59.999Z", sink);
     }
 
     @Test
     public void testCeilYYYY() throws Exception {
-        long millis = Dates.parseDateTime("2008-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.ceilYYYY(millis));
+        long millis = DateFormatUtils.parseDateTime("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.ceilYYYY(millis));
         TestUtils.assertEquals("2008-12-31T23:59:59.999Z", sink);
     }
 
     @Test
+    public void testDayOfWeek() throws Exception {
+        long millis = DateFormatUtils.parseDateTime("1893-03-19T17:16:30.192Z");
+        Assert.assertEquals(7, Dates.getDayOfWeek(millis));
+        Assert.assertEquals(1, Dates.getDayOfWeekSundayFirst(millis));
+        millis = DateFormatUtils.parseDateTime("2017-04-09T17:16:30.192Z");
+        Assert.assertEquals(7, Dates.getDayOfWeek(millis));
+        Assert.assertEquals(1, Dates.getDayOfWeekSundayFirst(millis));
+    }
+
+    @Test
     public void testFloorDD() throws Exception {
-        long millis = Dates.parseDateTime("2008-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.floorDD(millis));
+        long millis = DateFormatUtils.parseDateTime("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.floorDD(millis));
         TestUtils.assertEquals("2008-05-12T00:00:00.000Z", sink);
     }
 
     @Test
     public void testFloorHH() throws Exception {
-        long millis = Dates.parseDateTime("2008-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.floorHH(millis));
+        long millis = DateFormatUtils.parseDateTime("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.floorHH(millis));
         TestUtils.assertEquals("2008-05-12T23:00:00.000Z", sink);
     }
 
     @Test
     public void testFloorMM() throws Exception {
-        long millis = Dates.parseDateTime("2008-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.floorMM(millis));
+        long millis = DateFormatUtils.parseDateTime("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.floorMM(millis));
         TestUtils.assertEquals("2008-05-01T00:00:00.000Z", sink);
     }
 
     @Test
     public void testFloorYYYY() throws Exception {
-        long millis = Dates.parseDateTime("2008-05-12T23:45:51.045Z");
-        Dates.appendDateTime(sink, Dates.floorYYYY(millis));
+        long millis = DateFormatUtils.parseDateTime("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.floorYYYY(millis));
         TestUtils.assertEquals("2008-01-01T00:00:00.000Z", sink);
     }
 
     @Test
     public void testFormatCalDate1() throws Exception {
-        Dates.formatDashYYYYMMDD(sink, Dates.parseDateTime("2008-05-10T12:31:02.008Z"));
+        DateFormatUtils.formatDashYYYYMMDD(sink, DateFormatUtils.parseDateTime("2008-05-10T12:31:02.008Z"));
         TestUtils.assertEquals("2008-05-10", sink);
     }
 
     @Test
     public void testFormatCalDate2() throws Exception {
-        Dates.formatYYYYMM(sink, Dates.parseDateTime("2008-05-10T12:31:02.008Z"));
+        DateFormatUtils.formatYYYYMM(sink, DateFormatUtils.parseDateTime("2008-05-10T12:31:02.008Z"));
         TestUtils.assertEquals("2008-05", sink);
     }
 
     @Test
     public void testFormatCalDate3() throws Exception {
-        Dates.formatYYYYMMDD(sink, Dates.parseDateTime("2008-05-10T12:31:02.008Z"));
+        DateFormatUtils.formatYYYYMMDD(sink, DateFormatUtils.parseDateTime("2008-05-10T12:31:02.008Z"));
         TestUtils.assertEquals("20080510", sink);
     }
 
@@ -168,19 +178,19 @@ public class DatesTest {
 
     @Test
     public void testFormatHTTP() throws Exception {
-        Dates.formatHTTP(sink, Dates.parseDateTime("2015-12-05T12:34:55.332Z"));
+        DateFormatUtils.formatHTTP(sink, DateFormatUtils.parseDateTime("2015-12-05T12:34:55.332Z"));
         TestUtils.assertEquals("Sat, 5 Dec 2015 12:34:55 GMT", sink);
     }
 
     @Test
     public void testFormatHTTP2() throws Exception {
-        Dates.formatHTTP(sink, Dates.parseDateTime("2015-12-05T12:04:55.332Z"));
+        DateFormatUtils.formatHTTP(sink, DateFormatUtils.parseDateTime("2015-12-05T12:04:55.332Z"));
         TestUtils.assertEquals("Sat, 5 Dec 2015 12:04:55 GMT", sink);
     }
 
     @Test
     public void testFormatMMMDYYYY() throws NumericException {
-        Dates.formatMMMDYYYY(sink, Dates.parseDateTime("2008-05-10T12:31:02.008Z"));
+        DateFormatUtils.formatMMMDYYYY(sink, DateFormatUtils.parseDateTime("2008-05-10T12:31:02.008Z"));
         TestUtils.assertEquals("May 10 2008", sink);
     }
 
@@ -213,24 +223,24 @@ public class DatesTest {
     @Test
     public void testNExtOrSameDow3() throws Exception {
         // thursday
-        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
-        Dates.appendDateTime(sink, Dates.nextOrSameDayOfWeek(millis, 4));
+        long millis = DateFormatUtils.parseDateTime("2017-04-06T00:00:00.000Z");
+        DateFormatUtils.appendDateTime(sink, Dates.nextOrSameDayOfWeek(millis, 4));
         TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
     }
 
     @Test
     public void testNextOrSameDow1() throws Exception {
         // thursday
-        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
-        Dates.appendDateTime(sink, Dates.nextOrSameDayOfWeek(millis, 3));
+        long millis = DateFormatUtils.parseDateTime("2017-04-06T00:00:00.000Z");
+        DateFormatUtils.appendDateTime(sink, Dates.nextOrSameDayOfWeek(millis, 3));
         TestUtils.assertEquals("2017-04-12T00:00:00.000Z", sink);
     }
 
     @Test
     public void testNextOrSameDow2() throws Exception {
         // thursday
-        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
-        Dates.appendDateTime(sink, Dates.nextOrSameDayOfWeek(millis, 6));
+        long millis = DateFormatUtils.parseDateTime("2017-04-06T00:00:00.000Z");
+        DateFormatUtils.appendDateTime(sink, Dates.nextOrSameDayOfWeek(millis, 6));
         TestUtils.assertEquals("2017-04-08T00:00:00.000Z", sink);
     }
 
@@ -262,103 +272,93 @@ public class DatesTest {
 
     @Test
     public void testParseDateFmt2() throws Exception {
-        long date = Dates.parseDateTimeFmt2("02/24/2014");
+        long date = DateFormatUtils.parseDateTimeFmt2("02/24/2014");
         TestUtils.assertEquals("2014-02-24T00:00:00.000Z", Dates.toString(date));
     }
 
     @Test
     public void testParseDateFmt3() throws Exception {
-        long date = Dates.parseDateTimeFmt3("24/02/2014");
+        long date = DateFormatUtils.parseDateTimeFmt3("24/02/2014");
         TestUtils.assertEquals("2014-02-24T00:00:00.000Z", Dates.toString(date));
     }
 
     @Test
     public void testParseDateTime() throws Exception {
         String date = "2008-02-29T10:54:01.010Z";
-        Dates.appendDateTime(sink, Dates.parseDateTime(date));
+        DateFormatUtils.appendDateTime(sink, DateFormatUtils.parseDateTime(date));
         TestUtils.assertEquals(date, sink);
     }
 
     @Test
     public void testParseDateTimePrevEpoch() throws Exception {
         String date = "1812-02-29T10:54:01.010Z";
-        Dates.appendDateTime(sink, Dates.parseDateTime(date));
+        DateFormatUtils.appendDateTime(sink, DateFormatUtils.parseDateTime(date));
         TestUtils.assertEquals(date, sink);
     }
 
     @Test(expected = NumericException.class)
     public void testParseWrongDay() throws Exception {
-        Dates.parseDateTime("2013-09-31T00:00:00.000Z");
+        DateFormatUtils.parseDateTime("2013-09-31T00:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)
     public void testParseWrongHour() throws Exception {
-        Dates.parseDateTime("2013-09-30T24:00:00.000Z");
+        DateFormatUtils.parseDateTime("2013-09-30T24:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)
     public void testParseWrongMillis() throws Exception {
-        Dates.parseDateTime("2013-09-30T22:04:34.1024Z");
+        DateFormatUtils.parseDateTime("2013-09-30T22:04:34.1024Z");
     }
 
     @Test(expected = NumericException.class)
     public void testParseWrongMinute() throws Exception {
-        Dates.parseDateTime("2013-09-30T22:61:00.000Z");
+        DateFormatUtils.parseDateTime("2013-09-30T22:61:00.000Z");
     }
 
     @Test(expected = NumericException.class)
     public void testParseWrongMonth() throws Exception {
-        Dates.parseDateTime("2013-00-12T00:00:00.000Z");
+        DateFormatUtils.parseDateTime("2013-00-12T00:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)
     public void testParseWrongSecond() throws Exception {
-        Dates.parseDateTime("2013-09-30T22:04:60.000Z");
+        DateFormatUtils.parseDateTime("2013-09-30T22:04:60.000Z");
     }
 
     @Test
     public void testPreviousOrSameDow1() throws Exception {
         // thursday
-        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
-        Dates.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 3));
+        long millis = DateFormatUtils.parseDateTime("2017-04-06T00:00:00.000Z");
+        DateFormatUtils.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 3));
         TestUtils.assertEquals("2017-04-05T00:00:00.000Z", sink);
     }
 
     @Test
     public void testPreviousOrSameDow2() throws Exception {
         // thursday
-        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
-        Dates.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 6));
+        long millis = DateFormatUtils.parseDateTime("2017-04-06T00:00:00.000Z");
+        DateFormatUtils.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 6));
         TestUtils.assertEquals("2017-04-01T00:00:00.000Z", sink);
     }
 
     @Test
     public void testPreviousOrSameDow3() throws Exception {
         // thursday
-        long millis = Dates.parseDateTime("2017-04-06T00:00:00.000Z");
-        Dates.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 4));
+        long millis = DateFormatUtils.parseDateTime("2017-04-06T00:00:00.000Z");
+        DateFormatUtils.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 4));
         TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
     }
 
-    @Test
-    public void testDayOfWeek() throws Exception {
-        long millis = Dates.parseDateTime("1893-03-19T17:16:30.192Z");
-        Assert.assertEquals(7, Dates.getDayOfWeek(millis));
-        Assert.assertEquals(1, Dates.getDayOfWeekSundayFirst(millis));
-        millis = Dates.parseDateTime("2017-04-09T17:16:30.192Z");
-        Assert.assertEquals(7, Dates.getDayOfWeek(millis));
-        Assert.assertEquals(1, Dates.getDayOfWeekSundayFirst(millis));
-    }
-
     private void assertTrue(String date) throws NumericException {
-        Dates.appendDateTime(sink, Dates.parseDateTime(date));
+        DateFormatUtils.appendDateTime(sink, DateFormatUtils.parseDateTime(date));
         TestUtils.assertEquals(date, sink);
         sink.clear();
     }
 
     private void expectExceptionDateTime(String s) {
         try {
-            Dates.parseDateTime(s);
+            DateFormatUtils.parseDateTime(s);
             Assert.fail("Expected exception");
         } catch (NumericException ignore) {
         }

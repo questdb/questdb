@@ -26,13 +26,13 @@ package com.questdb.ql;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.latest.HeapMergingRowSource;
 import com.questdb.ql.impl.latest.KvIndexSymLookupRowSource;
 import com.questdb.ql.impl.latest.MergingRowSource;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,7 +42,7 @@ public class MergingRowSourceTest extends AbstractTest {
     @Test
     public void testHeapMerge() throws JournalException, NumericException {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
-            TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
+            TestUtils.generateQuoteData(w, 100000, DateFormatUtils.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
 
             RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);
             RowSource srcB = new KvIndexSymLookupRowSource("sym", "WTB.L", true);
@@ -67,7 +67,7 @@ public class MergingRowSourceTest extends AbstractTest {
     @Test
     public void testMerge() throws JournalException, NumericException {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
-            TestUtils.generateQuoteData(w, 100000, Dates.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
+            TestUtils.generateQuoteData(w, 100000, DateFormatUtils.parseDateTime("2014-02-11T00:00:00.000Z"), 10);
 
             RowSource srcA = new KvIndexSymLookupRowSource("sym", "BP.L", true);
             RowSource srcB = new KvIndexSymLookupRowSource("sym", "WTB.L", true);

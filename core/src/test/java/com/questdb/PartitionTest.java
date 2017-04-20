@@ -25,9 +25,9 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
-import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
 import com.questdb.model.Quote;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.Interval;
 import com.questdb.store.BSearchType;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
@@ -39,10 +39,10 @@ public class PartitionTest extends AbstractTest {
     public void testIndexOf() throws JournalException, NumericException {
         try (JournalWriter<Quote> journal = getFactory().writer(Quote.class)) {
 
-            long ts1 = Dates.parseDateTime("2012-06-05T00:00:00.000");
-            long ts2 = Dates.parseDateTime("2012-07-03T00:00:00.000");
-            long ts3 = Dates.parseDateTime("2012-06-04T00:00:00.000");
-            long ts4 = Dates.parseDateTime("2012-06-06T00:00:00.000");
+            long ts1 = DateFormatUtils.parseDateTime("2012-06-05T00:00:00.000Z");
+            long ts2 = DateFormatUtils.parseDateTime("2012-07-03T00:00:00.000Z");
+            long ts3 = DateFormatUtils.parseDateTime("2012-06-04T00:00:00.000Z");
+            long ts4 = DateFormatUtils.parseDateTime("2012-06-06T00:00:00.000Z");
 
             Quote q9 = new Quote().setSym("S5").setTimestamp(ts3);
             Quote q10 = new Quote().setSym("S5").setTimestamp(ts4);
@@ -71,20 +71,20 @@ public class PartitionTest extends AbstractTest {
 
             Assert.assertEquals(2, journal.getPartitionCount());
 
-            long tsA = Dates.parseDateTime("2012-06-15T00:00:00.000");
+            long tsA = DateFormatUtils.parseDateTime("2012-06-15T00:00:00.000Z");
 
             Partition<Quote> partition1 = getPartitionForTimestamp(journal, tsA).open();
             Assert.assertNotNull("getPartition(timestamp) failed", partition1);
 
             Assert.assertEquals(-2, partition1.indexOf(tsA, BSearchType.NEWER_OR_SAME));
-            Assert.assertEquals(-1, partition1.indexOf(Dates.parseDateTime("2012-06-03T00:00:00.000"), BSearchType.OLDER_OR_SAME));
-            Assert.assertEquals(0, partition1.indexOf(Dates.parseDateTime("2012-06-03T00:00:00.000"), BSearchType.NEWER_OR_SAME));
+            Assert.assertEquals(-1, partition1.indexOf(DateFormatUtils.parseDateTime("2012-06-03T00:00:00.000Z"), BSearchType.OLDER_OR_SAME));
+            Assert.assertEquals(0, partition1.indexOf(DateFormatUtils.parseDateTime("2012-06-03T00:00:00.000Z"), BSearchType.NEWER_OR_SAME));
 
             Assert.assertEquals(4, partition1.indexOf(ts1, BSearchType.OLDER_OR_SAME));
             Assert.assertEquals(1, partition1.indexOf(ts1, BSearchType.NEWER_OR_SAME));
 
             Partition<Quote> p = journal.openOrCreateLagPartition();
-            long result = p.indexOf(Dates.parseDateTime("2012-06-15T00:00:00.000"), BSearchType.OLDER_OR_SAME);
+            long result = p.indexOf(DateFormatUtils.parseDateTime("2012-06-15T00:00:00.000Z"), BSearchType.OLDER_OR_SAME);
             Assert.assertEquals(-1, result);
         }
     }

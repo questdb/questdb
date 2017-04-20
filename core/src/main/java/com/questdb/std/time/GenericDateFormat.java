@@ -18,7 +18,7 @@ public class GenericDateFormat extends AbstractDateFormat {
     }
 
     @Override
-    public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) throws NumericException {
+    public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
         int day = -1;
         int month = -1;
         int year = Integer.MIN_VALUE;
@@ -538,8 +538,13 @@ public class GenericDateFormat extends AbstractDateFormat {
                     year = adjustYear(Numbers.parseInt(in, pos, pos += 2));
                     break;
                 case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
-                    assertRemaining(pos + 3, hi);
-                    year = Numbers.parseInt(in, pos, pos += 4);
+                    if (pos < hi && in.charAt(pos) == '-') {
+                        assertRemaining(pos + 4, hi);
+                        year = -Numbers.parseInt(in, pos + 1, pos += 5);
+                    } else {
+                        assertRemaining(pos + 3, hi);
+                        year = Numbers.parseInt(in, pos, pos += 4);
+                    }
                     break;
                 case DateFormatCompiler.OP_YEAR_GREEDY:
                     l = DateFormatUtils.parseYearGreedy(in, pos, hi);

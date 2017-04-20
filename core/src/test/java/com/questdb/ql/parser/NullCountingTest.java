@@ -26,9 +26,9 @@ package com.questdb.ql.parser;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Rnd;
+import com.questdb.std.time.DateFormatUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -74,7 +74,7 @@ public class NullCountingTest extends AbstractOptimiserTest {
                 }
             }
 
-            long timestamp = Dates.parseDateTime("2014-05-04T10:30:00.000Z");
+            long timestamp = DateFormatUtils.parseDateTime("2014-05-04T10:30:00.000Z");
             int tsIncrement = 10000;
 
             int orderId = 0;

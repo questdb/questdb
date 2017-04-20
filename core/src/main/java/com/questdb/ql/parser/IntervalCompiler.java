@@ -25,11 +25,12 @@ package com.questdb.ql.parser;
 
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
 import com.questdb.misc.Numbers;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.Dates;
+import com.questdb.std.time.Interval;
 
 public class IntervalCompiler {
 
@@ -137,7 +138,7 @@ public class IntervalCompiler {
                 }
 
                 try {
-                    long millis = Dates.tryParse(seq, lo, lim);
+                    long millis = DateFormatUtils.tryParse(seq, lo, lim);
                     append(out, millis, millis);
                     break;
                 } catch (NumericException e) {
@@ -375,7 +376,7 @@ public class IntervalCompiler {
             // try date instead
         }
         try {
-            long loMillis = Dates.tryParse(seq, lo, p - 1);
+            long loMillis = DateFormatUtils.tryParse(seq, lo, p);
             append(out, loMillis, Dates.addPeriod(loMillis, type, period));
         } catch (NumericException e) {
             throw QueryError.$(position, "Neither interval nor date");

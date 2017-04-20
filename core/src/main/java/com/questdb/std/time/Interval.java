@@ -45,7 +45,7 @@ public class Interval implements Sinkable {
     }
 
     public Interval(CharSequence lo, CharSequence hi) throws NumericException {
-        this(Dates.parseDateTime(lo), Dates.parseDateTime(hi));
+        this(DateFormatUtils.parseDateTime(lo), DateFormatUtils.parseDateTime(hi));
     }
 
     public Interval(long millis, int partitionBy) {
@@ -73,17 +73,17 @@ public class Interval implements Sinkable {
         long millis;
         switch (partitionBy) {
             case PartitionBy.YEAR:
-                millis = Dates.parseDateTime(dir + "-01-01T00:00:00.000Z");
+                millis = DateFormatUtils.parseDateTime(dir + "-01-01T00:00:00.000Z");
                 this.lo = Dates.floorYYYY(millis);
                 this.hi = Dates.ceilYYYY(millis);
                 break;
             case PartitionBy.MONTH:
-                millis = Dates.parseDateTime(dir + "-01T00:00:00.000Z");
+                millis = DateFormatUtils.parseDateTime(dir + "-01T00:00:00.000Z");
                 this.lo = Dates.floorMM(millis);
                 this.hi = Dates.ceilMM(millis);
                 break;
             case PartitionBy.DAY:
-                millis = Dates.parseDateTime(dir + "T00:00:00.000Z");
+                millis = DateFormatUtils.parseDateTime(dir + "T00:00:00.000Z");
                 this.lo = Dates.floorDD(millis);
                 this.hi = Dates.ceilDD(millis);
                 break;
@@ -104,13 +104,13 @@ public class Interval implements Sinkable {
         StringSink sink = new StringSink();
         switch (partitionBy) {
             case PartitionBy.YEAR:
-                Dates.formatYYYY(sink, lo);
+                DateFormatUtils.formatYYYY(sink, lo);
                 break;
             case PartitionBy.MONTH:
-                Dates.formatYYYYMM(sink, lo);
+                DateFormatUtils.formatYYYYMM(sink, lo);
                 break;
             case PartitionBy.DAY:
-                Dates.formatDashYYYYMMDD(sink, lo);
+                DateFormatUtils.formatDashYYYYMMDD(sink, lo);
                 break;
             default:
                 return "default";

@@ -27,10 +27,10 @@ import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.factory.WriterFactory;
 import com.questdb.iter.*;
-import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
 import com.questdb.model.Quote;
 import com.questdb.std.ObjList;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.Interval;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -90,8 +90,8 @@ public class IteratorTest extends AbstractTest {
     @Test
     public void testEmptyPartitionFollowedByNonEmpty() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
-            w.getAppendPartition(Dates.parseDateTime("2012-01-10T10:00:00.000Z"));
-            w.append(new Quote().setSym("TST").setTimestamp(Dates.parseDateTime("2012-02-10T10:00:00.000Z")));
+            w.getAppendPartition(DateFormatUtils.parseDateTime("2012-01-10T10:00:00.000Z"));
+            w.append(new Quote().setSym("TST").setTimestamp(DateFormatUtils.parseDateTime("2012-02-10T10:00:00.000Z")));
             Assert.assertTrue(w.iterator().hasNext());
         }
     }

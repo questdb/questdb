@@ -25,10 +25,10 @@ package com.questdb.ql.ops.gt;
 
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.std.time.Dates;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.parser.QueryError;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.ColumnType;
 
 public class DateToStrCmpBaseOperator extends AbstractBinaryOperator {
@@ -53,7 +53,7 @@ public class DateToStrCmpBaseOperator extends AbstractBinaryOperator {
             alwaysFalse = true;
         } else {
             try {
-                date = Dates.parseDateTime(cs);
+                date = DateFormatUtils.parseDateTime(cs);
                 super.setRhs(rhs);
             } catch (NumericException e) {
                 throw QueryError.$(rhs.getPosition(), "Not a date");

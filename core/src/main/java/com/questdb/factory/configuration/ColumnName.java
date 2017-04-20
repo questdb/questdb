@@ -25,10 +25,11 @@ package com.questdb.factory.configuration;
 
 import com.questdb.misc.Chars;
 import com.questdb.std.ThreadLocal;
+import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.str.FlyweightCharSequence;
 import org.jetbrains.annotations.NotNull;
 
-public class ColumnName implements CharSequence {
+public class ColumnName extends AbstractCharSequence {
     private static final ThreadLocal<ColumnName> SINGLETON = new ThreadLocal<>(ColumnName::new);
     private final FlyweightCharSequence alias = new FlyweightCharSequence();
     private final FlyweightCharSequence name = new FlyweightCharSequence();
@@ -58,13 +59,6 @@ public class ColumnName implements CharSequence {
         return Chars.equals(alias, that.alias()) && Chars.equals(name, that.name());
     }
 
-    @Override
-    public
-    @NotNull
-    String toString() {
-        return underlying == null ? "null" : underlying.toString();
-    }
-
     public boolean isNull() {
         return alias.length() == 0 && name.length() == 0;
     }
@@ -79,13 +73,15 @@ public class ColumnName implements CharSequence {
         return underlying.charAt(index);
     }
 
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        throw new UnsupportedOperationException();
-    }
-
     public CharSequence name() {
         return name;
+    }
+
+    @Override
+    public
+    @NotNull
+    String toString() {
+        return underlying == null ? "null" : underlying.toString();
     }
 
     private void of(CharSequence that) {

@@ -26,22 +26,23 @@ package com.questdb.net.http;
 import com.questdb.Journal;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
-import com.questdb.ex.FatalError;
-import com.questdb.ex.NumericException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.factory.FactoryEventListener;
 import com.questdb.factory.WriterFactory;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.*;
+import com.questdb.misc.ByteBuffers;
+import com.questdb.misc.Chars;
+import com.questdb.misc.Misc;
+import com.questdb.misc.Numbers;
 import com.questdb.net.ha.AbstractJournalTest;
 import com.questdb.net.http.handlers.ImportHandler;
 import com.questdb.net.http.handlers.StaticContentHandler;
 import com.questdb.net.http.handlers.UploadHandler;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
-import com.questdb.std.time.Dates;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.HttpTestUtils;
 import com.questdb.test.tools.TestUtils;
@@ -227,14 +228,9 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testFragmentedUrl() throws Exception {
+        final long tick = DateFormatUtils.parseDateTime("2015-12-05T13:30:00.000Z");
         HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher());
-        server.setClock(() -> {
-            try {
-                return Dates.parseDateTime("2015-12-05T13:30:00.000Z");
-            } catch (NumericException ignore) {
-                throw new FatalError(ignore);
-            }
-        });
+        server.setClock(() -> tick);
         server.start();
 
         try (SocketChannel channel = openChannel()) {

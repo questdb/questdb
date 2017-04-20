@@ -26,6 +26,7 @@ package com.questdb.std;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.str.AbstractCharSequence;
 import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
@@ -499,7 +500,7 @@ public class VirtualMemory implements Closeable {
         Unsafe.getUnsafe().freeMemory(address);
     }
 
-    public class CharSequenceView implements CharSequence {
+    public class CharSequenceView extends AbstractCharSequence {
         private long offset;
         private int len;
         private int lastIndex;
@@ -524,11 +525,6 @@ public class VirtualMemory implements Closeable {
             }
             lastIndex = index;
             return c;
-        }
-
-        @Override
-        public CharSequence subSequence(int start, int end) {
-            throw new UnsupportedOperationException();
         }
 
         void of(long offset, int len) {

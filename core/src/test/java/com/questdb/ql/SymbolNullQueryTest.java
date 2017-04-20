@@ -27,11 +27,11 @@ import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.std.time.Dates;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.ObjList;
+import com.questdb.std.time.DateFormatUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -63,7 +63,7 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
 
         int tsIncrementMax = 10000;
 
-        long timestamp = Dates.parseDateTime("2015-03-23T00:00:00.000Z");
+        long timestamp = DateFormatUtils.parseDateTime("2015-03-23T00:00:00.000Z");
 
         Rnd rnd = new Rnd();
         ObjList<String> tags = new ObjList<>();
@@ -82,7 +82,7 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
         quotes.commit();
 
 
-        timestamp = Dates.parseDateTime("2015-03-23T00:00:00.000Z");
+        timestamp = DateFormatUtils.parseDateTime("2015-03-23T00:00:00.000Z");
 
         for (int i = 0; i < tradeCount; i++) {
             JournalEntryWriter w = trades.entryWriter();

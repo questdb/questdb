@@ -29,7 +29,7 @@ import com.questdb.misc.*;
 import com.questdb.std.IntObjHashMap;
 import com.questdb.std.Mutable;
 import com.questdb.std.str.CharSink;
-import com.questdb.std.time.Dates;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.txt.sink.AbstractCharSink;
 
 import java.io.Closeable;
@@ -106,7 +106,7 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         put("HTTP/1.1 ").put(code).put(' ').put(status).put(Misc.EOL);
         put("Server: ").put("questDB/1.0").put(Misc.EOL);
         put("Date: ");
-        Dates.formatHTTP(this, clock.getTicks());
+        DateFormatUtils.formatHTTP(this, clock.getTicks());
         put(Misc.EOL);
         if (contentLength > -2) {
             if (this.chunky = (contentLength == -1)) {

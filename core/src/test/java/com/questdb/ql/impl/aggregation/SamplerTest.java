@@ -23,7 +23,7 @@
 
 package com.questdb.ql.impl.aggregation;
 
-import com.questdb.std.time.Dates;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
@@ -43,7 +43,7 @@ public class SamplerTest {
     public void testDays() throws Exception {
         TimestampSampler sampler = SamplerFactory.from("2d");
         Assert.assertNotNull(sampler);
-        Dates.appendDateTime(sink, sampler.resample(Dates.parseDateTime("2015-04-03T09:04:45.000Z")));
+        DateFormatUtils.appendDateTime(sink, sampler.resample(DateFormatUtils.parseDateTime("2015-04-03T09:04:45.000Z")));
         TestUtils.assertEquals("2015-04-03T00:00:00.000Z", sink);
     }
 
@@ -51,7 +51,7 @@ public class SamplerTest {
     public void testHours() throws Exception {
         TimestampSampler sampler = SamplerFactory.from("3h");
         Assert.assertNotNull(sampler);
-        Dates.appendDateTime(sink, sampler.resample(Dates.parseDateTime("2015-04-10T10:04:45.000Z")));
+        DateFormatUtils.appendDateTime(sink, sampler.resample(DateFormatUtils.parseDateTime("2015-04-10T10:04:45.000Z")));
         TestUtils.assertEquals("2015-04-10T09:00:00.000Z", sink);
     }
 
@@ -64,12 +64,12 @@ public class SamplerTest {
     public void testMinutes() throws Exception {
         TimestampSampler sampler = SamplerFactory.from("3m");
         Assert.assertNotNull(sampler);
-        Dates.appendDateTime(sink, sampler.resample(Dates.parseDateTime("2015-04-10T10:04:45.000Z")));
+        DateFormatUtils.appendDateTime(sink, sampler.resample(DateFormatUtils.parseDateTime("2015-04-10T10:04:45.000Z")));
         TestUtils.assertEquals("2015-04-10T10:03:00.000Z", sink);
 
         sink.clear();
 
-        Dates.appendDateTime(sink, sampler.resample(Dates.parseDateTime("2015-04-10T10:07:15.000Z")));
+        DateFormatUtils.appendDateTime(sink, sampler.resample(DateFormatUtils.parseDateTime("2015-04-10T10:07:15.000Z")));
         TestUtils.assertEquals("2015-04-10T10:06:00.000Z", sink);
     }
 
@@ -77,7 +77,7 @@ public class SamplerTest {
     public void testMonths() throws Exception {
         TimestampSampler sampler = SamplerFactory.from("3M");
         Assert.assertNotNull(sampler);
-        Dates.appendDateTime(sink, sampler.resample(Dates.parseDateTime("2015-07-03T09:04:45.000Z")));
+        DateFormatUtils.appendDateTime(sink, sampler.resample(DateFormatUtils.parseDateTime("2015-07-03T09:04:45.000Z")));
         TestUtils.assertEquals("2015-07-01T00:00:00.000Z", sink);
     }
 
@@ -90,7 +90,7 @@ public class SamplerTest {
     public void testSeconds() throws Exception {
         TimestampSampler sampler = SamplerFactory.from("15s");
         Assert.assertNotNull(sampler);
-        Dates.appendDateTime(sink, sampler.resample(Dates.parseDateTime("2015-04-10T10:04:48.100Z")));
+        DateFormatUtils.appendDateTime(sink, sampler.resample(DateFormatUtils.parseDateTime("2015-04-10T10:04:48.100Z")));
         TestUtils.assertEquals("2015-04-10T10:04:45.000Z", sink);
         sink.clear();
     }
@@ -99,7 +99,7 @@ public class SamplerTest {
     public void testYear() throws Exception {
         TimestampSampler sampler = SamplerFactory.from("Y");
         Assert.assertNotNull(sampler);
-        Dates.appendDateTime(sink, sampler.resample(Dates.parseDateTime("2015-07-03T09:04:45.000Z")));
+        DateFormatUtils.appendDateTime(sink, sampler.resample(DateFormatUtils.parseDateTime("2015-07-03T09:04:45.000Z")));
         TestUtils.assertEquals("2015-01-01T00:00:00.000Z", sink);
     }
 
