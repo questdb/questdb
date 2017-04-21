@@ -89,48 +89,47 @@ class BootstrapMain {
             return;
         }
 
+        BootstrapEnv env = new BootstrapEnv();
         // main configuration
-        final ServerConfiguration configuration = new ServerConfiguration(conf);
-        configureLoggers(configuration);
+        env.configuration = new ServerConfiguration(conf);
+        configureLoggers(env.configuration);
 
         // reader/writer factory and cache
-        final Factory factory = new Factory(
-                configuration.getDbPath().getAbsolutePath(),
-                configuration.getDbPoolIdleTimeout(),
-                configuration.getDbReaderPoolSize(),
-                configuration.getDbPoolIdleCheckInterval()
+        env.factory = new Factory(
+                env.configuration.getDbPath().getAbsolutePath(),
+                env.configuration.getDbPoolIdleTimeout(),
+                env.configuration.getDbReaderPoolSize(),
+                env.configuration.getDbPoolIdleCheckInterval()
         );
 
-        // monitoring setup
-        final FactoryEventLogger factoryEventLogger = new FactoryEventLogger(factory, 10000000, 5000, MilliClock.INSTANCE);
-
         // URL matcher configuration
-        final SimpleUrlMatcher matcher = new SimpleUrlMatcher();
-        matcher.put("/imp", new ImportHandler(configuration, factory));
-        matcher.put("/exec", new QueryHandler(factory, configuration));
-        matcher.put("/exp", new CsvHandler(factory, configuration));
-        matcher.put("/chk", new ExistenceCheckHandler(factory));
-        matcher.setDefaultHandler(new StaticContentHandler(configuration));
+        env.matcher = new SimpleUrlMatcher();
+        env.matcher.put("/imp", new ImportHandler(env));
+        env.matcher.put("/exec", new QueryHandler(env));
+        env.matcher.put("/exp", new CsvHandler(env));
+        env.matcher.put("/chk", new ExistenceCheckHandler(env));
+        env.matcher.setDefaultHandler(new StaticContentHandler(env));
 
         // server configuration
         // add all other jobs to server as it will be scheduling workers to do them
-        final HttpServer server = new HttpServer(configuration, matcher);
+        final HttpServer server = new HttpServer(env);
+        // monitoring setup
+        final FactoryEventLogger factoryEventLogger = new FactoryEventLogger(env.factory, 10000000, 5000, MilliClock.INSTANCE);
         ObjHashSet<Job> jobs = server.getJobs();
-
         jobs.addAll(LogFactory.INSTANCE.getJobs());
         jobs.add(factoryEventLogger);
-        factory.exportJobs(jobs);
+        env.factory.exportJobs(jobs);
 
         // welcome message
         StringBuilder welcome = Misc.getThreadLocalBuilder();
-        if (!server.start(configuration.getHttpQueueDepth())) {
-            welcome.append("Could not bind socket ").append(configuration.getHttpIP()).append(':').append(configuration.getHttpPort());
+        if (!server.start()) {
+            welcome.append("Could not bind socket ").append(env.configuration.getHttpIP()).append(':').append(env.configuration.getHttpPort());
             welcome.append(". Already running?");
             System.err.println(welcome);
             System.out.println(new Date() + " QuestDB failed to start");
         } else {
-            welcome.append("Listening on ").append(configuration.getHttpIP()).append(':').append(configuration.getHttpPort());
-            if (configuration.getSslConfig().isSecure()) {
+            welcome.append("Listening on ").append(env.configuration.getHttpIP()).append(':').append(env.configuration.getHttpPort());
+            if (env.configuration.getSslConfig().isSecure()) {
                 welcome.append(" [HTTPS]");
             } else {
                 welcome.append(" [HTTP plain]");
@@ -149,7 +148,7 @@ class BootstrapMain {
                 System.out.println(new Date() + " QuestDB is shutting down");
                 server.halt();
                 factoryEventLogger.close();
-                factory.close();
+                env.factory.close();
             }));
         }
     }

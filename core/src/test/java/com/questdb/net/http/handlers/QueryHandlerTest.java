@@ -24,6 +24,7 @@
 package com.questdb.net.http.handlers;
 
 import com.google.gson.GsonBuilder;
+import com.questdb.BootstrapEnv;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
@@ -57,14 +58,21 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
     @BeforeClass
     public static void setUp() throws Exception {
         final ServerConfiguration serverConfiguration = new ServerConfiguration();
-        serverConfiguration.setHttpThreads(1);
-        handler = new QueryHandler(FACTORY_CONTAINER.getFactory(), serverConfiguration);
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = serverConfiguration;
+        env.configuration.setHttpThreads(1);
+        env.factory = FACTORY_CONTAINER.getFactory();
 
-        server = new HttpServer(serverConfiguration, new SimpleUrlMatcher() {{
+        handler = new QueryHandler(env);
+
+        env.matcher = new SimpleUrlMatcher() {{
             put("/js", handler);
-            put("/chk", new ExistenceCheckHandler(FACTORY_CONTAINER.getFactory()));
-            put("/csv", new CsvHandler(FACTORY_CONTAINER.getFactory(), serverConfiguration));
-        }});
+            put("/chk", new ExistenceCheckHandler(env));
+            put("/csv", new CsvHandler(env));
+        }};
+
+
+        server = new HttpServer(env);
 
         server.start();
         generateJournal();

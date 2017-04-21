@@ -23,7 +23,7 @@
 
 package com.questdb.net.http;
 
-interface UrlMatcher {
+public interface UrlMatcher {
     ContextHandler get(CharSequence url);
 
     void setupHandlers();

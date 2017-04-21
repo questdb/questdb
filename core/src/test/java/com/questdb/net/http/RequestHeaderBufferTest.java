@@ -31,7 +31,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class RequestHeaderBufferTest {
-    private final static String request = "GET /status?x=1&a=%26b HTTP/1.1\r\n" +
+    private final static String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
             "Host: localhost:9000\r\n" +
             "Connection: keep-alive\r\n" +
             "Cache-Control: max-age=0\r\n" +
@@ -42,6 +42,23 @@ public class RequestHeaderBufferTest {
             "Accept-Language: en-US,en;q=0.8\r\n" +
             "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
             "\r\n";
+
+    @Test
+    public void testDanglingUrlParamWithoutValue() throws Exception {
+        String request = "GET /status?accept HTTP/1.1\r\n" +
+                "Host: localhost:9000\r\n" +
+                "\r\n";
+        ObjectPool<DirectByteCharSequence> pool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
+        try (RequestHeaderBuffer hb = new RequestHeaderBuffer(4 * 1024, pool)) {
+            long p = TestUtils.toMemory(request);
+            try {
+                hb.write(p, request.length(), true);
+                TestUtils.assertEquals("", hb.getUrlParam("accept"));
+            } finally {
+                Unsafe.free(p, request.length());
+            }
+        }
+    }
 
     @Test
     public void testSplitWrite() throws Exception {
@@ -78,7 +95,7 @@ public class RequestHeaderBufferTest {
     private void assertHeaders(RequestHeaderBuffer hb) {
         TestUtils.assertEquals("GET", hb.getMethod());
         TestUtils.assertEquals("/status", hb.getUrl());
-        TestUtils.assertEquals("GET /status?x=1&a=&b HTTP/1.1", hb.getMethodLine());
+        TestUtils.assertEquals("GET /status?x=1&a=&b&c&d=x HTTP/1.1", hb.getMethodLine());
         Assert.assertEquals(9, hb.size());
         TestUtils.assertEquals("localhost:9000", hb.get("Host"));
         TestUtils.assertEquals("keep-alive", hb.get("Connection"));
@@ -91,6 +108,7 @@ public class RequestHeaderBufferTest {
         TestUtils.assertEquals("textwrapon=false; textautoformat=false; wysiwyg=textarea", hb.get("Cookie"));
         TestUtils.assertEquals("1", hb.getUrlParam("x"));
         TestUtils.assertEquals("&b", hb.getUrlParam("a"));
+        TestUtils.assertEquals("", hb.getUrlParam("c"));
         Assert.assertNull(hb.get("xxx"));
     }
 }

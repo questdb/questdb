@@ -81,6 +81,8 @@ public final class Misc {
                     if (name != null) {
                         map.put(name, pool.next().of(_lo, wp));
                         name = null;
+                    } else if (_lo < wp) {
+                        map.put(pool.next().of(_lo, wp), "");
                     }
                     _lo = rp - offset;
                     break;
@@ -104,8 +106,12 @@ public final class Misc {
             Unsafe.getUnsafe().putByte(wp++, (byte) b);
         }
 
-        if (_lo < wp && name != null) {
-            map.put(name, pool.next().of(_lo, wp));
+        if (_lo < wp) {
+            if (name != null) {
+                map.put(name, pool.next().of(_lo, wp));
+            } else {
+                map.put(pool.next().of(_lo, wp), "");
+            }
         }
 
         return offset;

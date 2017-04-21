@@ -24,6 +24,7 @@
 package com.questdb.net.http.handlers;
 
 import com.google.gson.JsonSyntaxException;
+import com.questdb.BootstrapEnv;
 import com.questdb.net.http.HttpServer;
 import com.questdb.net.http.QueryResponse;
 import com.questdb.net.http.ServerConfiguration;
@@ -45,12 +46,18 @@ public class QueryHandlerSmallBufferTest extends AbstractOptimiserTest {
 
     @BeforeClass
     public static void setUp() throws Exception {
-        handler = new QueryHandler(FACTORY_CONTAINER.getFactory(), new ServerConfiguration());
-        ServerConfiguration configuration = new ServerConfiguration();
-        configuration.setHttpBufRespContent(128);
-        server = new HttpServer(configuration, new SimpleUrlMatcher() {{
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.configuration.setHttpBufRespContent(128);
+        env.factory = FACTORY_CONTAINER.getFactory();
+
+        handler = new QueryHandler(env);
+
+        env.matcher = new SimpleUrlMatcher() {{
             put("/js", handler);
-        }});
+        }};
+
+        server = new HttpServer(env);
 
         server.start();
         QueryHandlerTest.generateJournal("large", RECORD_COUNT);
@@ -69,7 +76,7 @@ public class QueryHandlerSmallBufferTest extends AbstractOptimiserTest {
         }
 
         String allCharString = allChars.toString();
-        QueryHandlerTest.generateJournal("xyz", allCharString, 1.900232E-10, 2.598E20, Long.MAX_VALUE, Integer.MIN_VALUE, new Timestamp(-102023));
+        QueryHandlerTest.generateJournal("xyz", allCharString, 4.900232E-10, 2.598E20, Long.MAX_VALUE, Integer.MIN_VALUE, new Timestamp(-102023));
         String query = "select x, id from xyz \n limit 1";
         QueryHandlerTest.download(query, temp);
     }

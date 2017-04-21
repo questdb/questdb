@@ -23,6 +23,7 @@
 
 package com.questdb.net.http.handlers;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.iter.clock.MilliClock;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
@@ -53,12 +54,18 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
 
     @Test
     public void testCsvHandlerConsistency() throws Exception {
-        testHandler(new CsvHandler(FACTORY_CONTAINER.getFactory(), new ServerConfiguration()));
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.factory = FACTORY_CONTAINER.getFactory();
+        testHandler(new CsvHandler(env));
     }
 
     @Test
     public void testCsvOutput() throws Exception {
-        ContextHandler handler = new CsvHandler(FACTORY_CONTAINER.getFactory(), new ServerConfiguration());
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.factory = FACTORY_CONTAINER.getFactory();
+        ContextHandler handler = new CsvHandler(env);
         handler.setupThread();
         TestChannel channel = new TestChannel(QUERY1);
         String expected = "\"id\",\"x\",\"y\",\"z\",\"w\",\"timestamp\"\r\n" +

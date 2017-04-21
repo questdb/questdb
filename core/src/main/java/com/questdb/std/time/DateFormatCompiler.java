@@ -889,12 +889,6 @@ public class DateFormatCompiler {
                     asm.istore(LOCAL_YEAR);
                     break;
                 case OP_YEAR_FOUR_DIGITS: {
-                    // assertRemaining(pos + 3, hi);
-                    // year = Numbers.parseInt(in, pos, pos += 4);
-//                    stackState &= ~(1 << LOCAL_YEAR);
-//                    parseDigits(assertRemainingIndex, parseIntIndex, 4, LOCAL_YEAR);
-
-
                     // if (pos < hi && in.charAt(pos) == '-') {
                     //    assertRemaining(pos + 4, hi);
                     //    year = -Numbers.parseInt(in, pos + 1, pos += 5);

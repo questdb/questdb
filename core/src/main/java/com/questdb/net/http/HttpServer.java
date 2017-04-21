@@ -23,6 +23,7 @@
 
 package com.questdb.net.http;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.ex.FatalError;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.NetworkError;
@@ -58,13 +59,13 @@ public class HttpServer {
     private Dispatcher<IOContext> dispatcher;
     private RingQueue<Event<IOContext>> ioQueue;
 
-    public HttpServer(final ServerConfiguration configuration, UrlMatcher urlMatcher) {
+    public HttpServer(BootstrapEnv env) {
+        this.configuration = env.configuration;
         this.address = new InetSocketAddress(configuration.getHttpIP(), configuration.getHttpPort());
-        this.urlMatcher = urlMatcher;
+        this.urlMatcher = env.matcher;
         this.workerCount = configuration.getHttpThreads();
         this.haltLatch = new CountDownLatch(workerCount);
         this.workers = new ObjList<>(workerCount);
-        this.configuration = configuration;
         this.contextFactory = (fd, clock) -> new IOContext(new NetworkChannelImpl(fd), configuration, clock);
     }
 
@@ -99,15 +100,15 @@ public class HttpServer {
         this.clock = clock;
     }
 
-    public boolean start(int queueDepth) {
+    public boolean start() {
         this.running = true;
-        ioQueue = new RingQueue<>(EVENT_FACTORY, queueDepth);
+        ioQueue = new RingQueue<>(EVENT_FACTORY, configuration.getHttpQueueDepth());
         SPSequence ioPubSequence = new SPSequence(ioQueue.getCapacity());
         MCSequence ioSubSequence = new MCSequence(ioQueue.getCapacity(), null);
         ioPubSequence.then(ioSubSequence).then(ioPubSequence);
 
         try {
-            this.dispatcher = createDispatcher("0.0.0.0", address.getPort(), ioQueue, ioPubSequence, clock, configuration, queueDepth);
+            this.dispatcher = createDispatcher(address.getHostName(), address.getPort(), ioQueue, ioPubSequence, clock, configuration);
         } catch (NetworkError e) {
             LOG.error().$("Server failed to start: ").$(e.getMessage()).$();
             running = false;
@@ -128,18 +129,13 @@ public class HttpServer {
         return true;
     }
 
-    public void start() {
-        start(1024);
-    }
-
     private Dispatcher<IOContext> createDispatcher(
             CharSequence ip,
             int port,
             RingQueue<Event<IOContext>> ioQueue,
             Sequence ioSequence,
             Clock clock,
-            ServerConfiguration configuration,
-            int capacity
+            ServerConfiguration configuration
     ) {
 
         switch (Os.type) {
@@ -152,7 +148,7 @@ public class HttpServer {
                         ioQueue,
                         ioSequence,
                         clock,
-                        capacity,
+                        configuration.getHttpQueueDepth(),
                         EVENT_FACTORY,
                         contextFactory
                 );
@@ -165,7 +161,7 @@ public class HttpServer {
                         ioQueue,
                         ioSequence,
                         clock,
-                        capacity,
+                        configuration.getHttpQueueDepth(),
                         EVENT_FACTORY,
                         contextFactory
                 );
@@ -178,7 +174,7 @@ public class HttpServer {
                         ioQueue,
                         ioSequence,
                         clock,
-                        capacity,
+                        configuration.getHttpQueueDepth(),
                         EVENT_FACTORY,
                         contextFactory
                 );

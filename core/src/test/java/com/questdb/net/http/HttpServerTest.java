@@ -23,6 +23,7 @@
 
 package com.questdb.net.http;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.Journal;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
@@ -113,9 +114,13 @@ public class HttpServerTest extends AbstractJournalTest {
         configuration.getSslConfig().setSecure(true);
         configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
 
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration));
-        }});
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = configuration;
+        env.matcher = new SimpleUrlMatcher() {{
+            setDefaultHandler(new StaticContentHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
         server.start();
         try {
             HttpTestUtils.download(clientBuilder(true), "https://localhost:9000/upload.html", new File(temp.getRoot(), "upload.html"));
@@ -126,10 +131,14 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testConcurrentImport() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration();
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, getFactory()));
-        }});
+        final BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.factory = getFactory();
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
         server.start();
 
         final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -172,11 +181,14 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testConnectionCount() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
-        configuration.setHttpMaxConnections(10);
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration));
-        }});
+        final BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        env.configuration.setHttpMaxConnections(10);
+        env.matcher = new SimpleUrlMatcher() {{
+            setDefaultHandler(new StaticContentHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
         server.start();
 
         try {
@@ -212,11 +224,14 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testDefaultDirIndex() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
-        configuration.getSslConfig().setSecure(false);
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration));
-        }});
+        final BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        env.configuration.getSslConfig().setSecure(false);
+        env.matcher = new SimpleUrlMatcher() {{
+            setDefaultHandler(new StaticContentHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
 
         server.start();
         try {
@@ -229,7 +244,11 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testFragmentedUrl() throws Exception {
         final long tick = DateFormatUtils.parseDateTime("2015-12-05T13:30:00.000Z");
-        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher());
+        final BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.matcher = new SimpleUrlMatcher();
+
+        HttpServer server = new HttpServer(env);
         server.setClock(() -> tick);
         server.start();
 
@@ -279,14 +298,16 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testIdleTimeout() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        final BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
         // 500ms timeout
-        configuration.setHttpTimeout(500);
-        configuration.getSslConfig().setSecure(false);
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration));
+        env.configuration.setHttpTimeout(500);
+        env.configuration.getSslConfig().setSecure(false);
+        env.matcher = new SimpleUrlMatcher() {{
+            setDefaultHandler(new StaticContentHandler(env));
+        }};
 
-        }});
+        HttpServer server = new HttpServer(env);
         server.start();
 
         try {
@@ -323,9 +344,14 @@ public class HttpServerTest extends AbstractJournalTest {
             return true;
         });
 
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, getFactory()));
-        }});
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = configuration;
+        env.factory = getFactory();
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
         server.start();
 
         try {
@@ -345,16 +371,20 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportForcedHeader() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration();
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, getFactory()));
-        }});
+
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.factory = getFactory();
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(env));
+        }};
+        HttpServer server = new HttpServer(env);
         server.start();
 
         try {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(configuration);
+            QueryCompiler qc = new QueryCompiler(env.configuration);
 
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-explicit-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true&forceHeader=true", null, null));
             printer.print(qc.compile(getFactory(), "select count() from 'test-import.csv'"), getFactory());
@@ -368,10 +398,13 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testImportIntoBusyJournal() throws Exception {
         try (JournalWriter ignored = getFactory().writer(new JournalStructure("test-import.csv").$int("x").$())) {
-            final ServerConfiguration configuration = new ServerConfiguration();
-            HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-                put("/imp", new ImportHandler(configuration, getFactory()));
-            }});
+            BootstrapEnv env = new BootstrapEnv();
+            env.configuration = new ServerConfiguration();
+            env.factory = getFactory();
+            env.matcher = new SimpleUrlMatcher() {{
+                put("/imp", new ImportHandler(env));
+            }};
+            HttpServer server = new HttpServer(env);
             server.start();
 
             StringBuilder response = new StringBuilder();
@@ -397,10 +430,14 @@ public class HttpServerTest extends AbstractJournalTest {
             ew.append();
             w.commit();
 
-            final ServerConfiguration configuration = new ServerConfiguration();
-            HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-                put("/imp", new ImportHandler(configuration, getFactory()));
-            }});
+            BootstrapEnv env = new BootstrapEnv();
+            env.configuration = new ServerConfiguration();
+            env.factory = getFactory();
+            env.matcher = new SimpleUrlMatcher() {{
+                put("/imp", new ImportHandler(env));
+            }};
+
+            HttpServer server = new HttpServer(env);
             server.start();
 
             StringBuilder response = new StringBuilder();
@@ -418,15 +455,20 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testImportNoHeader() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, getFactory()));
-        }});
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = configuration;
+        env.factory = getFactory();
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
         server.start();
 
         try {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(configuration);
+            QueryCompiler qc = new QueryCompiler(env.configuration);
 
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-explicit-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true", null, null));
             printer.print(qc.compile(getFactory(), "select count() from 'test-import.csv'"), getFactory());
@@ -439,18 +481,23 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testImportNumberPrefixedColumn() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, getFactory()));
-        }});
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = configuration;
+        env.factory = getFactory();
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
         server.start();
 
         try {
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-num-prefix.csv", "http://localhost:9000/imp?fmt=json", null, null));
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(configuration);
-            try (RecordSource rs = qc.compile(getFactory(), "select count(StrSym), count(IntSym), count(_1IntCol), count(long), count() from 'test-import-num-prefix.csv'")) {
-                printer.print(rs, getFactory());
+            QueryCompiler qc = new QueryCompiler(env.configuration);
+            try (RecordSource rs = qc.compile(env.factory, "select count(StrSym), count(IntSym), count(_1IntCol), count(long), count() from 'test-import-num-prefix.csv'")) {
+                printer.print(rs, env.factory);
             }
             TestUtils.assertEquals("126\t126\t128\t129\t129\n", sink);
         } finally {
@@ -460,16 +507,20 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportNumericHeader() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration();
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, getFactory()));
-        }});
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.factory = getFactory();
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
         server.start();
 
         try {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(configuration);
+            QueryCompiler qc = new QueryCompiler(env.configuration);
 
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-numeric-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true&forceHeader=true", null, null));
             printer.print(qc.compile(getFactory(), "select count() from 'test-import.csv'"), getFactory());
@@ -483,15 +534,20 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testImportOverwrite() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, getFactory()));
-        }});
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = configuration;
+        env.factory = getFactory();
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
         server.start();
 
         try {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(configuration);
+            QueryCompiler qc = new QueryCompiler(env.configuration);
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null, null));
             printer.print(qc.compile(getFactory(), "select count() from 'test-import.csv'"), getFactory());
             TestUtils.assertEquals("129\n", sink);
@@ -507,10 +563,14 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportUnknownFormat() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration();
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, getFactory()));
-        }});
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.factory = getFactory();
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
 
         server.start();
         StringBuilder response = new StringBuilder();
@@ -526,10 +586,14 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportWrongType() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration();
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, getFactory()));
-        }});
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.factory = getFactory();
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
 
         server.start();
 
@@ -538,16 +602,16 @@ public class HttpServerTest extends AbstractJournalTest {
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", "IsoDate=DATE_ISO", null));
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(configuration);
-            RecordSource src1 = qc.compile(getFactory(), "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'");
+            QueryCompiler qc = new QueryCompiler(env.configuration);
+            RecordSource src1 = qc.compile(env.factory, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'");
             try {
-                printer.print(src1, getFactory());
+                printer.print(src1, env.factory);
                 TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
             } finally {
                 Misc.free(src1);
             }
 
-            RecordSource src2 = qc.compile(getFactory(), "'test-import.csv'");
+            RecordSource src2 = qc.compile(env.factory, "'test-import.csv'");
             try {
                 Assert.assertEquals(ColumnType.DOUBLE, src2.getMetadata().getColumn("IntCol").getType());
             } finally {
@@ -560,10 +624,13 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportWrongTypeStrictAtomicity() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration();
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            put("/imp", new ImportHandler(configuration, getFactory()));
-        }});
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.factory = getFactory();
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(env));
+        }};
+        HttpServer server = new HttpServer(env);
 
         server.start();
 
@@ -571,10 +638,10 @@ public class HttpServerTest extends AbstractJournalTest {
             Assert.assertEquals(400, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?atomicity=strict", "IsoDate=DATE_ISO&IntCol=DATE_ISO", null));
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(configuration);
-            RecordSource src1 = qc.compile(getFactory(), "select count() from 'test-import.csv'");
+            QueryCompiler qc = new QueryCompiler(env.configuration);
+            RecordSource src1 = qc.compile(env.factory, "select count() from 'test-import.csv'");
             try {
-                printer.print(src1, getFactory());
+                printer.print(src1, env.factory);
                 TestUtils.assertEquals("0\n", sink);
             } finally {
                 Misc.free(src1);
@@ -627,11 +694,13 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testMaxConnections() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
-        configuration.setHttpMaxConnections(1);
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration));
-
-        }});
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = configuration;
+        env.configuration.setHttpMaxConnections(1);
+        env.matcher = new SimpleUrlMatcher() {{
+            setDefaultHandler(new StaticContentHandler(env));
+        }};
+        HttpServer server = new HttpServer(env);
         server.start();
 
         try {
@@ -650,23 +719,29 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testNativeConcurrentDownload() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
-        configuration.getSslConfig().setSecure(false);
-        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration));
-        }});
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = configuration;
+        env.configuration.getSslConfig().setSecure(false);
+        env.matcher = new SimpleUrlMatcher() {{
+            setDefaultHandler(new StaticContentHandler(env));
+        }};
+        final MimeTypes mimeTypes = new MimeTypes(env.configuration.getMimeTypes());
+        HttpServer server = new HttpServer(env);
         server.start();
-
         assertConcurrentDownload(mimeTypes, server, "http");
     }
 
     @Test
     public void testNativeNotModified() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
-        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration));
-        }});
-        assertNotModified(configuration, server);
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        env.configuration.getSslConfig().setSecure(false);
+        env.matcher = new SimpleUrlMatcher() {{
+            setDefaultHandler(new StaticContentHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
+        assertNotModified(env.configuration, server);
     }
 
     @Test
@@ -677,39 +752,47 @@ public class HttpServerTest extends AbstractJournalTest {
     // recv(fd) returns -1 and EWOULDBLOCK and this goes on forever with epoll keep firing fd that has nothing to show
     // fix is in server, which would allow limited number of this iterations after which connection is closed.
     public void testRangesNative() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/questdb.conf"));
-        configuration.setHttpThreads(1);
-        configuration.setHttpSoRetries(10);
-        HttpServer server = new HttpServer(new ServerConfiguration() {
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/questdb.conf")) {
             @Override
             public File getHttpPublic() {
                 return temp.getRoot();
             }
-        }, new SimpleUrlMatcher() {{
-            put("/upload", new UploadHandler(configuration.getHttpPublic()));
-            setDefaultHandler(new StaticContentHandler(configuration));
-        }});
-        assertRanges(configuration, server);
+        };
+        env.configuration.setHttpThreads(1);
+        env.configuration.setHttpSoRetries(10);
+        env.configuration.getSslConfig().setSecure(false);
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/upload", new UploadHandler(env.configuration.getHttpPublic()));
+            setDefaultHandler(new StaticContentHandler(env));
+        }};
+
+        HttpServer server = new HttpServer(env);
+        assertRanges(env.configuration, server);
     }
 
     @Test
     public void testSslConcurrentDownload() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
-        configuration.getSslConfig().setSecure(true);
-        configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
+        env.configuration.getSslConfig().setSecure(true);
+        env.configuration.getSslConfig().setKeyStore(new FileInputStream(resourceFile("/keystore/singlekey.ks")), "changeit");
+        env.matcher = new SimpleUrlMatcher() {{
+            setDefaultHandler(new StaticContentHandler(env));
+        }};
 
-
-        final MimeTypes mimeTypes = new MimeTypes(configuration.getMimeTypes());
-        HttpServer server = new HttpServer(configuration, new SimpleUrlMatcher() {{
-            setDefaultHandler(new StaticContentHandler(configuration));
-        }});
+        final MimeTypes mimeTypes = new MimeTypes(env.configuration.getMimeTypes());
+        HttpServer server = new HttpServer(env);
         server.start();
         assertConcurrentDownload(mimeTypes, server, "https");
     }
 
     @Test
     public void testStartStop() throws Exception {
-        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher());
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.matcher = new SimpleUrlMatcher();
+        HttpServer server = new HttpServer(env);
         server.start();
         server.halt();
     }
@@ -717,14 +800,18 @@ public class HttpServerTest extends AbstractJournalTest {
     @Test
     public void testUpload() throws Exception {
         final File dir = temp.newFolder();
-        HttpServer server = new HttpServer(new ServerConfiguration(), new SimpleUrlMatcher() {{
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.matcher = new SimpleUrlMatcher() {{
             put("/upload", new UploadHandler(dir));
-        }});
+        }};
+
+        HttpServer server = new HttpServer(env);
         server.start();
 
         File expected = resourceFile("/csv/test-import.csv");
         File actual = new File(dir, "test-import.csv");
-        upload(expected, "http://localhost:9000/upload");
+        upload(expected);
 
         TestUtils.assertEquals(expected, actual);
         server.halt();
@@ -765,8 +852,8 @@ public class HttpServerTest extends AbstractJournalTest {
         return new File(HttpServerTest.class.getResource(resource).getFile());
     }
 
-    private static void upload(File file, String url) throws IOException {
-        HttpPost post = new HttpPost(url);
+    private static void upload(File file) throws IOException {
+        HttpPost post = new HttpPost("http://localhost:9000/upload");
         try (CloseableHttpClient client = HttpClients.createDefault()) {
             MultipartEntityBuilder b = MultipartEntityBuilder.create();
             b.addPart("data", new FileBody(file));
@@ -878,7 +965,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
             File out = new File(temp.getRoot(), "out.csv");
 
-            HttpGet get = new HttpGet("http://localhost:9000/large.csv");
+            HttpGet get = new HttpGet("http://localhost:9000/large.csv?attachment");
             get.addHeader("Range", "xyz");
 
             try (CloseableHttpClient client = HttpClients.createDefault()) {
@@ -923,7 +1010,9 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     private File downloadChunked(ServerConfiguration conf, final int count, final int sz, boolean ssl, final boolean compressed) throws Exception {
-        HttpServer server = new HttpServer(conf, new SimpleUrlMatcher() {{
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = conf;
+        env.matcher = new SimpleUrlMatcher() {{
 
             put("/test", new ContextHandler() {
 
@@ -962,8 +1051,9 @@ public class HttpServerTest extends AbstractJournalTest {
                 public void setupThread() {
                 }
             });
-        }});
+        }};
 
+        HttpServer server = new HttpServer(env);
         File out = temp.newFile();
         server.start();
         try {

@@ -23,6 +23,7 @@
 
 package com.questdb.net.http.handlers;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.ex.NumericException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -30,10 +31,7 @@ import com.questdb.misc.*;
 import com.questdb.net.http.*;
 import com.questdb.std.LocalValue;
 import com.questdb.std.Mutable;
-import com.questdb.std.str.CharSink;
-import com.questdb.std.str.FlyweightCharSequence;
-import com.questdb.std.str.LPSZ;
-import com.questdb.std.str.PrefixedPath;
+import com.questdb.std.str.*;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -51,8 +49,8 @@ public class StaticContentHandler implements ContextHandler {
     private final LocalValue<FileDescriptorHolder> lvFd = new LocalValue<>();
     private final ServerConfiguration configuration;
 
-    public StaticContentHandler(ServerConfiguration configuration) throws IOException {
-        this.configuration = configuration;
+    public StaticContentHandler(BootstrapEnv env) throws IOException {
+        this.configuration = env.configuration;
         this.mimeTypes = new MimeTypes(configuration.getMimeTypes());
     }
 
@@ -74,7 +72,7 @@ public class StaticContentHandler implements ContextHandler {
             }
 
             if (Files.exists(path)) {
-                send(context, path, false);
+                send(context, path, context.request.getUrlParam("attachment") != null);
             } else {
                 LOG.info().$("Not found: ").$(path).$();
                 context.simpleResponse().send(404);
@@ -185,8 +183,7 @@ public class StaticContentHandler implements ContextHandler {
                 final CharSink sink = r.headers();
 
                 if (asAttachment) {
-                    //todo: extract name from path
-                    sink.put("Content-Disposition: attachment; filename=\"").put(path).put('\"').put(Misc.EOL);
+                    sink.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put('\"').put(Misc.EOL);
                 }
                 sink.put("Accept-Ranges: bytes").put(Misc.EOL);
                 sink.put("Content-Range: bytes ").put(lo).put('-').put(h.sendMax).put('/').put(length).put(Misc.EOL);

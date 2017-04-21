@@ -23,6 +23,7 @@
 
 package com.questdb.net.http.handlers;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.PartitionBy;
 import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.JournalRuntimeException;
@@ -70,9 +71,9 @@ public class ImportHandler extends AbstractMultipartHandler {
     private final LocalValue<ImportHandlerContext> lvContext = new LocalValue<>();
     private final ServerConfiguration configuration;
 
-    public ImportHandler(ServerConfiguration configuration, Factory factory) {
-        this.factory = factory;
-        this.configuration = configuration;
+    public ImportHandler(BootstrapEnv env) {
+        this.factory = env.factory;
+        this.configuration = env.configuration;
     }
 
     @Override

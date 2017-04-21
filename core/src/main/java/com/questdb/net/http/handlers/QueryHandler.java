@@ -23,6 +23,7 @@
 
 package com.questdb.net.http.handlers;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.ex.SlowWritableChannelException;
@@ -50,6 +51,10 @@ public class QueryHandler implements ContextHandler {
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
     private final ServerConfiguration configuration;
+
+    public QueryHandler(BootstrapEnv env) {
+        this(env.factory, env.configuration);
+    }
 
     public QueryHandler(Factory factory, ServerConfiguration configuration) {
         this.factory = factory;
