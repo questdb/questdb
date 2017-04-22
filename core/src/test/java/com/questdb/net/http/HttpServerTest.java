@@ -48,6 +48,7 @@ import com.questdb.store.ColumnType;
 import com.questdb.test.tools.HttpTestUtils;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
+import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
 import com.questdb.txt.sink.FileSink;
 import com.questdb.txt.sink.StringSink;
 import org.apache.http.Header;
@@ -88,6 +89,7 @@ import java.util.concurrent.locks.LockSupport;
 public class HttpServerTest extends AbstractJournalTest {
 
     private final static Log LOG = LogFactory.getLog(HttpServerTest.class);
+    private final static TypeProbeCollection TYPE_PROBE_COLLECTION = new TypeProbeCollection();
 
     private final static String request = "GET /imp?x=1&z=2 HTTP/1.1\r\n" +
             "Host: localhost:80\r\n" +
@@ -134,6 +136,7 @@ public class HttpServerTest extends AbstractJournalTest {
         final BootstrapEnv env = new BootstrapEnv();
         env.configuration = new ServerConfiguration();
         env.factory = getFactory();
+        env.typeProbeCollection = TYPE_PROBE_COLLECTION;
         env.matcher = new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(env));
         }};
@@ -227,6 +230,7 @@ public class HttpServerTest extends AbstractJournalTest {
         final BootstrapEnv env = new BootstrapEnv();
         env.configuration = new ServerConfiguration(new File(resourceFile("/site"), "conf/questdb.conf"));
         env.configuration.getSslConfig().setSecure(false);
+        env.typeProbeCollection = TYPE_PROBE_COLLECTION;
         env.matcher = new SimpleUrlMatcher() {{
             setDefaultHandler(new StaticContentHandler(env));
         }};
@@ -347,6 +351,7 @@ public class HttpServerTest extends AbstractJournalTest {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = configuration;
         env.factory = getFactory();
+        env.typeProbeCollection = TYPE_PROBE_COLLECTION;
         env.matcher = new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(env));
         }};
@@ -375,6 +380,7 @@ public class HttpServerTest extends AbstractJournalTest {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = new ServerConfiguration();
         env.factory = getFactory();
+        env.typeProbeCollection = TYPE_PROBE_COLLECTION;
         env.matcher = new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(env));
         }};
@@ -401,6 +407,7 @@ public class HttpServerTest extends AbstractJournalTest {
             BootstrapEnv env = new BootstrapEnv();
             env.configuration = new ServerConfiguration();
             env.factory = getFactory();
+            env.typeProbeCollection = TYPE_PROBE_COLLECTION;
             env.matcher = new SimpleUrlMatcher() {{
                 put("/imp", new ImportHandler(env));
             }};
@@ -433,6 +440,7 @@ public class HttpServerTest extends AbstractJournalTest {
             BootstrapEnv env = new BootstrapEnv();
             env.configuration = new ServerConfiguration();
             env.factory = getFactory();
+            env.typeProbeCollection = TYPE_PROBE_COLLECTION;
             env.matcher = new SimpleUrlMatcher() {{
                 put("/imp", new ImportHandler(env));
             }};
@@ -458,6 +466,7 @@ public class HttpServerTest extends AbstractJournalTest {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = configuration;
         env.factory = getFactory();
+        env.typeProbeCollection = TYPE_PROBE_COLLECTION;
         env.matcher = new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(env));
         }};
@@ -484,6 +493,7 @@ public class HttpServerTest extends AbstractJournalTest {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = configuration;
         env.factory = getFactory();
+        env.typeProbeCollection = TYPE_PROBE_COLLECTION;
         env.matcher = new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(env));
         }};
@@ -510,6 +520,7 @@ public class HttpServerTest extends AbstractJournalTest {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = new ServerConfiguration();
         env.factory = getFactory();
+        env.typeProbeCollection = TYPE_PROBE_COLLECTION;
         env.matcher = new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(env));
         }};
@@ -537,6 +548,7 @@ public class HttpServerTest extends AbstractJournalTest {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = configuration;
         env.factory = getFactory();
+        env.typeProbeCollection = TYPE_PROBE_COLLECTION;
         env.matcher = new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(env));
         }};
@@ -589,6 +601,7 @@ public class HttpServerTest extends AbstractJournalTest {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = new ServerConfiguration();
         env.factory = getFactory();
+        env.typeProbeCollection = TYPE_PROBE_COLLECTION;
         env.matcher = new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(env));
         }};
@@ -627,6 +640,7 @@ public class HttpServerTest extends AbstractJournalTest {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = new ServerConfiguration();
         env.factory = getFactory();
+        env.typeProbeCollection = TYPE_PROBE_COLLECTION;
         env.matcher = new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(env));
         }};
@@ -922,7 +936,6 @@ public class HttpServerTest extends AbstractJournalTest {
 
         } finally {
             server.halt();
-            mimeTypes.close();
         }
     }
 
@@ -953,7 +966,6 @@ public class HttpServerTest extends AbstractJournalTest {
             }
         } finally {
             server.halt();
-            new MimeTypes(configuration.getMimeTypes()).close();
         }
     }
 
@@ -1005,7 +1017,6 @@ public class HttpServerTest extends AbstractJournalTest {
             }
         } finally {
             server.halt();
-            new MimeTypes(configuration.getMimeTypes()).close();
         }
     }
 

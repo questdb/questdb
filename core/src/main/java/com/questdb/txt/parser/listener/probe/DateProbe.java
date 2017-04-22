@@ -27,16 +27,16 @@ import com.questdb.ex.NumericException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.txt.ImportedColumnType;
 
-public class DateIsoProbe implements TypeProbe {
+public class DateProbe implements TypeProbe {
     @Override
     public int getType() {
-        return ImportedColumnType.DATE_ISO;
+        return ImportedColumnType.DATE_1;
     }
 
     @Override
     public boolean probe(CharSequence text) {
         try {
-            DateFormatUtils.parseDateTime(text);
+            DateFormatUtils.parseDateTimeFmt1(text);
             return true;
         } catch (NumericException e) {
             return false;

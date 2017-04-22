@@ -23,10 +23,8 @@
 
 package com.questdb.txt.parser.listener.probe;
 
-import com.questdb.txt.ImportedColumnMetadata;
-
 public interface TypeProbe {
-    void getMetadata(ImportedColumnMetadata metadata);
+    int getType();
 
-    boolean probe(CharSequence seq);
+    boolean probe(CharSequence text);
 }

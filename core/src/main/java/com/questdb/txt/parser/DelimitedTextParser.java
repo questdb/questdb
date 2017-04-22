@@ -35,6 +35,7 @@ import com.questdb.txt.SchemaImpl;
 import com.questdb.txt.parser.listener.InputAnalysisListener;
 import com.questdb.txt.parser.listener.Listener;
 import com.questdb.txt.parser.listener.MetadataExtractorListener;
+import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
 
 import java.io.Closeable;
 
@@ -43,7 +44,7 @@ public class DelimitedTextParser implements Closeable, Mutable {
     private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
     private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 16);
     private final ObjectPool<ImportedColumnMetadata> mPool = new ObjectPool<>(ImportedColumnMetadata.FACTORY, 256);
-    private final MetadataExtractorListener mel = new MetadataExtractorListener(mPool);
+    private final MetadataExtractorListener mel;
     private final SchemaImpl schema = new SchemaImpl(csPool, mPool);
     private boolean ignoreEolOnce;
     private char separator;
@@ -63,6 +64,10 @@ public class DelimitedTextParser implements Closeable, Mutable {
     private long lineRollBufPtr = Unsafe.malloc(lineRollBufLen);
     private boolean header;
     private long lastQuotePos = -1;
+
+    public DelimitedTextParser(TypeProbeCollection typeProbeCollection) {
+        this.mel = new MetadataExtractorListener(mPool, typeProbeCollection);
+    }
 
     public void analyseStructure(long addr, int len, int sampleSize, InputAnalysisListener ial, boolean forceHeader) {
         this.schema.parse();

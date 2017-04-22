@@ -29,6 +29,7 @@ import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.ImportManager;
 import com.questdb.txt.parser.DelimitedTextParser;
 import com.questdb.txt.parser.listener.Listener;
+import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
 import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -38,6 +39,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class CsvTest {
+
+    private final TypeProbeCollection typeProbeCollection = new TypeProbeCollection();
 
     @Test
     public void testHeaders() throws Exception {
@@ -52,7 +55,7 @@ public class CsvTest {
 
 
         ImportManager.parse(new File(this.getClass().getResource("/csv/test-headers.csv").getFile())
-                , new DelimitedTextParser().of(',')
+                , new DelimitedTextParser(typeProbeCollection).of(',')
                 , 1024 * 1024
                 , true
                 , new Listener() {
@@ -91,22 +94,22 @@ public class CsvTest {
 
     @Test
     public void testParseDosCsvSmallBuf() throws Exception {
-        assertFile("/csv/test-dos.csv", 10, new DelimitedTextParser().of(','));
+        assertFile("/csv/test-dos.csv", 10, new DelimitedTextParser(typeProbeCollection).of(','));
     }
 
     @Test
     public void testParseTab() throws Exception {
-        assertFile("/csv/test.txt", 1024 * 1024, new DelimitedTextParser().of('\t'));
+        assertFile("/csv/test.txt", 1024 * 1024, new DelimitedTextParser(typeProbeCollection).of('\t'));
     }
 
     @Test
     public void testParseTabSmallBuf() throws Exception {
-        assertFile("/csv/test.txt", 10, new DelimitedTextParser().of('\t'));
+        assertFile("/csv/test.txt", 10, new DelimitedTextParser(typeProbeCollection).of('\t'));
     }
 
     @Test
     public void testParseUnixCsvSmallBuf() throws Exception {
-        assertFile("/csv/test-unix.csv", 10, new DelimitedTextParser().of(','));
+        assertFile("/csv/test-unix.csv", 10, new DelimitedTextParser(typeProbeCollection).of(','));
     }
 
 /*

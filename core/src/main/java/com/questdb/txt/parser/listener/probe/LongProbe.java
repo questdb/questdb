@@ -25,22 +25,21 @@ package com.questdb.txt.parser.listener.probe;
 
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Numbers;
-import com.questdb.txt.ImportedColumnMetadata;
 import com.questdb.txt.ImportedColumnType;
 
 public class LongProbe implements TypeProbe {
     @Override
-    public void getMetadata(ImportedColumnMetadata m) {
-        m.importedColumnType = ImportedColumnType.LONG;
+    public int getType() {
+        return ImportedColumnType.LONG;
     }
 
     @Override
-    public boolean probe(CharSequence seq) {
-        if (seq.length() > 2 && seq.charAt(0) == '0' && seq.charAt(1) != '.') {
+    public boolean probe(CharSequence text) {
+        if (text.length() > 2 && text.charAt(0) == '0' && text.charAt(1) != '.') {
             return false;
         }
         try {
-            Numbers.parseLong(seq);
+            Numbers.parseLong(text);
             return true;
         } catch (NumericException e) {
             return false;

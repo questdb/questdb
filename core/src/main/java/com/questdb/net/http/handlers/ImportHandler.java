@@ -29,13 +29,15 @@ import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.ex.SlowWritableChannelException;
-import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
-import com.questdb.net.http.*;
+import com.questdb.net.http.ChunkedResponse;
+import com.questdb.net.http.IOContext;
+import com.questdb.net.http.RequestHeaderBuffer;
+import com.questdb.net.http.ResponseSink;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.LocalValue;
 import com.questdb.std.LongList;
@@ -67,13 +69,11 @@ public class ImportHandler extends AbstractMultipartHandler {
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final ThreadLocal<FormatParser> PARSER = new ThreadLocal<>();
     private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
-    private final Factory factory;
     private final LocalValue<ImportHandlerContext> lvContext = new LocalValue<>();
-    private final ServerConfiguration configuration;
+    private final BootstrapEnv env;
 
     public ImportHandler(BootstrapEnv env) {
-        this.factory = env.factory;
-        this.configuration = env.configuration;
+        this.env = env;
     }
 
     @Override
@@ -132,8 +132,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                             h.textParser.analyseStructure(lo, len, 100, h.importer, h.forceHeader);
                             h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
                         } catch (JournalRuntimeException e) {
-
-                            if (configuration.isHttpAbortBrokenUploads()) {
+                            if (env.configuration.isHttpAbortBrokenUploads()) {
                                 sendError(context, e.getMessage());
                                 throw e;
                             }
@@ -202,7 +201,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     public void setup(IOContext context) {
         ImportHandlerContext h = lvContext.get(context);
         if (h == null) {
-            lvContext.set(context, new ImportHandlerContext(factory));
+            lvContext.set(context, new ImportHandlerContext(env));
         }
     }
 
@@ -430,15 +429,16 @@ public class ImportHandler extends AbstractMultipartHandler {
         private int state;
         private String stateMessage;
         private boolean analysed = false;
-        private DelimitedTextParser textParser = new DelimitedTextParser();
+        private DelimitedTextParser textParser;
         private JournalImportListener importer;
         private int messagePart = MESSAGE_UNKNOWN;
         private int responseState = RESPONSE_PREFIX;
         private boolean json = false;
         private boolean forceHeader = false;
 
-        private ImportHandlerContext(Factory factory) {
-            this.importer = new JournalImportListener(factory);
+        private ImportHandlerContext(BootstrapEnv env) {
+            this.importer = new JournalImportListener(env.factory);
+            this.textParser = new DelimitedTextParser(env.typeProbeCollection);
         }
 
         @Override

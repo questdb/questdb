@@ -39,6 +39,7 @@ import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.net.http.handlers.*;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjHashSet;
+import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
 import sun.misc.Signal;
 
 import java.io.File;
@@ -93,6 +94,7 @@ class BootstrapMain {
         // main configuration
         env.configuration = new ServerConfiguration(conf);
         configureLoggers(env.configuration);
+        env.typeProbeCollection = new TypeProbeCollection();
 
         // reader/writer factory and cache
         env.factory = new Factory(

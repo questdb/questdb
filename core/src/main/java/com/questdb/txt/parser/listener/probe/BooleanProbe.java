@@ -24,18 +24,17 @@
 package com.questdb.txt.parser.listener.probe;
 
 import com.questdb.misc.Chars;
-import com.questdb.txt.ImportedColumnMetadata;
 import com.questdb.txt.ImportedColumnType;
 
 public class BooleanProbe implements TypeProbe {
 
     @Override
-    public void getMetadata(ImportedColumnMetadata m) {
-        m.importedColumnType = ImportedColumnType.BOOLEAN;
+    public int getType() {
+        return ImportedColumnType.BOOLEAN;
     }
 
     @Override
-    public boolean probe(CharSequence seq) {
-        return Chars.equalsIgnoreCase(seq, "true") || Chars.equalsIgnoreCase(seq, "false");
+    public boolean probe(CharSequence text) {
+        return Chars.equalsIgnoreCase(text, "true") || Chars.equalsIgnoreCase(text, "false");
     }
 }

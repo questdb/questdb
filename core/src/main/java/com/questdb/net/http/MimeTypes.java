@@ -28,79 +28,79 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.str.DirectByteCharSequence;
 
-import java.io.Closeable;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
-public final class MimeTypes extends CharSequenceObjHashMap<CharSequence> implements Closeable {
-    private ByteBuffer buf;
+public final class MimeTypes extends CharSequenceObjHashMap<CharSequence> {
 
     public MimeTypes(File file) throws IOException {
+
+        final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+
         try (FileInputStream fis = new FileInputStream(file)) {
             int sz;
-            buf = ByteBuffer.allocateDirect(sz = fis.available());
+            ByteBuffer buf = ByteBuffer.allocateDirect(sz = fis.available());
+            try {
 
-            fis.getChannel().read(buf);
+                fis.getChannel().read(buf);
 
-            long p = ByteBuffers.getAddress(buf);
-            long hi = p + sz;
-            long _lo = p;
+                long p = ByteBuffers.getAddress(buf);
+                long hi = p + sz;
+                long _lo = p;
 
-            boolean newline = true;
-            boolean comment = false;
+                boolean newline = true;
+                boolean comment = false;
 
-            CharSequence contentType = null;
+                CharSequence contentType = null;
 
-            while (p < hi) {
-                char b = (char) Unsafe.getUnsafe().getByte(p++);
+                while (p < hi) {
+                    char b = (char) Unsafe.getUnsafe().getByte(p++);
 
-                switch (b) {
-                    case '#':
-                        comment = newline;
-                        break;
-                    case ' ':
-                    case '\t':
-                        if (!comment) {
-                            if (newline || _lo == p - 1) {
-                                _lo = p;
-                            } else {
-                                DirectByteCharSequence s = new DirectByteCharSequence().of(_lo, p - 1);
-                                _lo = p;
-                                if (contentType == null) {
-                                    contentType = s;
+                    switch (b) {
+                        case '#':
+                            comment = newline;
+                            break;
+                        case ' ':
+                        case '\t':
+                            if (!comment) {
+                                if (newline || _lo == p - 1) {
+                                    _lo = p;
                                 } else {
-                                    this.put(s, contentType);
+                                    String s = dbcs.of(_lo, p - 1).toString();
+                                    _lo = p;
+                                    if (contentType == null) {
+                                        contentType = s;
+                                    } else {
+                                        this.put(s, contentType);
+                                    }
+                                    newline = false;
                                 }
+                            }
+                            break;
+                        case '\n':
+                        case '\r':
+                            newline = true;
+                            comment = false;
+                            if (_lo < p - 1 && contentType != null) {
+                                String s = dbcs.of(_lo, p - 1).toString();
+                                this.put(s, contentType);
+                            }
+                            contentType = null;
+                            _lo = p;
+                            break;
+                        default:
+                            if (newline) {
                                 newline = false;
                             }
-                        }
-                        break;
-                    case '\n':
-                    case '\r':
-                        newline = true;
-                        comment = false;
-                        if (_lo < p - 1 && contentType != null) {
-                            DirectByteCharSequence s = new DirectByteCharSequence().of(_lo, p - 1);
-                            this.put(s, contentType);
-                        }
-                        contentType = null;
-                        _lo = p;
-                        break;
-                    default:
-                        if (newline) {
-                            newline = false;
-                        }
-                        break;
-                }
+                            break;
+                    }
 
+                }
+            } finally {
+                ByteBuffers.release(buf);
             }
         }
-    }
-
-    @Override
-    public void close() {
-        buf = ByteBuffers.release(buf);
     }
 }

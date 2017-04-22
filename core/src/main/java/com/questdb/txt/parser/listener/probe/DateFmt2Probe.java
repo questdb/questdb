@@ -25,19 +25,18 @@ package com.questdb.txt.parser.listener.probe;
 
 import com.questdb.ex.NumericException;
 import com.questdb.std.time.DateFormatUtils;
-import com.questdb.txt.ImportedColumnMetadata;
 import com.questdb.txt.ImportedColumnType;
 
 public class DateFmt2Probe implements TypeProbe {
     @Override
-    public void getMetadata(ImportedColumnMetadata m) {
-        m.importedColumnType = ImportedColumnType.DATE_2;
+    public int getType() {
+        return ImportedColumnType.DATE_2;
     }
 
     @Override
-    public boolean probe(CharSequence seq) {
+    public boolean probe(CharSequence text) {
         try {
-            DateFormatUtils.parseDateTimeFmt2(seq);
+            DateFormatUtils.parseDateTimeFmt2(text);
             return true;
         } catch (NumericException e) {
             return false;

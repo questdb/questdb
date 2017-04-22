@@ -31,6 +31,7 @@ import com.questdb.txt.parser.DelimitedTextParser;
 import com.questdb.txt.parser.listener.InputAnalysisListener;
 import com.questdb.txt.parser.listener.JournalImportListener;
 import com.questdb.txt.parser.listener.Listener;
+import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -92,7 +93,7 @@ public final class ImportManager {
 
     public static void importFile(Factory factory, String fileName, char delimiter, CharSequence schema, int sampleSize, boolean forceHeader) throws IOException {
 
-        try (DelimitedTextParser parser = new DelimitedTextParser().of(delimiter)) {
+        try (DelimitedTextParser parser = new DelimitedTextParser(new TypeProbeCollection()).of(delimiter)) {
             File file = new File(fileName);
             String location = file.getName();
 

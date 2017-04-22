@@ -28,22 +28,10 @@ import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.txt.ImportedColumnMetadata;
 import com.questdb.txt.ImportedColumnType;
 import com.questdb.txt.Schema;
-import com.questdb.txt.parser.listener.probe.*;
+import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
 import com.questdb.txt.sink.StringSink;
 
 public class MetadataExtractorListener implements Listener, Mutable {
-    // order of probes in array is critical
-    private static final TypeProbe probes[] = new TypeProbe[]{
-            new IntProbe(),
-            new LongProbe(),
-            new DoubleProbe(),
-            new BooleanProbe(),
-            new DateIsoProbe(),
-            new DateFmt1Probe(),
-            new DateFmt2Probe(),
-            new DateFmt3Probe()
-    };
-    private static final int probeCount = probes.length;
     private final StringSink tempSink = new StringSink();
     private final ObjList<ImportedColumnMetadata> _metadata = new ObjList<>();
     private final ObjList<String> _headers = new ObjList<>();
@@ -51,12 +39,14 @@ public class MetadataExtractorListener implements Listener, Mutable {
     private final IntList _histogram = new IntList();
     private final CharSequenceObjHashMap<ImportedColumnMetadata> schemaColumns = new CharSequenceObjHashMap<>();
     private final ObjectPool<ImportedColumnMetadata> mPool;
+    private final TypeProbeCollection typeProbeCollection;
     private int fieldCount;
     private boolean header = false;
     private boolean forceHeader = false;
 
-    public MetadataExtractorListener(ObjectPool<ImportedColumnMetadata> mPool) {
+    public MetadataExtractorListener(ObjectPool<ImportedColumnMetadata> mPool, TypeProbeCollection typeProbeCollection) {
         this.mPool = mPool;
+        this.typeProbeCollection = typeProbeCollection;
     }
 
     @Override
@@ -98,7 +88,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
 
     @Override
     public void onFieldCount(int count) {
-        this._histogram.setAll((fieldCount = count) * probeCount, 0);
+        this._histogram.setAll((fieldCount = count) * typeProbeCollection.getProbeCount(), 0);
         this._blanks.setAll(count, 0);
         for (int i = 0; i < count; i++) {
             this._metadata.add(mPool.next());
@@ -113,14 +103,15 @@ public class MetadataExtractorListener implements Listener, Mutable {
             stashPossibleHeader(values, hi);
         }
 
+        int count = typeProbeCollection.getProbeCount();
         for (int i = 0; i < hi; i++) {
             DirectByteCharSequence cs = values.getQuick(i);
             if (cs.length() == 0) {
                 _blanks.increment(i);
             }
-            int offset = i * probeCount;
-            for (int k = 0; k < probeCount; k++) {
-                if (probes[k].probe(cs)) {
+            int offset = i * count;
+            for (int k = 0; k < count; k++) {
+                if (typeProbeCollection.probe(k, cs)) {
                     _histogram.increment(k + offset);
                 }
             }
@@ -178,6 +169,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
      */
     private boolean calcTypes(int count, boolean setDefault) {
         boolean allStrings = true;
+        int probeCount = typeProbeCollection.getProbeCount();
         for (int i = 0; i < fieldCount; i++) {
             int offset = i * probeCount;
             int blanks = _blanks.getQuick(i);
@@ -187,7 +179,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
             for (int k = 0; k < probeCount; k++) {
                 if (_histogram.getQuick(k + offset) + blanks == count && blanks < count) {
                     unprobed = false;
-                    probes[k].getMetadata(m);
+                    m.importedColumnType = typeProbeCollection.getType(k);
                     if (allStrings) {
                         allStrings = false;
                     }
