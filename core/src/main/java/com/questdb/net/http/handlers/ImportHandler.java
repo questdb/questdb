@@ -437,7 +437,7 @@ public class ImportHandler extends AbstractMultipartHandler {
         private boolean forceHeader = false;
 
         private ImportHandlerContext(BootstrapEnv env) {
-            this.importer = new JournalImportListener(env.factory);
+            this.importer = new JournalImportListener(env);
             this.textParser = new DelimitedTextParser(env.typeProbeCollection);
         }
 

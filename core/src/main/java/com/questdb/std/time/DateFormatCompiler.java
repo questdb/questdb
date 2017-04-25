@@ -125,12 +125,12 @@ public class DateFormatCompiler {
         }
     }
 
-    public DateFormat compile(CharSequence sequence, boolean generic) {
-        return compile(sequence, 0, sequence.length(), generic);
+    public DateFormat compile(CharSequence pattern, boolean generic) {
+        return compile(pattern, 0, pattern.length(), generic);
     }
 
-    public DateFormat compile(CharSequence sequence, int lo, int hi, boolean generic) {
-        this.lexer.setContent(sequence, lo, hi);
+    public DateFormat compile(CharSequence pattern, int lo, int hi, boolean generic) {
+        this.lexer.setContent(pattern, lo, hi);
 
         IntList ops;
         ObjList<String> delimiters;
@@ -1242,6 +1242,9 @@ public class DateFormatCompiler {
         int appendHour12PaddedIndex = asm.poolMethod(dateFormatUtilsClassIndex, "appendHour12Padded", "(Lcom/questdb/std/str/CharSink;I)V");
         int appendHour121Index = asm.poolMethod(dateFormatUtilsClassIndex, "appendHour121", "(Lcom/questdb/std/str/CharSink;I)V");
         int appendHour121PaddedIndex = asm.poolMethod(dateFormatUtilsClassIndex, "appendHour121Padded", "(Lcom/questdb/std/str/CharSink;I)V");
+        int append000Index = asm.poolMethod(dateFormatUtilsClassIndex, "append000", "(Lcom/questdb/std/str/CharSink;I)V");
+        int append00Index = asm.poolMethod(dateFormatUtilsClassIndex, "append00", "(Lcom/questdb/std/str/CharSink;I)V");
+        int append0Index = asm.poolMethod(dateFormatUtilsClassIndex, "append0", "(Lcom/questdb/std/str/CharSink;I)V");
 
         int parseOffsetIndex = asm.poolMethod(datesClassIndex, "parseOffset", "(Ljava/lang/CharSequence;II)J");
         int getYearIndex = asm.poolMethod(datesClassIndex, "getYear", "(J)I");
@@ -1253,9 +1256,6 @@ public class DateFormatCompiler {
         int getSecondOfMinuteIndex = asm.poolMethod(datesClassIndex, "getSecondOfMinute", "(J)I");
         int getMillisOfSecondIndex = asm.poolMethod(datesClassIndex, "getMillisOfSecond", "(J)I");
         int getDayOfWeekIndex = asm.poolMethod(datesClassIndex, "getDayOfWeekSundayFirst", "(J)I");
-        int append000Index = asm.poolMethod(datesClassIndex, "append000", "(Lcom/questdb/std/str/CharSink;I)V");
-        int append00Index = asm.poolMethod(datesClassIndex, "append00", "(Lcom/questdb/std/str/CharSink;I)V");
-        int append0Index = asm.poolMethod(datesClassIndex, "append0", "(Lcom/questdb/std/str/CharSink;I)V");
 
         int sinkPutIntIndex = asm.poolInterfaceMethod(sinkIndex, "put", "(I)Lcom/questdb/std/str/CharSink;");
         int sinkPutStrIndex = asm.poolInterfaceMethod(sinkIndex, "put", "(Ljava/lang/CharSequence;)Lcom/questdb/std/str/CharSink;");

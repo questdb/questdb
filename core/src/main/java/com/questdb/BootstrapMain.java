@@ -39,6 +39,8 @@ import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.net.http.handlers.*;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjHashSet;
+import com.questdb.std.time.DateFormatFactory;
+import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
 import sun.misc.Signal;
 
@@ -94,7 +96,8 @@ class BootstrapMain {
         // main configuration
         env.configuration = new ServerConfiguration(conf);
         configureLoggers(env.configuration);
-        env.typeProbeCollection = new TypeProbeCollection();
+        env.dateFormatFactory = new DateFormatFactory();
+        env.typeProbeCollection = new TypeProbeCollection(new File(dir, "conf/date.formats"), env.dateFormatFactory, DateLocaleFactory.INSTANCE);
 
         // reader/writer factory and cache
         env.factory = new Factory(

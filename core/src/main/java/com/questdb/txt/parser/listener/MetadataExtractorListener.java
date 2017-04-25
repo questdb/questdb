@@ -25,9 +25,10 @@ package com.questdb.txt.parser.listener;
 
 import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.store.ColumnType;
 import com.questdb.txt.ImportedColumnMetadata;
-import com.questdb.txt.ImportedColumnType;
 import com.questdb.txt.Schema;
+import com.questdb.txt.parser.listener.probe.TypeProbe;
 import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
 import com.questdb.txt.sink.StringSink;
 
@@ -111,7 +112,8 @@ public class MetadataExtractorListener implements Listener, Mutable {
             }
             int offset = i * count;
             for (int k = 0; k < count; k++) {
-                if (typeProbeCollection.probe(k, cs)) {
+                TypeProbe probe = typeProbeCollection.getProbe(k);
+                if (probe.probe(cs)) {
                     _histogram.increment(k + offset);
                 }
             }
@@ -151,7 +153,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
                 ImportedColumnMetadata _m = _metadata.getQuick(i);
                 ImportedColumnMetadata m = schemaColumns.get(_m.name);
                 if (m != null) {
-                    _m.importedColumnType = m.importedColumnType;
+                    m.copyTo(_m);
                 }
             }
         }
@@ -179,7 +181,11 @@ public class MetadataExtractorListener implements Listener, Mutable {
             for (int k = 0; k < probeCount; k++) {
                 if (_histogram.getQuick(k + offset) + blanks == count && blanks < count) {
                     unprobed = false;
-                    m.importedColumnType = typeProbeCollection.getType(k);
+                    TypeProbe probe = typeProbeCollection.getProbe(k);
+                    m.importedColumnType = probe.getType();
+                    m.formatText = probe.getFormat();
+                    m.dateFormat = probe.getDateFormat();
+                    m.dateLocale = probe.getDateLocale();
                     if (allStrings) {
                         allStrings = false;
                     }
@@ -188,7 +194,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
             }
 
             if (setDefault && unprobed) {
-                m.importedColumnType = ImportedColumnType.STRING;
+                m.importedColumnType = ColumnType.STRING;
             }
         }
 

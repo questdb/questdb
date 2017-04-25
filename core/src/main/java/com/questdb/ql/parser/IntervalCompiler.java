@@ -131,7 +131,7 @@ public class IntervalCompiler {
             case -1:
                 // no semicolons, just date part, which can be interval in itself
                 try {
-                    Dates.parseInterval(seq, lo, lim, out);
+                    DateFormatUtils.parseInterval(seq, lo, lim, out);
                     break;
                 } catch (NumericException ignore) {
                     // this must be a date then?
@@ -368,7 +368,7 @@ public class IntervalCompiler {
             throw QueryError.$(position, "Range not a number");
         }
         try {
-            Dates.parseInterval(seq, lo, p, out);
+            DateFormatUtils.parseInterval(seq, lo, p, out);
             int n = out.size();
             out.setQuick(n - 1, Dates.addPeriod(out.getQuick(n - 1), type, period));
             return;

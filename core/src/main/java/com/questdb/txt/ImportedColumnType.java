@@ -24,42 +24,16 @@
 package com.questdb.txt;
 
 import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.store.ColumnType;
+
+import static com.questdb.store.ColumnType.*;
 
 public final class ImportedColumnType {
-
-    public static final int BOOLEAN = ColumnType.BOOLEAN;
-    public static final int BYTE = ColumnType.BYTE;
-    public static final int DOUBLE = ColumnType.DOUBLE;
-    public static final int FLOAT = ColumnType.FLOAT;
-    public static final int INT = ColumnType.INT;
-    public static final int LONG = ColumnType.LONG;
-    public static final int SHORT = ColumnType.SHORT;
-    public static final int STRING = ColumnType.STRING;
-    public static final int SYMBOL = ColumnType.SYMBOL;
-    public static final int BINARY = ColumnType.BINARY;
-    // extra dates
-    public static final int DATE_ISO = 2048;
-    public static final int DATE_1 = 2049;
-    public static final int DATE_2 = 2050;
-    public static final int DATE_3 = 2051;
 
     private static final CharSequenceIntHashMap nameTypeMap = new CharSequenceIntHashMap();
 
     private ImportedColumnType() {
     }
 
-    public static int columnTypeOf(int importedType) {
-        switch (importedType) {
-            case DATE_ISO:
-            case DATE_1:
-            case DATE_2:
-            case DATE_3:
-                return ColumnType.DATE;
-            default:
-                return importedType;
-        }
-    }
 
     public static int importedColumnTypeOf(CharSequence name) {
         return nameTypeMap.get(name);
@@ -75,9 +49,9 @@ public final class ImportedColumnType {
         nameTypeMap.put("SHORT", SHORT);
         nameTypeMap.put("STRING", STRING);
         nameTypeMap.put("SYMBOL", SYMBOL);
-        nameTypeMap.put("DATE_ISO", DATE_ISO);
-        nameTypeMap.put("DATE_1", DATE_1);
-        nameTypeMap.put("DATE_2", DATE_2);
-        nameTypeMap.put("DATE_3", DATE_3);
+        nameTypeMap.put("DATE_ISO", DATE);
+        nameTypeMap.put("DATE_1", DATE);
+        nameTypeMap.put("DATE_2", DATE);
+        nameTypeMap.put("DATE_3", DATE);
     }
 }

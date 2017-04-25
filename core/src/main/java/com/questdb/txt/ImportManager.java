@@ -23,6 +23,7 @@
 
 package com.questdb.txt;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
@@ -101,7 +102,10 @@ public final class ImportManager {
                 case JournalConfiguration.EXISTS_FOREIGN:
                     throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
                 default:
-                    try (JournalImportListener l = new JournalImportListener(factory).of(location, false, false, JournalImportListener.ATOMICITY_RELAXED)) {
+                    BootstrapEnv env = new BootstrapEnv();
+                    env.factory = factory;
+
+                    try (JournalImportListener l = new JournalImportListener(env).of(location, false, false, JournalImportListener.ATOMICITY_RELAXED)) {
                         analyzeAndParse(file, parser, l, schema, sampleSize, forceHeader);
                     }
                     break;

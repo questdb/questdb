@@ -23,7 +23,16 @@
 
 package com.questdb.txt.parser.listener.probe;
 
+import com.questdb.std.time.DateFormat;
+import com.questdb.std.time.DateLocale;
+
 public interface TypeProbe {
+    DateFormat getDateFormat();
+
+    DateLocale getDateLocale();
+
+    String getFormat();
+
     int getType();
 
     boolean probe(CharSequence text);

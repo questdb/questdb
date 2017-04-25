@@ -20,8 +20,10 @@ public class DateLocale {
     private final String[] ampmArray;
     private final String[] eraArray;
     private final TimeZoneRuleFactory factory;
+    private final String id;
 
-    DateLocale(DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory, @Transient CharSequenceHashSet cache) {
+    DateLocale(String id, DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory, @Transient CharSequenceHashSet cache) {
+        this.id = id;
         this.factory = timeZoneRuleFactory;
         index(monthArray = symbols.getMonths(), months);
         index(shortMonthArray = symbols.getShortMonths(), months);
@@ -38,6 +40,10 @@ public class DateLocale {
 
     public String getEra(int index) {
         return Unsafe.arrayGet(eraArray, index);
+    }
+
+    public String getId() {
+        return id;
     }
 
     public String getMonth(int index) {

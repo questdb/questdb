@@ -25,12 +25,29 @@ package com.questdb.txt.parser.listener.probe;
 
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Numbers;
-import com.questdb.txt.ImportedColumnType;
+import com.questdb.std.time.DateFormat;
+import com.questdb.std.time.DateLocale;
+import com.questdb.store.ColumnType;
 
 public class IntProbe implements TypeProbe {
     @Override
+    public DateFormat getDateFormat() {
+        return null;
+    }
+
+    @Override
+    public DateLocale getDateLocale() {
+        return null;
+    }
+
+    @Override
+    public String getFormat() {
+        return null;
+    }
+
+    @Override
     public int getType() {
-        return ImportedColumnType.INT;
+        return ColumnType.INT;
     }
 
     @Override

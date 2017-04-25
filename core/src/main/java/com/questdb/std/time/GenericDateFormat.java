@@ -54,7 +54,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     if (millis == -1) {
                         millis = Dates.getMillisOfSecond(datetime);
                     }
-                    Dates.append00(sink, millis);
+                    append00(sink, millis);
                     break;
 
                 // SECOND
@@ -70,7 +70,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     if (second == -1) {
                         second = Dates.getSecondOfMinute(datetime);
                     }
-                    Dates.append0(sink, second);
+                    append0(sink, second);
                     break;
 
 
@@ -87,7 +87,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     if (minute == -1) {
                         minute = Dates.getMinuteOfHour(datetime);
                     }
-                    Dates.append0(sink, minute);
+                    append0(sink, minute);
                     break;
 
 
@@ -136,7 +136,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(datetime);
                     }
-                    Dates.append0(sink, hour);
+                    append0(sink, hour);
                     break;
 
                 // HOUR (1 - 24)
@@ -152,7 +152,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(datetime);
                     }
-                    Dates.append0(sink, hour + 1);
+                    append0(sink, hour + 1);
                     break;
 
                 // DAY
@@ -185,7 +185,7 @@ public class GenericDateFormat extends AbstractDateFormat {
 
                         day = Dates.getDayOfMonth(datetime, year, month, leap);
                     }
-                    Dates.append0(sink, day);
+                    append0(sink, day);
                     break;
 
                 case DateFormatCompiler.OP_DAY_NAME_LONG:
@@ -232,7 +232,7 @@ public class GenericDateFormat extends AbstractDateFormat {
 
                         month = Dates.getMonthOfYear(datetime, year, leap);
                     }
-                    Dates.append0(sink, month);
+                    append0(sink, month);
                     break;
 
                 case DateFormatCompiler.OP_MONTH_SHORT_NAME:
@@ -273,14 +273,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                         year = Dates.getYear(datetime);
                         leap = Dates.isLeapYear(year);
                     }
-                    Dates.append0(sink, year % 100);
+                    append0(sink, year % 100);
                     break;
                 case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Dates.getYear(datetime);
                         leap = Dates.isLeapYear(year);
                     }
-                    Dates.append000(sink, year);
+                    append000(sink, year);
                     break;
 
                 // ERA

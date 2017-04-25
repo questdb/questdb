@@ -18,7 +18,6 @@ public class DateFormatCompilerTest {
 
     @BeforeClass
     public static void setUp() throws Exception {
-        DateFormatUtils.init();
         DateFormatUtils.updateReferenceYear(Dates.toMillis(1997, 1, 1, 0, 0));
     }
 

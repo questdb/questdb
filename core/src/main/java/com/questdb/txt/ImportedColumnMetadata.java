@@ -25,16 +25,43 @@ package com.questdb.txt;
 
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
+import com.questdb.std.time.DateFormat;
+import com.questdb.std.time.DateLocale;
+import com.questdb.store.ColumnType;
 
 public class ImportedColumnMetadata implements Mutable {
     public static final ObjectFactory<ImportedColumnMetadata> FACTORY = ImportedColumnMetadata::new;
 
     public int importedColumnType;
+    public CharSequence formatText;
+    public DateFormat dateFormat;
+    public DateLocale dateLocale;
     public CharSequence name;
 
     @Override
     public void clear() {
+    }
 
+    public void copyTo(ImportedColumnMetadata _m) {
+        _m.importedColumnType = this.importedColumnType;
+        if (this.importedColumnType == ColumnType.DATE) {
+            if (this.formatText != null) {
+                _m.formatText = this.formatText;
+            }
+
+            if (this.dateFormat != null) {
+                _m.dateFormat = this.dateFormat;
+            }
+
+            if (this.dateLocale != null) {
+                _m.dateLocale = this.dateLocale;
+            }
+
+        } else {
+            _m.formatText = this.formatText;
+            _m.dateFormat = this.dateFormat;
+            _m.dateLocale = this.dateLocale;
+        }
     }
 }
 
