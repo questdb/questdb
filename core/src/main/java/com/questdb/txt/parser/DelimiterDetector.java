@@ -30,8 +30,8 @@ import com.questdb.std.ObjectFactory;
 
 import static com.questdb.txt.TextFileDelimiter.*;
 
-public class FormatParser {
-    public static final ObjectFactory<FormatParser> FACTORY = FormatParser::new;
+public class DelimiterDetector {
+    public static final ObjectFactory<DelimiterDetector> FACTORY = DelimiterDetector::new;
     private static final int maxLines = 10000;
     private final IntList commas = new IntList(maxLines);
     private final IntList pipes = new IntList(maxLines);
@@ -41,7 +41,7 @@ public class FormatParser {
     private int avgRecLen;
     private char delimiter;
 
-    private FormatParser() {
+    private DelimiterDetector() {
     }
 
     public char getDelimiter() {

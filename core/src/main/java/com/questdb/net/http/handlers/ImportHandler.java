@@ -48,7 +48,7 @@ import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.FileNameExtractorCharSequence;
 import com.questdb.store.ColumnType;
 import com.questdb.txt.parser.DelimitedTextParser;
-import com.questdb.txt.parser.FormatParser;
+import com.questdb.txt.parser.DelimiterDetector;
 import com.questdb.txt.parser.listener.JournalImportListener;
 
 import java.io.Closeable;
@@ -67,7 +67,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     private static final int TO_STRING_COL3_PAD = 10;
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
-    private static final ThreadLocal<FormatParser> PARSER = new ThreadLocal<>();
+    private static final ThreadLocal<DelimiterDetector> PARSER = new ThreadLocal<>();
     private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
     private final LocalValue<ImportHandlerContext> lvContext = new LocalValue<>();
     private final BootstrapEnv env;
@@ -129,6 +129,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                     analyseFormat(h, lo, len);
                     if (h.state == ImportHandlerContext.STATE_OK) {
                         try {
+                            // todo: read sample size from configuration
                             h.textParser.analyseStructure(lo, len, 100, h.importer, h.forceHeader);
                             h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
                         } catch (JournalRuntimeException e) {
@@ -207,7 +208,7 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     @Override
     public void setupThread() {
-        PARSER.set(FormatParser.FACTORY.newInstance());
+        PARSER.set(DelimiterDetector.FACTORY.newInstance());
     }
 
     private static void resumeJson(ImportHandlerContext ctx, ChunkedResponse r) throws DisconnectedChannelException, SlowWritableChannelException {
@@ -375,12 +376,12 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     private void analyseFormat(ImportHandlerContext context, long address, int len) {
-        final FormatParser fmtParser = PARSER.get();
+        final DelimiterDetector delimiterDetector = PARSER.get();
 
-        fmtParser.of(address, len);
-        if (fmtParser.getDelimiter() != 0 && fmtParser.getStdDev() < 0.5) {
+        delimiterDetector.of(address, len);
+        if (delimiterDetector.getDelimiter() != 0 && delimiterDetector.getStdDev() < 0.5) {
             context.state = ImportHandlerContext.STATE_OK;
-            context.textParser.of(fmtParser.getDelimiter());
+            context.textParser.of(delimiterDetector.getDelimiter());
         } else {
             context.state = ImportHandlerContext.STATE_INVALID_FORMAT;
             context.stateMessage = "Unsupported Data Format";

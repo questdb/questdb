@@ -69,10 +69,10 @@ public class DelimitedTextParser implements Closeable, Mutable {
         this.mel = new MetadataExtractorListener(mPool, typeProbeCollection);
     }
 
-    public void analyseStructure(long addr, int len, int sampleSize, InputAnalysisListener ial, boolean forceHeader) {
+    public void analyseStructure(long addr, int len, int lineCountLimit, InputAnalysisListener ial, boolean forceHeader) {
         this.schema.parse();
         mel.of(schema, forceHeader);
-        parse(addr, len, sampleSize, mel);
+        parse(addr, len, lineCountLimit, mel);
         mel.onLineCount(lineCount);
         ial.onMetadata(mel.getMetadata(), mel.isHeader());
         setHeader(mel.isHeader());
@@ -108,10 +108,10 @@ public class DelimitedTextParser implements Closeable, Mutable {
         return this;
     }
 
-    public void parse(long lo, long len, int lim, Listener listener) {
+    public void parse(long lo, long len, int lineCountLimit, Listener listener) {
         this.listener = listener;
         this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
-        parse(lo, len, lim);
+        parse(lo, len, lineCountLimit);
     }
 
     public void parseLast() {
@@ -173,7 +173,7 @@ public class DelimitedTextParser implements Closeable, Mutable {
         ignoreEolOnce = false;
     }
 
-    private void parse(long lo, long len, int maxLine) {
+    private void parse(long lo, long len, int lineCountLimit) {
         long hi = lo + len;
         long ptr = lo;
 
@@ -227,7 +227,7 @@ public class DelimitedTextParser implements Closeable, Mutable {
 
                         triggerLine(ptr);
 
-                        if (lineCount > maxLine) {
+                        if (lineCount > lineCountLimit) {
                             break OUT;
                         }
                         break;

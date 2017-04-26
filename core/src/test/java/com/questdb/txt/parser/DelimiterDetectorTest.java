@@ -35,10 +35,10 @@ import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 
-public class FormatParserTest {
+public class DelimiterDetectorTest {
 
     private static final int maxLen = 16 * 1024 * 1024;
-    private final FormatParser p = FormatParser.FACTORY.newInstance();
+    private final DelimiterDetector p = DelimiterDetector.FACTORY.newInstance();
     private long address;
     private int len;
     private RandomAccessFile raf;
