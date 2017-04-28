@@ -44,14 +44,12 @@ public class StrConcatOperator extends AbstractBinaryOperator {
 
     @Override
     public CharSequence getFlyweightStr(Record rec) {
-        csA.init(lhs.getFlyweightStr(rec), rhs.getFlyweightStr(rec));
-        return csA;
+        return csA.of(lhs.getFlyweightStr(rec), rhs.getFlyweightStr(rec));
     }
 
     @Override
     public CharSequence getFlyweightStrB(Record rec) {
-        csB.init(lhs.getFlyweightStrB(rec), rhs.getFlyweightStrB(rec));
-        return csB;
+        return csB.of(lhs.getFlyweightStrB(rec), rhs.getFlyweightStrB(rec));
     }
 
     @Override

@@ -31,13 +31,6 @@ public class SplitCharSequence extends AbstractCharSequence {
     private int rl;
     private int split;
 
-    public void init(CharSequence lhs, CharSequence rhs) {
-        this.lhs = lhs;
-        this.rhs = rhs;
-        this.rl = rhs == null ? 0 : rhs.length();
-        this.split = lhs == null ? 0 : lhs.length();
-    }
-
     @Override
     public int length() {
         return split + rl;
@@ -50,5 +43,13 @@ public class SplitCharSequence extends AbstractCharSequence {
         } else {
             return rhs.charAt(index - split);
         }
+    }
+
+    public CharSequence of(CharSequence lhs, CharSequence rhs) {
+        this.lhs = lhs;
+        this.rhs = rhs;
+        this.rl = rhs == null ? 0 : rhs.length();
+        this.split = lhs == null ? 0 : lhs.length();
+        return this;
     }
 }

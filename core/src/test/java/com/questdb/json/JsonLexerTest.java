@@ -1,18 +1,26 @@
 package com.questdb.json;
 
 import com.questdb.misc.Chars;
+import com.questdb.misc.Files;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.IntStack;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 public class JsonLexerTest {
 
-    private final JsonLexer parser = new JsonLexer();
-    private final JsonAssemblingListener listener = new JsonAssemblingListener();
+    private static final JsonLexer parser = new JsonLexer(1024);
+    private static final JsonAssemblingListener listener = new JsonAssemblingListener();
+
+    @AfterClass
+    public static void tearDown() throws Exception {
+        parser.close();
+    }
 
     @Before
     public void setUp() throws Exception {
@@ -25,6 +33,21 @@ public class JsonLexerTest {
         assertThat("[{\"A\":[\"122\",\"133\"],\"x\":\"y\"},\"134\",\"abc\"]", "[\n" +
                 "{\"A\":[122, 133], \"x\": \"y\"}, 134  , \"abc\"\n" +
                 "]");
+    }
+
+    @Test
+    public void testBreakOnValue() throws Exception {
+        int len = "{\"x\": \"abcdefhijklmn\"}".length();
+        long address = Unsafe.malloc(len);
+        try {
+            Chars.strcpy("{\"x\": \"abcdefhijklmn\"}", len, address);
+            parser.parse(address, len - 7, listener);
+            parser.parse(address + len - 7, 7, listener);
+            parser.parseLast();
+            TestUtils.assertEquals("{\"x\":\"abcdefhijklmn\"}", listener.value());
+        } finally {
+            Unsafe.free(address, len);
+        }
     }
 
     @Test
@@ -108,6 +131,39 @@ public class JsonLexerTest {
     }
 
     @Test
+    public void testParseLargeFile() throws Exception {
+        Path p = new Path(JsonLexerTest.class.getResource("/json/test.json").getPath());
+        long l = Files.length(p);
+        long fd = Files.openRO(p);
+        JsonListener listener = new NoOpListener();
+        try {
+            long buf = Unsafe.malloc(l);
+            try {
+                Files.read(fd, buf, (int) l, 0);
+                JsonLexer lexer = new JsonLexer(1024);
+
+                long t = System.nanoTime();
+                for (int i = 0; i < l; i++) {
+                    try {
+                        lexer.clear();
+                        lexer.parse(buf, i, listener);
+                        lexer.parse(buf + i, l - i, listener);
+                        lexer.parseLast();
+                    } catch (JsonException e) {
+                        System.out.println(i);
+                        throw e;
+                    }
+                }
+                System.out.println((System.nanoTime() - t) / l);
+            } finally {
+                Unsafe.free(buf, l);
+            }
+        } finally {
+            Files.close(fd);
+        }
+    }
+
+    @Test
     public void testQuoteEscape() throws Exception {
         assertThat("{\"x\":\"a\\\"bc\"}", "{\"x\": \"a\\\"bc\"}");
     }
@@ -141,6 +197,7 @@ public class JsonLexerTest {
             Chars.strcpy(input, len, address);
             try {
                 parser.parse(address, len, listener);
+                parser.parseLast();
                 Assert.fail();
             } catch (JsonException e) {
                 Assert.assertEquals(expected, e.getMessage());
@@ -157,9 +214,16 @@ public class JsonLexerTest {
         try {
             Chars.strcpy(input, len, address);
             parser.parse(address, len, listener);
+            parser.parseLast();
             TestUtils.assertEquals(expected, listener.value());
         } finally {
             Unsafe.free(address, len);
+        }
+    }
+
+    private static final class NoOpListener implements JsonListener {
+        @Override
+        public void onEvent(int code, CharSequence tag) {
         }
     }
 
@@ -173,6 +237,10 @@ public class JsonLexerTest {
             buffer.setLength(0);
             itemCount = 0;
             itemCountStack.clear();
+        }
+
+        public CharSequence value() {
+            return buffer;
         }
 
         @Override
@@ -230,8 +298,6 @@ public class JsonLexerTest {
             }
         }
 
-        public CharSequence value() {
-            return buffer;
-        }
+
     }
 }

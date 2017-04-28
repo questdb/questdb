@@ -1,11 +1,15 @@
 package com.questdb.json;
 
 import com.questdb.misc.Unsafe;
+import com.questdb.std.IntHashSet;
 import com.questdb.std.IntStack;
 import com.questdb.std.Mutable;
+import com.questdb.std.SplitCharSequence;
 import com.questdb.std.str.DirectByteCharSequence;
 
-public class JsonLexer implements Mutable {
+import java.io.Closeable;
+
+public class JsonLexer implements Mutable, Closeable {
     public static final int EVT_OBJ_START = 1;
     public static final int EVT_OBJ_END = 2;
     public static final int EVT_ARRAY_START = 3;
@@ -14,18 +18,32 @@ public class JsonLexer implements Mutable {
     public static final int EVT_VALUE = 6;
     public static final int EVT_ARRAY_VALUE = 7;
 
-    public static final int S_START = 0;
-    public static final int S_EXPECT_NAME = 1;
-    public static final int S_EXPECT_FIRST_NAME = 5;
-    public static final int S_EXPECT_VALUE = 2;
-    public static final int S_EXPECT_COMMA = 3;
+    private static final int S_START = 0;
+    private static final int S_EXPECT_NAME = 1;
+    private static final int S_EXPECT_FIRST_NAME = 5;
+    private static final int S_EXPECT_VALUE = 2;
+    private static final int S_EXPECT_COMMA = 3;
     private static final int S_EXPECT_COLON = 4;
+    private static final IntHashSet unquotedTeminators = new IntHashSet();
     private final IntStack objDepthStack = new IntStack();
     private final IntStack arrayDepthStack = new IntStack();
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private final DirectByteCharSequence reserveDbcs = new DirectByteCharSequence();
+    private final SplitCharSequence splitCs = new SplitCharSequence();
+    private final int cacheSizeLimit;
     private int state = S_START;
     private int objDepth = 0;
     private int arrayDepth = 0;
+    private boolean ignoreNext = false;
+    private boolean quoted = false;
+    private long cache = 0;
+    private int cacheCapacity = 0;
+    private int cacheSize = 0;
+    private boolean useCache = false;
+
+    public JsonLexer(int cacheSizeLimit) {
+        this.cacheSizeLimit = cacheSizeLimit;
+    }
 
     @Override
     public void clear() {
@@ -34,14 +52,23 @@ public class JsonLexer implements Mutable {
         state = S_START;
         objDepth = 0;
         arrayDepth = 0;
+        ignoreNext = false;
+        quoted = false;
+        cacheSize = 0;
+        useCache = false;
+    }
+
+    @Override
+    public void close() {
+        if (cacheCapacity > 0 && cache != 0) {
+            Unsafe.free(cache, cacheCapacity);
+        }
     }
 
     public void parse(long lo, long len, JsonListener listener) throws JsonException {
         long p = lo;
         long hi = lo + len;
-        long valueStart = 0;
-        boolean quoted = false;
-        boolean ignoreNext = false;
+        long valueStart = useCache ? lo : 0;
         while (p < hi) {
             char c = (char) Unsafe.getUnsafe().getByte(p++);
 
@@ -50,7 +77,7 @@ public class JsonLexer implements Mutable {
                 continue;
             }
 
-            if (valueStart > 0 && ((quoted && c != '"') || (!quoted && (c == '-' || c == '.' || c == 'e' || c == 'E' || (c >= '0' && c <= '9'))))) {
+            if (valueStart > 0 && ((quoted && c != '"') || (!quoted && !unquotedTeminators.contains(c)))) {
                 if (quoted && c == '\\') {
                     ignoreNext = true;
                 }
@@ -59,13 +86,15 @@ public class JsonLexer implements Mutable {
 
             if (valueStart > 0) {
                 if (state == S_EXPECT_NAME || state == S_EXPECT_FIRST_NAME) {
-                    listener.onEvent(EVT_NAME, dbcs.of(valueStart, p - 1));
+                    listener.onEvent(EVT_NAME, getCharSequence(valueStart, p));
                     state = S_EXPECT_COLON;
                 } else {
-                    listener.onEvent(arrayDepth > 0 ? EVT_ARRAY_VALUE : EVT_VALUE, dbcs.of(valueStart, p - 1));
+                    listener.onEvent(arrayDepth > 0 ? EVT_ARRAY_VALUE : EVT_VALUE, getCharSequence(valueStart, p));
                     state = S_EXPECT_COMMA;
                 }
                 valueStart = 0;
+                cacheSize = 0;
+                useCache = false;
 
                 if (quoted) {
                     // skip the quote mark
@@ -170,5 +199,66 @@ public class JsonLexer implements Mutable {
                     quoted = false;
             }
         }
+
+        if (valueStart > 0) {
+            // stash
+            cacheIncompleteTag(valueStart, lo, hi);
+            useCache = true;
+        }
+    }
+
+    public void parseLast() throws JsonException {
+        if (cacheSize > 0) {
+            throw JsonException.with("Unterminated string", 0);
+        }
+
+        if (arrayDepth > 0 || arrayDepthStack.size() > 0) {
+            throw JsonException.with("Unterminated array", 0);
+        }
+
+        if (objDepth > 0 || objDepthStack.size() > 0) {
+            throw JsonException.with("Unterminated object", 0);
+        }
+    }
+
+    private void cacheIncompleteTag(long valueStart, long lo, long hi) throws JsonException {
+        int n = ((int) (hi - valueStart)) + cacheSize;
+        if (n > cacheCapacity) {
+            if (n > cacheSizeLimit) {
+                throw JsonException.with("String is too long", (int) (lo - valueStart));
+            }
+            long ptr = Unsafe.malloc(n);
+            if (cacheSize > 0) {
+                Unsafe.getUnsafe().copyMemory(cache, ptr, cacheSize);
+                Unsafe.free(cache, cacheCapacity);
+            }
+            cache = ptr;
+        }
+
+        if (n > 0) {
+            Unsafe.getUnsafe().copyMemory(valueStart, cache + cacheSize, n);
+            cacheSize += n;
+        }
+    }
+
+    private CharSequence getCharSequence(long lo, long hi) {
+        if (cacheSize == 0) {
+            return dbcs.of(lo, hi - 1);
+        } else {
+            return splitCs.of(reserveDbcs.of(cache, cache + cacheSize), dbcs.of(lo, hi - 1));
+        }
+    }
+
+    static {
+        unquotedTeminators.add(' ');
+        unquotedTeminators.add('\t');
+        unquotedTeminators.add('\n');
+        unquotedTeminators.add('\r');
+        unquotedTeminators.add(',');
+        unquotedTeminators.add('}');
+        unquotedTeminators.add(']');
+        unquotedTeminators.add('{');
+        unquotedTeminators.add('[');
+        unquotedTeminators.add(':');
     }
 }
