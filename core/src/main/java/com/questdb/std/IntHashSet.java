@@ -84,7 +84,7 @@ public class IntHashSet implements Mutable {
 
     public boolean contains(int key) {
         int index = key & mask;
-        return Unsafe.arrayGet(keys, index) != noEntryValue && (key == Unsafe.arrayGet(keys, index) || key == Unsafe.arrayGet(keys, index)) || probeContains(key, index);
+        return Unsafe.arrayGet(keys, index) != noEntryValue && (key == Unsafe.arrayGet(keys, index) || probeContains(key, index));
     }
 
     public int get(int index) {

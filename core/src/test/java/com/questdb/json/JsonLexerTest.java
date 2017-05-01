@@ -1,6 +1,5 @@
 package com.questdb.json;
 
-import com.questdb.misc.Chars;
 import com.questdb.misc.Files;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.IntStack;
@@ -26,6 +25,7 @@ public class JsonLexerTest {
     public void setUp() throws Exception {
         parser.clear();
         listener.clear();
+        listener.recordPositions = false;
     }
 
     @Test
@@ -37,10 +37,10 @@ public class JsonLexerTest {
 
     @Test
     public void testBreakOnValue() throws Exception {
-        int len = "{\"x\": \"abcdefhijklmn\"}".length();
-        long address = Unsafe.malloc(len);
+        String in = "{\"x\": \"abcdefhijklmn\"}";
+        int len = in.length();
+        long address = TestUtils.toMemory(in);
         try {
-            Chars.strcpy("{\"x\": \"abcdefhijklmn\"}", len, address);
             parser.parse(address, len - 7, listener);
             parser.parse(address + len - 7, 7, listener);
             parser.parseLast();
@@ -88,6 +88,30 @@ public class JsonLexerTest {
     @Test
     public void testInvalidObjectNesting() throws Exception {
         assertError("{ is not expected here", 11, "{\"a\":\"x\", {}}");
+    }
+
+    @Test
+    public void testJsonSlicingAndPositions() throws Exception {
+        String in = "[{\"name\": null, \"type\": true, \"formatPattern\":12E-2, \"locale\": \"en-GB\"}]";
+        String expected = "<1>[<2>{<4>\"name\":<11>\"null\"<18>,\"type\":<25>\"true\"<32>,\"formatPattern\":<47>\"12E-2\"<55>,\"locale\":<65>\"en-GB\"<71>}<72>]";
+
+        int len = in.length();
+        long address = TestUtils.toMemory(in);
+        try {
+            listener.recordPositions = true;
+
+            for (int i = 0; i < len; i++) {
+                listener.clear();
+                parser.clear();
+
+                parser.parse(address, i, listener);
+                parser.parse(address + i, len - i, listener);
+                parser.parseLast();
+                TestUtils.assertEquals(expected, listener.value());
+            }
+        } finally {
+            Unsafe.free(address, len);
+        }
     }
 
     @Test
@@ -192,9 +216,8 @@ public class JsonLexerTest {
 
     private void assertError(String expected, int expectedPosition, String input) throws JsonException {
         int len = input.length();
-        long address = Unsafe.malloc(len);
+        long address = TestUtils.toMemory(input);
         try {
-            Chars.strcpy(input, len, address);
             try {
                 parser.parse(address, len, listener);
                 parser.parseLast();
@@ -210,9 +233,8 @@ public class JsonLexerTest {
 
     private void assertThat(String expected, String input) throws JsonException {
         int len = input.length();
-        long address = Unsafe.malloc(len);
+        long address = TestUtils.toMemory(input);
         try {
-            Chars.strcpy(input, len, address);
             parser.parse(address, len, listener);
             parser.parseLast();
             TestUtils.assertEquals(expected, listener.value());
@@ -223,7 +245,7 @@ public class JsonLexerTest {
 
     private static final class NoOpListener implements JsonListener {
         @Override
-        public void onEvent(int code, CharSequence tag) {
+        public void onEvent(int code, CharSequence tag, int position) {
         }
     }
 
@@ -231,6 +253,7 @@ public class JsonLexerTest {
         private final StringBuffer buffer = new StringBuffer();
         private final IntStack itemCountStack = new IntStack();
         private int itemCount = 0;
+        private boolean recordPositions = false;
 
         @Override
         public void clear() {
@@ -244,7 +267,10 @@ public class JsonLexerTest {
         }
 
         @Override
-        public void onEvent(int code, CharSequence tag) {
+        public void onEvent(int code, CharSequence tag, int position) {
+            if (recordPositions) {
+                buffer.append('<').append(position).append('>');
+            }
             switch (code) {
                 case JsonLexer.EVT_OBJ_START:
                     if (itemCount++ > 0) {
@@ -297,7 +323,5 @@ public class JsonLexerTest {
                     break;
             }
         }
-
-
     }
 }

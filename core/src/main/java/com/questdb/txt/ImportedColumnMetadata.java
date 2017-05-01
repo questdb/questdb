@@ -33,7 +33,7 @@ public class ImportedColumnMetadata implements Mutable {
     public static final ObjectFactory<ImportedColumnMetadata> FACTORY = ImportedColumnMetadata::new;
 
     public int importedColumnType;
-    public CharSequence formatText;
+    public CharSequence pattern;
     public DateFormat dateFormat;
     public DateLocale dateLocale;
     public CharSequence name;
@@ -45,8 +45,8 @@ public class ImportedColumnMetadata implements Mutable {
     public void copyTo(ImportedColumnMetadata _m) {
         _m.importedColumnType = this.importedColumnType;
         if (this.importedColumnType == ColumnType.DATE) {
-            if (this.formatText != null) {
-                _m.formatText = this.formatText;
+            if (this.pattern != null) {
+                _m.pattern = this.pattern;
             }
 
             if (this.dateFormat != null) {
@@ -58,10 +58,20 @@ public class ImportedColumnMetadata implements Mutable {
             }
 
         } else {
-            _m.formatText = this.formatText;
+            _m.pattern = this.pattern;
             _m.dateFormat = this.dateFormat;
             _m.dateLocale = this.dateLocale;
         }
+    }
+
+    @Override
+    public String toString() {
+        return "ImportedColumnMetadata{" +
+                "importedColumnType=" + ColumnType.nameOf(importedColumnType) +
+                ", pattern=" + pattern +
+                ", dateLocale=" + dateLocale.getId() +
+                ", name=" + name +
+                '}';
     }
 }
 

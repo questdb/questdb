@@ -183,7 +183,7 @@ public class MetadataExtractorListener implements Listener, Mutable {
                     unprobed = false;
                     TypeProbe probe = typeProbeCollection.getProbe(k);
                     m.importedColumnType = probe.getType();
-                    m.formatText = probe.getFormat();
+                    m.pattern = probe.getFormat();
                     m.dateFormat = probe.getDateFormat();
                     m.dateLocale = probe.getDateLocale();
                     if (allStrings) {
