@@ -23,6 +23,7 @@
 
 package com.questdb.txt.parser;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
@@ -31,11 +32,9 @@ import com.questdb.std.ObjList;
 import com.questdb.std.ObjectPool;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.txt.ImportedColumnMetadata;
-import com.questdb.txt.SchemaImpl;
 import com.questdb.txt.parser.listener.InputAnalysisListener;
 import com.questdb.txt.parser.listener.Listener;
 import com.questdb.txt.parser.listener.MetadataExtractorListener;
-import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
 
 import java.io.Closeable;
 
@@ -45,7 +44,7 @@ public class DelimitedTextParser implements Closeable, Mutable {
     private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 16);
     private final ObjectPool<ImportedColumnMetadata> mPool = new ObjectPool<>(ImportedColumnMetadata.FACTORY, 256);
     private final MetadataExtractorListener mel;
-    private final SchemaImpl schema = new SchemaImpl(csPool, mPool);
+    private final long lineRollBufLimit;
     private boolean ignoreEolOnce;
     private char separator;
     private boolean inQuote;
@@ -60,17 +59,19 @@ public class DelimitedTextParser implements Closeable, Mutable {
     private Listener listener;
     private boolean calcFields;
     private long lastLineStart;
-    private long lineRollBufLen = 4 * 1024L;
-    private long lineRollBufPtr = Unsafe.malloc(lineRollBufLen);
+    private long lineRollBufLen;
+    private long lineRollBufPtr;
     private boolean header;
     private long lastQuotePos = -1;
 
-    public DelimitedTextParser(TypeProbeCollection typeProbeCollection) {
-        this.mel = new MetadataExtractorListener(mPool, typeProbeCollection);
+    public DelimitedTextParser(BootstrapEnv env) {
+        this.mel = new MetadataExtractorListener(mPool, env.typeProbeCollection);
+        this.lineRollBufLen = env.configuration.getHttpImportInitialTextBuf();
+        this.lineRollBufLimit = env.configuration.getHttpImportMaxTextBuf();
+        this.lineRollBufPtr = Unsafe.malloc(lineRollBufLen);
     }
 
-    public void analyseStructure(long addr, int len, int lineCountLimit, InputAnalysisListener ial, boolean forceHeader) {
-        this.schema.parse();
+    public void analyseStructure(long addr, int len, int lineCountLimit, InputAnalysisListener ial, boolean forceHeader, ObjList<ImportedColumnMetadata> schema) {
         mel.of(schema, forceHeader);
         parse(addr, len, lineCountLimit, mel);
         mel.onLineCount(lineCount);
@@ -95,7 +96,6 @@ public class DelimitedTextParser implements Closeable, Mutable {
             Unsafe.free(lineRollBufPtr, lineRollBufLen);
             lineRollBufPtr = 0;
         }
-        schema.close();
     }
 
     public int getLineCount() {
@@ -139,12 +139,6 @@ public class DelimitedTextParser implements Closeable, Mutable {
 
     public void setHeader(boolean header) {
         this.header = header;
-    }
-
-    public void setSchemaText(CharSequence schema) {
-        if (schema != null) {
-            this.schema.setText(schema);
-        }
     }
 
     private void calcField() {

@@ -28,6 +28,6 @@ public final class ImportColumnCountException extends JournalRuntimeException {
     public final static ImportColumnCountException INSTANCE = new ImportColumnCountException();
 
     private ImportColumnCountException() {
-        super("Journal exists and column count does not mismatch");
+        super("Journal exists and column count does not match");
     }
 }

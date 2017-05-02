@@ -1,5 +1,6 @@
 package com.questdb.txt;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.json.JsonException;
 import com.questdb.json.JsonLexer;
 import com.questdb.json.JsonListener;
@@ -25,7 +26,7 @@ public class SchemaParser implements JsonListener, Mutable {
     private static final int P_PATTERN = 3;
     private static final int P_LOCALE = 4;
     private static final CharSequenceIntHashMap propertyNameMap = new CharSequenceIntHashMap();
-    private final ObjectPool<ImportedColumnMetadata> mPool;
+    private final ObjectPool<ImportedColumnMetadata> mPool = new ObjectPool<>(ImportedColumnMetadata.FACTORY, 64);
     private final DateLocaleFactory dateLocaleFactory;
     private final ObjList<ImportedColumnMetadata> metadata = new ObjList<>();
     private final ObjectPool<FloatingCharSequence> csPool = new ObjectPool<>(FloatingCharSequence::new, 64);
@@ -41,12 +42,9 @@ public class SchemaParser implements JsonListener, Mutable {
     private long bufCapacity = 0;
     private int bufSize = 0;
 
-    public SchemaParser(ObjectPool<ImportedColumnMetadata> mPool,
-                        DateLocaleFactory dateLocaleFactory,
-                        DateFormatFactory dateFormatFactory) {
-        this.mPool = mPool;
-        this.dateLocaleFactory = dateLocaleFactory;
-        this.dateFormatFactory = dateFormatFactory;
+    public SchemaParser(BootstrapEnv env) {
+        this.dateLocaleFactory = env.dateLocaleFactory;
+        this.dateFormatFactory = env.dateFormatFactory;
     }
 
     @Override
@@ -55,6 +53,7 @@ public class SchemaParser implements JsonListener, Mutable {
         state = S_NEED_ARRAY;
         metadata.clear();
         csPool.clear();
+        mPool.clear();
         clearStage();
     }
 

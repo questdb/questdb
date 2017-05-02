@@ -25,13 +25,12 @@ package com.questdb.net.http.handlers;
 
 import com.questdb.BootstrapEnv;
 import com.questdb.PartitionBy;
-import com.questdb.ex.DisconnectedChannelException;
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.ex.ResponseContentBufferTooSmallException;
-import com.questdb.ex.SlowWritableChannelException;
+import com.questdb.ex.*;
 import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
+import com.questdb.json.JsonException;
+import com.questdb.json.JsonLexer;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.net.http.ChunkedResponse;
@@ -47,6 +46,7 @@ import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.FileNameExtractorCharSequence;
 import com.questdb.store.ColumnType;
+import com.questdb.txt.SchemaParser;
 import com.questdb.txt.parser.DelimitedTextParser;
 import com.questdb.txt.parser.DelimiterDetector;
 import com.questdb.txt.parser.listener.JournalImportListener;
@@ -116,36 +116,17 @@ public class ImportHandler extends AbstractMultipartHandler {
             return;
         }
 
+        long lo = ((DirectByteCharSequence) data).getLo();
+
         switch (h.messagePart) {
             case MESSAGE_DATA:
                 if (h.state != ImportHandlerContext.STATE_OK) {
                     break;
                 }
-
-                long lo = ((DirectByteCharSequence) data).getLo();
-                if (h.analysed) {
-                    h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
-                } else {
-                    analyseFormat(h, lo, len);
-                    if (h.state == ImportHandlerContext.STATE_OK) {
-                        try {
-                            // todo: read sample size from configuration
-                            h.textParser.analyseStructure(lo, len, 100, h.importer, h.forceHeader);
-                            h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
-                        } catch (JournalRuntimeException e) {
-                            if (env.configuration.isHttpAbortBrokenUploads()) {
-                                sendError(context, e.getMessage());
-                                throw e;
-                            }
-                            h.state = ImportHandlerContext.STATE_DATA_ERROR;
-                            h.stateMessage = e.getMessage();
-                        }
-                    }
-                    h.analysed = true;
-                }
+                parseData(context, h, lo, len);
                 break;
             case MESSAGE_SCHEMA:
-                h.textParser.setSchemaText((DirectByteCharSequence) data);
+                parseSchema(context, h, lo, len);
                 break;
             default:
                 break;
@@ -191,6 +172,13 @@ public class ImportHandler extends AbstractMultipartHandler {
                     h.textParser.parseLast();
                     h.importer.commit();
                     sendResponse(context);
+                    break;
+                case MESSAGE_SCHEMA:
+                    try {
+                        h.jsonLexer.parseLast();
+                    } catch (JsonException e) {
+                        handleJsonException(context, h, e);
+                    }
                     break;
                 default:
                     break;
@@ -388,6 +376,45 @@ public class ImportHandler extends AbstractMultipartHandler {
         }
     }
 
+    private void handleJsonException(IOContext context, ImportHandlerContext h, JsonException e) throws IOException {
+        if (env.configuration.isHttpAbortBrokenUploads()) {
+            sendError(context, e.getMessage());
+            throw ImportSchemaException.INSTANCE;
+        }
+        h.state = ImportHandlerContext.STATE_DATA_ERROR;
+        h.stateMessage = e.getMessage();
+    }
+
+    private void parseData(IOContext context, ImportHandlerContext h, long lo, int len) throws IOException {
+        if (h.analysed) {
+            h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
+        } else {
+            analyseFormat(h, lo, len);
+            if (h.state == ImportHandlerContext.STATE_OK) {
+                try {
+                    h.textParser.analyseStructure(lo, len, env.configuration.getHttpImportSampleSize(), h.importer, h.forceHeader, h.schemaParser.getMetadata());
+                    h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
+                } catch (JournalRuntimeException e) {
+                    if (env.configuration.isHttpAbortBrokenUploads()) {
+                        sendError(context, e.getMessage());
+                        throw e;
+                    }
+                    h.state = ImportHandlerContext.STATE_DATA_ERROR;
+                    h.stateMessage = e.getMessage();
+                }
+            }
+            h.analysed = true;
+        }
+    }
+
+    private void parseSchema(IOContext context, ImportHandlerContext h, long lo, int len) throws IOException {
+        try {
+            h.jsonLexer.parse(lo, len, h.schemaParser);
+        } catch (JsonException e) {
+            handleJsonException(context, h, e);
+        }
+    }
+
     private void sendError(IOContext context, String message) throws IOException {
         ResponseSink sink = context.responseSink();
         if (Chars.equalsNc("json", context.request.getUrlParam("fmt"))) {
@@ -426,12 +453,14 @@ public class ImportHandler extends AbstractMultipartHandler {
         public static final int STATE_OK = 0;
         public static final int STATE_INVALID_FORMAT = 1;
         public static final int STATE_DATA_ERROR = 2;
+        private final DelimitedTextParser textParser;
+        private final JournalImportListener importer;
+        private final SchemaParser schemaParser;
+        private final JsonLexer jsonLexer;
         public int columnIndex = 0;
         private int state;
         private String stateMessage;
         private boolean analysed = false;
-        private DelimitedTextParser textParser;
-        private JournalImportListener importer;
         private int messagePart = MESSAGE_UNKNOWN;
         private int responseState = RESPONSE_PREFIX;
         private boolean json = false;
@@ -439,7 +468,9 @@ public class ImportHandler extends AbstractMultipartHandler {
 
         private ImportHandlerContext(BootstrapEnv env) {
             this.importer = new JournalImportListener(env);
-            this.textParser = new DelimitedTextParser(env.typeProbeCollection);
+            this.textParser = new DelimitedTextParser(env);
+            this.schemaParser = new SchemaParser(env);
+            this.jsonLexer = new JsonLexer(env.configuration.getHttpImportMaxJsonStringLen());
         }
 
         @Override
@@ -451,13 +482,16 @@ public class ImportHandler extends AbstractMultipartHandler {
             state = STATE_OK;
             textParser.clear();
             importer.clear();
+            jsonLexer.clear();
+            schemaParser.clear();
         }
 
         @Override
         public void close() {
             clear();
-            textParser = Misc.free(textParser);
-            importer = Misc.free(importer);
+            Misc.free(textParser);
+            Misc.free(importer);
+            Misc.free(jsonLexer);
         }
     }
 

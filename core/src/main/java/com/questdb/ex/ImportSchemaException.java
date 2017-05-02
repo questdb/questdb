@@ -21,12 +21,13 @@
  *
  ******************************************************************************/
 
-package com.questdb.txt;
+package com.questdb.ex;
 
-import com.questdb.std.ObjList;
+@SuppressWarnings("ThrowableInstanceNeverThrown")
+public final class ImportSchemaException extends JournalRuntimeException {
+    public final static ImportSchemaException INSTANCE = new ImportSchemaException();
 
-import java.io.Closeable;
-
-public interface Schema extends Closeable {
-    ObjList<ImportedColumnMetadata> getMetadata();
+    private ImportSchemaException() {
+        super("Error in schema");
+    }
 }

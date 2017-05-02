@@ -27,7 +27,16 @@ import com.questdb.BootstrapEnv;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.JournalConfiguration;
+import com.questdb.json.JsonException;
+import com.questdb.json.JsonLexer;
 import com.questdb.misc.ByteBuffers;
+import com.questdb.misc.Chars;
+import com.questdb.misc.Unsafe;
+import com.questdb.net.http.ServerConfiguration;
+import com.questdb.std.ObjList;
+import com.questdb.std.time.DateFormatFactory;
+import com.questdb.std.time.DateLocaleFactory;
+import com.questdb.std.time.TimeZoneRuleFactory;
 import com.questdb.txt.parser.DelimitedTextParser;
 import com.questdb.txt.parser.listener.InputAnalysisListener;
 import com.questdb.txt.parser.listener.JournalImportListener;
@@ -94,7 +103,12 @@ public final class ImportManager {
 
     public static void importFile(Factory factory, String fileName, char delimiter, CharSequence schema, int sampleSize, boolean forceHeader) throws IOException {
 
-        try (DelimitedTextParser parser = new DelimitedTextParser(new TypeProbeCollection()).of(delimiter)) {
+        BootstrapEnv env = new BootstrapEnv();
+        env.typeProbeCollection = new TypeProbeCollection();
+        env.configuration = new ServerConfiguration();
+        env.factory = factory;
+
+        try (DelimitedTextParser parser = new DelimitedTextParser(env).of(delimiter)) {
             File file = new File(fileName);
             String location = file.getName();
 
@@ -102,9 +116,6 @@ public final class ImportManager {
                 case JournalConfiguration.EXISTS_FOREIGN:
                     throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
                 default:
-                    BootstrapEnv env = new BootstrapEnv();
-                    env.factory = factory;
-
                     try (JournalImportListener l = new JournalImportListener(env).of(location, false, false, JournalImportListener.ATOMICITY_RELAXED)) {
                         analyzeAndParse(file, parser, l, schema, sampleSize, forceHeader);
                     }
@@ -144,6 +155,29 @@ public final class ImportManager {
             int sampleSize,
             boolean forceHeader) throws IOException {
         parser.clear();
+
+        ObjList<ImportedColumnMetadata> metadata = null;
+        if (schema != null) {
+            BootstrapEnv env = new BootstrapEnv();
+            env.dateLocaleFactory = new DateLocaleFactory(new TimeZoneRuleFactory());
+            env.dateFormatFactory = new DateFormatFactory();
+            SchemaParser schemaParser = new SchemaParser(env);
+            int len = schema.length();
+            long addr = Unsafe.malloc(len);
+            try {
+                Chars.strcpy(schema, len, addr);
+                try (JsonLexer lexer = new JsonLexer(1024)) {
+                    lexer.parse(addr, len, schemaParser);
+                    lexer.parseLast();
+                }
+                metadata = schemaParser.getMetadata();
+
+            } catch (JsonException e) {
+                throw new IOException(e);
+            } finally {
+                Unsafe.free(addr, len);
+            }
+        }
         try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
             try (FileChannel channel = raf.getChannel()) {
                 long size = channel.size();
@@ -153,8 +187,7 @@ public final class ImportManager {
                     MappedByteBuffer buf = channel.map(FileChannel.MapMode.READ_ONLY, p, size - p < bufSize ? size - p : bufSize);
                     try {
                         if (p == 0) {
-                            parser.setSchemaText(schema);
-                            parser.analyseStructure(ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener, forceHeader);
+                            parser.analyseStructure(ByteBuffers.getAddress(buf), buf.remaining(), sampleSize, listener, forceHeader, metadata);
                         }
                         p += buf.remaining();
                         parser.parse(ByteBuffers.getAddress(buf), buf.remaining(), Integer.MAX_VALUE, listener);

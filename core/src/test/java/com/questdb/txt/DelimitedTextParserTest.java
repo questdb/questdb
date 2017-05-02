@@ -128,14 +128,15 @@ public class DelimitedTextParserTest extends AbstractTest {
     @Test
     public void testImportSchema() throws Exception {
         String file = this.getClass().getResource("/csv/test-import.csv").getFile();
-        ImportManager.importFile(getFactory(), file, TextFileDelimiter.CSV, "IntSym=INT&Fmt2Date=STRING", false);
+        String schema = "[{\"name\":\"IntSym\", \"type\":\"SYMBOL\"}, {\"name\":\"Fmt2Date\", \"type\":\"STRING\"}]";
+        ImportManager.importFile(getFactory(), file, TextFileDelimiter.CSV, schema, false);
         String location = "test-import.csv";
 
         Assert.assertEquals(JournalConfiguration.EXISTS, getFactory().getConfiguration().exists(location));
 
         try (Journal r = getFactory().reader(location)) {
             JournalMetadata m = r.getMetadata();
-            Assert.assertEquals(ColumnType.INT, m.getColumn(1).type);
+            Assert.assertEquals(ColumnType.SYMBOL, m.getColumn(1).type);
             Assert.assertEquals(ColumnType.STRING, m.getColumn(6).type);
         }
     }

@@ -23,6 +23,7 @@
 
 package com.questdb;
 
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.test.tools.TestUtils;
@@ -40,7 +41,12 @@ import java.util.List;
 
 public class CsvTest {
 
-    private final TypeProbeCollection typeProbeCollection = new TypeProbeCollection();
+    private final BootstrapEnv env = new BootstrapEnv();
+
+    public CsvTest() {
+        env.typeProbeCollection = new TypeProbeCollection();
+        env.configuration = new ServerConfiguration();
+    }
 
     @Test
     public void testHeaders() throws Exception {
@@ -55,7 +61,7 @@ public class CsvTest {
 
 
         ImportManager.parse(new File(this.getClass().getResource("/csv/test-headers.csv").getFile())
-                , new DelimitedTextParser(typeProbeCollection).of(',')
+                , new DelimitedTextParser(env).of(',')
                 , 1024 * 1024
                 , true
                 , new Listener() {
@@ -94,22 +100,22 @@ public class CsvTest {
 
     @Test
     public void testParseDosCsvSmallBuf() throws Exception {
-        assertFile("/csv/test-dos.csv", 10, new DelimitedTextParser(typeProbeCollection).of(','));
+        assertFile("/csv/test-dos.csv", 10, new DelimitedTextParser(env).of(','));
     }
 
     @Test
     public void testParseTab() throws Exception {
-        assertFile("/csv/test.txt", 1024 * 1024, new DelimitedTextParser(typeProbeCollection).of('\t'));
+        assertFile("/csv/test.txt", 1024 * 1024, new DelimitedTextParser(env).of('\t'));
     }
 
     @Test
     public void testParseTabSmallBuf() throws Exception {
-        assertFile("/csv/test.txt", 10, new DelimitedTextParser(typeProbeCollection).of('\t'));
+        assertFile("/csv/test.txt", 10, new DelimitedTextParser(env).of('\t'));
     }
 
     @Test
     public void testParseUnixCsvSmallBuf() throws Exception {
-        assertFile("/csv/test-unix.csv", 10, new DelimitedTextParser(typeProbeCollection).of(','));
+        assertFile("/csv/test-unix.csv", 10, new DelimitedTextParser(env).of(','));
     }
 
 /*

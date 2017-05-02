@@ -43,7 +43,9 @@ import com.questdb.net.http.handlers.StaticContentHandler;
 import com.questdb.net.http.handlers.UploadHandler;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
+import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.HttpTestUtils;
 import com.questdb.test.tools.TestUtils;
@@ -90,6 +92,7 @@ public class HttpServerTest extends AbstractJournalTest {
 
     private final static Log LOG = LogFactory.getLog(HttpServerTest.class);
     private final static TypeProbeCollection TYPE_PROBE_COLLECTION = new TypeProbeCollection();
+    private final static DateFormatFactory DATE_FORMAT_FACTORY = new DateFormatFactory();
 
     private final static String request = "GET /imp?x=1&z=2 HTTP/1.1\r\n" +
             "Host: localhost:80\r\n" +
@@ -417,7 +420,7 @@ public class HttpServerTest extends AbstractJournalTest {
             StringBuilder response = new StringBuilder();
             try {
                 Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", null, response));
-                TestUtils.assertEquals("{\"status\":\"Journal exists and column count does not mismatch\"}", response);
+                TestUtils.assertEquals("{\"status\":\"Journal exists and column count does not match\"}", response);
             } catch (IOException e) {
                 Assert.assertTrue(e.getMessage().contains("Connection reset"));
             } finally {
@@ -602,6 +605,8 @@ public class HttpServerTest extends AbstractJournalTest {
         env.configuration = new ServerConfiguration();
         env.factory = getFactory();
         env.typeProbeCollection = TYPE_PROBE_COLLECTION;
+        env.dateLocaleFactory = DateLocaleFactory.INSTANCE;
+        env.dateFormatFactory = DATE_FORMAT_FACTORY;
         env.matcher = new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(env));
         }};
@@ -611,8 +616,8 @@ public class HttpServerTest extends AbstractJournalTest {
         server.start();
 
         try {
-            Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", "IsoDate=DATE_ISO&IntCol=DOUBLE", null));
-            Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", "IsoDate=DATE_ISO", null));
+            Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?fmt=json", "[{\"name\":\"IsoDate\", \"type\":\"DATE\"}, {\"name\":\"IntCol\", \"type\":\"DOUBLE\"}]", null));
+            Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", "[{\"name\":\"IsoDate\", \"type\":\"DATE\"}]", null));
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
             QueryCompiler qc = new QueryCompiler(env.configuration);
@@ -644,12 +649,19 @@ public class HttpServerTest extends AbstractJournalTest {
         env.matcher = new SimpleUrlMatcher() {{
             put("/imp", new ImportHandler(env));
         }};
+        env.dateLocaleFactory = DateLocaleFactory.INSTANCE;
+        env.dateFormatFactory = DATE_FORMAT_FACTORY;
+
         HttpServer server = new HttpServer(env);
 
         server.start();
 
         try {
-            Assert.assertEquals(400, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp?atomicity=strict", "IsoDate=DATE_ISO&IntCol=DATE_ISO", null));
+            Assert.assertEquals(400, HttpTestUtils.upload(
+                    "/csv/test-import.csv",
+                    "http://localhost:9000/imp?atomicity=strict",
+                    "[{\"name\":\"IsoDate\", \"type\":\"DATE\"}, {\"name\":\"IntCol\", \"type\":\"DATE\"}]",
+                    null));
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
             QueryCompiler qc = new QueryCompiler(env.configuration);

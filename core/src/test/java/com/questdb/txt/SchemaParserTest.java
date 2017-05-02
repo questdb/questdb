@@ -1,26 +1,29 @@
 package com.questdb.txt;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.json.JsonException;
 import com.questdb.json.JsonLexer;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjList;
-import com.questdb.std.ObjectPool;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.std.time.TimeZoneRuleFactory;
 import com.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 public class SchemaParserTest {
-    private static final DateLocaleFactory dateLocaleFactory = new DateLocaleFactory(new TimeZoneRuleFactory());
-    private static final DateFormatFactory dateFormatFactory = new DateFormatFactory();
-    private static final ObjectPool<ImportedColumnMetadata> mPool = new ObjectPool<>(ImportedColumnMetadata.FACTORY, 64);
     private static final JsonLexer LEXER = new JsonLexer(1024);
-    private static final SchemaParser schemaParser = new SchemaParser(mPool, dateLocaleFactory, dateFormatFactory);
-    private static final String defaultLocaleId = dateLocaleFactory.getDefaultDateLocale().getId();
+    private static SchemaParser schemaParser;
+    private static String defaultLocaleId;
+
+    @BeforeClass
+    public static void setUpClass() throws Exception {
+        BootstrapEnv env = new BootstrapEnv();
+        env.dateFormatFactory = new DateFormatFactory();
+        env.dateLocaleFactory = new DateLocaleFactory(new TimeZoneRuleFactory());
+        defaultLocaleId = env.dateLocaleFactory.getDefaultDateLocale().getId();
+        schemaParser = new SchemaParser(env);
+    }
 
     @AfterClass
     public static void tearDown() throws Exception {
@@ -29,7 +32,6 @@ public class SchemaParserTest {
 
     @Before
     public void setUp() throws Exception {
-        mPool.clear();
         LEXER.clear();
         schemaParser.clear();
     }

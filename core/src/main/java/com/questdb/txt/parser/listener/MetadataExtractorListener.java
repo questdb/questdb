@@ -27,7 +27,6 @@ import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.store.ColumnType;
 import com.questdb.txt.ImportedColumnMetadata;
-import com.questdb.txt.Schema;
 import com.questdb.txt.parser.listener.probe.TypeProbe;
 import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
 import com.questdb.txt.sink.StringSink;
@@ -71,12 +70,11 @@ public class MetadataExtractorListener implements Listener, Mutable {
         return header;
     }
 
-    public void of(Schema schema, boolean forceHeader) {
+    public void of(ObjList<ImportedColumnMetadata> schema, boolean forceHeader) {
         clear();
         if (schema != null) {
-            ObjList<ImportedColumnMetadata> list = schema.getMetadata();
-            for (int i = 0, n = list.size(); i < n; i++) {
-                ImportedColumnMetadata m = list.getQuick(i);
+            for (int i = 0, n = schema.size(); i < n; i++) {
+                ImportedColumnMetadata m = schema.getQuick(i);
                 schemaColumns.put(m.name, m);
             }
         }

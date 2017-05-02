@@ -54,6 +54,10 @@ public class ServerConfiguration {
     private int httpSoConsecutiveBadReadLimit = 1000;
     private boolean httpAbortBrokenUploads = true;
     private String httpIndexFile = "index.html";
+    private int httpImportMaxJsonStringLen = 1024 * 64;
+    private int httpImportInitialTextBuf = 4 * 1024;
+    private int httpImportMaxTextBuf = 4 * 1024 * 1024;
+    private int httpImportSampleSize = 100;
     private int dbAsOfDataPage = 4 * 1024 * 1024;
     private int dbAsOfIndexPage = 1024 * 1024;
     private int dbAsOfRowPage = 1024 * 1024;
@@ -167,6 +171,22 @@ public class ServerConfiguration {
 
         if ((s = props.getProperty("http.index.file")) != null) {
             this.httpIndexFile = s;
+        }
+
+        if ((n = parseInt(props, "http.import.max.json.string")) > -1) {
+            this.httpImportMaxJsonStringLen = n;
+        }
+
+        if ((n = parseInt(props, "http.import.initial.text.buf")) > -1) {
+            this.httpImportInitialTextBuf = n;
+        }
+
+        if ((n = parseInt(props, "http.import.max.text.buf")) > -1) {
+            this.httpImportMaxTextBuf = n;
+        }
+
+        if ((n = parseInt(props, "http.import.sample.size")) > -1) {
+            this.httpImportSampleSize = n;
         }
 
         if ((s = props.getProperty("db.path")) != null) {
@@ -436,6 +456,22 @@ public class ServerConfiguration {
 
     public String getHttpIP() {
         return httpIP;
+    }
+
+    public int getHttpImportInitialTextBuf() {
+        return httpImportInitialTextBuf;
+    }
+
+    public int getHttpImportMaxJsonStringLen() {
+        return httpImportMaxJsonStringLen;
+    }
+
+    public int getHttpImportMaxTextBuf() {
+        return httpImportMaxTextBuf;
+    }
+
+    public int getHttpImportSampleSize() {
+        return httpImportSampleSize;
     }
 
     public String getHttpIndexFile() {
