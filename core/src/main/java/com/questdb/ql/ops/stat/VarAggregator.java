@@ -44,6 +44,7 @@ import java.io.Closeable;
 
 public class VarAggregator extends AbstractUnaryOperator implements AggregatorFunction, MapRecordValueInterceptor, Closeable {
 
+    public static final VirtualColumnFactory<Function> FACTORY = (position, env) -> new VarAggregator(position, env.configuration);
     private final static RecordColumnMetadata INTERNAL_COL_TOTAL = new RecordColumnMetadataImpl("$total", ColumnType.LONG);
     private final static RecordColumnMetadata INTERNAL_COL_LOCAL_TOTAL = new RecordColumnMetadataImpl("$part_total", ColumnType.LONG);
     private final static RecordColumnMetadata INTERNAL_COL_SUM = new RecordColumnMetadataImpl("$part_sum", ColumnType.DOUBLE);
@@ -53,7 +54,6 @@ public class VarAggregator extends AbstractUnaryOperator implements AggregatorFu
     private final static RecordColumnMetadata INTERNAL_COL_VALUES_TAIL = new RecordColumnMetadataImpl("$valuesTail", ColumnType.LONG);
     private final static CollectionRecordMetadata meanPartialsMetadata;
     private final static CollectionRecordMetadata sourceMetadata;
-    public static final VirtualColumnFactory<Function> FACTORY = VarAggregator::new;
     private final RecordList meanPartials;
     private final RecordList srcRecords;
     private int oTotal;

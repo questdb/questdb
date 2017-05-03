@@ -15,7 +15,6 @@ public class DateFormatUtils {
     public static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
     private static final DateFormat FMT4;
     private static final DateFormat HTTP_FORMAT;
-    private static final DateFormat TIME24;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
@@ -319,10 +318,6 @@ public class DateFormatUtils {
         }
     }
 
-    public static long parseTime24(CharSequence seq) throws NumericException {
-        return TIME24.parse(seq, defaultLocale);
-    }
-
     public static long tryParse(CharSequence s) throws NumericException {
         return tryParse(s, 0, s.length());
     }
@@ -585,6 +580,5 @@ public class DateFormatUtils {
         UTC_FORMAT = compiler.compile(UTC_PATTERN, false);
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z", false);
         FMT4 = compiler.compile("MMM d yyyy", false);
-        TIME24 = compiler.compile("H:m", false);
     }
 }

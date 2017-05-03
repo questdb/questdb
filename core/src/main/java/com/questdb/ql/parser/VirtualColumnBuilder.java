@@ -23,13 +23,13 @@
 
 package com.questdb.ql.parser;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.ex.NoSuchColumnException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.model.ExprNode;
 import com.questdb.ql.model.QueryModel;
 import com.questdb.ql.ops.*;
@@ -47,15 +47,15 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
     private final Signature mutableSig = new Signature();
     private final ArrayDeque<VirtualColumn> stack = new ArrayDeque<>();
     private final PostOrderTreeTraversalAlgo algo;
-    private final ServerConfiguration configuration;
+    private final BootstrapEnv env;
     private RecordMetadata metadata;
     private CharSequenceIntHashMap columnNameHistogram;
     private CharSequenceObjHashMap<Parameter> parameterMap;
     private QueryModel model;
 
-    VirtualColumnBuilder(PostOrderTreeTraversalAlgo algo, ServerConfiguration configuration) {
+    VirtualColumnBuilder(PostOrderTreeTraversalAlgo algo, BootstrapEnv env) {
         this.algo = algo;
-        this.configuration = configuration;
+        this.env = env;
     }
 
     @Override
@@ -153,7 +153,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
             throw QueryError.$(node.position, "No such function: " + sig.userReadable());
         }
 
-        Function f = factory.newInstance(node.position, configuration);
+        Function f = factory.newInstance(node.position, env);
         if (args != null) {
             int n = node.paramCount;
             for (int i = 0; i < n; i++) {

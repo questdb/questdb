@@ -24,19 +24,29 @@
 package com.questdb.ql.ops.conv;
 
 import com.questdb.ex.NumericException;
+import com.questdb.ex.ParserException;
 import com.questdb.ql.Record;
-import com.questdb.ql.ops.AbstractUnaryOperator;
+import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
+import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.DateFormat;
+import com.questdb.std.time.DateFormatFactory;
+import com.questdb.std.time.DateLocale;
 import com.questdb.store.ColumnType;
 
-public class Time24ToMillisFunction extends AbstractUnaryOperator {
+public class ToDateTwoArgFunction extends AbstractBinaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new Time24ToMillisFunction(position);
+    public final static VirtualColumnFactory<Function> FACTORY = (position, env) -> new ToDateTwoArgFunction(position, env.dateFormatFactory, env.dateLocaleFactory.getDefaultDateLocale());
 
-    private Time24ToMillisFunction(int position) {
-        super(ColumnType.LONG, position);
+    private final DateFormatFactory dateFormatFactory;
+    private final DateLocale dateLocale;
+    private DateFormat fmt;
+
+    private ToDateTwoArgFunction(int position, DateFormatFactory dateFormatFactory, DateLocale defaultLocale) {
+        super(ColumnType.DATE, position);
+        this.dateFormatFactory = dateFormatFactory;
+        this.dateLocale = defaultLocale;
     }
 
     @Override
@@ -52,10 +62,16 @@ public class Time24ToMillisFunction extends AbstractUnaryOperator {
     @Override
     public long getLong(Record rec) {
         try {
-            CharSequence s = value.getFlyweightStr(rec);
-            return s == null ? Long.MIN_VALUE : DateFormatUtils.parseTime24(s);
+            CharSequence s = lhs.getFlyweightStr(rec);
+            return s == null ? Long.MIN_VALUE : fmt.parse(s, dateLocale);
         } catch (NumericException ignore) {
-            return 0;
+            return Long.MIN_VALUE;
         }
+    }
+
+    @Override
+    public void setRhs(VirtualColumn rhs) throws ParserException {
+        super.setRhs(rhs);
+        fmt = dateFormatFactory.get(rhs.getFlyweightStr(null));
     }
 }

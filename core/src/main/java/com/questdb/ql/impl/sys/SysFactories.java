@@ -40,5 +40,6 @@ public final class SysFactories {
         sysViewFactories.put("$tabs", $TabsFactory.INSTANCE);
         sysViewFactories.put("$cols", $ColsFactory.INSTANCE);
         sysViewFactories.put("$locales", $LocalesFactory.INSTANCE);
+        sysViewFactories.put("dual", DualFactory.INSTANCE);
     }
 }

@@ -23,6 +23,7 @@
 
 package com.questdb.ql;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.factory.configuration.JournalStructure;
@@ -63,7 +64,10 @@ public class VirtualColumnTest extends AbstractTest {
 
             StringSink sink = new StringSink();
             RecordSourcePrinter p = new RecordSourcePrinter(sink);
-            final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(0, new ServerConfiguration());
+            BootstrapEnv env = new BootstrapEnv();
+            env.configuration = new ServerConfiguration();
+
+            final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(0, env);
             plus.setName("plus");
             plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid"), 0));
             plus.setRhs(new DoubleConstant(12.5, 0));
@@ -201,7 +205,9 @@ public class VirtualColumnTest extends AbstractTest {
 
             StringSink sink = new StringSink();
             RecordSourcePrinter p = new RecordSourcePrinter(sink);
-            final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(0, new ServerConfiguration());
+            BootstrapEnv env = new BootstrapEnv();
+            env.configuration = new ServerConfiguration();
+            final AddDoubleOperator plus = (AddDoubleOperator) AddDoubleOperator.FACTORY.newInstance(0, env);
             plus.setName("plus");
             plus.setLhs(new DoubleRecordSourceColumn(w.getMetadata().getColumnIndex("bid"), 0));
             plus.setRhs(new DoubleConstant(12.5, 0));

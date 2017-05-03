@@ -3953,7 +3953,7 @@ public class SingleJournalQueryTest extends AbstractTest {
                         "\t2015-03-12T00:00:00.000Z\t19:32\t2015-03-12T19:32:00.000Z\n" +
                         "\t2015-03-12T00:00:00.000Z\t21:49\t2015-03-12T21:49:00.000Z\n" +
                         "\t2015-03-12T00:00:00.000Z\t7:16\t2015-03-12T07:16:00.000Z\n",
-                "select id, date, time, date + time24(time) from tab where id = null limit 10");
+                "select id, date, time, date + toDate(time, 'H:m') from tab where id = null limit 10");
     }
 
     @Test

@@ -29,11 +29,11 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.store.ColumnType;
 
-public class LtoDFunction extends AbstractUnaryOperator {
+public class LongToDateFunction extends AbstractUnaryOperator {
 
-    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new LtoDFunction(position);
+    public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new LongToDateFunction(position);
 
-    private LtoDFunction(int position) {
+    private LongToDateFunction(int position) {
         super(ColumnType.DATE, position);
     }
 

@@ -229,16 +229,16 @@ public final class FunctionFactories {
         aggregateFunctionNames.add(name);
     }
 
-    private static void triSig(String name, int lhst, int rhst, int scale, VirtualColumnFactory<Function> f) {
-        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, false), f);
-        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, false).paramType(2, scale, true), f);
-        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, true).paramType(2, scale, false), f);
-        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, false).paramType(1, rhst, true).paramType(2, scale, true), f);
+    private static void triSig(String name, int one, int two, int three, VirtualColumnFactory<Function> f) {
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, one, false).paramType(1, two, false).paramType(2, three, false), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, one, false).paramType(1, two, false).paramType(2, three, true), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, one, false).paramType(1, two, true).paramType(2, three, false), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, one, false).paramType(1, two, true).paramType(2, three, true), f);
 
-        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, false).paramType(2, scale, false), f);
-        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, false).paramType(2, scale, true), f);
-        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, true).paramType(2, scale, false), f);
-        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, lhst, true).paramType(1, rhst, true).paramType(2, scale, true), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, one, true).paramType(1, two, false).paramType(2, three, false), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, one, true).paramType(1, two, false).paramType(2, three, true), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, one, true).paramType(1, two, true).paramType(2, three, false), f);
+        factories.put(new Signature().setName(name).setParamCount(3).paramType(0, one, true).paramType(1, two, true).paramType(2, three, true), f);
     }
 
     private static void binSig(String name, VirtualColumnFactory<Function> doubleFactory, VirtualColumnFactory<Function> longFactory, VirtualColumnFactory<Function> intFactory) {
@@ -320,6 +320,7 @@ public final class FunctionFactories {
         binSig("+", AddDoubleOperator.FACTORY, AddLongOperator.FACTORY, AddIntOperator.FACTORY, StrConcatOperator.FACTORY);
         binSig("+", ColumnType.DATE, ColumnType.LONG, AddDateOperator.FACTORY);
         binSig("+", ColumnType.LONG, ColumnType.DATE, AddDateOperator.FACTORY);
+        binSig("+", ColumnType.DATE, ColumnType.DATE, AddDateOperator.FACTORY);
         binSig("+", ColumnType.DATE, ColumnType.INT, AddDateDayLOperator.FACTORY);
         binSig("+", ColumnType.INT, ColumnType.DATE, AddDateDayROperator.FACTORY);
 
@@ -392,12 +393,25 @@ public final class FunctionFactories {
         unSig("_atos", ColumnType.STRING, AtoSFunction.FACTORY);
         unSig("atoi", ColumnType.STRING, AtoIFunction.FACTORY);
         unSig("atod", ColumnType.STRING, AtoDFunction.FACTORY);
-        unSig("ltod", ColumnType.LONG, LtoDFunction.FACTORY);
-        unSig("ltod", ColumnType.INT, LtoDFunction.FACTORY);
         unSig("dtol", ColumnType.DATE, DtoLFunction.FACTORY);
         unSig("dtoa4", ColumnType.DATE, DtoA4Function.FACTORY);
-        unSig("time24", ColumnType.STRING, Time24ToMillisFunction.FACTORY);
+
+        unSig("toDate", ColumnType.LONG, LongToDateFunction.FACTORY);
+        unSig("toDate", ColumnType.INT, LongToDateFunction.FACTORY);
         unSig("toDate", ColumnType.STRING, ToDateFunction.FACTORY);
+        binSig("toDate", ColumnType.STRING, false, ColumnType.STRING, true, ToDateTwoArgFunction.FACTORY);
+        binSig("toDate", ColumnType.STRING, true, ColumnType.STRING, true, ToDateTwoArgFunction.FACTORY);
+        factories.put(new Signature().setName("toDate").setParamCount(3).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), ToDateThreeArgFunction.FACTORY);
+        factories.put(new Signature().setName("toDate").setParamCount(3).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), ToDateThreeArgFunction.FACTORY);
+
+
+        unSig("TO_DATE", ColumnType.LONG, LongToDateFunction.FACTORY);
+        unSig("TO_DATE", ColumnType.INT, LongToDateFunction.FACTORY);
+        unSig("TO_DATE", ColumnType.STRING, ToDateFunction.FACTORY);
+        binSig("TO_DATE", ColumnType.STRING, false, ColumnType.STRING, true, ToDateTwoArgFunction.FACTORY);
+        binSig("TO_DATE", ColumnType.STRING, true, ColumnType.STRING, true, ToDateTwoArgFunction.FACTORY);
+        factories.put(new Signature().setName("TO_DATE").setParamCount(3).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), ToDateThreeArgFunction.FACTORY);
+        factories.put(new Signature().setName("TO_DATE").setParamCount(3).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), ToDateThreeArgFunction.FACTORY);
 
         binSig("roundUp", ColumnType.DOUBLE, ColumnType.INT, RoundUpFunction.FACTORY);
         binSig("roundDown", ColumnType.DOUBLE, ColumnType.INT, RoundDownFunction.FACTORY);

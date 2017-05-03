@@ -23,15 +23,19 @@
 
 package com.questdb.test.tools;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.Factory;
 import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
+import com.questdb.std.time.DateFormatFactory;
+import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.store.SymbolTable;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.sink.StringSink;
@@ -48,7 +52,15 @@ public abstract class AbstractTest {
 
     protected final StringSink sink = new StringSink();
     protected final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-    private final QueryCompiler compiler = new QueryCompiler();
+    private final QueryCompiler compiler;
+
+    public AbstractTest() {
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.dateFormatFactory = new DateFormatFactory();
+        env.dateLocaleFactory = DateLocaleFactory.INSTANCE;
+        compiler = new QueryCompiler(env);
+    }
 
     public void assertSymbol(String query) throws ParserException {
         try (RecordSource src = compiler.compile(getFactory(), query)) {

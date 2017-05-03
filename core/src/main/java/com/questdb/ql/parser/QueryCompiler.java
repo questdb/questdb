@@ -137,7 +137,7 @@ public class QueryCompiler {
         // seed column name assembly with default column prefix, which we will reuse
         this.env = env;
         this.configuration = env.configuration;
-        this.virtualColumnBuilder = new VirtualColumnBuilder(traversalAlgo, configuration);
+        this.virtualColumnBuilder = new VirtualColumnBuilder(traversalAlgo, env);
         columnNameAssembly.put("col");
         columnNamePrefixLen = 3;
     }

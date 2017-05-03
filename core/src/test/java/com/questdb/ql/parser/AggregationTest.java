@@ -259,7 +259,7 @@ public class AggregationTest extends AbstractOptimiserTest {
                         "BEOUOJSHR\t2014-05-04T10:32:50.000Z\n" +
                         "YRXPEHNRX\t2014-05-04T10:33:10.000Z\n" +
                         "VTJWCPSWH\t2014-05-04T10:34:10.000Z\n",
-                "select employeeId, ltod(first(orderDate)) f from orders");
+                "select employeeId, toDate(first(orderDate)) f from orders");
     }
 
     @Test
@@ -291,7 +291,7 @@ public class AggregationTest extends AbstractOptimiserTest {
                         "BEOUOJSHR\t-233.000000000000\t0.2665\t1504681377\t2014-05-05T14:14:30.000Z\t2014-05-04T10:32:50.000Z\t2014-05-05T14:14:30.000Z\n" +
                         "YRXPEHNRX\t0.000003891365\t0.6637\t1081845029\t2014-05-05T14:12:10.000Z\t2014-05-04T10:33:10.000Z\t2014-05-05T14:12:10.000Z\n" +
                         "VTJWCPSWH\t124.287727355957\t0.5628\t414901203\t2014-05-05T14:15:10.000Z\t2014-05-04T10:34:10.000Z\t2014-05-05T14:15:10.000Z\n",
-                "select employeeId, last(price), last(rate), last(quantity), ltod(dtol(last(orderDate))), min(orderDate), max(orderDate) from orders",
+                "select employeeId, last(price), last(rate), last(quantity), toDate(dtol(last(orderDate))), min(orderDate), max(orderDate) from orders",
                 true);
 
     }

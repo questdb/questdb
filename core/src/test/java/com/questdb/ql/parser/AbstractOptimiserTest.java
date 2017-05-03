@@ -35,6 +35,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.AssociativeCache;
+import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.store.SymbolTable;
 import com.questdb.test.tools.FactoryContainer;
@@ -220,6 +221,7 @@ public abstract class AbstractOptimiserTest {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = new ServerConfiguration();
         env.dateLocaleFactory = DateLocaleFactory.INSTANCE;
+        env.dateFormatFactory = new DateFormatFactory();
         compiler = new QueryCompiler(env);
     }
 }
