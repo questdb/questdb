@@ -404,6 +404,13 @@ public final class FunctionFactories {
         factories.put(new Signature().setName("toDate").setParamCount(3).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), ToDateThreeArgFunction.FACTORY);
         factories.put(new Signature().setName("toDate").setParamCount(3).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), ToDateThreeArgFunction.FACTORY);
 
+        binSig("TO_CHAR", ColumnType.DATE, false, ColumnType.STRING, true, DateToCharFunction.FACTORY);
+        binSig("TO_CHAR", ColumnType.DATE, true, ColumnType.STRING, true, DateToCharFunction.FACTORY);
+        factories.put(new Signature().setName("TO_CHAR").setParamCount(3).paramType(0, ColumnType.DATE, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), DateToCharTZFunction.FACTORY);
+        factories.put(new Signature().setName("TO_CHAR").setParamCount(3).paramType(0, ColumnType.DATE, false).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), DateToCharTZFunction.FACTORY);
+
+        factories.put(new Signature().setName("TO_CHAR").setParamCount(4).paramType(0, ColumnType.DATE, false).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true).paramType(3, ColumnType.STRING, true), DateToCharTZLocaleFunction.FACTORY);
+        factories.put(new Signature().setName("TO_CHAR").setParamCount(4).paramType(0, ColumnType.DATE, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true).paramType(3, ColumnType.STRING, true), DateToCharTZLocaleFunction.FACTORY);
 
         unSig("TO_DATE", ColumnType.LONG, LongToDateFunction.FACTORY);
         unSig("TO_DATE", ColumnType.INT, LongToDateFunction.FACTORY);
@@ -412,6 +419,9 @@ public final class FunctionFactories {
         binSig("TO_DATE", ColumnType.STRING, true, ColumnType.STRING, true, ToDateTwoArgFunction.FACTORY);
         factories.put(new Signature().setName("TO_DATE").setParamCount(3).paramType(0, ColumnType.STRING, false).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), ToDateThreeArgFunction.FACTORY);
         factories.put(new Signature().setName("TO_DATE").setParamCount(3).paramType(0, ColumnType.STRING, true).paramType(1, ColumnType.STRING, true).paramType(2, ColumnType.STRING, true), ToDateThreeArgFunction.FACTORY);
+
+
+        factories.put(new Signature().setName("SYSDATE").setParamCount(0), SysdateFunction.FACTORY);
 
         binSig("roundUp", ColumnType.DOUBLE, ColumnType.INT, RoundUpFunction.FACTORY);
         binSig("roundDown", ColumnType.DOUBLE, ColumnType.INT, RoundDownFunction.FACTORY);

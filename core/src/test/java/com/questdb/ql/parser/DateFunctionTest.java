@@ -10,16 +10,19 @@ public class DateFunctionTest extends AbstractOptimiserTest {
     @Test
     public void testCannotParse() throws Exception {
         assertThat("\n", "select toDate('2017', 'MM/y') from dual");
+        assertThat("\n", "select TO_DATE('2017', 'MM/y') from dual");
     }
 
     @Test
     public void testDefaultLocale() throws Exception {
         assertThat("2017-03-01T00:00:00.000Z\n", "select toDate('03/2017', 'MM/y') from dual");
+        assertThat("2017-03-01T00:00:00.000Z\n", "select TO_DATE('03/2017', 'MM/y') from dual");
     }
 
     @Test
     public void testParseWithLocale() throws Exception {
         assertThat("2017-04-01T00:00:00.000Z\n", "select toDate('Abril 2017', 'MMM y', 'es') from dual");
+        assertThat("2017-04-01T00:00:00.000Z\n", "select TO_DATE('Abril 2017', 'MMM y', 'es') from dual");
     }
 
     @Test
