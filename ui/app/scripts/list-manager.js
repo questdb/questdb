@@ -177,9 +177,6 @@
                 clearUL();
                 clearMap();
 
-                console.log('after splice');
-                console.log(map);
-
                 let first;
 
                 for (let i = 0, n = items.length; i < n; i++) {

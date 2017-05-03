@@ -154,7 +154,7 @@ public class SchemaParser implements JsonListener, Mutable {
         m.importedColumnType = type;
         m.pattern = pattern;
         m.dateFormat = dateFormat;
-        m.dateLocale = dateLocale == null ? dateLocaleFactory.getDefaultDateLocale() : dateLocale;
+        m.dateLocale = dateLocale == null && type == ColumnType.DATE ? dateLocaleFactory.getDefaultDateLocale() : dateLocale;
         metadata.add(m);
 
         // prepare for next iteration
@@ -190,7 +190,7 @@ public class SchemaParser implements JsonListener, Mutable {
     static {
         propertyNameMap.put("name", P_NAME);
         propertyNameMap.put("type", P_TYPE);
-        propertyNameMap.put("formatPattern", P_PATTERN);
-        propertyNameMap.put("dateLocale", P_LOCALE);
+        propertyNameMap.put("pattern", P_PATTERN);
+        propertyNameMap.put("locale", P_LOCALE);
     }
 }

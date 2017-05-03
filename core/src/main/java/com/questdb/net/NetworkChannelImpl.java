@@ -34,16 +34,10 @@ public class NetworkChannelImpl implements NetworkChannel {
     private final long fd;
     private final long ip;
     private long totalWritten = 0;
-    private long consecutiveBadReadCount = 0;
 
     public NetworkChannelImpl(long fd) {
         this.fd = fd;
         this.ip = Net.getPeerIP(fd);
-    }
-
-    @Override
-    public long getConsecutiveBadReadCount() {
-        return consecutiveBadReadCount;
     }
 
     public long getFd() {
@@ -74,14 +68,10 @@ public class NetworkChannelImpl implements NetworkChannel {
 
     @Override
     public int read(ByteBuffer dst) throws IOException {
-        int read = Net.recv(fd, ByteBuffers.getAddress(dst) + dst.position(), dst.remaining());
+        int p = dst.position();
+        int read = Net.recv(fd, ByteBuffers.getAddress(dst) + p, dst.remaining());
         if (read > 0) {
-            dst.position(dst.position() + read);
-            if (consecutiveBadReadCount > 0) {
-                consecutiveBadReadCount = 0;
-            }
-        } else {
-            consecutiveBadReadCount++;
+            dst.position(p + read);
         }
         return read;
     }

@@ -97,7 +97,8 @@ class BootstrapMain {
         env.configuration = new ServerConfiguration(conf);
         configureLoggers(env.configuration);
         env.dateFormatFactory = new DateFormatFactory();
-        env.typeProbeCollection = new TypeProbeCollection(new File(dir, "conf/date.formats"), env.dateFormatFactory, DateLocaleFactory.INSTANCE);
+        env.dateLocaleFactory = DateLocaleFactory.INSTANCE;
+        env.typeProbeCollection = new TypeProbeCollection(new File(dir, "conf/date.formats"), env.dateFormatFactory, env.dateLocaleFactory);
 
         // reader/writer factory and cache
         env.factory = new Factory(

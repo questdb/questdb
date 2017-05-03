@@ -69,7 +69,7 @@ public class ImportedColumnMetadata implements Mutable {
         return "ImportedColumnMetadata{" +
                 "importedColumnType=" + ColumnType.nameOf(importedColumnType) +
                 ", pattern=" + pattern +
-                ", dateLocale=" + dateLocale.getId() +
+                ", dateLocale=" + (dateLocale == null ? null : dateLocale.getId()) +
                 ", name=" + name +
                 '}';
     }

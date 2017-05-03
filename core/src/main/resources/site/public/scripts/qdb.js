@@ -25449,16 +25449,24 @@ function nopropagation(e) {
 
             // encode type overrides
             if (current.response && current.response.columns) {
-                var schema = '';
+                var schema = [];
                 for (var i = 0; i < current.response.columns.length; i++) {
                     var c = current.response.columns[i];
                     if (c.altType && c.type !== c.altType.text && c.altType.text !== 'AUTO') {
-                        schema += c.name + '=' + c.altType.value + '&';
+                        schema.push({
+                            name: c.name,
+                            type: c.altType.value
+                        });
+                        // schema += c.name + '=' + c.altType.value + '&';
                     } else if (c.errors === 0 && c.type !== 'DATE' && (c.altType === undefined || c.altType.text !== 'AUTO')) {
-                        schema += c.name + '=' + c.type + '&';
+                        schema.push({
+                            name: c.name,
+                            type: c.type
+                        });
+                        // schema += c.name + '=' + c.type + '&';
                     }
                 }
-                importRequest.data.append('schema', schema);
+                importRequest.data.append('schema', JSON.stringify(schema));
             }
 
             if (current.type === 'file') {
@@ -25777,7 +25785,16 @@ function nopropagation(e) {
         var lineHeight = 35;
         var select = void 0;
         var location = void 0;
-        var types = [{ text: 'AUTO', value: null }, { text: 'BOOLEAN', value: 'BOOLEAN' }, { text: 'BYTE', value: 'BYTE' }, { text: 'DOUBLE', value: 'DOUBLE' }, { text: 'FLOAT', value: 'FLOAT' }, { text: 'INT', value: 'INT' }, { text: 'LONG', value: 'LONG' }, { text: 'SHORT', value: 'SHORT' }, { text: 'STRING', value: 'STRING' }, { text: 'SYMBOL', value: 'SYMBOL' }, { text: 'DATE (ISO)', value: 'DATE_ISO' }, { text: 'DATE (YYYY-MM-DD hh:mm:ss)', value: 'DATE_1' }, { text: 'DATE (MM/DD/YYYY)', value: 'DATE_2' }, { text: 'DATE (DD/MM/YYYY)', value: 'DATE_3' }];
+        var types = [{text: 'AUTO', value: null}, {text: 'BOOLEAN', value: 'BOOLEAN'}, {
+            text: 'BYTE',
+            value: 'BYTE'
+        }, {text: 'DOUBLE', value: 'DOUBLE'}, {text: 'DATE', value: 'DATE'}, {
+            text: 'FLOAT',
+            value: 'FLOAT'
+        }, {text: 'INT', value: 'INT'}, {text: 'LONG', value: 'LONG'}, {text: 'SHORT', value: 'SHORT'}, {
+            text: 'STRING',
+            value: 'STRING'
+        }, {text: 'SYMBOL', value: 'SYMBOL'}];
 
         var current = null;
         var editorBus = ebus;
@@ -25881,7 +25898,7 @@ function nopropagation(e) {
                     var top = 0;
                     for (var k = 0; k < e.response.columns.length; k++) {
                         var col = e.response.columns[k];
-                        divCanvas.append('<div class="ud-row" style="top: ' + top + 'px">' + '<div class="ud-cell gc-1 g-other js-g-row">' + (k + 1) + '</div>' + '<div class="ud-cell gc-2 g-other">' + (col.errors > 0 ? '<i class="fa fa-exclamation-triangle g-warning"></i>' : '') + col.name + '</div>' + '<div class="ud-cell gc-3 g-type">' + getTypeHtml(col) + '</div>' + '<div class="ud-cell gc-4 g-other">' + col.errors + '</div>' + '</div>');
+                        divCanvas.append('<div class="ud-row" style="top: ' + top + 'px">' + '<div class="ud-cell gc-1 g-other js-g-row">' + (k + 1) + '</div>' + '<div class="ud-cell gc-2 g-other">' + (col.errors > 0 ? '<i class="fa fa-exclamation-triangle g-warning"></i>' : '') + col.name + '</div>' + '<div class="ud-cell gc-3 g-type">' + getTypeHtml(col) + '</div>' + '<div class="ud-cell gc-4 g-other">' + (col.pattern !== undefined ? col.pattern : '') + '</div>' + '<div class="ud-cell gc-5 g-other">' + (col.locale !== undefined ? col.locale : '') + '</div>' + '<div class="ud-cell gc-6 g-other">' + col.errors + '</div>' + '</div>');
 
                         top += lineHeight;
                     }
@@ -27216,9 +27233,6 @@ const eChartsMacarons = {
 
             clearUL();
             clearMap();
-
-            console.log('after splice');
-            console.log(map);
 
             var first = void 0;
 

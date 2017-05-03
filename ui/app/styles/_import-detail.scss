@@ -91,15 +91,23 @@ $stats-transition: top 0.25s ease-in-out;
 }
 
 .gh-2 {
-  width: 50%;
+  width: 40%;
 }
 
 .gh-3 {
-  width: 25%;
+  width: 15%;
 }
 
 .gh-4 {
   width: 20%;
+}
+
+.gh-5 {
+  width: 10%;
+}
+
+.gh-6 {
+  width: 10%;
 }
 
 .gc-1 {
@@ -109,17 +117,27 @@ $stats-transition: top 0.25s ease-in-out;
 
 .gc-2 {
   left: 5%;
-  width: 50%;
+  width: 40%;
 }
 
 .gc-3 {
-  left: 55%;
-  width: 25%;
+  left: 45%;
+  width: 15%;
 }
 
 .gc-4 {
-  left: 80%;
+  left: 60%;
   width: 20%;
+}
+
+.gc-5 {
+  left: 80%;
+  width: 10%;
+}
+
+.gc-6 {
+  left: 90%;
+  width: 10%;
 }
 
 .g-dynamic-select {

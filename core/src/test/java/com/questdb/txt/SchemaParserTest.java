@@ -39,28 +39,28 @@ public class SchemaParserTest {
     @Test
     public void testArrayProperty() throws Exception {
         String in = "[\n" +
-                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"formatPattern\":\"xyz\", \"dateLocale\": []}\n" +
+                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\", \"locale\": []}\n" +
                 "]";
         try {
             parseMetadata(in);
             Assert.fail();
         } catch (JsonException e) {
             Assert.assertEquals("Unexpected array", e.getMessage());
-            Assert.assertEquals(72, e.getPosition());
+            Assert.assertEquals(62, e.getPosition());
         }
     }
 
     @Test
     public void testCorrectSchema() throws Exception {
         String in = "[\n" +
-                "{\"name\": \"x\", \"type\": \"INT\", \"formatPattern\":\"xyz\", \"dateLocale\": \"en-GB\"},\n" +
-                "{\"name\": \"y\", \"type\": \"DOUBLE\", \"formatPattern\":\"xyz\"}\n" +
+                "{\"name\": \"x\", \"type\": \"INT\", \"pattern\":\"xyz\", \"locale\": \"en-US\"},\n" +
+                "{\"name\": \"y\", \"type\": \"DATE\", \"pattern\":\"xyz\"}\n" +
                 "]";
 
         ObjList<ImportedColumnMetadata> metadata = parseMetadata(in);
         Assert.assertEquals(2, metadata.size());
-        Assert.assertEquals("ImportedColumnMetadata{importedColumnType=INT, pattern=xyz, dateLocale=en-GB, name=x}", metadata.get(0).toString());
-        Assert.assertEquals("ImportedColumnMetadata{importedColumnType=DOUBLE, pattern=xyz, dateLocale=" + defaultLocaleId + ", name=y}", metadata.get(1).toString());
+        Assert.assertEquals("ImportedColumnMetadata{importedColumnType=INT, pattern=xyz, dateLocale=en-US, name=x}", metadata.get(0).toString());
+        Assert.assertEquals("ImportedColumnMetadata{importedColumnType=DATE, pattern=xyz, dateLocale=" + defaultLocaleId + ", name=y}", metadata.get(1).toString());
     }
 
     @Test
@@ -81,8 +81,8 @@ public class SchemaParserTest {
     @Test
     public void testMissingName() throws Exception {
         String in = "[\n" +
-                "{\"name\": \"x\", \"type\": \"INT\", \"formatPattern\":\"xyz\", \"locale\": \"en-GB\"},\n" +
-                "{\"type\": \"DOUBLE\", \"formatPattern\":\"xyz\"}\n" +
+                "{\"name\": \"x\", \"type\": \"INT\", \"pattern\":\"xyz\", \"locale\": \"en-GB\"},\n" +
+                "{\"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
                 "]";
 
         try {
@@ -90,22 +90,22 @@ public class SchemaParserTest {
             Assert.fail();
         } catch (JsonException e) {
             Assert.assertEquals("Missing 'name' property", e.getMessage());
-            Assert.assertEquals(115, e.getPosition());
+            Assert.assertEquals(103, e.getPosition());
         }
     }
 
     @Test
     public void testMissingType() throws Exception {
         String in = "[\n" +
-                "{\"name\": \"x\", \"formatPattern\":\"xyz\", \"locale\": \"en-GB\"},\n" +
-                "{\"name\": \"y\", \"type\": \"DOUBLE\", \"formatPattern\":\"xyz\"}\n" +
+                "{\"name\": \"x\", \"pattern\":\"xyz\", \"locale\": \"en-GB\"},\n" +
+                "{\"name\": \"y\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
                 "]";
         try {
             parseMetadata(in);
             Assert.fail();
         } catch (JsonException e) {
             Assert.assertEquals("Missing 'type' property", e.getMessage());
-            Assert.assertEquals(57, e.getPosition());
+            Assert.assertEquals(51, e.getPosition());
         }
     }
 
@@ -123,7 +123,7 @@ public class SchemaParserTest {
     @Test
     public void testNonObjectArrayMember() throws Exception {
         String in = "[2,\n" +
-                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"formatPattern\":\"xyz\"}\n" +
+                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
                 "]";
         try {
             parseMetadata(in);
@@ -137,21 +137,21 @@ public class SchemaParserTest {
     @Test
     public void testWrongDateLocale() throws Exception {
         String in = "[\n" +
-                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"formatPattern\":\"xyz\", \"dateLocale\": \"enk\"}\n" +
+                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\", \"locale\": \"enk\"}\n" +
                 "]";
         try {
             parseMetadata(in);
             Assert.fail();
         } catch (JsonException e) {
             Assert.assertEquals("Invalid date locale", e.getMessage());
-            Assert.assertEquals(73, e.getPosition());
+            Assert.assertEquals(63, e.getPosition());
         }
     }
 
     @Test
     public void testWrongType() throws Exception {
         String in = "[\n" +
-                "{\"name\": \"y\", \"type\": \"ABC\", \"formatPattern\":\"xyz\"}\n" +
+                "{\"name\": \"y\", \"type\": \"ABC\", \"pattern\":\"xyz\"}\n" +
                 "]";
         try {
             parseMetadata(in);

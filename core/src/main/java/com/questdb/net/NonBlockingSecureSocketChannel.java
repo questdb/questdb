@@ -69,11 +69,6 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
     }
 
     @Override
-    public long getConsecutiveBadReadCount() {
-        return channel.getConsecutiveBadReadCount();
-    }
-
-    @Override
     public long getFd() {
         return channel.getFd();
     }

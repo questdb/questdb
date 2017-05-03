@@ -98,6 +98,10 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
         return errors;
     }
 
+    public ObjList<ImportedColumnMetadata> getImportedMetadata() {
+        return metadata;
+    }
+
     public long getImportedRowCount() {
         try {
             return writer.size() - _size;
@@ -106,7 +110,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
         }
     }
 
-    public JournalMetadata getMetadata() {
+    public JournalMetadata getJournalMetadata() {
         return writer.getMetadata();
     }
 

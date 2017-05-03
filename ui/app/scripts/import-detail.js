@@ -56,16 +56,13 @@
             {text: 'BOOLEAN', value: 'BOOLEAN'},
             {text: 'BYTE', value: 'BYTE'},
             {text: 'DOUBLE', value: 'DOUBLE'},
+            {text: 'DATE', value: 'DATE'},
             {text: 'FLOAT', value: 'FLOAT'},
             {text: 'INT', value: 'INT'},
             {text: 'LONG', value: 'LONG'},
             {text: 'SHORT', value: 'SHORT'},
             {text: 'STRING', value: 'STRING'},
-            {text: 'SYMBOL', value: 'SYMBOL'},
-            {text: 'DATE (ISO)', value: 'DATE_ISO'},
-            {text: 'DATE (YYYY-MM-DD hh:mm:ss)', value: 'DATE_1'},
-            {text: 'DATE (MM/DD/YYYY)', value: 'DATE_2'},
-            {text: 'DATE (DD/MM/YYYY)', value: 'DATE_3'}
+            {text: 'SYMBOL', value: 'SYMBOL'}
         ];
 
         let current = null;
@@ -174,7 +171,9 @@
                             '<div class="ud-cell gc-1 g-other js-g-row">' + (k + 1) + '</div>' +
                             '<div class="ud-cell gc-2 g-other">' + (col.errors > 0 ? '<i class="fa fa-exclamation-triangle g-warning"></i>' : '') + col.name + '</div>' +
                             '<div class="ud-cell gc-3 g-type">' + getTypeHtml(col) + '</div>' +
-                            '<div class="ud-cell gc-4 g-other">' + col.errors + '</div>' +
+                            '<div class="ud-cell gc-4 g-other">' + (col.pattern !== undefined ? col.pattern : '') + '</div>' +
+                            '<div class="ud-cell gc-5 g-other">' + (col.locale !== undefined ? col.locale : '') + '</div>' +
+                            '<div class="ud-cell gc-6 g-other">' + col.errors + '</div>' +
                             '</div>');
 
                         top += lineHeight;

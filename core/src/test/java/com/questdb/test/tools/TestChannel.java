@@ -53,11 +53,6 @@ public class TestChannel implements NetworkChannel {
     }
 
     @Override
-    public long getConsecutiveBadReadCount() {
-        return 0;
-    }
-
-    @Override
     public long getFd() {
         return 0;
     }

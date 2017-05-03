@@ -387,16 +387,24 @@ function nopropagation(e) {
 
             // encode type overrides
             if (current.response && current.response.columns) {
-                let schema = '';
+                let schema = [];
                 for (let i = 0; i < current.response.columns.length; i++) {
                     const c = current.response.columns[i];
                     if (c.altType && c.type !== c.altType.text && c.altType.text !== 'AUTO') {
-                        schema += c.name + '=' + c.altType.value + '&';
+                        schema.push({
+                            name: c.name,
+                            type: c.altType.value
+                        });
+                        // schema += c.name + '=' + c.altType.value + '&';
                     } else if (c.errors === 0 && c.type !== 'DATE' && (c.altType === undefined || c.altType.text !== 'AUTO')) {
-                        schema += c.name + '=' + c.type + '&';
+                        schema.push({
+                            name: c.name,
+                            type: c.type
+                        });
+                        // schema += c.name + '=' + c.type + '&';
                     }
                 }
-                importRequest.data.append('schema', schema);
+                importRequest.data.append('schema', JSON.stringify(schema));
             }
 
             if (current.type === 'file') {

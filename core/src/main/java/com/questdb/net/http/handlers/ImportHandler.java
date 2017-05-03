@@ -37,15 +37,13 @@ import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.IOContext;
 import com.questdb.net.http.RequestHeaderBuffer;
 import com.questdb.net.http.ResponseSink;
-import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.std.LocalValue;
-import com.questdb.std.LongList;
-import com.questdb.std.Mutable;
+import com.questdb.std.*;
 import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.FileNameExtractorCharSequence;
 import com.questdb.store.ColumnType;
+import com.questdb.txt.ImportedColumnMetadata;
 import com.questdb.txt.SchemaParser;
 import com.questdb.txt.parser.DelimitedTextParser;
 import com.questdb.txt.parser.DelimiterDetector;
@@ -53,6 +51,7 @@ import com.questdb.txt.parser.listener.JournalImportListener;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.lang.ThreadLocal;
 
 
 public class ImportHandler extends AbstractMultipartHandler {
@@ -64,7 +63,9 @@ public class ImportHandler extends AbstractMultipartHandler {
     private static final int MESSAGE_UNKNOWN = 3;
     private static final int TO_STRING_COL1_PAD = 15;
     private static final int TO_STRING_COL2_PAD = 50;
-    private static final int TO_STRING_COL3_PAD = 10;
+    private static final int TO_STRING_COL3_PAD = 15;
+    private static final int TO_STRING_COL4_PAD = 7;
+    private static final int TO_STRING_COL5_PAD = 10;
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final ThreadLocal<DelimiterDetector> PARSER = new ThreadLocal<>();
@@ -200,7 +201,8 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     private static void resumeJson(ImportHandlerContext ctx, ChunkedResponse r) throws DisconnectedChannelException, SlowWritableChannelException {
-        final JournalMetadata m = ctx.importer.getMetadata();
+        final JournalMetadata m = ctx.importer.getJournalMetadata();
+        final ObjList<ImportedColumnMetadata> importedMetadata = ctx.importer.getImportedMetadata();
         final int columnCount = m.getColumnCount();
         final LongList errors = ctx.importer.getErrors();
 
@@ -220,6 +222,8 @@ public class ImportHandler extends AbstractMultipartHandler {
             case RESPONSE_COLUMN:
                 for (; ctx.columnIndex < columnCount; ctx.columnIndex++) {
                     RecordColumnMetadata cm = m.getColumnQuick(ctx.columnIndex);
+                    ImportedColumnMetadata im = importedMetadata.getQuick(ctx.columnIndex);
+
                     r.bookmark();
                     if (ctx.columnIndex > 0) {
                         r.put(',');
@@ -228,7 +232,17 @@ public class ImportHandler extends AbstractMultipartHandler {
                             putQuoted("name").put(':').putQuoted(cm.getName()).put(',').
                             putQuoted("type").put(':').putQuoted(ColumnType.nameOf(cm.getType())).put(',').
                             putQuoted("size").put(':').put(ColumnType.sizeOf(cm.getType())).put(',').
-                            putQuoted("errors").put(':').put(errors.getQuick(ctx.columnIndex)).put('}');
+                            putQuoted("errors").put(':').put(errors.getQuick(ctx.columnIndex));
+
+                    if (im.pattern != null) {
+                        r.put(',').putQuoted("pattern").put(':').putQuoted(im.pattern);
+                    }
+
+                    if (im.dateLocale != null) {
+                        r.put(',').putQuoted("locale").put(':').putQuoted(im.dateLocale.getId());
+                    }
+
+                    r.put('}');
                 }
                 ctx.responseState = RESPONSE_SUFFIX;
                 // fall through
@@ -278,11 +292,11 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     private static void sep(CharSink b) {
         b.put('+');
-        replicate(b, '-', TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + 8);
+        replicate(b, '-', TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + TO_STRING_COL5_PAD + 14);
         b.put("+\n");
     }
 
-    private static void col(CharSink b, ColumnMetadata m) {
+    private static void col(CharSink b, ColumnMetadata m, ImportedColumnMetadata im) {
         pad(
                 b,
                 TO_STRING_COL2_PAD,
@@ -296,11 +310,15 @@ public class ImportHandler extends AbstractMultipartHandler {
                         + m.size
                         + ')'
         );
+
+        pad(b, TO_STRING_COL3_PAD, im.pattern);
+        pad(b, TO_STRING_COL4_PAD, im.dateLocale != null ? im.dateLocale.getId() : null);
     }
 
     private static void resumeText(ImportHandlerContext h, ChunkedResponse r) throws IOException {
-        JournalMetadata m = h.importer.getMetadata();
+        JournalMetadata m = h.importer.getJournalMetadata();
         LongList errors = h.importer.getErrors();
+        ObjList<ImportedColumnMetadata> importedMetadata = h.importer.getImportedMetadata();
 
         final int columnCount = m.getColumnCount();
 
@@ -310,24 +328,32 @@ public class ImportHandler extends AbstractMultipartHandler {
                 r.put('|');
                 pad(r, TO_STRING_COL1_PAD, "Location:");
                 pad(r, TO_STRING_COL2_PAD, m.getName());
-                pad(r, TO_STRING_COL3_PAD, "Errors").put(Misc.EOL);
+                pad(r, TO_STRING_COL3_PAD, "Pattern");
+                pad(r, TO_STRING_COL4_PAD, "Locale");
+                pad(r, TO_STRING_COL5_PAD, "Errors").put(Misc.EOL);
 
 
                 r.put('|');
                 pad(r, TO_STRING_COL1_PAD, "Partition by");
                 pad(r, TO_STRING_COL2_PAD, PartitionBy.toString(m.getPartitionBy()));
-                pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
+                pad(r, TO_STRING_COL3_PAD, "");
+                pad(r, TO_STRING_COL4_PAD, "");
+                pad(r, TO_STRING_COL5_PAD, "").put(Misc.EOL);
                 sep(r);
 
                 r.put('|');
                 pad(r, TO_STRING_COL1_PAD, "Rows handled");
                 pad(r, TO_STRING_COL2_PAD, h.textParser.getLineCount());
-                pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
+                pad(r, TO_STRING_COL3_PAD, "");
+                pad(r, TO_STRING_COL4_PAD, "");
+                pad(r, TO_STRING_COL5_PAD, "").put(Misc.EOL);
 
                 r.put('|');
                 pad(r, TO_STRING_COL1_PAD, "Rows imported");
                 pad(r, TO_STRING_COL2_PAD, h.importer.getImportedRowCount());
-                pad(r, TO_STRING_COL3_PAD, "").put(Misc.EOL);
+                pad(r, TO_STRING_COL3_PAD, "");
+                pad(r, TO_STRING_COL4_PAD, "");
+                pad(r, TO_STRING_COL5_PAD, "").put(Misc.EOL);
                 sep(r);
 
                 h.responseState = RESPONSE_COLUMN;
@@ -337,8 +363,8 @@ public class ImportHandler extends AbstractMultipartHandler {
                     r.bookmark();
                     r.put('|');
                     pad(r, TO_STRING_COL1_PAD, h.columnIndex);
-                    col(r, m.getColumnQuick(h.columnIndex));
-                    pad(r, TO_STRING_COL3_PAD, errors.getQuick(h.columnIndex));
+                    col(r, m.getColumnQuick(h.columnIndex), importedMetadata.getQuick(h.columnIndex));
+                    pad(r, TO_STRING_COL5_PAD, errors.getQuick(h.columnIndex));
                     r.put(Misc.EOL);
                 }
                 h.responseState = RESPONSE_SUFFIX;

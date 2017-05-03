@@ -50,8 +50,7 @@ public class ServerConfiguration {
     private int httpQueueDepth = 1024;
     private int httpSoRcvSmall = 8 * 1024;
     private int httpSoRcvLarge = 4 * 1024 * 1024;
-    private int httpSoRetries = 1024;
-    private int httpSoConsecutiveBadReadLimit = 1000;
+    private int httpSoRetries = 1000000;
     private boolean httpAbortBrokenUploads = true;
     private String httpIndexFile = "index.html";
     private int httpImportMaxJsonStringLen = 1024 * 64;
@@ -137,10 +136,6 @@ public class ServerConfiguration {
 
         if ((n = parseInt(props, "http.so.retries")) > -1) {
             this.httpSoRetries = n;
-        }
-
-        if ((n = parseInt(props, "http.so.consecutive.bad.reads.limit")) > -1) {
-            this.httpSoConsecutiveBadReadLimit = n;
         }
 
         if ((s = props.getProperty("http.abort.broken.uploads")) != null) {
@@ -496,10 +491,6 @@ public class ServerConfiguration {
 
     public int getHttpQueueDepth() {
         return httpQueueDepth;
-    }
-
-    public int getHttpSoConsecutiveBadReadLimit() {
-        return httpSoConsecutiveBadReadLimit;
     }
 
     public int getHttpSoRcvLarge() {
