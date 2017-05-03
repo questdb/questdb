@@ -23,13 +23,13 @@
 
 package com.questdb.ql.impl.sys;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.RecordSource;
 
 public interface SystemViewFactory {
-    RecordSource create(ReaderFactory factory, ServerConfiguration configuration);
+    RecordSource create(ReaderFactory factory, BootstrapEnv env);
 
     RecordMetadata getMetadata();
 }

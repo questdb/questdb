@@ -23,6 +23,7 @@
 
 package com.questdb.ql.parser;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.JournalEntryWriter;
 import com.questdb.JournalWriter;
 import com.questdb.PartitionBy;
@@ -122,16 +123,20 @@ public class QueryCompiler {
     private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> grouppedAnalytic = new ObjObjHashMap<>();
     private final CopyHelperCompiler copyHelperCompiler = new CopyHelperCompiler(asm);
     private final RecordKeyCopierCompiler recordKeyCopierCompiler = new RecordKeyCopierCompiler(asm);
+    private final BootstrapEnv env;
     private ObjList<JoinContext> emittedJoinClauses;
     private int aggregateColumnSequence;
 
     public QueryCompiler() {
-        this(new ServerConfiguration());
+        this(new BootstrapEnv() {{
+            configuration = new ServerConfiguration();
+        }});
     }
 
-    public QueryCompiler(ServerConfiguration configuration) {
+    public QueryCompiler(BootstrapEnv env) {
         // seed column name assembly with default column prefix, which we will reuse
-        this.configuration = configuration;
+        this.env = env;
+        this.configuration = env.configuration;
         this.virtualColumnBuilder = new VirtualColumnBuilder(traversalAlgo, configuration);
         columnNameAssembly.put("col");
         columnNamePrefixLen = 3;
@@ -1037,8 +1042,9 @@ public class QueryCompiler {
     }
 
     private RecordSource compileJournal(QueryModel model, Factory factory) throws ParserException {
-        if (SysFactories.getFactory(model.getJournalName().token) != null) {
-            return compileSysView(model, factory);
+        SystemViewFactory systemViewFactory = SysFactories.getFactory(model.getJournalName().token);
+        if (systemViewFactory != null) {
+            return compileSysView(model, factory, systemViewFactory);
         } else {
             return compileJournal0(model, factory);
         }
@@ -1300,13 +1306,9 @@ public class QueryCompiler {
         return filter(model, compileNoOptimise(model.getNestedModel(), factory));
     }
 
-    private RecordSource compileSysView(QueryModel model, Factory factory) throws ParserException {
+    private RecordSource compileSysView(QueryModel model, Factory factory, SystemViewFactory systemViewFactory) throws ParserException {
         applyLimit(model);
-        SystemViewFactory fact = SysFactories.getFactory(model.getJournalName().token);
-        if (fact == null) {
-            throw QueryError.$(model.getJournalName().position, "invalid view name");
-        }
-        return filter(model, fact.create(factory, configuration));
+        return filter(model, systemViewFactory.create(factory, env));
     }
 
     private ExprNode concatFilters(ExprNode old, ExprNode filter) {

@@ -34,7 +34,6 @@ import com.questdb.misc.Numbers;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.std.LocalValue;
 import com.questdb.std.Mutable;
@@ -52,11 +51,11 @@ public class CsvHandler implements ContextHandler {
     private final LocalValue<ExportHandlerContext> localContext = new LocalValue<>();
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
-    private final ServerConfiguration configuration;
+    private final BootstrapEnv env;
 
     public CsvHandler(BootstrapEnv env) {
         this.factory = env.factory;
-        this.configuration = env.configuration;
+        this.env = env;
     }
 
     @Override
@@ -168,7 +167,7 @@ public class CsvHandler implements ContextHandler {
 
     @Override
     public void setupThread() {
-        AbstractQueryContext.setupThread(configuration);
+        AbstractQueryContext.setupThread(env);
     }
 
 

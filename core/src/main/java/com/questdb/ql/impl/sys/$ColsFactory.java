@@ -23,9 +23,9 @@
 
 package com.questdb.ql.impl.sys;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.RecordSource;
 
 public class $ColsFactory implements SystemViewFactory {
@@ -36,8 +36,8 @@ public class $ColsFactory implements SystemViewFactory {
     }
 
     @Override
-    public RecordSource create(ReaderFactory factory, ServerConfiguration configuration) {
-        return new $ColsRecordSource(configuration.getDbSysViewPage(), configuration.getDbSysMetaSize(), configuration.getDbSysMaxMetaSize());
+    public RecordSource create(ReaderFactory factory, BootstrapEnv env) {
+        return new $ColsRecordSource(env.configuration.getDbSysViewPage(), env.configuration.getDbSysMetaSize(), env.configuration.getDbSysMaxMetaSize());
     }
 
     @Override

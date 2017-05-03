@@ -341,7 +341,6 @@ public class HttpServerTest extends AbstractJournalTest {
 
     @Test
     public void testImportAppend() throws Exception {
-        final ServerConfiguration configuration = new ServerConfiguration();
 
         final AtomicInteger errors = new AtomicInteger();
         getFactory().setEventListener((factoryType, thread, name, event, segment, position) -> {
@@ -352,7 +351,7 @@ public class HttpServerTest extends AbstractJournalTest {
         });
 
         BootstrapEnv env = new BootstrapEnv();
-        env.configuration = configuration;
+        env.configuration = new ServerConfiguration();
         env.factory = getFactory();
         env.typeProbeCollection = TYPE_PROBE_COLLECTION;
         env.matcher = new SimpleUrlMatcher() {{
@@ -367,7 +366,7 @@ public class HttpServerTest extends AbstractJournalTest {
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null, null));
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(configuration);
+            QueryCompiler qc = new QueryCompiler(env);
             printer.print(qc.compile(getFactory(), "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'"), getFactory());
             TestUtils.assertEquals("252\t252\t256\t258\t258\n", sink);
         } finally {
@@ -393,7 +392,7 @@ public class HttpServerTest extends AbstractJournalTest {
         try {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(env.configuration);
+            QueryCompiler qc = new QueryCompiler(env);
 
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-explicit-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true&forceHeader=true", null, null));
             printer.print(qc.compile(getFactory(), "select count() from 'test-import.csv'"), getFactory());
@@ -480,7 +479,7 @@ public class HttpServerTest extends AbstractJournalTest {
         try {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(env.configuration);
+            QueryCompiler qc = new QueryCompiler(env);
 
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-explicit-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true", null, null));
             printer.print(qc.compile(getFactory(), "select count() from 'test-import.csv'"), getFactory());
@@ -508,7 +507,7 @@ public class HttpServerTest extends AbstractJournalTest {
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-num-prefix.csv", "http://localhost:9000/imp?fmt=json", null, null));
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(env.configuration);
+            QueryCompiler qc = new QueryCompiler(env);
             try (RecordSource rs = qc.compile(env.factory, "select count(StrSym), count(IntSym), count(_1IntCol), count(long), count() from 'test-import-num-prefix.csv'")) {
                 printer.print(rs, env.factory);
             }
@@ -534,7 +533,7 @@ public class HttpServerTest extends AbstractJournalTest {
         try {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(env.configuration);
+            QueryCompiler qc = new QueryCompiler(env);
 
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-numeric-headers.csv", "http://localhost:9000/imp?name=test-import.csv&overwrite=true&durable=true&forceHeader=true", null, null));
             printer.print(qc.compile(getFactory(), "select count() from 'test-import.csv'"), getFactory());
@@ -562,7 +561,7 @@ public class HttpServerTest extends AbstractJournalTest {
         try {
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(env.configuration);
+            QueryCompiler qc = new QueryCompiler(env);
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", null, null));
             printer.print(qc.compile(getFactory(), "select count() from 'test-import.csv'"), getFactory());
             TestUtils.assertEquals("129\n", sink);
@@ -620,7 +619,7 @@ public class HttpServerTest extends AbstractJournalTest {
             Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import.csv", "http://localhost:9000/imp", "[{\"name\":\"IsoDate\", \"type\":\"DATE\"}]", null));
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(env.configuration);
+            QueryCompiler qc = new QueryCompiler(env);
             RecordSource src1 = qc.compile(env.factory, "select count(StrSym), count(IntSym), count(IntCol), count(long), count() from 'test-import.csv'");
             try {
                 printer.print(src1, env.factory);
@@ -664,7 +663,7 @@ public class HttpServerTest extends AbstractJournalTest {
                     null));
             StringSink sink = new StringSink();
             RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-            QueryCompiler qc = new QueryCompiler(env.configuration);
+            QueryCompiler qc = new QueryCompiler(env);
             RecordSource src1 = qc.compile(env.factory, "select count() from 'test-import.csv'");
             try {
                 printer.print(src1, env.factory);

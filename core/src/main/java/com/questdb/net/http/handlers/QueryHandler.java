@@ -33,7 +33,6 @@ import com.questdb.misc.Numbers;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.std.LocalValue;
 import com.questdb.std.str.CharSink;
@@ -50,15 +49,11 @@ public class QueryHandler implements ContextHandler {
     private final LocalValue<QueryHandlerContext> localContext = new LocalValue<>();
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
-    private final ServerConfiguration configuration;
+    private final BootstrapEnv env;
 
     public QueryHandler(BootstrapEnv env) {
-        this(env.factory, env.configuration);
-    }
-
-    public QueryHandler(Factory factory, ServerConfiguration configuration) {
-        this.factory = factory;
-        this.configuration = configuration;
+        this.factory = env.factory;
+        this.env = env;
     }
 
     @Override
@@ -206,7 +201,7 @@ public class QueryHandler implements ContextHandler {
 
     @Override
     public void setupThread() {
-        AbstractQueryContext.setupThread(configuration);
+        AbstractQueryContext.setupThread(env);
     }
 
     private static void putValue(CharSink sink, int type, Record rec, int col) {

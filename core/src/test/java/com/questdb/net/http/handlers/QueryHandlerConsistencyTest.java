@@ -183,7 +183,10 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
 
     @Test
     public void testQueryHandlerConsistency() throws Exception {
-        testHandler(new QueryHandler(FACTORY_CONTAINER.getFactory(), new ServerConfiguration()));
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.factory = FACTORY_CONTAINER.getFactory();
+        testHandler(new QueryHandler(env));
     }
 
     private void testHandler(ContextHandler handler) throws Exception {

@@ -26,13 +26,16 @@ package com.questdb.ql.parser;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParser;
+import com.questdb.BootstrapEnv;
 import com.questdb.ex.ParserException;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
+import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.AssociativeCache;
+import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.store.SymbolTable;
 import com.questdb.test.tools.FactoryContainer;
 import com.questdb.test.tools.TestUtils;
@@ -52,7 +55,7 @@ public abstract class AbstractOptimiserTest {
     public static final FactoryContainer FACTORY_CONTAINER = new FactoryContainer();
     protected static final StringSink sink = new StringSink();
     protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-    protected static final QueryCompiler compiler = new QueryCompiler();
+    protected static final QueryCompiler compiler;
     private static final AssociativeCache<RecordSource> cache = new AssociativeCache<>(8, 16);
     private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private static final JsonParser jp = new JsonParser();
@@ -77,7 +80,6 @@ public abstract class AbstractOptimiserTest {
         Assert.assertEquals(0, FACTORY_CONTAINER.getFactory().getBusyWriterCount());
         Assert.assertEquals(0, FACTORY_CONTAINER.getFactory().getBusyReaderCount());
     }
-
 
     protected static void assertRowId(String query, String longColumn) throws ParserException {
         RecordSource src = compiler.compile(FACTORY_CONTAINER.getFactory(), query);
@@ -212,5 +214,12 @@ public abstract class AbstractOptimiserTest {
             Assert.assertEquals(memUsed, Unsafe.getMemUsed());
             throw e;
         }
+    }
+
+    static {
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.dateLocaleFactory = DateLocaleFactory.INSTANCE;
+        compiler = new QueryCompiler(env);
     }
 }

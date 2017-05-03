@@ -23,6 +23,7 @@
 
 package com.questdb.net.http.handlers;
 
+import com.questdb.BootstrapEnv;
 import com.questdb.ex.*;
 import com.questdb.factory.Factory;
 import com.questdb.factory.configuration.RecordMetadata;
@@ -33,7 +34,6 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.Request;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
@@ -197,9 +197,9 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
         return true;
     }
 
-    static void setupThread(ServerConfiguration configuration) {
+    static void setupThread(BootstrapEnv env) {
         if (COMPILER.get() == null) {
-            COMPILER.set(new QueryCompiler(configuration));
+            COMPILER.set(new QueryCompiler(env));
         }
         if (CACHE.get() == null) {
             CACHE.set(new AssociativeCache<>(8, 128));
