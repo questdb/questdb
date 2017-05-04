@@ -26,6 +26,22 @@ public class DateFunctionTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testToChar() throws Exception {
+        assertThat("20-03-2015\n", "select TO_CHAR(TO_DATE('2015-03-20T15:25:40.567Z'), 'dd-MM-y') from dual");
+    }
+
+    @Test
+    public void testToCharTZ() throws Exception {
+        assertThat("20-03-2015 08:25:40.567 PDT\n", "select TO_CHAR(TO_DATE('2015-03-20T15:25:40.567Z'), 'dd-MM-y HH:mm:ss.SSS Z', 'PDT') from dual");
+        assertThat("20-03-2015 21:25:40.567 +0600\n", "select TO_CHAR(TO_DATE('2015-03-20T15:25:40.567Z'), 'dd-MM-y HH:mm:ss.SSS Z', '+0600') from dual");
+    }
+
+    @Test
+    public void testToCharTZLocale() throws Exception {
+        assertThat("Пт, 20 мар 2015 08:25:40.567 PDT\n", "select TO_CHAR(TO_DATE('2015-03-20T15:25:40.567Z'), 'E, dd MMM y HH:mm:ss.SSS Z', 'PDT', 'ru') from dual");
+    }
+
+    @Test
     public void testWrongLocale() throws Exception {
         try {
             expectFailure("select toDate('Abril 2017', 'MMM y', 'wrong') from dual");
