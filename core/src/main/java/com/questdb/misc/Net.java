@@ -67,13 +67,23 @@ public final class Net {
 
     public static native int send(long fd, long ptr, int len);
 
+    public native static int sendTo(long fd, long ptr, int len, long sockaddr);
+
     public native static int setRcvBuf(long fd, int size);
 
     public native static int setSndBuf(long fd, int size);
 
+    public static long sockaddr(CharSequence address, int port) {
+        return sockaddr(parseIPv4(address), port);
+    }
+
     public native static long socketTcp(boolean blocking);
 
+    public native static long socketUdp();
+
     private native static int getEwouldblock();
+
+    private native static long sockaddr(int address, int port);
 
     private static int parseIPv4(CharSequence address) {
         int ip = 0;

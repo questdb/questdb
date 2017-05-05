@@ -28,10 +28,11 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/errno.h>
+#include <stdlib.h>
 #include "net.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketTcp
-        (JNIEnv *e, jobject cl, jboolean blocking) {
+        (JNIEnv *e, jclass cl, jboolean blocking) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd > 0 && !blocking) {
         if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
@@ -48,14 +49,33 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketTcp
     return fd;
 }
 
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp
+        (JNIEnv *e, jclass cl) {
+    return socket(AF_INET, SOCK_DGRAM, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_sockaddr
+        (JNIEnv *e, jclass cl, jint address, jint port) {
+    struct sockaddr_in *addr = calloc(1, sizeof(struct sockaddr_in));
+    addr->sin_family = AF_INET;
+    addr->sin_addr.s_addr = htonl((uint32_t) address);
+    addr->sin_port = htons((uint16_t) port);
+    return (jlong) addr;
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_sendTo
+        (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len, jlong sockaddr) {
+    return (jint) sendto((int) fd, (const void *) ptr, (size_t) len, 0, (const struct sockaddr *) sockaddr,
+                         sizeof(struct sockaddr_in));
+}
+
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_bind
         (JNIEnv *e, jobject cl, jlong fd, jint address, jint port) {
     struct sockaddr_in addr;
 
     addr.sin_family = AF_INET;
-
-    addr.sin_addr.s_addr = htonl(address);
-    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = htonl((uint32_t) address);
+    addr.sin_port = htons((uint16_t) port);
 
     return (jboolean) (bind((int) fd, (struct sockaddr *) &addr, sizeof(addr)) == 0);
 }

@@ -63,6 +63,14 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getPeerPort
 
 /*
  * Class:     com_questdb_misc_Net
+ * Method:    isDead
+ * Signature: (J)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_isDead
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Net
  * Method:    listen
  * Signature: (JI)V
  */
@@ -79,19 +87,19 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_recv
 
 /*
  * Class:     com_questdb_misc_Net
- * Method:    recv
- * Signature: (JJI)I
- */
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_isDead
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_questdb_misc_Net
  * Method:    send
  * Signature: (JJI)I
  */
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_send
         (JNIEnv *, jclass, jlong, jlong, jint);
+
+/*
+ * Class:     com_questdb_misc_Net
+ * Method:    sendTo
+ * Signature: (JJIJ)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_sendTo
+        (JNIEnv *, jclass, jlong, jlong, jint, jlong);
 
 /*
  * Class:     com_questdb_misc_Net
@@ -119,11 +127,27 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketTcp
 
 /*
  * Class:     com_questdb_misc_Net
- * Method:    getEwouldblock
+ * Method:    socketUdp
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_misc_Net
+ * Method:    getEWouldBlock
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEwouldblock
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEWouldBlock
         (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_misc_Net
+ * Method:    sockaddr
+ * Signature: (II)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_sockaddr
+        (JNIEnv *, jclass, jint, jint);
 
 #ifdef __cplusplus
 }
