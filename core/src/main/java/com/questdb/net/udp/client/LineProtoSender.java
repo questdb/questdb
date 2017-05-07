@@ -62,6 +62,11 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         return this;
     }
 
+    public LineProtoSender field(CharSequence name, CharSequence value) {
+        field(name).putQuoted(value);
+        return this;
+    }
+
     public LineProtoSender field(CharSequence name, double value, int scale) {
         field(name).put(value, scale).put('i');
         return this;
@@ -109,7 +114,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
 
     public LineProtoSender tag(CharSequence tag, CharSequence value) {
         if (hasMetric) {
-            put(',').putNameEscaped(tag).put('=').putUtf8EscapedAndQuoted(value);
+            put(',').putNameEscaped(tag).put('=').putUtf8(value);
             return this;
         }
         throw new RuntimeException();
@@ -148,11 +153,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
 
     private void send() {
         if (lo < lineStart) {
-            System.out.println(Net.sendTo(fd, lo, (int) (lineStart - lo), sockaddr));
-            for (long l = lo; l < lineStart; l++) {
-                System.out.print((char) Unsafe.getUnsafe().getByte(l));
-            }
-            System.out.println(lineStart - lo);
+            Net.sendTo(fd, lo, (int) (lineStart - lo), sockaddr);
         }
     }
 

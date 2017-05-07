@@ -148,6 +148,9 @@ public class DelimitedTextParser implements Closeable, Mutable {
     }
 
     private void growRollBuf(long len) {
+        if (len > lineRollBufLimit) {
+            listener.onError(lineCount);
+        }
         LOG.info().$("Resizing line roll buffer: ").$(lineRollBufLen).$(" -> ").$(len).$();
         long p = Unsafe.malloc(len);
         long l = lineRollBufCur - lineRollBufPtr;

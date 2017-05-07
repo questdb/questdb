@@ -296,6 +296,5 @@ public class JsonLexer implements Mutable, Closeable {
         unquotedTerminators.add(']');
         unquotedTerminators.add('{');
         unquotedTerminators.add('[');
-//        unquotedTerminators.add(':');
     }
 }
