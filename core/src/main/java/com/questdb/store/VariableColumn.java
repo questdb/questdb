@@ -156,7 +156,6 @@ public class VariableColumn extends AbstractColumn {
         return binIn.isNull() ? null : binIn;
     }
 
-    // todo: support long
     public int getBinLen(long localRowID) {
         return Unsafe.getUnsafe().getInt(mappedFile.addressOf(getOffset(localRowID), 4));
     }

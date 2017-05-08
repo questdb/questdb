@@ -417,7 +417,6 @@ public class VirtualMemory implements Closeable {
     }
 
     private void putBinSplit(ByteBuffer buf, int pos, int len) {
-        // todo: this doesn't seem to adjust buf position correctly
         int start = pos;
         do {
             int half = (int) (pageHi - appendPointer);

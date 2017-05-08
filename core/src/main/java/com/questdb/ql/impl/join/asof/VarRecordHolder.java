@@ -32,6 +32,7 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.std.IntList;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
+import com.questdb.store.VariableColumn;
 
 public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolder {
     private final IntList types;
@@ -144,8 +145,13 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
                     break;
                 case ColumnType.STRING:
                     Unsafe.getUnsafe().putInt(address, varOffset);
-                    //todo: test with null
-                    varOffset += Chars.strcpyw(record.getFlyweightStr(i), this.address + varOffset);
+                    CharSequence cs = record.getFlyweightStr(i);
+                    if (cs == null) {
+                        Unsafe.getUnsafe().putInt(this.address + varOffset, VariableColumn.NULL_LEN);
+                        varOffset += 4;
+                    } else {
+                        varOffset += Chars.strcpyw(cs, this.address + varOffset);
+                    }
                     break;
                 default:
                     break;

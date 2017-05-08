@@ -37,6 +37,7 @@ import com.questdb.std.LongList;
 import com.questdb.std.Transient;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
+import com.questdb.store.VariableColumn;
 
 public class LastVarRecordMap implements LastRecordMap {
     private final DirectMap map;
@@ -287,8 +288,13 @@ public class LastVarRecordMap implements LastRecordMap {
                     break;
                 case ColumnType.STRING:
                     Unsafe.getUnsafe().putInt(address, varOffset);
-                    //todo: test with null
-                    varOffset += Chars.strcpyw(record.getFlyweightStr(idx), addr + varOffset);
+                    CharSequence cs = record.getFlyweightStr(idx);
+                    if (cs == null) {
+                        Unsafe.getUnsafe().putInt(addr + varOffset, VariableColumn.NULL_LEN);
+                        varOffset += 4;
+                    } else {
+                        varOffset += Chars.strcpyw(record.getFlyweightStr(idx), addr + varOffset);
+                    }
                     break;
                 default:
                     break;

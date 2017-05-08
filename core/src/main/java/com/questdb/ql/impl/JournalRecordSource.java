@@ -49,7 +49,6 @@ public class JournalRecordSource extends AbstractCombinedRecordSource {
 
     @Override
     public void close() {
-        //todo: ensure rowsource resources are released
     }
 
     @Override

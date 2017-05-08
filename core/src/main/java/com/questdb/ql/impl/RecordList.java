@@ -36,6 +36,7 @@ import com.questdb.std.DirectInputStream;
 import com.questdb.std.MemoryPages;
 import com.questdb.std.Mutable;
 import com.questdb.store.ColumnType;
+import com.questdb.store.VariableColumn;
 
 import java.io.Closeable;
 
@@ -276,7 +277,7 @@ public class RecordList extends AbstractImmutableIterator<Record> implements Clo
     private void writeNullString(long headerAddress) {
         long addr = mem.allocate(4);
         Unsafe.getUnsafe().putLong(headerAddress, addr);
-        Unsafe.getUnsafe().putInt(addr, -1);
+        Unsafe.getUnsafe().putInt(addr, VariableColumn.NULL_LEN);
     }
 
     private void writeString(long headerAddress, CharSequence value) {

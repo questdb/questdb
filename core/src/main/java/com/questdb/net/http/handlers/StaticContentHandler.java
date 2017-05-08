@@ -214,8 +214,7 @@ public class StaticContentHandler implements ContextHandler {
             final FixedSizeResponse r = context.fixedSizeResponse();
             r.status(200, contentType, length);
             if (asAttachment) {
-                // todo: extract name from path
-                r.headers().put("Content-Disposition: attachment; filename=\"").put(path).put("\"").put(Misc.EOL);
+                r.headers().put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put("\"").put(Misc.EOL);
             }
             r.headers().put("ETag: ").put('"').put(Files.getLastModified(path)).put('"').put(Misc.EOL);
             r.sendHeader();
