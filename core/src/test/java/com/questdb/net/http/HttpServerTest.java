@@ -792,8 +792,7 @@ public class HttpServerTest extends AbstractJournalTest {
             setDefaultHandler(new StaticContentHandler(env));
         }};
 
-        HttpServer server = new HttpServer(env);
-        assertRanges(env.configuration, server);
+        assertRanges(new HttpServer(env));
     }
 
     @Test
@@ -980,7 +979,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
-    private void assertRanges(ServerConfiguration configuration, HttpServer server) throws IOException {
+    private void assertRanges(HttpServer server) throws IOException {
         server.start();
         try {
 

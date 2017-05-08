@@ -21,10 +21,11 @@
  *
  ******************************************************************************/
 
-package com.questdb.std;
+package com.questdb.misc;
 
-import com.questdb.misc.Chars;
+import com.questdb.std.ObjList;
 import com.questdb.std.str.ConcatCharSequence;
+import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.FileNameExtractorCharSequence;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
@@ -100,10 +101,36 @@ public class CharsTest {
         TestUtils.assertEquals("xyz.txt", extractor.of("xyz.txt"));
     }
 
+    @Test
+    public void testUtf8Support() throws Exception {
+
+        StringBuilder expected = new StringBuilder();
+        for (int i = 0; i < 0xD800; i++) {
+            expected.append((char) i);
+        }
+
+        String in = expected.toString();
+        long p = Unsafe.malloc(8 * 0xffff);
+        try {
+            byte[] bytes = in.getBytes();
+            for (int i = 0, n = bytes.length; i < n; i++) {
+                Unsafe.getUnsafe().putByte(p + i, bytes[i]);
+            }
+            DirectByteCharSequence cs = new DirectByteCharSequence();
+            cs.of(p, p + bytes.length);
+            StringBuilder b = new StringBuilder();
+            Chars.utf8Decode(cs, b);
+            TestUtils.assertEquals(in, b.toString());
+        } finally {
+            Unsafe.free(p, 8 * 0xffff);
+        }
+    }
+
     private void assertThat(String expected, ObjList<Path> list) {
         Assert.assertEquals(expected, list.toString());
         for (int i = 0, n = list.size(); i < n; i++) {
             list.getQuick(i).close();
         }
     }
+
 }

@@ -23,9 +23,11 @@
 
 package com.questdb.std.str;
 
+import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.NotNull;
 
 public class DirectByteCharSequence extends AbstractCharSequence implements Mutable, ByteSequence {
     public static final Factory FACTORY = new Factory();
@@ -81,6 +83,12 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         seq.lo = this.lo + start;
         seq.hi = this.lo + end;
         return seq;
+    }
+
+    @NotNull
+    @Override
+    public String toString() {
+        return Chars.toUtf8String(this);
     }
 
     public static final class Factory implements ObjectFactory<DirectByteCharSequence> {

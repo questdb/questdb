@@ -25,6 +25,8 @@ package com.questdb.std;
 
 import com.questdb.misc.Chars;
 import com.questdb.std.str.AbstractCharSequence;
+import com.questdb.std.str.ByteSequence;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -35,6 +37,7 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
     private static final CharSequenceHashSet whitespace = new CharSequenceHashSet();
     private final IntObjHashMap<List<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence floatingSequence = new FloatingSequence();
+    private final CharSequence floatingByteSequence = new FloatingByteSequence();
     private CharSequence next = null;
     private int _lo;
     private int _hi;
@@ -43,6 +46,7 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
     private CharSequence content;
     private CharSequence unparsed;
     private CharSequence last;
+    private CharSequence flyweightSequence;
 
     public Lexer() {
         for (int i = 0, n = whitespace.size(); i < n; i++) {
@@ -135,7 +139,7 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
                     switch (c) {
                         case '\'':
                             _hi += 2;
-                            return last = floatingSequence;
+                            return last = flyweightSequence;
                         default:
                             _hi++;
                             break;
@@ -145,7 +149,7 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
                     switch (c) {
                         case '"':
                             _hi += 2;
-                            return last = floatingSequence;
+                            return last = flyweightSequence;
                         default:
                             _hi++;
                             break;
@@ -155,7 +159,7 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
                     switch (c) {
                         case '`':
                             _hi += 2;
-                            return last = floatingSequence;
+                            return last = flyweightSequence;
                         default:
                             _hi++;
                             break;
@@ -165,7 +169,7 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
                     break;
             }
         }
-        return last = floatingSequence;
+        return last = flyweightSequence;
     }
 
     public CharSequence optionTok() {
@@ -209,6 +213,11 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
 
     public void setContent(CharSequence cs, int lo, int hi) {
         this.content = cs;
+        if (content instanceof ByteSequence) {
+            flyweightSequence = floatingByteSequence;
+        } else {
+            flyweightSequence = floatingSequence;
+        }
         this._pos = lo;
         this._len = hi;
         this.next = null;
@@ -255,7 +264,7 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
             } else {
                 next = t;
             }
-            return floatingSequence;
+            return flyweightSequence;
         } else {
             return null;
         }
@@ -277,6 +286,19 @@ public class Lexer extends AbstractImmutableIterator<CharSequence> {
         @Override
         public char charAt(int index) {
             return content.charAt(_lo + index);
+        }
+    }
+
+    private class FloatingByteSequence extends FloatingSequence implements ByteSequence {
+        @Override
+        public byte byteAt(int index) {
+            return (byte) charAt(index);
+        }
+
+        @NotNull
+        @Override
+        public String toString() {
+            return Chars.toUtf8String(this);
         }
     }
 

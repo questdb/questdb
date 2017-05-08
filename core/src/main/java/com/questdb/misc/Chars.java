@@ -365,4 +365,113 @@ public final class Chars {
         return s == null ? null : s.toString();
     }
 
+    public static String toUtf8String(ByteSequence in) {
+        if (in == null) {
+            return null;
+        }
+
+        StringBuilder b = Misc.getThreadLocalBuilder();
+        utf8Decode(in, b);
+        return b.toString();
+    }
+
+    public static void utf8Decode(ByteSequence in, StringBuilder builder) {
+        int index = 0;
+        int len = in.length();
+
+        while (index < len) {
+            byte b = in.byteAt(index);
+            if (b < 0) {
+                index += utf8DecodeMultiByte(in, b, index, len, builder);
+            } else {
+                builder.append((char) b);
+                ++index;
+            }
+        }
+    }
+
+    private static int utf8error(StringBuilder builder, int index, int len) {
+        builder.setLength(index);
+        return len - index;
+    }
+
+    private static int utf8DecodeMultiByte(ByteSequence in, int b, int index, int len, StringBuilder builder) {
+        if (b >> 5 == -2 && (b & 30) != 0) {
+            return utf8Decode2Bytes(in, b, index, len, builder);
+        }
+
+        if (b >> 4 == -2) {
+            return utf8Decode3Bytes(in, b, index, len, builder);
+        }
+
+        return utf8Decode4Bytes(in, b, index, len, builder);
+    }
+
+    private static int utf8Decode4Bytes(ByteSequence in, int b, int index, int len, StringBuilder builder) {
+        if (b >> 3 != -2) {
+            return utf8error(builder, index, len);
+        }
+
+        if (len - index > 3) {
+            byte b2 = in.byteAt(index + 1);
+            byte b3 = in.byteAt(index + 2);
+            byte b4 = in.byteAt(index + 3);
+
+            int codePoint = b << 18 ^ b2 << 12 ^ b3 << 6 ^ b4 ^ 3678080;
+            if (!isMalformed4(b2, b3, b4) && Character.isSupplementaryCodePoint(codePoint)) {
+                builder.append(Character.highSurrogate(codePoint));
+                builder.append(Character.lowSurrogate(codePoint));
+                return 4;
+            }
+        }
+        return utf8error(builder, index, len);
+    }
+
+    private static int utf8Decode3Bytes(ByteSequence in, int b, int index, int len, StringBuilder builder) {
+        if (len - index < 3) {
+            return utf8error(builder, index, len);
+        }
+
+        byte b2 = in.byteAt(index + 1);
+        byte b3 = in.byteAt(index + 2);
+
+        if (isMalformed3(b, b2, b3)) {
+            return utf8error(builder, index, len);
+        }
+
+        char c = (char) (b << 12 ^ b2 << 6 ^ b3 ^ -123008);
+        if (Character.isSurrogate(c)) {
+            return utf8error(builder, index, len);
+        }
+
+        builder.append(c);
+        return 3;
+    }
+
+    private static int utf8Decode2Bytes(ByteSequence in, int b, int index, int len, StringBuilder builder) {
+        if (len - index < 2) {
+            return utf8error(builder, index, len);
+        }
+
+        byte b2 = in.byteAt(index + 1);
+        if (isNotContinuation(b2)) {
+            return utf8error(builder, index, len);
+        }
+
+        builder.append((char) (b << 6 ^ b2 ^ 3968));
+        return 2;
+    }
+
+
+    private static boolean isNotContinuation(int b) {
+        return (b & 192) != 128;
+    }
+
+    private static boolean isMalformed3(int b1, int b2, int b3) {
+        return b1 == -32 && (b2 & 224) == 128 || (b2 & 192) != 128 || (b3 & 192) != 128;
+    }
+
+    private static boolean isMalformed4(int b2, int b3, int b4) {
+        return (b2 & 192) != 128 || (b3 & 192) != 128 || (b4 & 192) != 128;
+    }
 }
