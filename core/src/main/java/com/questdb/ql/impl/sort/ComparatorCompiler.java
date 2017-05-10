@@ -73,17 +73,14 @@ public class ComparatorCompiler {
         int setLeftDescIndex = asm.poolUtf8("(Lcom/questdb/ql/Record;)V");
         //
         asm.finishPool();
-        asm.defineClass(1, thisClassIndex);
-        // interface count
-        asm.putShort(1);
+        asm.defineClass(thisClassIndex);
+        asm.interfaceCount(1);
         asm.putShort(interfaceClassIndex);
-        // field count
-        asm.putShort(fieldNameIndices.size());
+        asm.fieldCount(fieldNameIndices.size());
         for (int i = 0, n = fieldNameIndices.size(); i < n; i++) {
-            asm.defineField(0x02, fieldNameIndices.getQuick(i), fieldTypeIndices.getQuick(i));
+            asm.defineField(fieldNameIndices.getQuick(i), fieldTypeIndices.getQuick(i));
         }
-        // method count
-        asm.putShort(3);
+        asm.methodCount(3);
         asm.defineDefaultConstructor();
         instrumentSetLeftMethod(setLeftNameIndex, setLeftDescIndex, keyColumnIndices);
         instrumentCompareMethod(stackMapTableIndex, compareNameIndex, compareDescIndex, keyColumnIndices);
@@ -96,7 +93,7 @@ public class ComparatorCompiler {
     private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, IntList keyColumns) {
         branches.clear();
         int sz = keyColumns.size();
-        asm.startMethod(0x01, nameIndex, descIndex, sz + 3, 3);
+        asm.startMethod(nameIndex, descIndex, sz + 3, 3);
 
         for (int i = 0; i < sz; i++) {
             if (i > 0) {
@@ -172,7 +169,7 @@ public class ComparatorCompiler {
      * method signatures in constant pool in bytecode.
      */
     private void instrumentSetLeftMethod(int nameIndex, int descIndex, IntList keyColumns) {
-        asm.startMethod(0x01, nameIndex, descIndex, 3, 2);
+        asm.startMethod(nameIndex, descIndex, 3, 2);
         for (int i = 0, n = keyColumns.size(); i < n; i++) {
             asm.aload(0);
             asm.aload(1);
@@ -281,14 +278,14 @@ public class ComparatorCompiler {
 
             int methodIndex = methodMap.get(getterNameA);
             if (methodIndex == -1) {
-                methodMap.put(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8(getterNameA), asm.poolUtf8("(I)" + fieldType))));
+                methodMap.put(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameA, "(I)" + fieldType));
             }
             fieldRecordAccessorIndicesA.add(methodIndex);
 
             if (getterNameB != null) {
                 methodIndex = methodMap.get(getterNameB);
                 if (methodIndex == -1) {
-                    methodMap.put(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8(getterNameB), asm.poolUtf8("(I)" + fieldType))));
+                    methodMap.put(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameB, "(I)" + fieldType));
                 }
             }
             fieldRecordAccessorIndicesB.add(methodIndex);

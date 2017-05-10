@@ -27,6 +27,7 @@ import com.questdb.ex.BytecodeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.ObjIntHashMap;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 
@@ -37,27 +38,9 @@ import java.nio.ByteOrder;
 
 public class BytecodeAssembler {
 
-    public static final int i2l = 0x85;
-    public static final int i2f = 0x86;
-    public static final int i2d = 0x87;
-    public static final int l2i = 0x88;
-    public static final int l2f = 0x89;
-    public static final int l2d = 0x8A;
-    public static final int f2i = 0x8B;
-    public static final int f2l = 0x8C;
-    public static final int f2d = 0x8D;
-    public static final int d2i = 0x8E;
-    public static final int d2l = 0x8F;
-    public static final int d2f = 0x90;
-    public static final int i2b = 0x91;
-    public static final int i2s = 0x93;
-
+    private static final int ACC_PUBLIC = 0x01;
+    private static final int ACC_PRIVATE = 0x02;
     private static final Log LOG = LogFactory.getLog(BytecodeAssembler.class);
-
-    private static final int putfield = 181;
-    private static final int invokevirtual = 182;
-    private static final int invokestatic = 184;
-    private static final int invokeinterface = 185;
     private static final int aload = 0x19;
     private static final int aload_0 = 0x2a;
     private static final int aload_1 = 0x2b;
@@ -73,16 +56,12 @@ public class BytecodeAssembler {
     private static final int lstore_1 = 0x40;
     private static final int lstore_2 = 0x41;
     private static final int lstore_3 = 0x42;
-    private static final int ldc = 0x12;
-    private static final int ldc2_w = 0x14;
     private static final int iinc = 0x84;
-
     private static final int lload = 0x16;
     private static final int lload_0 = 0x1e;
     private static final int lload_1 = 0x1f;
     private static final int lload_2 = 0x20;
     private static final int lload_3 = 0x21;
-
     private static final int iload = 0x15;
     private static final int iload_0 = 0x1a;
     private static final int iload_1 = 0x1b;
@@ -94,9 +73,9 @@ public class BytecodeAssembler {
     private static final int sipush = 0x11;
     private static final int invokespecial = 183;
     private static final int O_POOL_COUNT = 8;
-
     private final Utf8Appender utf8Appender = new Utf8Appender();
     private final CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();
+    private final ObjIntHashMap<Class> classCache = new ObjIntHashMap<>();
     private ByteBuffer buf;
     private int poolCount;
     private int objectClassIndex;
@@ -123,13 +102,25 @@ public class BytecodeAssembler {
         putShort(offset);
     }
 
-    public void defineClass(int flags, int thisClassIndex) {
-        defineClass(flags, thisClassIndex, objectClassIndex);
+    public void d2f() {
+        putShort(0x90);
     }
 
-    public void defineClass(int flags, int thisClassIndex, int superclassIndex) {
+    public void d2i() {
+        putShort(0x8E);
+    }
+
+    public void d2l() {
+        putShort(0x8F);
+    }
+
+    public void defineClass(int thisClassIndex) {
+        defineClass(thisClassIndex, objectClassIndex);
+    }
+
+    public void defineClass(int thisClassIndex, int superclassIndex) {
         // access flags
-        putShort(flags);
+        putShort(ACC_PUBLIC);
         // this class index
         putShort(thisClassIndex);
         // super class
@@ -142,7 +133,7 @@ public class BytecodeAssembler {
 
     public void defineDefaultConstructor(int superIndex) {
         // constructor method entry
-        startMethod(1, defaultConstructorNameIndex, defaultConstructorDescIndex, 1, 1);
+        startMethod(defaultConstructorNameIndex, defaultConstructorDescIndex, 1, 1);
         // code
         aload(0);
         put(invokespecial);
@@ -156,8 +147,8 @@ public class BytecodeAssembler {
         endMethod();
     }
 
-    public void defineField(int flags, int nameIndex, int typeIndex) {
-        putShort(flags);
+    public void defineField(int nameIndex, int typeIndex) {
+        putShort(ACC_PRIVATE);
         putShort(nameIndex);
         putShort(typeIndex);
         // attribute count
@@ -194,6 +185,22 @@ public class BytecodeAssembler {
         putInt(stackMapTableCut, position() - stackMapTableCut - 4);
     }
 
+    public void f2d() {
+        putShort(0x8D);
+    }
+
+    public void f2i() {
+        putShort(0x8B);
+    }
+
+    public void f2l() {
+        putShort(0x8C);
+    }
+
+    public void fieldCount(int count) {
+        putShort(count);
+    }
+
     public void finishPool() {
         putShort(O_POOL_COUNT, poolCount);
     }
@@ -216,8 +223,24 @@ public class BytecodeAssembler {
         return genericGoto(0xa7);
     }
 
+    public void i2b() {
+        putShort(0x91);
+    }
+
+    public void i2d() {
+        putShort(0x87);
+    }
+
+    public void i2f() {
+        putShort(0x86);
+    }
+
     public void i2l() {
-        putShort(i2l);
+        putShort(0x85);
+    }
+
+    public void i2s() {
+        putShort(0x93);
     }
 
     public void iadd() {
@@ -272,22 +295,27 @@ public class BytecodeAssembler {
         this.buf.clear();
         this.poolCount = 1;
         this.utf8Cache.clear();
+        this.classCache.clear();
+    }
+
+    public void interfaceCount(int count) {
+        putShort(count);
     }
 
     public void invokeInterface(int interfaceIndex, int argCount) {
-        put(invokeinterface);
+        put(185);
         putShort(interfaceIndex);
         put(argCount + 1);
         put(0);
     }
 
     public void invokeStatic(int index) {
-        put(invokestatic);
+        put(184);
         putShort(index);
     }
 
     public void invokeVirtual(int index) {
-        put(invokevirtual);
+        put(182);
         putShort(index);
     }
 
@@ -307,6 +335,18 @@ public class BytecodeAssembler {
         put(0x64);
     }
 
+    public void l2d() {
+        putShort(0x8A);
+    }
+
+    public void l2f() {
+        putShort(0x89);
+    }
+
+    public void l2i() {
+        putShort(0x88);
+    }
+
     public void lcmp() {
         put(0x94);
     }
@@ -316,12 +356,12 @@ public class BytecodeAssembler {
     }
 
     public void ldc(int index) {
-        put(ldc);
+        put(0x12);
         put(index);
     }
 
     public void ldc2_w(int index) {
-        put(ldc2_w);
+        put(0x14);
         putShort(index);
     }
 
@@ -348,6 +388,10 @@ public class BytecodeAssembler {
         optimisedIO(lstore_0, lstore_1, lstore_2, lstore_3, lstore, value);
     }
 
+    public void methodCount(int count) {
+        putShort(count);
+    }
+
     public <T> T newInstance() {
         Class<T> x = loadClass(host);
         try {
@@ -365,30 +409,34 @@ public class BytecodeAssembler {
     }
 
     public int poolClass(Class clazz) {
-        String name = clazz.getName();
-        put(0x01);
-        int n;
-        putShort(n = name.length());
-        for (int i = 0; i < n; i++) {
-            char c = name.charAt(i);
-            switch (c) {
-                case '.':
-                    put('/');
-                    break;
-                default:
-                    put(c);
-                    break;
+        int index = classCache.get(clazz);
+        if (index == -1) {
+            String name = clazz.getName();
+            put(0x01);
+            int n;
+            putShort(n = name.length());
+            for (int i = 0; i < n; i++) {
+                char c = name.charAt(i);
+                switch (c) {
+                    case '.':
+                        put('/');
+                        break;
+                    default:
+                        put(c);
+                        break;
+                }
             }
+            classCache.put(clazz, index = poolClass(this.poolCount++));
         }
-        return poolClass(this.poolCount++);
+        return index;
     }
 
     public int poolField(int classIndex, int nameAndTypeIndex) {
         return poolRef(0x09, classIndex, nameAndTypeIndex);
     }
 
-    public int poolInterfaceMethod(int classIndex, int nameAndTypeIndex) {
-        return poolRef(0x0B, classIndex, nameAndTypeIndex);
+    public int poolInterfaceMethod(Class clazz, String name, String sig) {
+        return poolInterfaceMethod(poolClass(clazz), poolNameAndType(poolUtf8(name), poolUtf8(sig)));
     }
 
     public int poolInterfaceMethod(int classIndex, String name, String sig) {
@@ -409,6 +457,10 @@ public class BytecodeAssembler {
 
     public int poolMethod(int classIndex, CharSequence methodName, CharSequence signature) {
         return poolMethod(classIndex, poolNameAndType(poolUtf8(methodName), poolUtf8(signature)));
+    }
+
+    public int poolMethod(Class clazz, CharSequence methodName, CharSequence signature) {
+        return poolMethod(poolClass(clazz), poolNameAndType(poolUtf8(methodName), poolUtf8(signature)));
     }
 
     public int poolNameAndType(int nameIndex, int typeIndex) {
@@ -493,7 +545,7 @@ public class BytecodeAssembler {
     }
 
     public void putfield(int index) {
-        put(putfield);
+        put(181);
         putShort(index);
     }
 
@@ -531,9 +583,9 @@ public class BytecodeAssembler {
         codeAttributeIndex = poolUtf8("Code");
     }
 
-    public void startMethod(int flags, int nameIndex, int descriptorIndex, int maxStack, int maxLocal) {
+    public void startMethod(int nameIndex, int descriptorIndex, int maxStack, int maxLocal) {
         // access flags
-        putShort(flags);
+        putShort(ACC_PUBLIC);
         // name index
         putShort(nameIndex);
         // descriptor index
@@ -593,6 +645,10 @@ public class BytecodeAssembler {
                 put(value);
                 break;
         }
+    }
+
+    private int poolInterfaceMethod(int classIndex, int nameAndTypeIndex) {
+        return poolRef(0x0B, classIndex, nameAndTypeIndex);
     }
 
     private int poolRef(int op, int name, int type) {

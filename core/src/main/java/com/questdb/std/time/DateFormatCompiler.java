@@ -183,7 +183,7 @@ public class DateFormatCompiler {
 
     private void assembleFormatMethod(IntList ops, ObjList<String> delimiters, int getWeekdayIndex, int getShortWeekdayIndex, int getMonthIndex, int getShortMonthIndex, int appendEraIndex, int appendAmPmIndex, int appendHour12Index, int appendHour12PaddedIndex, int appendHour121Index, int appendHour121PaddedIndex, int getYearIndex, int isLeapYearIndex, int getMonthOfYearIndex, int getDayOfMonthIndex, int getHourOfDayIndex, int getMinuteOfHourIndex, int getSecondOfMinuteIndex, int getMillisOfSecondIndex, int getDayOfWeekIndex, int append000Index, int append00Index, int append0Index, int sinkPutIntIndex, int sinkPutStrIndex, int sinkPutChrIndex, int formatNameIndex, int formatSigIndex) {
         int formatAttributes = computeFormatAttributes(ops);
-        asm.startMethod(0x01, formatNameIndex, formatSigIndex, 6, FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes));
+        asm.startMethod(formatNameIndex, formatSigIndex, 6, FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes));
 
         assembleFormatMethodStack(
                 formatAttributes,
@@ -501,7 +501,7 @@ public class DateFormatCompiler {
         int stackState = computeParseMethodStack(ops);
 
         // public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException
-        asm.startMethod(0x01, parseNameIndex, parseSigIndex, 13, 20);
+        asm.startMethod(parseNameIndex, parseSigIndex, 13, 20);
 
         // define stack variables
         // when pattern is not used a default value must be assigned
@@ -1204,62 +1204,57 @@ public class DateFormatCompiler {
         int stackMapTableIndex = asm.poolUtf8("StackMapTable");
         int superclassIndex = asm.poolClass(AbstractDateFormat.class);
         int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
-        int dateFormatUtilsClassIndex = asm.poolClass(DateFormatUtils.class);
-        int numbersClassIndex = asm.poolClass(Numbers.class);
-        int datesClassIndex = asm.poolClass(Dates.class);
         int charSequenceClassIndex = asm.poolClass(CharSequence.class);
         int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
         int minMillisIndex = asm.poolLongConst(Dates.MINUTE_MILLIS);
-        int sinkIndex = asm.poolClass(CharSink.class);
-        int charSequenceIndex = asm.poolClass(CharSequence.class);
 
         int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
-        int matchWeekdayIndex = asm.poolMethod(dateLocaleClassIndex, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
-        int matchMonthIndex = asm.poolMethod(dateLocaleClassIndex, "matchMonth", "(Ljava/lang/CharSequence;II)J");
-        int matchZoneIndex = asm.poolMethod(dateLocaleClassIndex, "matchZone", "(Ljava/lang/CharSequence;II)J");
-        int matchAMPMIndex = asm.poolMethod(dateLocaleClassIndex, "matchAMPM", "(Ljava/lang/CharSequence;II)J");
-        int matchEraIndex = asm.poolMethod(dateLocaleClassIndex, "matchEra", "(Ljava/lang/CharSequence;II)J");
-        int getWeekdayIndex = asm.poolMethod(dateLocaleClassIndex, "getWeekday", "(I)Ljava/lang/String;");
-        int getShortWeekdayIndex = asm.poolMethod(dateLocaleClassIndex, "getShortWeekday", "(I)Ljava/lang/String;");
-        int getMonthIndex = asm.poolMethod(dateLocaleClassIndex, "getMonth", "(I)Ljava/lang/String;");
-        int getShortMonthIndex = asm.poolMethod(dateLocaleClassIndex, "getShortMonth", "(I)Ljava/lang/String;");
+        int matchWeekdayIndex = asm.poolMethod(DateLocale.class, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
+        int matchMonthIndex = asm.poolMethod(DateLocale.class, "matchMonth", "(Ljava/lang/CharSequence;II)J");
+        int matchZoneIndex = asm.poolMethod(DateLocale.class, "matchZone", "(Ljava/lang/CharSequence;II)J");
+        int matchAMPMIndex = asm.poolMethod(DateLocale.class, "matchAMPM", "(Ljava/lang/CharSequence;II)J");
+        int matchEraIndex = asm.poolMethod(DateLocale.class, "matchEra", "(Ljava/lang/CharSequence;II)J");
+        int getWeekdayIndex = asm.poolMethod(DateLocale.class, "getWeekday", "(I)Ljava/lang/String;");
+        int getShortWeekdayIndex = asm.poolMethod(DateLocale.class, "getShortWeekday", "(I)Ljava/lang/String;");
+        int getMonthIndex = asm.poolMethod(DateLocale.class, "getMonth", "(I)Ljava/lang/String;");
+        int getShortMonthIndex = asm.poolMethod(DateLocale.class, "getShortMonth", "(I)Ljava/lang/String;");
 
-        int parseIntSafelyIndex = asm.poolMethod(numbersClassIndex, "parseIntSafely", "(Ljava/lang/CharSequence;II)J");
-        int decodeLenIndex = asm.poolMethod(numbersClassIndex, "decodeLen", "(J)I");
-        int decodeIntIndex = asm.poolMethod(numbersClassIndex, "decodeInt", "(J)I");
-        int parseIntIndex = asm.poolMethod(numbersClassIndex, "parseInt", "(Ljava/lang/CharSequence;II)I");
+        int parseIntSafelyIndex = asm.poolMethod(Numbers.class, "parseIntSafely", "(Ljava/lang/CharSequence;II)J");
+        int decodeLenIndex = asm.poolMethod(Numbers.class, "decodeLen", "(J)I");
+        int decodeIntIndex = asm.poolMethod(Numbers.class, "decodeInt", "(J)I");
+        int parseIntIndex = asm.poolMethod(Numbers.class, "parseInt", "(Ljava/lang/CharSequence;II)I");
 
-        int assertRemainingIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertRemaining", "(II)V");
-        int assertNoTailIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertNoTail", "(II)V");
-        int assertStringIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
-        int assertCharIndex = asm.poolMethod(dateFormatUtilsClassIndex, "assertChar", "(CLjava/lang/CharSequence;II)V");
-        int computeMillisIndex = asm.poolMethod(dateFormatUtilsClassIndex, "compute", "(Lcom/questdb/std/time/DateLocale;IIIIIIIIIJI)J");
-        int adjustYearIndex = asm.poolMethod(dateFormatUtilsClassIndex, "adjustYear", "(I)I");
-        int parseYearGreedyIndex = asm.poolMethod(dateFormatUtilsClassIndex, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
-        int appendEraIndex = asm.poolMethod(dateFormatUtilsClassIndex, "appendEra", "(Lcom/questdb/std/str/CharSink;ILcom/questdb/std/time/DateLocale;)V");
-        int appendAmPmIndex = asm.poolMethod(dateFormatUtilsClassIndex, "appendAmPm", "(Lcom/questdb/std/str/CharSink;ILcom/questdb/std/time/DateLocale;)V");
-        int appendHour12Index = asm.poolMethod(dateFormatUtilsClassIndex, "appendHour12", "(Lcom/questdb/std/str/CharSink;I)V");
-        int appendHour12PaddedIndex = asm.poolMethod(dateFormatUtilsClassIndex, "appendHour12Padded", "(Lcom/questdb/std/str/CharSink;I)V");
-        int appendHour121Index = asm.poolMethod(dateFormatUtilsClassIndex, "appendHour121", "(Lcom/questdb/std/str/CharSink;I)V");
-        int appendHour121PaddedIndex = asm.poolMethod(dateFormatUtilsClassIndex, "appendHour121Padded", "(Lcom/questdb/std/str/CharSink;I)V");
-        int append000Index = asm.poolMethod(dateFormatUtilsClassIndex, "append000", "(Lcom/questdb/std/str/CharSink;I)V");
-        int append00Index = asm.poolMethod(dateFormatUtilsClassIndex, "append00", "(Lcom/questdb/std/str/CharSink;I)V");
-        int append0Index = asm.poolMethod(dateFormatUtilsClassIndex, "append0", "(Lcom/questdb/std/str/CharSink;I)V");
+        int assertRemainingIndex = asm.poolMethod(DateFormatUtils.class, "assertRemaining", "(II)V");
+        int assertNoTailIndex = asm.poolMethod(DateFormatUtils.class, "assertNoTail", "(II)V");
+        int assertStringIndex = asm.poolMethod(DateFormatUtils.class, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
+        int assertCharIndex = asm.poolMethod(DateFormatUtils.class, "assertChar", "(CLjava/lang/CharSequence;II)V");
+        int computeMillisIndex = asm.poolMethod(DateFormatUtils.class, "compute", "(Lcom/questdb/std/time/DateLocale;IIIIIIIIIJI)J");
+        int adjustYearIndex = asm.poolMethod(DateFormatUtils.class, "adjustYear", "(I)I");
+        int parseYearGreedyIndex = asm.poolMethod(DateFormatUtils.class, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
+        int appendEraIndex = asm.poolMethod(DateFormatUtils.class, "appendEra", "(Lcom/questdb/std/str/CharSink;ILcom/questdb/std/time/DateLocale;)V");
+        int appendAmPmIndex = asm.poolMethod(DateFormatUtils.class, "appendAmPm", "(Lcom/questdb/std/str/CharSink;ILcom/questdb/std/time/DateLocale;)V");
+        int appendHour12Index = asm.poolMethod(DateFormatUtils.class, "appendHour12", "(Lcom/questdb/std/str/CharSink;I)V");
+        int appendHour12PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour12Padded", "(Lcom/questdb/std/str/CharSink;I)V");
+        int appendHour121Index = asm.poolMethod(DateFormatUtils.class, "appendHour121", "(Lcom/questdb/std/str/CharSink;I)V");
+        int appendHour121PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour121Padded", "(Lcom/questdb/std/str/CharSink;I)V");
+        int append000Index = asm.poolMethod(DateFormatUtils.class, "append000", "(Lcom/questdb/std/str/CharSink;I)V");
+        int append00Index = asm.poolMethod(DateFormatUtils.class, "append00", "(Lcom/questdb/std/str/CharSink;I)V");
+        int append0Index = asm.poolMethod(DateFormatUtils.class, "append0", "(Lcom/questdb/std/str/CharSink;I)V");
 
-        int parseOffsetIndex = asm.poolMethod(datesClassIndex, "parseOffset", "(Ljava/lang/CharSequence;II)J");
-        int getYearIndex = asm.poolMethod(datesClassIndex, "getYear", "(J)I");
-        int isLeapYearIndex = asm.poolMethod(datesClassIndex, "isLeapYear", "(I)Z");
-        int getMonthOfYearIndex = asm.poolMethod(datesClassIndex, "getMonthOfYear", "(JIZ)I");
-        int getDayOfMonthIndex = asm.poolMethod(datesClassIndex, "getDayOfMonth", "(JIIZ)I");
-        int getHourOfDayIndex = asm.poolMethod(datesClassIndex, "getHourOfDay", "(J)I");
-        int getMinuteOfHourIndex = asm.poolMethod(datesClassIndex, "getMinuteOfHour", "(J)I");
-        int getSecondOfMinuteIndex = asm.poolMethod(datesClassIndex, "getSecondOfMinute", "(J)I");
-        int getMillisOfSecondIndex = asm.poolMethod(datesClassIndex, "getMillisOfSecond", "(J)I");
-        int getDayOfWeekIndex = asm.poolMethod(datesClassIndex, "getDayOfWeekSundayFirst", "(J)I");
+        int parseOffsetIndex = asm.poolMethod(Dates.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
+        int getYearIndex = asm.poolMethod(Dates.class, "getYear", "(J)I");
+        int isLeapYearIndex = asm.poolMethod(Dates.class, "isLeapYear", "(I)Z");
+        int getMonthOfYearIndex = asm.poolMethod(Dates.class, "getMonthOfYear", "(JIZ)I");
+        int getDayOfMonthIndex = asm.poolMethod(Dates.class, "getDayOfMonth", "(JIIZ)I");
+        int getHourOfDayIndex = asm.poolMethod(Dates.class, "getHourOfDay", "(J)I");
+        int getMinuteOfHourIndex = asm.poolMethod(Dates.class, "getMinuteOfHour", "(J)I");
+        int getSecondOfMinuteIndex = asm.poolMethod(Dates.class, "getSecondOfMinute", "(J)I");
+        int getMillisOfSecondIndex = asm.poolMethod(Dates.class, "getMillisOfSecond", "(J)I");
+        int getDayOfWeekIndex = asm.poolMethod(Dates.class, "getDayOfWeekSundayFirst", "(J)I");
 
-        int sinkPutIntIndex = asm.poolInterfaceMethod(sinkIndex, "put", "(I)Lcom/questdb/std/str/CharSink;");
-        int sinkPutStrIndex = asm.poolInterfaceMethod(sinkIndex, "put", "(Ljava/lang/CharSequence;)Lcom/questdb/std/str/CharSink;");
-        int sinkPutChrIndex = asm.poolInterfaceMethod(sinkIndex, "put", "(C)Lcom/questdb/std/str/CharSink;");
+        int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(I)Lcom/questdb/std/str/CharSink;");
+        int sinkPutStrIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(Ljava/lang/CharSequence;)Lcom/questdb/std/str/CharSink;");
+        int sinkPutChrIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(C)Lcom/questdb/std/str/CharSink;");
 
         int charAtIndex = asm.poolInterfaceMethod(charSequenceClassIndex, "charAt", "(I)C");
 
@@ -1284,13 +1279,10 @@ public class DateFormatCompiler {
 
         asm.finishPool();
 
-        asm.defineClass(1, thisClassIndex, superclassIndex);
-        // interface count
-        asm.putShort(0);
-        // field count
-        asm.putShort(0);
-        // method count
-        asm.putShort(3);
+        asm.defineClass(thisClassIndex, superclassIndex);
+        asm.interfaceCount(0);
+        asm.fieldCount(0);
+        asm.methodCount(3);
         asm.defineDefaultConstructor(superIndex);
 
         assembleParseMethod(

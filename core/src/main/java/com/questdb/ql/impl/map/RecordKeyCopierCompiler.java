@@ -46,50 +46,41 @@ public class RecordKeyCopierCompiler {
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
         int interfaceClassIndex = asm.poolClass(RecordKeyCopier.class);
-        int recordClassIndex = asm.poolClass(Record.class);
-        int writerClassIndex = asm.poolClass(DirectMap.KeyWriter.class);
 
-        int rGetInt = asm.poolInterfaceMethod(recordClassIndex, "getInt", "(I)I");
-        // shared sig
-        int rIntLong = asm.poolUtf8("(I)J");
-        int rGetLong = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getLong"), rIntLong));
-        int rGetDate = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getDate"), rIntLong));
-        //
-        int rGetByte = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("get"), asm.poolUtf8("(I)B")));
-        int rGetShort = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getShort"), asm.poolUtf8("(I)S")));
-        int rGetBool = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getBool"), asm.poolUtf8("(I)Z")));
-        int rGetFloat = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getFloat"), asm.poolUtf8("(I)F")));
-        int rGetDouble = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getDouble"), asm.poolUtf8("(I)D")));
-        int rGetStr = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getFlyweightStr"), asm.poolUtf8("(I)Ljava/lang/CharSequence;")));
-        int rGetSym = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getSym"), asm.poolUtf8("(I)Ljava/lang/String;")));
+        int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
+        int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
+        int rGetByte = asm.poolInterfaceMethod(Record.class, "get", "(I)B");
+        int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
+        int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
+        int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
+        int rGetStr = asm.poolInterfaceMethod(Record.class, "getFlyweightStr", "(I)Ljava/lang/CharSequence;");
+        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/String;");
 
         //
-        int wPutInt = asm.poolMethod(writerClassIndex, "putInt", "(I)V");
-        int wIntLong = asm.poolUtf8("(J)V");
-        int wPutLong = asm.poolMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putLong"), wIntLong));
+        int wPutInt = asm.poolMethod(DirectMap.KeyWriter.class, "putInt", "(I)V");
+        int wPutLong = asm.poolMethod(DirectMap.KeyWriter.class, "putLong", "(J)V");
         //
-        int wPutByte = asm.poolMethod(writerClassIndex, "putByte", "(B)V");
-        int wPutShort = asm.poolMethod(writerClassIndex, "putShort", "(S)V");
-        int wPutBool = asm.poolMethod(writerClassIndex, "putBool", "(Z)V");
-        int wPutFloat = asm.poolMethod(writerClassIndex, "putFloat", "(F)V");
-        int wPutDouble = asm.poolMethod(writerClassIndex, "putDouble", "(D)V");
-        int wPutStr = asm.poolMethod(writerClassIndex, "putStr", "(Ljava/lang/CharSequence;)V");
+        int wPutByte = asm.poolMethod(DirectMap.KeyWriter.class, "putByte", "(B)V");
+        int wPutShort = asm.poolMethod(DirectMap.KeyWriter.class, "putShort", "(S)V");
+        int wPutBool = asm.poolMethod(DirectMap.KeyWriter.class, "putBool", "(Z)V");
+        int wPutFloat = asm.poolMethod(DirectMap.KeyWriter.class, "putFloat", "(F)V");
+        int wPutDouble = asm.poolMethod(DirectMap.KeyWriter.class, "putDouble", "(D)V");
+        int wPutStr = asm.poolMethod(DirectMap.KeyWriter.class, "putStr", "(Ljava/lang/CharSequence;)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lcom/questdb/ql/Record;Lcom/questdb/ql/impl/map/DirectMap$KeyWriter;)V");
 
         asm.finishPool();
-        asm.defineClass(1, thisClassIndex);
-        // interface count
-        asm.putShort(1);
+        asm.defineClass(thisClassIndex);
+        asm.interfaceCount(1);
         asm.putShort(interfaceClassIndex);
-        // field count
-        asm.putShort(0);
-        // method count
-        asm.putShort(2);
+        asm.fieldCount(0);
+        asm.methodCount(2);
         asm.defineDefaultConstructor();
 
-        asm.startMethod(0x01, copyNameIndex, copySigIndex, 4, 3);
+        asm.startMethod(copyNameIndex, copySigIndex, 4, 3);
 
         int n = columns.size();
         for (int i = 0; i < n; i++) {

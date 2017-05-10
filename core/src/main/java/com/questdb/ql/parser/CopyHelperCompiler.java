@@ -42,54 +42,45 @@ public class CopyHelperCompiler {
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
         int interfaceClassIndex = asm.poolClass(CopyHelper.class);
-        int recordClassIndex = asm.poolClass(Record.class);
-        int writerClassIndex = asm.poolClass(JournalEntryWriter.class);
 
-        int rGetInt = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getInt"), asm.poolUtf8("(I)I")));
-        // shared sig
-        int rIntLong = asm.poolUtf8("(I)J");
-        int rGetLong = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getLong"), rIntLong));
-        int rGetDate = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getDate"), rIntLong));
+        int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
+        int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         //
-        int rGetByte = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("get"), asm.poolUtf8("(I)B")));
-        int rGetShort = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getShort"), asm.poolUtf8("(I)S")));
-        int rGetBool = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getBool"), asm.poolUtf8("(I)Z")));
-        int rGetFloat = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getFloat"), asm.poolUtf8("(I)F")));
-        int rGetDouble = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getDouble"), asm.poolUtf8("(I)D")));
-        int rGetSym = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getSym"), asm.poolUtf8("(I)Ljava/lang/String;")));
-        int rGetStr = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getFlyweightStr"), asm.poolUtf8("(I)Ljava/lang/CharSequence;")));
-        int rGetBin = asm.poolInterfaceMethod(recordClassIndex, asm.poolNameAndType(asm.poolUtf8("getBin"), asm.poolUtf8("(I)Lcom/questdb/std/DirectInputStream;")));
-
+        int rGetByte = asm.poolInterfaceMethod(Record.class, "get", "(I)B");
+        int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
+        int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
+        int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
+        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/String;");
+        int rGetStr = asm.poolInterfaceMethod(Record.class, "getFlyweightStr", "(I)Ljava/lang/CharSequence;");
+        int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lcom/questdb/std/DirectInputStream;");
         //
-        int wPutInt = asm.poolInterfaceMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putInt"), asm.poolUtf8("(II)V")));
-        int wIntLong = asm.poolUtf8("(IJ)V");
-        int wPutLong = asm.poolInterfaceMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putLong"), wIntLong));
-        int wPutDate = asm.poolInterfaceMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putDate"), wIntLong));
+        int wPutInt = asm.poolInterfaceMethod(JournalEntryWriter.class, "putInt", "(II)V");
+        int wPutLong = asm.poolInterfaceMethod(JournalEntryWriter.class, "putLong", "(IJ)V");
+        int wPutDate = asm.poolInterfaceMethod(JournalEntryWriter.class, "putDate", "(IJ)V");
         //
-        int wPutByte = asm.poolInterfaceMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("put"), asm.poolUtf8("(IB)V")));
-        int wPutShort = asm.poolInterfaceMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putShort"), asm.poolUtf8("(IS)V")));
-        int wPutBool = asm.poolInterfaceMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putBool"), asm.poolUtf8("(IZ)V")));
-        int wPutFloat = asm.poolInterfaceMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putFloat"), asm.poolUtf8("(IF)V")));
-        int wPutDouble = asm.poolInterfaceMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putDouble"), asm.poolUtf8("(ID)V")));
-        int wPutSym = asm.poolInterfaceMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putSym"), asm.poolUtf8("(ILjava/lang/CharSequence;)V")));
-        int wPutStr = asm.poolInterfaceMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putStr"), asm.poolUtf8("(ILjava/lang/CharSequence;)V")));
-        int wPutBin = asm.poolInterfaceMethod(writerClassIndex, asm.poolNameAndType(asm.poolUtf8("putBin"), asm.poolUtf8("(ILjava/io/InputStream;)V")));
+        int wPutByte = asm.poolInterfaceMethod(JournalEntryWriter.class, "put", "(IB)V");
+        int wPutShort = asm.poolInterfaceMethod(JournalEntryWriter.class, "putShort", "(IS)V");
+        int wPutBool = asm.poolInterfaceMethod(JournalEntryWriter.class, "putBool", "(IZ)V");
+        int wPutFloat = asm.poolInterfaceMethod(JournalEntryWriter.class, "putFloat", "(IF)V");
+        int wPutDouble = asm.poolInterfaceMethod(JournalEntryWriter.class, "putDouble", "(ID)V");
+        int wPutSym = asm.poolInterfaceMethod(JournalEntryWriter.class, "putSym", "(ILjava/lang/CharSequence;)V");
+        int wPutStr = asm.poolInterfaceMethod(JournalEntryWriter.class, "putStr", "(ILjava/lang/CharSequence;)V");
+        int wPutBin = asm.poolInterfaceMethod(JournalEntryWriter.class, "putBin", "(ILjava/io/InputStream;)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lcom/questdb/ql/Record;Lcom/questdb/JournalEntryWriter;)V");
 
         asm.finishPool();
-        asm.defineClass(1, thisClassIndex);
-        // interface count
-        asm.putShort(1);
+        asm.defineClass(thisClassIndex);
+        asm.interfaceCount(1);
         asm.putShort(interfaceClassIndex);
-        // field count
-        asm.putShort(0);
-        // method count
-        asm.putShort(2);
+        asm.fieldCount(0);
+        asm.methodCount(2);
         asm.defineDefaultConstructor();
 
-        asm.startMethod(0x01, copyNameIndex, copySigIndex, 4, 3);
+        asm.startMethod(copyNameIndex, copySigIndex, 4, 3);
 
         int n = from.getColumnCount();
         for (int i = 0; i < n; i++) {
@@ -118,19 +109,19 @@ public class CopyHelperCompiler {
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.SHORT:
-                            asm.put(BytecodeAssembler.i2s);
+                            asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            asm.put(BytecodeAssembler.i2b);
+                            asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
-                            asm.put(BytecodeAssembler.i2f);
+                            asm.i2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.put(BytecodeAssembler.i2d);
+                            asm.i2d();
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
@@ -142,28 +133,28 @@ public class CopyHelperCompiler {
                     asm.invokeInterface(rGetLong, 1);
                     switch (to.getColumnQuick(i).getType()) {
                         case ColumnType.INT:
-                            asm.put(BytecodeAssembler.l2i);
+                            asm.l2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.DATE:
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.SHORT:
-                            asm.put(BytecodeAssembler.l2i);
-                            asm.put(BytecodeAssembler.i2s);
+                            asm.l2i();
+                            asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            asm.put(BytecodeAssembler.l2i);
-                            asm.put(BytecodeAssembler.i2b);
+                            asm.l2i();
+                            asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
-                            asm.put(BytecodeAssembler.l2f);
+                            asm.l2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.put(BytecodeAssembler.l2d);
+                            asm.l2d();
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
@@ -175,28 +166,28 @@ public class CopyHelperCompiler {
                     asm.invokeInterface(rGetDate, 1);
                     switch (to.getColumnQuick(i).getType()) {
                         case ColumnType.INT:
-                            asm.put(BytecodeAssembler.l2i);
+                            asm.l2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.SHORT:
-                            asm.put(BytecodeAssembler.l2i);
-                            asm.put(BytecodeAssembler.i2s);
+                            asm.l2i();
+                            asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            asm.put(BytecodeAssembler.l2i);
-                            asm.put(BytecodeAssembler.i2b);
+                            asm.l2i();
+                            asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
-                            asm.put(BytecodeAssembler.l2f);
+                            asm.l2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.put(BytecodeAssembler.l2d);
+                            asm.l2d();
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
@@ -211,23 +202,23 @@ public class CopyHelperCompiler {
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            asm.put(BytecodeAssembler.i2l);
+                            asm.i2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            asm.put(BytecodeAssembler.i2l);
+                            asm.i2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.SHORT:
-                            asm.put(BytecodeAssembler.i2s);
+                            asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.FLOAT:
-                            asm.put(BytecodeAssembler.i2f);
+                            asm.i2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.put(BytecodeAssembler.i2d);
+                            asm.i2d();
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
@@ -242,23 +233,23 @@ public class CopyHelperCompiler {
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            asm.put(BytecodeAssembler.i2l);
+                            asm.i2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            asm.put(BytecodeAssembler.i2l);
+                            asm.i2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.BYTE:
-                            asm.put(BytecodeAssembler.i2b);
+                            asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
-                            asm.put(BytecodeAssembler.i2f);
+                            asm.i2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.put(BytecodeAssembler.i2d);
+                            asm.i2d();
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
@@ -274,29 +265,29 @@ public class CopyHelperCompiler {
                     asm.invokeInterface(rGetFloat, 1);
                     switch (to.getColumnQuick(i).getType()) {
                         case ColumnType.INT:
-                            asm.put(BytecodeAssembler.f2i);
+                            asm.f2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            asm.put(BytecodeAssembler.f2l);
+                            asm.f2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            asm.put(BytecodeAssembler.f2l);
+                            asm.f2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.SHORT:
-                            asm.put(BytecodeAssembler.f2i);
-                            asm.put(BytecodeAssembler.i2s);
+                            asm.f2i();
+                            asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            asm.put(BytecodeAssembler.f2i);
-                            asm.put(BytecodeAssembler.i2b);
+                            asm.f2i();
+                            asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.put(BytecodeAssembler.f2d);
+                            asm.f2d();
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
@@ -308,29 +299,29 @@ public class CopyHelperCompiler {
                     asm.invokeInterface(rGetDouble, 1);
                     switch (to.getColumnQuick(i).getType()) {
                         case ColumnType.INT:
-                            asm.put(BytecodeAssembler.d2i);
+                            asm.d2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            asm.put(BytecodeAssembler.d2l);
+                            asm.d2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            asm.put(BytecodeAssembler.d2l);
+                            asm.d2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.SHORT:
-                            asm.put(BytecodeAssembler.d2i);
-                            asm.put(BytecodeAssembler.i2s);
+                            asm.d2i();
+                            asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            asm.put(BytecodeAssembler.d2i);
-                            asm.put(BytecodeAssembler.i2b);
+                            asm.d2i();
+                            asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
-                            asm.put(BytecodeAssembler.d2f);
+                            asm.d2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         default:

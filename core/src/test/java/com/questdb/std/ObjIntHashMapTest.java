@@ -51,4 +51,10 @@ public class ObjIntHashMapTest {
             Assert.assertEquals(e.value, val.intValue());
         }
     }
+
+    @Test
+    public void testClassBehaviour() throws Exception {
+        ObjIntHashMap<Class> map = new ObjIntHashMap<>();
+        Assert.assertEquals(-1, map.get(Object.class));
+    }
 }
