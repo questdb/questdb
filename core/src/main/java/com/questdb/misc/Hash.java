@@ -23,6 +23,8 @@
 
 package com.questdb.misc;
 
+import com.questdb.std.str.DirectBytes;
+
 public final class Hash {
     private Hash() {
     }
@@ -35,6 +37,10 @@ public final class Hash {
      * @return power of 2 integer
      */
     public static int boundedHash(CharSequence s, int max) {
+        return s == null ? -1 : (Chars.hashCode(s) & 0xFFFFFFF) & max;
+    }
+
+    public static int boundedHash(DirectBytes s, int max) {
         return s == null ? -1 : (Chars.hashCode(s) & 0xFFFFFFF) & max;
     }
 

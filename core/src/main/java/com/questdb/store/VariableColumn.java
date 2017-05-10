@@ -29,6 +29,7 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.str.DirectBytes;
 import com.questdb.std.str.DirectCharSequence;
 
 import java.io.IOException;
@@ -295,6 +296,19 @@ public class VariableColumn extends AbstractColumn {
             long offset = getOffset();
             Chars.strcpyw(value, mappedFile.addressOf(offset, len));
             return commitAppend(offset, len);
+        }
+    }
+
+    public long putStr(DirectBytes value) {
+        if (value == null) {
+            return putNull();
+        } else {
+            int len = value.byteLength();
+            long offset = getOffset();
+            long address = mappedFile.addressOf(offset, len + 4);
+            Unsafe.getUnsafe().putInt(address, len / 2);
+            Unsafe.getUnsafe().copyMemory(value.address(), address + 4, len);
+            return commitAppend(offset, len + 4);
         }
     }
 

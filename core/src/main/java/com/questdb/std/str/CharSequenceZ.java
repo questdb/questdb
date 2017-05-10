@@ -33,10 +33,6 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
     private int capacity;
     private int len;
 
-    public CharSequenceZ() {
-        alloc(128);
-    }
-
     public CharSequenceZ(CharSequence str) {
         int l = str.length();
         alloc(l);

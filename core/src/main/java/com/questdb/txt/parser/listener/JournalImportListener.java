@@ -40,6 +40,7 @@ import com.questdb.std.LongList;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.DirectBytes;
 import com.questdb.std.str.DirectCharSink;
 import com.questdb.store.ColumnType;
 import com.questdb.txt.ImportedColumnMetadata;
@@ -153,7 +154,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                         case ColumnType.STRING:
                             utf8Sink.clear();
                             Chars.utf8Decode(values.getQuick(i), utf8Sink);
-                            w.putStr(i, utf8Sink);
+                            w.putStr(i, (DirectBytes) utf8Sink);
                             break;
                         case ColumnType.DOUBLE:
                             w.putDouble(i, Numbers.parseDouble(values.getQuick(i)));

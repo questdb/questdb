@@ -26,10 +26,20 @@ package com.questdb.std.str;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
 
-public class DirectCharSequence extends AbstractCharSequence {
+public class DirectCharSequence extends AbstractCharSequence implements DirectBytes {
     private long lo;
     private long hi;
     private int len;
+
+    @Override
+    public long address() {
+        return lo;
+    }
+
+    @Override
+    public int byteLength() {
+        return len * 2;
+    }
 
     public long getHi() {
         return hi;

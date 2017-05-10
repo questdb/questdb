@@ -29,6 +29,7 @@ import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.misc.Hash;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.str.DirectBytes;
 import com.questdb.store.*;
 
 import java.io.InputStream;
@@ -180,7 +181,24 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
     @Override
     public void putStr(int index, CharSequence value) {
         assertType(index, ColumnType.STRING);
-        putString0(index, value);
+        if (meta(index).indexed) {
+            Unsafe.arrayPut(koTuple, index * 2L, value == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(value, Unsafe.arrayGet(meta, index).distinctCountHint));
+            Unsafe.arrayPut(koTuple, index * 2L + 1L, varCol(index).putStr(value));
+        } else {
+            varCol(index).putStr(value);
+        }
+        skip(index);
+    }
+
+    @Override
+    public void putStr(int index, DirectBytes value) {
+        assertType(index, ColumnType.STRING);
+        if (meta(index).indexed) {
+            Unsafe.arrayPut(koTuple, index * 2L, value == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(value, Unsafe.arrayGet(meta, index).distinctCountHint));
+            Unsafe.arrayPut(koTuple, index * 2L + 1L, varCol(index).putStr(value));
+        } else {
+            varCol(index).putStr(value);
+        }
         skip(index);
     }
 

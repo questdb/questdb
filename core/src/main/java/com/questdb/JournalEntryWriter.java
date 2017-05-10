@@ -24,6 +24,7 @@
 package com.questdb;
 
 import com.questdb.ex.JournalException;
+import com.questdb.std.str.DirectBytes;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -57,6 +58,8 @@ public interface JournalEntryWriter {
     void putShort(int index, short value);
 
     void putStr(int index, CharSequence value);
+
+    void putStr(int index, DirectBytes value);
 
     void putSym(int index, CharSequence value);
 }

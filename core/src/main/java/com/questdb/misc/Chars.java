@@ -27,6 +27,7 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.str.DirectBytes;
 import com.questdb.std.str.Path;
 
 public final class Chars {
@@ -218,13 +219,28 @@ public final class Chars {
     }
 
     public static int hashCode(CharSequence value) {
-        if (value.length() == 0) {
+        int len = value.length();
+        if (len == 0) {
             return 0;
         }
 
         int h = 0;
-        for (int p = 0, n = value.length(); p < n; p++) {
+        for (int p = 0; p < len; p++) {
             h = 31 * h + value.charAt(p);
+        }
+        return h;
+    }
+
+    public static int hashCode(DirectBytes value) {
+        int len = value.byteLength();
+        if (len == 0) {
+            return 0;
+        }
+
+        int h = 0;
+        long address = value.address();
+        for (int p = 0, n = len / 2; p < n; p++) {
+            h = 31 * h + Unsafe.getUnsafe().getChar(address + (p << 1));
         }
         return h;
     }

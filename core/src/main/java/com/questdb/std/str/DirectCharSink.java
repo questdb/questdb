@@ -7,7 +7,7 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 import java.io.IOException;
 
-public class DirectCharSink extends AbstractCharSink implements CharSequence, Closeable, Mutable {
+public class DirectCharSink extends AbstractCharSink implements CharSequence, Closeable, Mutable, DirectBytes {
     private long ptr;
     private int capacity;
     private long lo;
@@ -18,6 +18,16 @@ public class DirectCharSink extends AbstractCharSink implements CharSequence, Cl
         this.capacity = capacity;
         this.lo = ptr;
         this.hi = ptr + capacity;
+    }
+
+    @Override
+    public long address() {
+        return ptr;
+    }
+
+    @Override
+    public int byteLength() {
+        return (int) (lo - ptr);
     }
 
     @Override
