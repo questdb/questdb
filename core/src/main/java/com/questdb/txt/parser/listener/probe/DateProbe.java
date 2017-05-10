@@ -7,13 +7,11 @@ import com.questdb.std.time.DateLocale;
 import com.questdb.store.ColumnType;
 
 public class DateProbe implements TypeProbe {
-    private final DateFormatFactory dateFormatFactory;
     private final String pattern;
     private final DateLocale dateLocale;
     private final DateFormat format;
 
     public DateProbe(DateFormatFactory dateFormatFactory, DateLocale dateLocale, String pattern) {
-        this.dateFormatFactory = dateFormatFactory;
         this.dateLocale = dateLocale;
         this.pattern = pattern;
         this.format = dateFormatFactory.get(pattern);

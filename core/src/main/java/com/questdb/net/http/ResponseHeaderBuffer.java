@@ -28,9 +28,9 @@ import com.questdb.iter.clock.Clock;
 import com.questdb.misc.*;
 import com.questdb.std.IntObjHashMap;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.time.DateFormatUtils;
-import com.questdb.txt.sink.AbstractCharSink;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;

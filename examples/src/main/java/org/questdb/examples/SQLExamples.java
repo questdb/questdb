@@ -30,9 +30,9 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
+import com.questdb.std.str.StdoutSink;
 import com.questdb.txt.ImportManager;
 import com.questdb.txt.RecordSourcePrinter;
-import com.questdb.txt.sink.StdoutSink;
 
 import java.io.IOException;
 

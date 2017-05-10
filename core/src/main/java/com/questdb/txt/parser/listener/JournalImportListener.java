@@ -40,6 +40,7 @@ import com.questdb.std.LongList;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.DirectCharSink;
 import com.questdb.store.ColumnType;
 import com.questdb.txt.ImportedColumnMetadata;
 
@@ -55,6 +56,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     private static final Log LOG = LogFactory.getLog(JournalImportListener.class);
     private final Factory factory;
     private final LongList errors = new LongList();
+    private final DirectCharSink utf8Sink = new DirectCharSink(4096);
     private String name;
     private ObjList<ImportedColumnMetadata> metadata;
     private boolean header;
@@ -78,6 +80,7 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
     @Override
     public void close() {
         clear();
+        utf8Sink.close();
     }
 
     public void commit() {
@@ -148,7 +151,9 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                     ImportedColumnMetadata m = metadata.getQuick(i);
                     switch (m.importedColumnType) {
                         case ColumnType.STRING:
-                            w.putStr(i, values.getQuick(i));
+                            utf8Sink.clear();
+                            Chars.utf8Decode(values.getQuick(i), utf8Sink);
+                            w.putStr(i, utf8Sink);
                             break;
                         case ColumnType.DOUBLE:
                             w.putDouble(i, Numbers.parseDouble(values.getQuick(i)));

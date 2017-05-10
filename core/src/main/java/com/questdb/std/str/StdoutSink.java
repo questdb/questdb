@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.txt.sink;
+package com.questdb.std.str;
 
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;

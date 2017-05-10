@@ -26,12 +26,12 @@ package com.questdb;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.ImportManager;
 import com.questdb.txt.parser.DelimitedTextParser;
 import com.questdb.txt.parser.listener.Listener;
 import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
-import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 

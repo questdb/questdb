@@ -26,6 +26,7 @@ package com.questdb.ql.ops;
 import com.questdb.misc.Misc;
 import com.questdb.std.IntList;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.StringSink;
 import com.questdb.store.ColumnType;
 
 public final class Signature implements Mutable {
@@ -70,23 +71,22 @@ public final class Signature implements Mutable {
     }
 
     public CharSequence userReadable() {
-        StringBuilder b = Misc.getThreadLocalBuilder();
-        b.setLength(0);
-        b.append('\'');
-        b.append(name);
-        b.append('\'');
-        b.append('(');
+        StringSink b = Misc.getThreadLocalBuilder();
+        b.put('\'');
+        b.put(name);
+        b.put('\'');
+        b.put('(');
         for (int i = 0, n = paramCount; i < n; i++) {
             if (i > 0) {
-                b.append(", ");
+                b.put(", ");
             }
             if (constParams.getQuick(i) == 1) {
-                b.append("const ");
+                b.put("const ");
             }
-            b.append(ColumnType.nameOf(paramTypes.getQuick(i)));
+            b.put(ColumnType.nameOf(paramTypes.getQuick(i)));
 
         }
-        b.append(')');
+        b.put(')');
         return b;
     }
 

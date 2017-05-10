@@ -38,7 +38,7 @@ import com.questdb.ql.ops.Parameter;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.*;
-import com.questdb.txt.sink.StringSink;
+import com.questdb.std.str.StringSink;
 
 import java.util.ArrayDeque;
 

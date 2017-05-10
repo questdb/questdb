@@ -265,10 +265,11 @@ public class JsonLexer implements Mutable, Closeable {
                 throw JsonException.with("String is too long", position);
             }
             long ptr = Unsafe.malloc(n);
-            if (cacheSize > 0) {
+            if (cacheCapacity > 0) {
                 Unsafe.getUnsafe().copyMemory(cache, ptr, cacheSize);
                 Unsafe.free(cache, cacheCapacity);
             }
+            cacheCapacity = n;
             cache = ptr;
         }
 

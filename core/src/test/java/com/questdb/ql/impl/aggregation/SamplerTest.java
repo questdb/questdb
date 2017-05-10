@@ -23,9 +23,9 @@
 
 package com.questdb.ql.impl.aggregation;
 
+import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
-import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;

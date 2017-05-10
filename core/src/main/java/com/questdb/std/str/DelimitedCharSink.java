@@ -21,10 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.txt.sink;
+package com.questdb.std.str;
 
 import com.questdb.misc.Misc;
-import com.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 import java.io.IOException;

@@ -27,8 +27,8 @@ import com.questdb.ex.BytecodeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
-import com.questdb.txt.sink.AbstractCharSink;
 
 import java.io.FileOutputStream;
 import java.io.IOException;

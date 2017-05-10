@@ -62,8 +62,8 @@ import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.constant.LongConstant;
 import com.questdb.std.*;
 import com.questdb.std.str.FlyweightCharSequence;
+import com.questdb.std.str.StringSink;
 import com.questdb.store.ColumnType;
-import com.questdb.txt.sink.StringSink;
 
 import java.util.ArrayDeque;
 

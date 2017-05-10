@@ -214,7 +214,7 @@ public class JsonLexerTest {
         assertError("Unexpected symbol", 10, "{\"x\": \"a\"bc\",}");
     }
 
-    private void assertError(String expected, int expectedPosition, String input) throws JsonException {
+    private void assertError(String expected, int expectedPosition, String input) {
         int len = input.length();
         long address = TestUtils.toMemory(input);
         try {

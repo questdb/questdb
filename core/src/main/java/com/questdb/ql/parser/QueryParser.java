@@ -32,6 +32,7 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.ql.model.*;
 import com.questdb.std.*;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 
 public final class QueryParser {
@@ -152,17 +153,17 @@ public final class QueryParser {
     }
 
     private ExprNode makeJoinAlias(int index) {
-        StringBuilder b = Misc.getThreadLocalBuilder();
+        CharSink b = Misc.getThreadLocalBuilder();
         ExprNode node = exprNodePool.next();
-        node.token = b.append("_xQdbA").append(index).toString();
+        node.token = b.put("_xQdbA").put(index).toString();
         node.type = ExprNode.LITERAL;
         return node;
     }
 
     private ExprNode makeModelAlias(String modelAlias, ExprNode node) {
-        StringBuilder b = Misc.getThreadLocalBuilder();
+        CharSink b = Misc.getThreadLocalBuilder();
         ExprNode exprNode = exprNodePool.next();
-        b.append(modelAlias).append('.').append(node.token);
+        b.put(modelAlias).put('.').put(node.token);
         exprNode.token = b.toString();
         exprNode.type = ExprNode.LITERAL;
         exprNode.position = node.position;

@@ -26,7 +26,7 @@ package com.questdb.txt;
 import com.questdb.ex.JournalException;
 import com.questdb.factory.ReaderFactory;
 import com.questdb.ql.RecordSource;
-import com.questdb.txt.sink.FileSink;
+import com.questdb.std.str.FileSink;
 
 import java.io.File;
 import java.io.IOException;

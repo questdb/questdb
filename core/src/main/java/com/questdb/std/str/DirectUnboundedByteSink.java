@@ -21,62 +21,43 @@
  *
  ******************************************************************************/
 
-package com.questdb.log;
+package com.questdb.std.str;
 
 import com.questdb.misc.Chars;
-import com.questdb.misc.Numbers;
+import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.str.AbstractCharSink;
-import com.questdb.std.str.CharSink;
 
-public class LogRecordSink extends AbstractCharSink {
+public class DirectUnboundedByteSink extends AbstractCharSink {
     private final long address;
-    private final long lim;
     private long _wptr;
-    private int level;
 
-    LogRecordSink(int capacity) {
-        int c = Numbers.ceilPow2(capacity);
-        this.address = _wptr = Unsafe.malloc(c);
-        this.lim = address + c;
+    public DirectUnboundedByteSink(long address) {
+        this.address = _wptr = address;
     }
 
     public void clear(int len) {
         _wptr = address + len;
     }
 
+    /**
+     * This is an unbuffered in-memory sink, any data put into it is flushed immediately.
+     */
     @Override
     public void flush() {
     }
 
     @Override
     public CharSink put(CharSequence cs) {
-        int rem = (int) (lim - _wptr);
         int len = cs.length();
-        int n = rem < len ? rem : len;
-        Chars.strcpy(cs, n, _wptr);
-        _wptr += n;
+        Chars.strcpy(cs, len, _wptr);
+        _wptr += len;
         return this;
     }
 
     @Override
     public CharSink put(char c) {
-        if (_wptr < lim) {
-            Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
-        }
+        Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
         return this;
-    }
-
-    public long getAddress() {
-        return address;
-    }
-
-    public int getLevel() {
-        return level;
-    }
-
-    public void setLevel(int level) {
-        this.level = level;
     }
 
     public int length() {
@@ -85,9 +66,9 @@ public class LogRecordSink extends AbstractCharSink {
 
     @Override
     public String toString() {
-        StringBuilder b = new StringBuilder();
+        CharSink b = Misc.getThreadLocalBuilder();
         for (long p = address, hi = _wptr; p < hi; p++) {
-            b.append((char) Unsafe.getUnsafe().getByte(p));
+            b.put((char) Unsafe.getUnsafe().getByte(p));
         }
         return b.toString();
     }

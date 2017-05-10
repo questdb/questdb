@@ -29,13 +29,14 @@ import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjectPool;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 import java.io.IOException;
 
 public final class Misc {
     public static final String EOL = "\r\n";
-    private final static ThreadLocal<StringBuilder> tlBuilder = new ThreadLocal<>(StringBuilder::new);
+    private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
 
     private Misc() {
     }
@@ -52,9 +53,9 @@ public final class Misc {
         return null;
     }
 
-    public static StringBuilder getThreadLocalBuilder() {
-        StringBuilder b = tlBuilder.get();
-        b.setLength(0);
+    public static StringSink getThreadLocalBuilder() {
+        StringSink b = tlBuilder.get();
+        b.clear();
         return b;
     }
 

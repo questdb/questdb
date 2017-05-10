@@ -31,10 +31,10 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 import com.questdb.store.UnstructuredFile;
 
-import java.lang.StringBuilder;
 import java.lang.reflect.Constructor;
 
 public class JournalMetadata<T> extends AbstractRecordMetadata {
@@ -283,24 +283,24 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
     @Override
     public String toString() {
 
-        StringBuilder b = Misc.getThreadLocalBuilder();
+        CharSink b = Misc.getThreadLocalBuilder();
         sep(b);
-        b.append('|');
+        b.put('|');
         pad(b, TO_STRING_COL1_PAD, "Name:");
-        pad(b, TO_STRING_COL2_PAD, name).append('\n');
+        pad(b, TO_STRING_COL2_PAD, name).put('\n');
 
 
-        b.append('|');
+        b.put('|');
         pad(b, TO_STRING_COL1_PAD, "Partition by");
-        pad(b, TO_STRING_COL2_PAD, PartitionBy.toString(partitionBy)).append('\n');
+        pad(b, TO_STRING_COL2_PAD, PartitionBy.toString(partitionBy)).put('\n');
         sep(b);
 
 
         for (int i = 0; i < columnCount; i++) {
-            b.append('|');
+            b.put('|');
             pad(b, TO_STRING_COL1_PAD, Integer.toString(i));
             col(b, columnMetadata[i]);
-            b.append('\n');
+            b.put('\n');
         }
 
         sep(b);
@@ -326,34 +326,34 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         buf.setAppendOffset(buf.getPos());
     }
 
-    private static StringBuilder pad(StringBuilder b, int w, String value) {
+    private static CharSink pad(CharSink b, int w, String value) {
         int pad = value == null ? w : w - value.length();
         for (int i = 0; i < pad; i++) {
-            b.append(' ');
+            b.put(' ');
         }
 
         if (value != null) {
             if (pad < 0) {
-                b.append("...").append(value.substring(-pad + 3));
+                b.put("...").put(value.substring(-pad + 3));
             } else {
-                b.append(value);
+                b.put(value);
             }
         }
 
-        b.append("  |");
+        b.put("  |");
 
         return b;
     }
 
-    private static void sep(StringBuilder b) {
-        b.append('+');
+    private static void sep(CharSink b) {
+        b.put('+');
         for (int i = 0; i < TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + 5; i++) {
-            b.append('-');
+            b.put('-');
         }
-        b.append("+\n");
+        b.put("+\n");
     }
 
-    private void col(StringBuilder b, ColumnMetadata m) {
+    private void col(CharSink b, ColumnMetadata m) {
         pad(b, TO_STRING_COL2_PAD, (m.distinctCountHint > 0 ? m.distinctCountHint + " ~ " : "") + (m.indexed ? '#' : "") + m.name + (m.sameAs != null ? " -> " + m.sameAs : "") + ' ' + ColumnType.nameOf(m.type) + '(' + m.size + ')');
     }
 }

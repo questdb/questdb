@@ -36,9 +36,9 @@ import com.questdb.ql.ops.col.DoubleRecordSourceColumn;
 import com.questdb.ql.ops.constant.DoubleConstant;
 import com.questdb.ql.ops.plus.AddDoubleOperator;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.txt.RecordSourcePrinter;
-import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 

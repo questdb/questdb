@@ -620,12 +620,12 @@ public final class Numbers {
         return value < 0 ? -roundUp00(-value, scale) : roundUp00(value, scale);
     }
 
-    private static double roundUp00(double value, int scale) throws NumericException {
+    private static double roundUp00(double value, int scale) {
         long powten = Unsafe.arrayGet(pow10, scale);
         return ((double) (long) (value * powten + 1 - TOLERANCE)) / powten;
     }
 
-    private static double roundDown00(double value, int scale) throws NumericException {
+    private static double roundDown00(double value, int scale) {
         long powten = Unsafe.arrayGet(pow10, scale);
         return ((double) (long) (value * powten + TOLERANCE)) / powten;
     }

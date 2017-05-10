@@ -28,9 +28,9 @@ import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.ColumnType;
-import com.questdb.txt.sink.StringSink;
 
 public class DtoA4Function extends AbstractUnaryOperator {
     public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new DtoA4Function(position);

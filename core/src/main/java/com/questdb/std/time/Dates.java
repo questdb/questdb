@@ -26,7 +26,7 @@ package com.questdb.std.time;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Numbers;
-import com.questdb.txt.sink.StringSink;
+import com.questdb.std.str.StringSink;
 
 final public class Dates {
 

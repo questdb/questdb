@@ -32,10 +32,10 @@ import com.questdb.ql.impl.AllRowSource;
 import com.questdb.ql.impl.JournalPartitionSource;
 import com.questdb.ql.impl.JournalRecordSource;
 import com.questdb.ql.impl.join.CrossJoinRecordSource;
+import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.FactoryContainer;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
-import com.questdb.txt.sink.StringSink;
 import org.junit.*;
 
 public class JoinStringToSymbolTest {

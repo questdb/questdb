@@ -28,7 +28,7 @@ import com.questdb.ex.JournalUnsupportedTypeException;
 import com.questdb.ex.NumericException;
 import com.questdb.std.Sinkable;
 import com.questdb.std.str.CharSink;
-import com.questdb.txt.sink.StringSink;
+import com.questdb.std.str.StringSink;
 
 public class Interval implements Sinkable {
     private long lo;

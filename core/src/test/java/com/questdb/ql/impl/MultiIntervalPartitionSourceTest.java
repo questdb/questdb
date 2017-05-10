@@ -27,12 +27,12 @@ import com.questdb.JournalWriter;
 import com.questdb.model.Quote;
 import com.questdb.ql.impl.interval.MultiIntervalPartitionSource;
 import com.questdb.std.LongList;
+import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
-import com.questdb.txt.sink.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 

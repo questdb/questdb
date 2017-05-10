@@ -21,19 +21,17 @@
  *
  ******************************************************************************/
 
-package com.questdb.txt.sink;
+package com.questdb.std.str;
 
 import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.str.CharSink;
 
-public class DirectUnboundedAnsiSink extends AbstractCharSink {
-    private final long address;
+public class DirectUnboundedCharSink extends AbstractCharSink {
+    private long address;
     private long _wptr;
 
-    public DirectUnboundedAnsiSink(long address) {
-        this.address = _wptr = address;
+    public DirectUnboundedCharSink() {
     }
 
     public void clear(int len) {
@@ -50,26 +48,32 @@ public class DirectUnboundedAnsiSink extends AbstractCharSink {
     @Override
     public CharSink put(CharSequence cs) {
         int len = cs.length();
-        Chars.strcpy(cs, len, _wptr);
-        _wptr += len;
+        Chars.strcpyw(cs, len, _wptr);
+        _wptr += (len * 2);
         return this;
     }
 
     @Override
     public CharSink put(char c) {
-        Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
+        Unsafe.getUnsafe().putChar(_wptr, c);
+        _wptr += 2;
         return this;
     }
 
     public int length() {
-        return (int) (_wptr - address);
+        return (int) (_wptr - address) / 2;
+    }
+
+    public final DirectUnboundedCharSink of(long address) {
+        this.address = _wptr = address;
+        return this;
     }
 
     @Override
     public String toString() {
-        StringBuilder b = Misc.getThreadLocalBuilder();
-        for (long p = address, hi = _wptr; p < hi; p++) {
-            b.append((char) Unsafe.getUnsafe().getByte(p));
+        CharSink b = Misc.getThreadLocalBuilder();
+        for (long p = address, hi = _wptr; p < hi; p += 2) {
+            b.put(Unsafe.getUnsafe().getChar(p));
         }
         return b.toString();
     }

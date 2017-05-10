@@ -106,13 +106,9 @@ public final class PrefixedPath extends AbstractCharSequence implements Closeabl
             return "";
         }
 
-        StringBuilder builder = Misc.getThreadLocalBuilder();
-        long p = this.ptr;
-        byte b;
-        while ((b = Unsafe.getUnsafe().getByte(p++)) != 0) {
-            builder.append((char) b);
-        }
-        return builder.toString();
+        CharSink sink = Misc.getThreadLocalBuilder();
+        toSink(sink);
+        return sink.toString();
     }
 
     private void alloc(int l) {

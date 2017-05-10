@@ -21,14 +21,13 @@
  *
  ******************************************************************************/
 
-package com.questdb.txt.sink;
+package com.questdb.std.str;
 
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.Sinkable;
-import com.questdb.std.str.CharSink;
 import com.questdb.std.time.DateFormatUtils;
 
 import java.util.Set;

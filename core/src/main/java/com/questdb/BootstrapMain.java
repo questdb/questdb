@@ -39,6 +39,7 @@ import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.net.http.handlers.*;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjHashSet;
+import com.questdb.std.str.CharSink;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
@@ -127,18 +128,18 @@ class BootstrapMain {
         env.factory.exportJobs(jobs);
 
         // welcome message
-        StringBuilder welcome = Misc.getThreadLocalBuilder();
+        CharSink welcome = Misc.getThreadLocalBuilder();
         if (!server.start()) {
-            welcome.append("Could not bind socket ").append(env.configuration.getHttpIP()).append(':').append(env.configuration.getHttpPort());
-            welcome.append(". Already running?");
+            welcome.put("Could not bind socket ").put(env.configuration.getHttpIP()).put(':').put(env.configuration.getHttpPort());
+            welcome.put(". Already running?");
             System.err.println(welcome);
             System.out.println(new Date() + " QuestDB failed to start");
         } else {
-            welcome.append("Listening on ").append(env.configuration.getHttpIP()).append(':').append(env.configuration.getHttpPort());
+            welcome.put("Listening on ").put(env.configuration.getHttpIP()).put(':').put(env.configuration.getHttpPort());
             if (env.configuration.getSslConfig().isSecure()) {
-                welcome.append(" [HTTPS]");
+                welcome.put(" [HTTPS]");
             } else {
-                welcome.append(" [HTTP plain]");
+                welcome.put(" [HTTP plain]");
             }
 
             System.err.println(welcome);

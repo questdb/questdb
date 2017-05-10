@@ -27,7 +27,7 @@ import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.IntIntHashMap;
 import com.questdb.std.IntObjHashMap;
 import com.questdb.std.ObjIntHashMap;
-import com.questdb.txt.sink.StringSink;
+import com.questdb.std.str.StringSink;
 
 import java.nio.ByteBuffer;
 

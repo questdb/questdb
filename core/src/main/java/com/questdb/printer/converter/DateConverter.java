@@ -25,8 +25,8 @@ package com.questdb.printer.converter;
 
 import com.questdb.misc.Unsafe;
 import com.questdb.printer.JournalPrinter;
+import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
-import com.questdb.txt.sink.StringSink;
 
 public class DateConverter extends AbstractConverter {
     private final StringSink sink = new StringSink();

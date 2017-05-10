@@ -25,6 +25,7 @@ package com.questdb.std;
 
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
@@ -177,17 +178,16 @@ public class IntList implements Mutable {
      */
     @Override
     public String toString() {
-        StringBuilder b = Misc.getThreadLocalBuilder();
+        CharSink b = Misc.getThreadLocalBuilder();
 
-        b.setLength(0);
-        b.append('[');
+        b.put('[');
         for (int i = 0, k = size(); i < k; i++) {
             if (i > 0) {
-                b.append(',');
+                b.put(',');
             }
-            b.append(get(i));
+            b.put(get(i));
         }
-        b.append(']');
+        b.put(']');
         return b.toString();
     }
 

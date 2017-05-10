@@ -21,12 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.txt.sink;
+package com.questdb.std.str;
 
 import com.questdb.misc.Chars;
 import com.questdb.std.Mutable;
-import com.questdb.std.str.CharSink;
-import com.questdb.std.str.CloneableMutable;
 import org.jetbrains.annotations.NotNull;
 
 public class StringSink extends AbstractCharSink implements CharSequence, Mutable, CloneableMutable {

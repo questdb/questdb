@@ -34,9 +34,9 @@ import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.str.StringSink;
 import com.questdb.std.time.*;
 import com.questdb.store.ColumnType;
-import com.questdb.txt.sink.StringSink;
 
 public class DateToCharTZFunction extends AbstractVirtualColumn implements Function {
 

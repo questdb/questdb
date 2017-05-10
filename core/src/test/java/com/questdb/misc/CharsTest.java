@@ -24,10 +24,7 @@
 package com.questdb.misc;
 
 import com.questdb.std.ObjList;
-import com.questdb.std.str.ConcatCharSequence;
-import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.std.str.FileNameExtractorCharSequence;
-import com.questdb.std.str.Path;
+import com.questdb.std.str.*;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -118,7 +115,7 @@ public class CharsTest {
             }
             DirectByteCharSequence cs = new DirectByteCharSequence();
             cs.of(p, p + bytes.length);
-            StringBuilder b = new StringBuilder();
+            CharSink b = new StringSink();
             Chars.utf8Decode(cs, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {

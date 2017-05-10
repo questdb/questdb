@@ -26,6 +26,7 @@ package com.questdb.misc;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.ByteSequence;
+import com.questdb.std.str.CharSink;
 import com.questdb.std.str.Path;
 
 public final class Chars {
@@ -370,12 +371,12 @@ public final class Chars {
             return null;
         }
 
-        StringBuilder b = Misc.getThreadLocalBuilder();
+        CharSink b = Misc.getThreadLocalBuilder();
         utf8Decode(in, b);
         return b.toString();
     }
 
-    public static void utf8Decode(ByteSequence in, StringBuilder builder) {
+    public static void utf8Decode(ByteSequence in, CharSink builder) {
         int index = 0;
         int len = in.length();
 
@@ -384,18 +385,17 @@ public final class Chars {
             if (b < 0) {
                 index += utf8DecodeMultiByte(in, b, index, len, builder);
             } else {
-                builder.append((char) b);
+                builder.put((char) b);
                 ++index;
             }
         }
     }
 
-    private static int utf8error(StringBuilder builder, int index, int len) {
-        builder.setLength(index);
+    private static int utf8error(int index, int len) {
         return len - index;
     }
 
-    private static int utf8DecodeMultiByte(ByteSequence in, int b, int index, int len, StringBuilder builder) {
+    private static int utf8DecodeMultiByte(ByteSequence in, int b, int index, int len, CharSink builder) {
         if (b >> 5 == -2 && (b & 30) != 0) {
             return utf8Decode2Bytes(in, b, index, len, builder);
         }
@@ -407,9 +407,9 @@ public final class Chars {
         return utf8Decode4Bytes(in, b, index, len, builder);
     }
 
-    private static int utf8Decode4Bytes(ByteSequence in, int b, int index, int len, StringBuilder builder) {
+    private static int utf8Decode4Bytes(ByteSequence in, int b, int index, int len, CharSink builder) {
         if (b >> 3 != -2) {
-            return utf8error(builder, index, len);
+            return utf8error(index, len);
         }
 
         if (len - index > 3) {
@@ -419,46 +419,46 @@ public final class Chars {
 
             int codePoint = b << 18 ^ b2 << 12 ^ b3 << 6 ^ b4 ^ 3678080;
             if (!isMalformed4(b2, b3, b4) && Character.isSupplementaryCodePoint(codePoint)) {
-                builder.append(Character.highSurrogate(codePoint));
-                builder.append(Character.lowSurrogate(codePoint));
+                builder.put(Character.highSurrogate(codePoint));
+                builder.put(Character.lowSurrogate(codePoint));
                 return 4;
             }
         }
-        return utf8error(builder, index, len);
+        return utf8error(index, len);
     }
 
-    private static int utf8Decode3Bytes(ByteSequence in, int b, int index, int len, StringBuilder builder) {
+    private static int utf8Decode3Bytes(ByteSequence in, int b, int index, int len, CharSink builder) {
         if (len - index < 3) {
-            return utf8error(builder, index, len);
+            return utf8error(index, len);
         }
 
         byte b2 = in.byteAt(index + 1);
         byte b3 = in.byteAt(index + 2);
 
         if (isMalformed3(b, b2, b3)) {
-            return utf8error(builder, index, len);
+            return utf8error(index, len);
         }
 
         char c = (char) (b << 12 ^ b2 << 6 ^ b3 ^ -123008);
         if (Character.isSurrogate(c)) {
-            return utf8error(builder, index, len);
+            return utf8error(index, len);
         }
 
-        builder.append(c);
+        builder.put(c);
         return 3;
     }
 
-    private static int utf8Decode2Bytes(ByteSequence in, int b, int index, int len, StringBuilder builder) {
+    private static int utf8Decode2Bytes(ByteSequence in, int b, int index, int len, CharSink builder) {
         if (len - index < 2) {
-            return utf8error(builder, index, len);
+            return utf8error(index, len);
         }
 
         byte b2 = in.byteAt(index + 1);
         if (isNotContinuation(b2)) {
-            return utf8error(builder, index, len);
+            return utf8error(index, len);
         }
 
-        builder.append((char) (b << 6 ^ b2 ^ 3968));
+        builder.put((char) (b << 6 ^ b2 ^ 3968));
         return 2;
     }
 

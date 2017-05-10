@@ -25,11 +25,11 @@ package com.questdb.txt.parser.listener;
 
 import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.StringSink;
 import com.questdb.store.ColumnType;
 import com.questdb.txt.ImportedColumnMetadata;
 import com.questdb.txt.parser.listener.probe.TypeProbe;
 import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
-import com.questdb.txt.sink.StringSink;
 
 public class MetadataExtractorListener implements Listener, Mutable {
     private final StringSink tempSink = new StringSink();

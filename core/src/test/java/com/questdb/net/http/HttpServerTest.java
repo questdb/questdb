@@ -43,6 +43,8 @@ import com.questdb.net.http.handlers.StaticContentHandler;
 import com.questdb.net.http.handlers.UploadHandler;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.parser.QueryCompiler;
+import com.questdb.std.str.FileSink;
+import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.DateLocaleFactory;
@@ -51,8 +53,6 @@ import com.questdb.test.tools.HttpTestUtils;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
 import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
-import com.questdb.txt.sink.FileSink;
-import com.questdb.txt.sink.StringSink;
 import org.apache.http.Header;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -593,6 +593,33 @@ public class HttpServerTest extends AbstractJournalTest {
             TestUtils.assertEquals("Unsupported Data Format", response);
         } catch (IOException e) {
             Assert.assertTrue(e.getMessage().contains("Connection reset"));
+        } finally {
+            server.halt();
+        }
+    }
+
+    @Test
+    public void testImportUtf8() throws Exception {
+
+        BootstrapEnv env = new BootstrapEnv();
+        env.configuration = new ServerConfiguration();
+        env.factory = getFactory();
+        env.typeProbeCollection = TYPE_PROBE_COLLECTION;
+        env.matcher = new SimpleUrlMatcher() {{
+            put("/imp", new ImportHandler(env));
+        }};
+        HttpServer server = new HttpServer(env);
+        server.start();
+
+        try {
+            StringSink sink = new StringSink();
+            RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+            QueryCompiler qc = new QueryCompiler(env);
+
+            Assert.assertEquals(200, HttpTestUtils.upload("/csv/test-import-utf8.csv", "http://localhost:9000/imp?overwrite=true&durable=true", null, null));
+            printer.print(qc.compile(getFactory(), "'test-import-utf8.csv'"), getFactory());
+            // expect first line to be treated as header
+            TestUtils.assertEquals("авг\tавг\n", sink);
         } finally {
             server.halt();
         }

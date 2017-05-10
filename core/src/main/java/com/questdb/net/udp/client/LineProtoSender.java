@@ -4,8 +4,8 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Files;
 import com.questdb.misc.Net;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
-import com.questdb.txt.sink.AbstractCharSink;
 
 import java.io.Closeable;
 

@@ -21,12 +21,11 @@
  *
  ******************************************************************************/
 
-package com.questdb.txt.sink;
+package com.questdb.std.str;
 
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 import java.io.File;

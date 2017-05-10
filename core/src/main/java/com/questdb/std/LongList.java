@@ -26,6 +26,7 @@ package com.questdb.std;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Rnd;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
@@ -192,17 +193,16 @@ public class LongList implements Mutable {
      */
     @Override
     public String toString() {
-        StringBuilder toStringBuilder = Misc.getThreadLocalBuilder();
+        CharSink toStringBuilder = Misc.getThreadLocalBuilder();
 
-        toStringBuilder.setLength(0);
-        toStringBuilder.append('[');
+        toStringBuilder.put('[');
         for (int i = 0, k = size(); i < k; i++) {
             if (i > 0) {
-                toStringBuilder.append(',');
+                toStringBuilder.put(',');
             }
-            toStringBuilder.append(get(i));
+            toStringBuilder.put(get(i));
         }
-        toStringBuilder.append(']');
+        toStringBuilder.put(']');
         return toStringBuilder.toString();
     }
 

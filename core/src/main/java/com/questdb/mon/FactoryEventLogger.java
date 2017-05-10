@@ -44,7 +44,7 @@ import java.io.Closeable;
 public class FactoryEventLogger extends SynchronizedJob implements Closeable {
     private final static Log LOG = LogFactory.getLog(FactoryEventLogger.class);
     private final static int PID = Os.getPid();
-    private static JournalStructure STRUCTURE = new JournalStructure("$mon_factory")
+    private final static JournalStructure STRUCTURE = new JournalStructure("$mon_factory")
             .$int("pid")
             .$byte("factoryType")
             .$long("thread")

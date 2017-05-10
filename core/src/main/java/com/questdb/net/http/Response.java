@@ -34,9 +34,9 @@ import com.questdb.log.LogRecord;
 import com.questdb.misc.*;
 import com.questdb.net.NonBlockingSecureSocketChannel;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
-import com.questdb.txt.sink.AbstractCharSink;
-import com.questdb.txt.sink.DirectUnboundedAnsiSink;
+import com.questdb.std.str.DirectUnboundedByteSink;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -60,7 +60,7 @@ public class Response implements Closeable, Mutable {
     private final long outPtr;
     private final long limit;
     private final ByteBuffer chunkHeader;
-    private final DirectUnboundedAnsiSink chunkSink;
+    private final DirectUnboundedByteSink chunkSink;
     private final ResponseHeaderBuffer hb;
     private final WritableByteChannel channel;
     private final SimpleResponse simple = new SimpleResponseImpl();
@@ -94,7 +94,7 @@ public class Response implements Closeable, Mutable {
         this.hb = new ResponseHeaderBuffer(configuration.getHttpBufRespHeader(), clock);
         // size is 32bit int, as hex string max 8 bytes
         this.chunkHeader = ByteBuffer.allocateDirect(8 + 2 * Misc.EOL.length());
-        this.chunkSink = new DirectUnboundedAnsiSink(ByteBuffers.getAddress(chunkHeader));
+        this.chunkSink = new DirectUnboundedByteSink(ByteBuffers.getAddress(chunkHeader));
         this.chunkSink.put(Misc.EOL);
         this.outPtr = this._wPtr = ByteBuffers.getAddress(out);
         this.limit = outPtr + sz;

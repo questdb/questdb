@@ -25,6 +25,7 @@ package com.questdb.std;
 
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.str.CharSink;
 
 public class DirectLongList extends DirectMemoryStructure implements Mutable {
 
@@ -136,15 +137,15 @@ public class DirectLongList extends DirectMemoryStructure implements Mutable {
 
     @Override
     public String toString() {
-        StringBuilder sb = Misc.getThreadLocalBuilder();
-        sb.append('{');
+        CharSink sb = Misc.getThreadLocalBuilder();
+        sb.put('{');
         for (int i = 0; i < size(); i++) {
             if (i > 0) {
-                sb.append(',').append(' ');
+                sb.put(',').put(' ');
             }
-            sb.append(get(i));
+            sb.put(get(i));
         }
-        sb.append('}');
+        sb.put('}');
         return sb.toString();
     }
 

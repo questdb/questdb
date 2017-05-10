@@ -37,9 +37,9 @@ import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
 import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.FactoryContainer;
 import com.questdb.txt.RecordSourcePrinter;
-import com.questdb.txt.sink.StringSink;
 import org.junit.*;
 
 public class HashJoinRecordSourceTest {

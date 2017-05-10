@@ -28,6 +28,12 @@ import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractCharSequence implements CharSequence, CloneableMutable {
 
+    public static String getString(CharSequence cs) {
+        final CharSink b = Misc.getThreadLocalBuilder();
+        b.put(cs);
+        return b.toString();
+    }
+
     @Override
     @SuppressWarnings("unchecked")
     public <T> T copy() {
@@ -42,8 +48,6 @@ public abstract class AbstractCharSequence implements CharSequence, CloneableMut
     @NotNull
     @Override
     public String toString() {
-        final StringBuilder b = Misc.getThreadLocalBuilder();
-        b.append(this);
-        return b.toString();
+        return getString(this);
     }
 }
