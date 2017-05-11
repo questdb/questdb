@@ -37,7 +37,7 @@ public class DelimiterDetector {
     private final IntList pipes = new IntList(maxLines);
     private final IntList tabs = new IntList(maxLines);
     private final IntList semicolons = new IntList(maxLines);
-    private final IntLongPriorityQueue heap = new IntLongPriorityQueue(3);
+    private final IntLongPriorityQueue heap = new IntLongPriorityQueue(4);
     private double stdDev;
     private int avgRecLen;
     private char delimiter;
