@@ -36,6 +36,7 @@ public class DelimiterDetector {
     private final IntList commas = new IntList(maxLines);
     private final IntList pipes = new IntList(maxLines);
     private final IntList tabs = new IntList(maxLines);
+    private final IntList semicolons = new IntList(maxLines);
     private final IntLongPriorityQueue heap = new IntLongPriorityQueue(3);
     private double stdDev;
     private int avgRecLen;
@@ -62,15 +63,18 @@ public class DelimiterDetector {
         int comma = 0;
         int pipe = 0;
         int tab = 0;
+        int semicolon = 0;
 
         // previous values
         int _comma = 0;
         int _pipe = 0;
         int _tab = 0;
+        int _semicolon = 0;
 
         commas.clear();
         pipes.clear();
         tabs.clear();
+        semicolons.clear();
 
         this.avgRecLen = 0;
         this.stdDev = Double.POSITIVE_INFINITY;
@@ -103,6 +107,12 @@ public class DelimiterDetector {
                         eol = false;
                     }
                     break;
+                case ';':
+                    semicolon++;
+                    if (eol) {
+                        eol = false;
+                    }
+                    break;
                 case '"':
                     suspended = !suspended;
                     if (eol) {
@@ -118,10 +128,12 @@ public class DelimiterDetector {
                     commas.add(comma - _comma);
                     pipes.add(pipe - _pipe);
                     tabs.add(tab - _tab);
+                    semicolons.add(semicolon - _semicolon);
 
                     _comma = comma;
                     _pipe = pipe;
                     _tab = tab;
+                    _semicolon = semicolon;
 
                     eol = true;
                     break;
@@ -143,6 +155,7 @@ public class DelimiterDetector {
         heap.add(CSV, comma);
         heap.add(PIPE, pipe);
         heap.add(TAB, tab);
+        heap.add(';', semicolon);
 
         this.delimiter = (char) heap.peekBottom();
         IntList test;
@@ -156,6 +169,9 @@ public class DelimiterDetector {
                 break;
             case TAB:
                 test = tabs;
+                break;
+            case ';':
+                test = semicolons;
                 break;
             default:
                 throw new IllegalArgumentException("Unsupported delimiter: " + delimiter);

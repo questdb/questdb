@@ -256,15 +256,6 @@ public class JournalEntryWriterImpl implements JournalEntryWriter {
         }
     }
 
-    private void putString0(int index, CharSequence value) {
-        if (meta(index).indexed) {
-            Unsafe.arrayPut(koTuple, index * 2L, value == null ? SymbolTable.VALUE_IS_NULL : Hash.boundedHash(value, Unsafe.arrayGet(meta, index).distinctCountHint));
-            Unsafe.arrayPut(koTuple, index * 2L + 1L, varCol(index).putStr(value));
-        } else {
-            varCol(index).putStr(value);
-        }
-    }
-
     private void putSymbol0(int index, CharSequence value) {
         int key;
         if (value == null) {

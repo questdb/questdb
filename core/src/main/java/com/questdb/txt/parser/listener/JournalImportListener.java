@@ -173,7 +173,9 @@ public class JournalImportListener implements InputAnalysisListener, Closeable, 
                             }
                             break;
                         case ColumnType.SYMBOL:
-                            w.putSym(i, values.getQuick(i));
+                            utf8Sink.clear();
+                            Chars.utf8Decode(values.getQuick(i), utf8Sink);
+                            w.putSym(i, utf8Sink);
                             break;
                         case ColumnType.LONG:
                             w.putLong(i, Numbers.parseLong(values.getQuick(i)));
