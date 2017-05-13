@@ -41,7 +41,7 @@ public class LineProtoLexer implements Mutable, Closeable {
         }
     }
 
-    public void parse(long lo, int len, LineProtoListener listener) {
+    public void parse(long lo, int len, LineProtoListener listener) throws LineProtoException {
         long p = lo;
         long hi = lo + len;
         long _lo = p;
@@ -69,7 +69,7 @@ public class LineProtoLexer implements Mutable, Closeable {
                             state = EVT_FIELD_NAME;
                             break;
                         default:
-                            throw new RuntimeException("unexpected ,");
+                            throw LineProtoException.INSTANCE;
                     }
                     break;
                 case '=':
@@ -83,7 +83,7 @@ public class LineProtoLexer implements Mutable, Closeable {
                             state = EVT_FIELD_VALUE;
                             break;
                         default:
-                            throw new RuntimeException("unexpected =");
+                            throw LineProtoException.INSTANCE;
                     }
                     break;
                 case '\\':
@@ -104,7 +104,7 @@ public class LineProtoLexer implements Mutable, Closeable {
                             state = EVT_TIMESTAMP;
                             break;
                         default:
-                            throw new RuntimeException("unexpected space");
+                            throw LineProtoException.INSTANCE;
                     }
                     break;
                 case '\n':
@@ -123,7 +123,7 @@ public class LineProtoLexer implements Mutable, Closeable {
                             listener.onEvent(makeByteSeq(_lo, p), EVT_TIMESTAMP);
                             break;
                         default:
-                            throw new RuntimeException("unexpected EOL");
+                            throw LineProtoException.INSTANCE;
                     }
 
                     if (state != EVT_MEASUREMENT) {
@@ -143,14 +143,22 @@ public class LineProtoLexer implements Mutable, Closeable {
         }
     }
 
-    public void parseLast(LineProtoListener listener) {
+    public void parseLast(LineProtoListener listener) throws LineProtoException {
         if (state != EVT_MEASUREMENT) {
             parseLast0(listener);
         }
     }
 
-    private ByteSequence makeByteSeq(long _lo, long hi) {
-        return rollSize > 0 ? makeByteSeq0(_lo, hi) : dbcs.of(_lo, hi - 1);
+    private ByteSequence makeByteSeq(long _lo, long hi) throws LineProtoException {
+        if (rollSize > 0) {
+            return makeByteSeq0(_lo, hi);
+        }
+
+        if (_lo == hi - 1) {
+            throw LineProtoException.INSTANCE;
+        }
+
+        return dbcs.of(_lo, hi - 1);
     }
 
     private ByteSequence makeByteSeq0(long _lo, long hi) {
@@ -164,13 +172,13 @@ public class LineProtoLexer implements Mutable, Closeable {
         return sequence;
     }
 
-    private void parseLast0(LineProtoListener listener) {
+    private void parseLast0(LineProtoListener listener) throws LineProtoException {
         if (state == EVT_TIMESTAMP) {
             if (rollSize > 0) {
                 listener.onEvent(dbcs.of(rollPtr, rollPtr + rollSize), EVT_TIMESTAMP);
             }
         } else if (rollSize == 0) {
-            throw new RuntimeException("unexpected EOL");
+            throw LineProtoException.INSTANCE;
         }
 
         switch (state) {
@@ -183,7 +191,7 @@ public class LineProtoLexer implements Mutable, Closeable {
             case EVT_TIMESTAMP:
                 break;
             default:
-                throw new RuntimeException("unexpected EOL");
+                throw LineProtoException.INSTANCE;
         }
         listener.onEvent(null, EVT_END);
     }
