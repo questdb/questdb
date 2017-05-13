@@ -21,9 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.std;
-
-import com.questdb.std.str.AbstractCharSequence;
+package com.questdb.std.str;
 
 public class SplitCharSequence extends AbstractCharSequence {
     private CharSequence lhs;

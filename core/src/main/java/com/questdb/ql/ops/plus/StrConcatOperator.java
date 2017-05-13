@@ -27,8 +27,8 @@ import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.std.SplitCharSequence;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.str.SplitCharSequence;
 import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
 

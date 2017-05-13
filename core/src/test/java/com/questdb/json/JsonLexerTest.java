@@ -4,6 +4,7 @@ import com.questdb.misc.Files;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.IntStack;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
@@ -245,7 +246,7 @@ public class JsonLexerTest {
 
     private static final class NoOpListener implements JsonListener {
         @Override
-        public void onEvent(int code, CharSequence tag, int position) {
+        public void onEvent(int code, ByteSequence tag, int position) {
         }
     }
 
@@ -267,7 +268,7 @@ public class JsonLexerTest {
         }
 
         @Override
-        public void onEvent(int code, CharSequence tag, int position) {
+        public void onEvent(int code, ByteSequence tag, int position) {
             if (recordPositions) {
                 buffer.append('<').append(position).append('>');
             }

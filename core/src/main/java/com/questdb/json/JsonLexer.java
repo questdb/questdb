@@ -4,8 +4,9 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.IntStack;
 import com.questdb.std.Mutable;
-import com.questdb.std.SplitCharSequence;
+import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.SplitByteSequence;
 
 import java.io.Closeable;
 
@@ -29,7 +30,7 @@ public class JsonLexer implements Mutable, Closeable {
     private final IntStack arrayDepthStack = new IntStack();
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final DirectByteCharSequence reserveDbcs = new DirectByteCharSequence();
-    private final SplitCharSequence splitCs = new SplitCharSequence();
+    private final SplitByteSequence splitCs = new SplitByteSequence();
     private final int cacheSizeLimit;
     private int state = S_START;
     private int objDepth = 0;
@@ -279,7 +280,7 @@ public class JsonLexer implements Mutable, Closeable {
         }
     }
 
-    private CharSequence getCharSequence(long lo, long hi, int cacheSize) {
+    private ByteSequence getCharSequence(long lo, long hi, int cacheSize) {
         if (cacheSize == 0) {
             return dbcs.of(lo, hi - 1);
         } else {

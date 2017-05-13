@@ -23,6 +23,45 @@
 
 package com.questdb.std.str;
 
-public interface ByteSequence extends CharSequence {
-    byte byteAt(int index);
+import com.questdb.std.Mutable;
+import com.questdb.std.ObjectFactory;
+
+public class SplitByteSequence extends AbstractCharSequence implements ByteSequence, Mutable {
+    public static final ObjectFactory<SplitByteSequence> FACTORY = SplitByteSequence::new;
+
+    private ByteSequence lhs;
+    private ByteSequence rhs;
+    private int rl;
+    private int split;
+
+    @Override
+    public byte byteAt(int index) {
+        return (byte) charAt(index);
+    }
+
+    @Override
+    public void clear() {
+    }
+
+    @Override
+    public int length() {
+        return split + rl;
+    }
+
+    @Override
+    public char charAt(int index) {
+        if (index < split) {
+            return lhs.charAt(index);
+        } else {
+            return rhs.charAt(index - split);
+        }
+    }
+
+    public ByteSequence of(ByteSequence lhs, ByteSequence rhs) {
+        this.lhs = lhs;
+        this.rhs = rhs;
+        this.rl = rhs == null ? 0 : rhs.length();
+        this.split = lhs == null ? 0 : lhs.length();
+        return this;
+    }
 }
