@@ -61,7 +61,7 @@ public class ReadWriteMemory extends VirtualMemory {
 
     private long mapPage(int page) {
         long address;
-        long offset = (long) page << bits;
+        long offset = pageOffset(page);
 
         if (Files.length(fd) < offset + pageSize) {
             Files.truncate(fd, offset + pageSize);

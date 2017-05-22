@@ -278,7 +278,7 @@ public class PerformanceTest extends AbstractTest {
             if (i == 0) {
                 t = System.nanoTime();
             }
-//            w.truncate();
+            w.truncate();
             long timestamp = DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z");
             String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
             Rnd r = new Rnd();

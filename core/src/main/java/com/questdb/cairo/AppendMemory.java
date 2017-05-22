@@ -15,11 +15,9 @@ public class AppendMemory extends VirtualMemory {
         if (fd == -1) {
             throw new RuntimeException("cannot open file");
         }
-        page = (int) (size >>> bits);
-        appendPointer = pageAddress = mapPage(page);
-        pageHi = appendPointer + this.pageSize;
-        appendPointer += (size - ((long) page << bits));
-        baseOffset = ((page + 1) << bits) - pageHi;
+        page = pageIndex(size);
+        updateLimits(page + 1, pageAddress = mapPage(page));
+        skip((size - pageOffset(page)));
     }
 
     @Override
@@ -70,21 +68,18 @@ public class AppendMemory extends VirtualMemory {
         }
         Files.truncate(fd, pageSize);
         page = 0;
-        appendPointer = pageAddress = mapPage(page);
-        pageHi = appendPointer + pageSize;
-        baseOffset = -pageHi;
-
+        updateLimits(page + 1, pageAddress = mapPage(page));
     }
 
     private long mapPage(int page) {
-        long target = (page + 1L) << bits;
+        long target = pageOffset(page + 1);
         long fileSize = Files.length(fd);
         if (fileSize < target) {
             if (!Files.truncate(fd, target)) {
                 throw new RuntimeException("Cannot resize file");
             }
         }
-        return Files.mmap0(fd, pageSize, ((long) page) << bits, Files.MAP_RW);
+        return Files.mmap0(fd, pageSize, pageOffset(page), Files.MAP_RW);
     }
 
 }

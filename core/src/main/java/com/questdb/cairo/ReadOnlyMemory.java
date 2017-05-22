@@ -47,7 +47,7 @@ public class ReadOnlyMemory extends VirtualMemory {
 
     private long mapPage(int page) {
         long address;
-        address = Files.mmap0(fd, pageSize, (long) page << bits, Files.MAP_RO);
+        address = Files.mmap0(fd, pageSize, pageOffset(page), Files.MAP_RO);
         if (address == -1) {
             throw new RuntimeException("Cannot mmap");
         }

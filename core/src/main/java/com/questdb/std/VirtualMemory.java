@@ -37,11 +37,11 @@ public class VirtualMemory implements Closeable {
     private final CharSequenceView csview = new CharSequenceView();
     private final ByteSequenceView bsview = new ByteSequenceView();
     protected int pageSize;
-    protected int bits;
-    protected int mod;
-    protected long appendPointer = 0;
-    protected long pageHi = 0;
-    protected long baseOffset = 0;
+    private int bits;
+    private int mod;
+    private long appendPointer = 0;
+    private long pageHi = 0;
+    private long baseOffset = 0;
     private long roOffsetLo = 0;
     private long roOffsetHi = 0;
     private long absolutePointer;
@@ -252,7 +252,7 @@ public class VirtualMemory implements Closeable {
     }
 
     public long size() {
-        return ((long) getMaxPage() << bits) - (lastPageRemaining == -1 ? (pageHi - appendPointer) : lastPageRemaining);
+        return pageOffset(getMaxPage()) - (lastPageRemaining == -1 ? (pageHi - appendPointer) : lastPageRemaining);
     }
 
     /**
@@ -285,7 +285,7 @@ public class VirtualMemory implements Closeable {
     }
 
     private long computeHotPage(int page) {
-        roOffsetLo = (page << bits) - 1;
+        roOffsetLo = pageOffset(page) - 1;
         roOffsetHi = roOffsetLo + pageSize + 1;
         long pageAddress = getPageAddress(page);
         absolutePointer = pageAddress - roOffsetLo - 1;
@@ -417,31 +417,29 @@ public class VirtualMemory implements Closeable {
     }
 
     private void jumpTo0(long offset) {
-        int page = pageIndex(offset);
-        long pageAddress = computeHotPage(page);
-        appendPointer = pageAddress + pageOffset(offset);
-        pageHi = pageAddress + pageSize;
-        baseOffset = (page << bits) - pageHi;
+        final int page = pageIndex(offset);
+        updateLimits(page, computeHotPage(page));
+        appendPointer += pageOffset(offset);
     }
 
     private void nextPage() {
-        int page = (int) (((baseOffset + appendPointer) >>> bits) + 1);
+        int page = pageIndex(baseOffset + appendPointer) + 1;
         if (page < getMaxPage()) {
             storeSize();
-            appendPointer = getPageAddress(page);
-            pageHi = appendPointer + pageSize;
-            baseOffset = (page << bits) - pageHi;
+            updateLimits(page, getPageAddress(page));
         } else {
             lastPageRemaining = -1;
-            appendPointer = allocateNextPage();
+            updateLimits(getMaxPage() + 1, allocateNextPage());
             addPage(appendPointer);
-            pageHi = appendPointer + pageSize;
-            baseOffset = (getMaxPage() << bits) - pageHi;
         }
     }
 
-    private int pageIndex(long offset) {
+    protected final int pageIndex(long offset) {
         return (int) (offset >> bits);
+    }
+
+    protected final long pageOffset(int page) {
+        return ((long) page << bits);
     }
 
     private int pageOffset(long offset) {
@@ -593,6 +591,12 @@ public class VirtualMemory implements Closeable {
         if (lastPageRemaining == -1) {
             lastPageRemaining = (pageHi - appendPointer);
         }
+    }
+
+    protected final void updateLimits(int page, long appendPointer) {
+        pageHi = appendPointer + this.pageSize;
+        baseOffset = pageOffset(page) - pageHi;
+        this.appendPointer = appendPointer;
     }
 
     public class CharSequenceView extends AbstractCharSequence {
