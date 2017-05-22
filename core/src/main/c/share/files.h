@@ -25,6 +25,10 @@ extern "C" {
 #define com_questdb_misc_Files_DT_SOCK 12L
 #undef com_questdb_misc_Files_DT_WHT
 #define com_questdb_misc_Files_DT_WHT 14L
+#undef com_questdb_misc_Files_MAP_RO
+#define com_questdb_misc_Files_MAP_RO 1L
+#undef com_questdb_misc_Files_MAP_RW
+#define com_questdb_misc_Files_MAP_RW 2L
 /*
  * Class:     com_questdb_misc_Files
  * Method:    append
@@ -83,19 +87,27 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
 
 /*
  * Class:     com_questdb_misc_Files
- * Method:    truncate
- * Signature: (JJ)Z
+ * Method:    length
+ * Signature: (J)J
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_truncate
-        (JNIEnv *, jclass, jlong, jlong);
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
+        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_questdb_misc_Files
- * Method:    remove
- * Signature: (J)Z
+ * Method:    mmap0
+ * Signature: (JJJI)J
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_remove
-        (JNIEnv *, jclass, jlong);
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
+        (JNIEnv *, jclass, jlong, jlong, jlong, jint);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    munmap0
+ * Signature: (JJ)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_munmap0
+        (JNIEnv *, jclass, jlong, jlong);
 
 /*
  * Class:     com_questdb_misc_Files
@@ -115,11 +127,35 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_sequentialRead
 
 /*
  * Class:     com_questdb_misc_Files
+ * Method:    truncate
+ * Signature: (JJ)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_truncate
+        (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
  * Method:    write
  * Signature: (JJIJ)J
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
         (JNIEnv *, jclass, jlong, jlong, jint, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    getPageSize
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getPageSize
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    remove
+ * Signature: (J)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_remove
+        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_questdb_misc_Files
@@ -131,11 +167,19 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getLastModified
 
 /*
  * Class:     com_questdb_misc_Files
- * Method:    length
+ * Method:    length0
  * Signature: (J)J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length0
         (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    mkdir
+ * Signature: (JI)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_mkdir
+        (JNIEnv *, jclass, jlong, jint);
 
 /*
  * Class:     com_questdb_misc_Files

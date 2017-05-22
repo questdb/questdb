@@ -28,11 +28,9 @@ import com.questdb.ex.NumericException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Files;
+import com.questdb.misc.Os;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.CompositePath;
-import com.questdb.std.str.DirectCharSequence;
-import com.questdb.std.str.NativeLPSZ;
-import com.questdb.std.str.Path;
+import com.questdb.std.str.*;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -143,6 +141,15 @@ public class FilesTest {
     }
 
     @Test
+    public void testMkdirs() throws Exception {
+        File r = temporaryFolder.newFolder("to_delete");
+        try (CharSequenceZ cs = new CharSequenceZ(r.getAbsolutePath() + "/a/b/c//f.text")) {
+            Assert.assertEquals(0, Files.mkdirs(cs, 509));
+            Assert.assertTrue(Files.exists(cs.of(r.getAbsolutePath() + "/a/b/c/")));
+        }
+    }
+
+    @Test
     public void testRemove() throws Exception {
         try (Path path = new Path(temporaryFolder.newFile().getAbsolutePath())) {
             Assert.assertTrue(Files.touch(path));
@@ -228,5 +235,9 @@ public class FilesTest {
     private static void touch(File file) throws IOException {
         FileOutputStream fos = new FileOutputStream(file);
         fos.close();
+    }
+
+    static {
+        Os.init();
     }
 }

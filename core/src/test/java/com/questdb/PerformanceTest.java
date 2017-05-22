@@ -23,6 +23,7 @@
 
 package com.questdb;
 
+import com.questdb.cairo.TableWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
@@ -30,6 +31,7 @@ import com.questdb.factory.Factory;
 import com.questdb.factory.ReaderFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
@@ -267,6 +269,40 @@ public class PerformanceTest extends AbstractTest {
     }
 
     @Test
+    public void testNewAppenderPerformance() throws JournalException, ParserException, NumericException {
+        TableWriter w = new TableWriter(getFactory().getConfiguration().getJournalBase().getAbsolutePath(), getFactory().getConfiguration().createMetadata(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE)));
+
+        long t = 0;
+        int count = 10;
+        for (int i = -count; i < count; i++) {
+            if (i == 0) {
+                t = System.nanoTime();
+            }
+//            w.truncate();
+            long timestamp = DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z");
+            String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+            Rnd r = new Rnd();
+            int n = symbols.length - 1;
+            for (int i1 = 0; i1 < TEST_DATA_SIZE; i1++) {
+                TableWriter.Row row = w.newRow();
+                row.putDate(0, timestamp);
+                row.putStr(1, symbols[Math.abs(r.nextInt() % n)]);
+                row.putDouble(2, Math.abs(r.nextDouble()));
+                row.putDouble(3, Math.abs(r.nextDouble()));
+                row.putInt(4, Math.abs(r.nextInt()));
+                row.putInt(5, Math.abs(r.nextInt()));
+                row.putStr(6, "LXE");
+                row.putStr(7, "Fast trading");
+                row.append();
+                timestamp += (long) 1000;
+            }
+            w.commit();
+        }
+        long result = System.nanoTime() - t;
+        LOG.info().$("raw append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
+    }
+
+    @Test
     public void testRawAppendPerformance() throws JournalException, ParserException, NumericException {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
             long t = 0;
@@ -283,4 +319,5 @@ public class PerformanceTest extends AbstractTest {
             LOG.info().$("raw append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
         }
     }
+
 }

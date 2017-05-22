@@ -25,10 +25,11 @@ package com.questdb.std.str;
 
 import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public final class CharSequenceZ extends AbstractCharSequence implements Closeable, LPSZ {
+public final class CharSequenceZ extends AbstractCharSequence implements Closeable, LPSZ, ByteSequence {
     private long ptr = 0;
     private int capacity;
     private int len;
@@ -42,6 +43,11 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
     @Override
     public long address() {
         return ptr;
+    }
+
+    @Override
+    public byte byteAt(int index) {
+        return Unsafe.getUnsafe().getByte(ptr + index);
     }
 
     @Override
@@ -59,7 +65,7 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
 
     @Override
     public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(ptr + index);
+        return (char) byteAt(index);
     }
 
     public CharSequenceZ of(CharSequence str) {
@@ -73,6 +79,12 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
         }
         cpyz(str, len);
         return this;
+    }
+
+    @NotNull
+    @Override
+    public String toString() {
+        return Chars.toUtf8String(this);
     }
 
     private void alloc(int len) {

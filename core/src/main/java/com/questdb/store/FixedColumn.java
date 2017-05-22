@@ -139,7 +139,6 @@ public class FixedColumn extends AbstractColumn {
 
     public void putNull() {
         getAddress();
-//        Unsafe.getUnsafe().setMemory(addressOf(), width, (byte) 0);
     }
 
     public void putShort(short value) {

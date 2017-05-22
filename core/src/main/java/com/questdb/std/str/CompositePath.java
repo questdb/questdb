@@ -23,6 +23,7 @@
 
 package com.questdb.std.str;
 
+import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjectFactory;
 
@@ -51,6 +52,26 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
         return ptr;
     }
 
+    public CompositePath append(CharSequence str) {
+        int l = str.length();
+        if (l + len >= capacity) {
+            extend(l + len);
+        }
+        Chars.strcpy(str, l, wptr);
+        wptr += l;
+        len += l;
+        return this;
+    }
+
+    public CompositePath append(char c) {
+        if (1 + len >= capacity) {
+            extend(16 + len);
+        }
+        Unsafe.getUnsafe().putByte(wptr++, (byte) c);
+        len++;
+        return this;
+    }
+
     @Override
     public void close() {
         if (ptr != 0) {
@@ -62,7 +83,7 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
     public CompositePath concat(CharSequence str) {
         int l = str.length();
         if (l + len + OVERHEAD >= capacity) {
-            extend(l + len);
+            extend(l + len + OVERHEAD);
         }
 
         if (len > 0 && !trailingSlash) {
@@ -97,6 +118,15 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
             this.trailingSlash = false;
             return concat(str);
         }
+    }
+
+    public void trimBy(int count) {
+        wptr -= count;
+        len -= count;
+    }
+
+    public void trimTo(int len) {
+        trimBy(this.len - len);
     }
 
     private void alloc(int len) {

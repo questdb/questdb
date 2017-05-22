@@ -25,6 +25,7 @@ package com.questdb.misc;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
+import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 
 import java.io.File;
@@ -36,6 +37,7 @@ import java.nio.charset.Charset;
 public final class Files {
 
     public static final Charset UTF_8;
+    public static final long PAGE_SIZE;
     public static final int DT_UNKNOWN = 0;
     public static final int DT_FIFO = 1;
     public static final int DT_CHR = 2;
@@ -45,6 +47,9 @@ public final class Files {
     public static final int DT_LNK = 10;
     public static final int DT_SOCK = 12;
     public static final int DT_WHT = 14;
+
+    public static final int MAP_RO = 1;
+    public static final int MAP_RW = 2;
 
     private Files() {
     } // Prevent construction.
@@ -110,6 +115,18 @@ public final class Files {
         return getLastModified(lpsz.address());
     }
 
+    public static long getPageSizeForMapping(long fileSize) {
+        long max = 512 * 1024 * 1024; // 512MB
+        long alignedSize = (fileSize / PAGE_SIZE) * PAGE_SIZE;
+        if (alignedSize == 0) {
+            return PAGE_SIZE;
+        } else if (alignedSize < max) {
+            return alignedSize;
+        } else {
+            return (max / PAGE_SIZE) * PAGE_SIZE;
+        }
+    }
+
     public native static long getStdOutFd();
 
     public static boolean isDots(CharSequence name) {
@@ -117,8 +134,10 @@ public final class Files {
     }
 
     public static long length(LPSZ lpsz) {
-        return length(lpsz.address());
+        return length0(lpsz.address());
     }
+
+    public native static long length(long fd);
 
     public static File makeTempDir() {
         File result;
@@ -145,6 +164,34 @@ public final class Files {
             throw new JournalRuntimeException("Cannot create temp directory: %s", dir);
         }
     }
+
+    public static int mkdir(LPSZ path, int mode) {
+        return mkdir(path.address(), mode);
+    }
+
+    public static int mkdirs(LPSZ path, int mode) {
+        try (CompositePath pp = new CompositePath()) {
+            for (int i = 0, n = path.length(); i < n; i++) {
+                char c = path.charAt(i);
+                if (c == File.separatorChar) {
+                    pp.$();
+                    if (pp.length() > 0 && !Files.exists(pp)) {
+                        int r = Files.mkdir(pp, mode);
+                        if (r != 0) {
+                            return r;
+                        }
+                    }
+                    pp.trimBy(1);
+                }
+                pp.append(c);
+            }
+        }
+        return 0;
+    }
+
+    public static native long mmap0(long fd, long len, long offset, int flags);
+
+    public static native int munmap0(long address, long len);
 
     public static long openAppend(LPSZ lpsz) {
         return openAppend(lpsz.address());
@@ -216,11 +263,15 @@ public final class Files {
         }
     }
 
+    private native static long getPageSize();
+
     private native static boolean remove(long lpsz);
 
     private native static long getLastModified(long lpszName);
 
-    private native static long length(long lpszName);
+    private native static long length0(long lpszName);
+
+    private native static int mkdir(long lpszPath, int mode);
 
     private native static long openRO(long lpszName);
 
@@ -273,5 +324,6 @@ public final class Files {
 
     static {
         UTF_8 = Charset.forName("UTF-8");
+        PAGE_SIZE = getPageSize();
     }
 }

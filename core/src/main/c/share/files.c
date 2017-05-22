@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/fcntl.h>
+#include <sys/mman.h>
 
 #ifdef __APPLE__
 
@@ -37,6 +38,7 @@
 
 #include <stdlib.h>
 #include <dirent.h>
+#include <asm/errno.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
@@ -46,6 +48,24 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
          jint len,
          jlong offset) {
     return pwrite((int) fd, (void *) (address), (size_t) len, (off_t) offset);
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
+        (JNIEnv *e, jclass cl, jlong fd, jlong len, jlong offset, jint flags) {
+    int prot = 0;
+
+    if (flags == com_questdb_misc_Files_MAP_RO) {
+        prot = PROT_READ;
+    } else if (flags == com_questdb_misc_Files_MAP_RW) {
+        prot = PROT_READ | PROT_WRITE;
+    }
+    EBADF
+    return (jlong) mmap(NULL, (size_t) len, prot, MAP_SHARED, (int) fd, offset);
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_munmap0
+        (JNIEnv *cl, jclass e, jlong address, jlong len) {
+    return munmap((void *) address, (size_t) len);
 }
 
 JNIEXPORT void JNICALL Java_com_questdb_misc_Files_append
@@ -102,13 +122,27 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openAppend
     return open((const char *) lpszName, O_CREAT | O_WRONLY | O_APPEND, 0644);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length0
         (JNIEnv *e, jclass cl, jlong pchar) {
     struct stat st;
 
     int r = stat((const char *) pchar, &st);
     return r == 0 ? st.st_size : r;
 }
+
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_mkdir
+        (JNIEnv *e, jclass cl, jlong pchar, jint mode) {
+    return mkdir((const char *) pchar, (__mode_t) mode);
+}
+
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
+        (JNIEnv *e, jclass cl, jlong fd) {
+    struct stat st;
+    int r = fstat((int) fd, &st);
+    return r == 0 ? st.st_size : r;
+}
+
 
 #ifdef __APPLE__
 
@@ -173,6 +207,12 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findFirst
     find->entry = entry;
     return (jlong) find;
 }
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getPageSize
+        (JNIEnv *e, jclass cl) {
+    return sysconf(_SC_PAGESIZE);
+}
+
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_findNext
         (JNIEnv *e, jclass cl, jlong findPtr) {

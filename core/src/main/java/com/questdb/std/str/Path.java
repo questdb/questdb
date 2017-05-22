@@ -29,6 +29,7 @@ import com.questdb.misc.Unsafe;
 import java.io.Closeable;
 
 public final class Path extends AbstractCharSequence implements Closeable, LPSZ {
+    public static final char SEPARATOR;
     private long ptr = 0;
     private int capacity;
     private int len;
@@ -38,9 +39,9 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
     }
 
     public Path(CharSequence str) {
-        int l = str.length();
-        alloc(l);
-        copyz(str, 0, l, ptr);
+        this.len = str.length();
+        alloc(len);
+        copyz(str, 0, len, ptr);
     }
 
     public static void copy(CharSequence str, int from, int len, long addr) {
@@ -51,7 +52,7 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
     }
 
     public static void copyPathSeparator(long address) {
-        Unsafe.getUnsafe().putByte(address, (byte) (Os.type == Os.WINDOWS ? '\\' : '/'));
+        Unsafe.getUnsafe().putByte(address, (byte) SEPARATOR);
     }
 
     public static void copyz(CharSequence str, int from, int len, long address) {
@@ -99,5 +100,9 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
     private void alloc(int len) {
         this.capacity = len;
         this.ptr = Unsafe.malloc(len + 1);
+    }
+
+    static {
+        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
     }
 }
