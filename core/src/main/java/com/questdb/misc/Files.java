@@ -183,7 +183,7 @@ public final class Files {
                     }
                     pp.trimBy(1);
                 }
-                pp.append(c);
+                pp.put(c);
             }
         }
         return 0;

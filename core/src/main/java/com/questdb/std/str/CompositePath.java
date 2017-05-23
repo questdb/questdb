@@ -28,8 +28,9 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjectFactory;
 
 import java.io.Closeable;
+import java.io.IOException;
 
-public final class CompositePath extends AbstractCharSequence implements Closeable, LPSZ {
+public final class CompositePath extends AbstractCharSink implements Closeable, LPSZ {
     public static final ObjectFactory<CompositePath> FACTORY = CompositePath::new;
     private static final int OVERHEAD = 4;
     private long ptr = 0;
@@ -50,26 +51,6 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
     @Override
     public long address() {
         return ptr;
-    }
-
-    public CompositePath append(CharSequence str) {
-        int l = str.length();
-        if (l + len >= capacity) {
-            extend(l + len);
-        }
-        Chars.strcpy(str, l, wptr);
-        wptr += l;
-        len += l;
-        return this;
-    }
-
-    public CompositePath append(char c) {
-        if (1 + len >= capacity) {
-            extend(16 + len);
-        }
-        Unsafe.getUnsafe().putByte(wptr++, (byte) c);
-        len++;
-        return this;
     }
 
     @Override
@@ -97,6 +78,33 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
     }
 
     @Override
+    public void flush() throws IOException {
+        $();
+    }
+
+    @Override
+    public CompositePath put(CharSequence str) {
+        int l = str.length();
+        if (l + len >= capacity) {
+            extend(l + len);
+        }
+        Chars.strcpy(str, l, wptr);
+        wptr += l;
+        len += l;
+        return this;
+    }
+
+    @Override
+    public CompositePath put(char c) {
+        if (1 + len >= capacity) {
+            extend(16 + len);
+        }
+        Unsafe.getUnsafe().putByte(wptr++, (byte) c);
+        len++;
+        return this;
+    }
+
+    @Override
     public int length() {
         return len;
     }
@@ -104,6 +112,11 @@ public final class CompositePath extends AbstractCharSequence implements Closeab
     @Override
     public char charAt(int index) {
         return (char) Unsafe.getUnsafe().getByte(ptr + index);
+    }
+
+    @Override
+    public CharSequence subSequence(int start, int end) {
+        throw new UnsupportedOperationException();
     }
 
     public CompositePath of(CharSequence str) {

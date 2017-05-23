@@ -54,11 +54,17 @@ public class VirtualMemory implements Closeable {
     protected VirtualMemory() {
     }
 
+    public void clearHotPage() {
+        roOffsetLo = roOffsetHi = 0;
+    }
+
     @Override
     public void close() {
         for (int i = 0, n = pages.size(); i < n; i++) {
             release(pages.getQuick(i));
         }
+        lastPageRemaining = -1;
+        clearHotPage();
     }
 
     public final ByteSequenceView getBin(long offset) {

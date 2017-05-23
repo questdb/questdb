@@ -5,25 +5,23 @@ import com.questdb.std.VirtualMemory;
 import com.questdb.std.str.LPSZ;
 
 public class ReadWriteMemory extends VirtualMemory {
-    protected long fd;
+    protected long fd = -1;
 
     public ReadWriteMemory(LPSZ name, int maxPageSize, long size, int defaultPageSize) {
-        this(name);
-        configurePageSize(size, defaultPageSize, maxPageSize);
+        of(name, maxPageSize, size, defaultPageSize);
     }
 
-    protected ReadWriteMemory(LPSZ name) {
-        fd = Files.openRW(name);
-        if (fd == -1) {
-            throw new RuntimeException("cannot open file");
-        }
+    public ReadWriteMemory() {
     }
 
     @Override
     public void close() {
         super.close();
-        Files.truncate(fd, size());
-        Files.close(fd);
+        if (fd != -1) {
+            Files.truncate(fd, size());
+            Files.close(fd);
+            fd = -1;
+        }
     }
 
     @Override
@@ -48,6 +46,16 @@ public class ReadWriteMemory extends VirtualMemory {
     @Override
     protected void release(long address) {
         Files.munmap0(address, pageSize);
+    }
+
+    public final void of(LPSZ name, int maxPageSize, long size, int defaultPageSize) {
+        close();
+
+        fd = Files.openRW(name);
+        if (fd == -1) {
+            throw new RuntimeException("cannot open file");
+        }
+        configurePageSize(size, defaultPageSize, maxPageSize);
     }
 
     protected final void configurePageSize(long size, int defaultPageSize, int maxPageSize) {

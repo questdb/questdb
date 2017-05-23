@@ -18,17 +18,20 @@ import com.questdb.store.SymbolTable;
 import java.util.function.LongSupplier;
 
 public class TableWriter {
+
+    private static final int PARTITION_INDEX_HEADER_LENGTH = 8;
+
     private final JournalMetadata metadata;
     private final ObjList<AppendMemory> columns = new ObjList<>();
     private final CompositePath path;
     private final LongList refs = new LongList();
     private final Row row = new Row();
     private final int rootLen;
+    private final ReadWriteMemory partitionIndexMem = new ReadWriteMemory();
     private long masterRef = 0;
     private int columnCount;
     private Runnable[] nullers;
     private int mode = 509;
-    private VirtualMemory indexMem;
     private LongSupplier sizer;
 
     public TableWriter(CharSequence location, JournalMetadata metadata) {
@@ -38,23 +41,24 @@ public class TableWriter {
         this.nullers = new Runnable[columnCount];
         this.path = new CompositePath().of(location).concat(metadata.getName());
         this.rootLen = path.length();
+        configureColumnMemory();
 
         if (metadata.getPartitionBy() == PartitionBy.NONE || metadata.getPartitionBy() == PartitionBy.DEFAULT) {
-            configurePartition("default");
+            switchPartition("default");
         }
+        path.trimTo(rootLen);
     }
 
     public void commit() {
-        indexMem.jumpTo(8);
+        partitionIndexMem.jumpTo(8);
         for (int i = 0; i < columnCount; i++) {
-            VirtualMemory m = columns.getQuick(i * 2);
-            indexMem.putLong(m.size());
+            partitionIndexMem.putLong(getPrimaryColumn(i).size());
 
-            m = columns.getQuick(i * 2 + 1);
+            VirtualMemory m = getSecondaryColumn(i);
             if (m == null) {
-                indexMem.skip(8);
+                partitionIndexMem.skip(8);
             } else {
-                indexMem.putLong(m.size());
+                partitionIndexMem.putLong(m.size());
             }
         }
     }
@@ -66,10 +70,31 @@ public class TableWriter {
 
     public void truncate() {
         for (int i = 0; i < columnCount; i++) {
-            columns.getQuick(i * 2).truncate();
-            AppendMemory mem = columns.getQuick(i * 2 + 1);
+            getPrimaryColumn(i).truncate();
+            AppendMemory mem = getSecondaryColumn(i);
             if (mem != null) {
                 mem.truncate();
+            }
+        }
+    }
+
+    private static long primaryColumnSizeOffset(int column) {
+        return column * 16 + PARTITION_INDEX_HEADER_LENGTH;
+    }
+
+    private static long secondaryColumnSizeOffset(int column) {
+        return primaryColumnSizeOffset(column) + 8;
+    }
+
+    private void configureColumnMemory() {
+        for (int i = 0; i < columnCount; i++) {
+            ColumnMetadata m = metadata.getColumnQuick(i);
+            columns.add(new AppendMemory());
+
+            if (m.type == ColumnType.BINARY || m.type == ColumnType.STRING || m.type == ColumnType.SYMBOL) {
+                columns.add(new AppendMemory());
+            } else {
+                columns.add(null);
             }
         }
     }
@@ -103,82 +128,81 @@ public class TableWriter {
         }
     }
 
-    private void configurePartition(CharSequence name) {
+    private AppendMemory getPrimaryColumn(int column) {
+        return columns.getQuick(column * 2);
+    }
+
+    private AppendMemory getSecondaryColumn(int column) {
+        return columns.getQuick(column * 2 + 1);
+    }
+
+    private void switchPartition(CharSequence name) {
         path.concat(name);
         int partitionPathLen = path.length();
 
-        if (Files.mkdirs(path.append(Path.SEPARATOR).$(), mode) != 0) {
+        if (Files.mkdirs(path.put(Path.SEPARATOR).$(), mode) != 0) {
             throw new RuntimeException("cannot create def partition");
         }
 
         path.trimTo(partitionPathLen);
-
-        path.concat("_index.qdb").$();
-        if (Files.exists(path)) {
-            indexMem = readIndexData(path);
-        } else {
-            indexMem = createIndexData(path);
-        }
-        path.trimTo(partitionPathLen);
+        switchPartitionIndex(path.concat("_index.qdb").$());
 
         assert columnCount > 0;
 
         for (int i = 0; i < columnCount; i++) {
             ColumnMetadata m = metadata.getColumnQuick(i);
-            columns.add(new AppendMemory(path.concat(m.name).append(".d").$(), 4096 * 4096, indexMem.getLong(i * 16 + 8)));
-            path.trimTo(partitionPathLen);
+            AppendMemory mem1 = getPrimaryColumn(i);
+            AppendMemory mem2 = getSecondaryColumn(i);
 
-            if (m.type == ColumnType.BINARY || m.type == ColumnType.STRING || m.type == ColumnType.SYMBOL) {
-                columns.add(new AppendMemory(path.concat(m.name).append(".i").$(), 4096 * 4096, indexMem.getLong(i * 16 + 16)));
+            path.trimTo(partitionPathLen);
+            mem1.of(path.concat(m.name).put(".d").$(), 4096 * 4096, partitionIndexMem.getLong(primaryColumnSizeOffset(i)));
+
+            if (mem2 != null) {
                 path.trimTo(partitionPathLen);
+                mem2.of(path.concat(m.name).put(".i").$(), 4096 * 4096, partitionIndexMem.getLong(secondaryColumnSizeOffset(i)));
             } else {
                 columns.add(null);
             }
             // set nullers
-            configureNuller(i, m.type, columns.getQuick(i), columns.getQuick(i + 1));
+            configureNuller(i, m.type, mem1, mem2);
+            path.trimTo(rootLen);
         }
-        path.trimBy(partitionPathLen - rootLen);
     }
 
-    private VirtualMemory createIndexData(LPSZ path) {
-        ReadWriteMemory mem = new ReadWriteMemory(path, (int) Files.PAGE_SIZE, 0L, (int) Files.PAGE_SIZE);
-        mem.putInt(0xdeadbeef);
-        mem.putInt(columnCount);
-        // reserve space for column sizes and their initial row counts
-        // note: there are two files for string and binary columns, so we keep two 64bit values for each logical column in the table.
-        // note: to save disk space initial row count may be non-zero if column added later on
+    private void switchPartitionIndex(LPSZ path) {
+        boolean exists = Files.exists(path);
+        partitionIndexMem.of(path, (int) Files.PAGE_SIZE, 0L, (int) Files.PAGE_SIZE);
+        if (exists) {
+            if (partitionIndexMem.getInt(0) != 0xdeadbeef) {
+                partitionIndexMem.close();
+                throw new RuntimeException("bad header");
+            }
 
-        // struct {
-        //      int tag;
-        //      int columnCount;
-        //      COLUMN_SIZE sizes[columnCount];
-        //      long firstRows[columnCount];
-        // }
-        // typedef struct {
-        //      long file1Size;
-        //      long file2Size;
-        // } COLUMN_SIZE
+            if (partitionIndexMem.getInt(4) != columnCount) {
+                partitionIndexMem.close();
+                throw new RuntimeException("Column count mismatch");
+            }
+        } else {
+            partitionIndexMem.putInt(0xdeadbeef);
+            partitionIndexMem.putInt(columnCount);
+            // reserve space for column sizes and their initial row counts
+            // note: there are two files for string and binary columns, so we keep two 64bit values for each logical column in the table.
+            // note: to save disk space initial row count may be non-zero if column added later on
 
-        mem.skip(columnCount * 8 * 3);
-        return mem;
-    }
+            // struct {
+            //      int tag;
+            //      int columnCount;
+            //      COLUMN_SIZE sizes[columnCount];
+            //      long firstRows[columnCount];
+            // }
+            // typedef struct {
+            //      long file1Size;
+            //      long file2Size;
+            // } COLUMN_SIZE
 
-    private VirtualMemory readIndexData(LPSZ path) {
-        ReadWriteMemory indexMem = new ReadWriteMemory(path);
-        // validate header mark and column count
-        if (indexMem.getInt(0) != 0xdeadbeef) {
-            indexMem.close();
-            throw new RuntimeException("bad header");
+            partitionIndexMem.skip(columnCount * 8 * 3);
         }
-
-        if (indexMem.getInt(4) != columnCount) {
-            indexMem.close();
-            throw new RuntimeException("Column count mismatch");
-        }
-
-        return indexMem;
     }
-
 
     public class Row {
         public void append() {
@@ -194,25 +218,24 @@ public class TableWriter {
         }
 
         public void putDouble(int index, double value) {
-            columns.getQuick(index * 2).putDouble(value);
+            getPrimaryColumn(index).putDouble(value);
             refs.setQuick(index, masterRef);
         }
 
         public void putInt(int index, int value) {
-            columns.getQuick(index * 2).putInt(value);
+            getPrimaryColumn(index).putInt(value);
             refs.setQuick(index, masterRef);
         }
 
         public void putLong(int index, long value) {
-            columns.getQuick(index * 2).putLong(value);
+            getPrimaryColumn(index).putLong(value);
             refs.setQuick(index, masterRef);
         }
 
         public void putStr(int index, CharSequence value) {
-            long r = columns.getQuick(index * 2).putStr(value);
-            columns.getQuick(index * 2 + 1).putLong(r);
+            long r = getPrimaryColumn(index).putStr(value);
+            getSecondaryColumn(index).putLong(r);
             refs.setQuick(index, masterRef);
         }
     }
-
 }
