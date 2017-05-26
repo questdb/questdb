@@ -95,6 +95,8 @@ public final class Files {
         }
     }
 
+    public static native long dup(long fd);
+
     public static boolean exists(LPSZ lpsz) {
         return getLastModified(lpsz) != -1;
     }
@@ -189,9 +191,18 @@ public final class Files {
         return 0;
     }
 
-    public static native long mmap0(long fd, long len, long offset, int flags);
+    public static long mmap(long fd, long len, long offset, int flags) {
+        long address = mmap0(fd, len, offset, flags);
+        if (address != -1) {
+            Unsafe.MEM_USED.addAndGet(len);
+        }
+        return address;
+    }
 
-    public static native int munmap0(long address, long len);
+    public static void munmap(long address, long len) {
+        Unsafe.MEM_USED.addAndGet(-len);
+        munmap0(address, len);
+    }
 
     public static long openAppend(LPSZ lpsz) {
         return openAppend(lpsz.address());
@@ -262,6 +273,10 @@ public final class Files {
             throw new JournalException("Cannot write to %s", e, file.getAbsolutePath());
         }
     }
+
+    private static native int munmap0(long address, long len);
+
+    private static native long mmap0(long fd, long len, long offset, int flags);
 
     private native static long getPageSize();
 

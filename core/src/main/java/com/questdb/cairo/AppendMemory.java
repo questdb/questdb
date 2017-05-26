@@ -20,7 +20,7 @@ public class AppendMemory extends VirtualMemory {
     public void close() {
         super.close();
         if (pageAddress != 0) {
-            Files.munmap0(pageAddress, pageSize);
+            Files.munmap(pageAddress, pageSize);
             pageAddress = 0;
         }
         if (fd != -1) {
@@ -58,7 +58,7 @@ public class AppendMemory extends VirtualMemory {
 
     @Override
     protected void release(long address) {
-        Files.munmap0(address, pageSize);
+        Files.munmap(address, pageSize);
     }
 
     public final void of(LPSZ name, int pageSize, long size) {
@@ -75,7 +75,7 @@ public class AppendMemory extends VirtualMemory {
 
     public void truncate() {
         if (pageAddress != 0) {
-            Files.munmap0(pageAddress, pageSize);
+            Files.munmap(pageAddress, pageSize);
         }
         Files.truncate(fd, pageSize);
         page = 0;
@@ -90,7 +90,7 @@ public class AppendMemory extends VirtualMemory {
                 throw new RuntimeException("Cannot resize file");
             }
         }
-        return Files.mmap0(fd, pageSize, pageOffset(page), Files.MAP_RW);
+        return Files.mmap(fd, pageSize, pageOffset(page), Files.MAP_RW);
     }
 
 }

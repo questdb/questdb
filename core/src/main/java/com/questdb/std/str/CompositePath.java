@@ -26,6 +26,7 @@ package com.questdb.std.str;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -44,6 +45,9 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
     }
 
     public CompositePath $() {
+        if (1 + (wptr - ptr) >= capacity) {
+            extend((int) (16 + (wptr - ptr)));
+        }
         Unsafe.getUnsafe().putByte(wptr++, (byte) 0);
         return this;
     }
@@ -133,13 +137,25 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         }
     }
 
+    @Override
+    @NotNull
+    public String toString() {
+        return AbstractCharSequence.getString(this);
+    }
+
     public void trimBy(int count) {
-        wptr -= count;
-        len -= count;
+        if (Unsafe.getUnsafe().getByte(wptr - 1) == 0) {
+            wptr -= count;
+            len -= count - 1;
+        } else {
+            wptr -= count;
+            len -= count;
+        }
     }
 
     public void trimTo(int len) {
-        trimBy(this.len - len);
+        this.len = len;
+        wptr = ptr + len;
     }
 
     private void alloc(int len) {

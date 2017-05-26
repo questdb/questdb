@@ -95,6 +95,14 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
 
 /*
  * Class:     com_questdb_misc_Files
+ * Method:    dup
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_dup
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
  * Method:    mmap0
  * Signature: (JJJI)J
  */

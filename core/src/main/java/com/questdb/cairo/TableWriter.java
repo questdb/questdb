@@ -10,17 +10,18 @@ import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 import com.questdb.std.VirtualMemory;
 import com.questdb.std.str.CompositePath;
-import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
+import java.io.Closeable;
 import java.util.function.LongSupplier;
 
-public class TableWriter {
+public class TableWriter implements Closeable {
 
     private static final int PARTITION_INDEX_HEADER_LENGTH = 8;
-
     private final JournalMetadata metadata;
     private final ObjList<AppendMemory> columns = new ObjList<>();
     private final CompositePath path;
@@ -28,11 +29,24 @@ public class TableWriter {
     private final Row row = new Row();
     private final int rootLen;
     private final ReadWriteMemory partitionIndexMem = new ReadWriteMemory();
+    // struct {
+    //    PARTITION_INFO info[txPartitionCount]
+    // }
+    //
+    // typedef struct {
+    //    long fd;
+    //    long sizes[columnCount];
+    // } PARTITION_INFO;
+    //
+    private final VirtualMemory partitionColumnSizes = new VirtualMemory((int) Files.PAGE_SIZE);
     private long masterRef = 0;
     private int columnCount;
     private Runnable[] nullers;
     private int mode = 509;
     private LongSupplier sizer;
+    private long partitionLo;
+    private long partitionHi;
+    private int txPartitionCount = 0;
 
     public TableWriter(CharSequence location, JournalMetadata metadata) {
         this.metadata = metadata;
@@ -44,27 +58,75 @@ public class TableWriter {
         configureColumnMemory();
 
         if (metadata.getPartitionBy() == PartitionBy.NONE || metadata.getPartitionBy() == PartitionBy.DEFAULT) {
-            switchPartition("default");
+            path.concat("default");
+            switchPartition();
+            path.trimTo(rootLen);
+            partitionLo = Long.MIN_VALUE;
+            partitionHi = Long.MAX_VALUE;
+            txPartitionCount = 1;
         }
-        path.trimTo(rootLen);
+    }
+
+    @Override
+    public void close() {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            AppendMemory m = columns.getQuick(i);
+            if (m != null) {
+                m.close();
+            }
+        }
+        partitionIndexMem.close();
+        if (txPartitionCount > 1) {
+            long p = 0;
+            for (int i = 0; i < txPartitionCount - 1; i++) {
+                Files.close(partitionColumnSizes.getLong(p));
+                p += columnCount * 16;
+            }
+        }
+        partitionColumnSizes.close();
+        path.close();
     }
 
     public void commit() {
-        partitionIndexMem.jumpTo(8);
-        for (int i = 0; i < columnCount; i++) {
-            partitionIndexMem.putLong(getPrimaryColumn(i).size());
+        if (txPartitionCount > 1) {
+            long p = 0;
+            for (int i = 0; i < txPartitionCount - 1; i++) {
+                long fd = partitionColumnSizes.getLong(p);
+                int len = columnCount * 16;
 
-            VirtualMemory m = getSecondaryColumn(i);
-            if (m == null) {
-                partitionIndexMem.skip(8);
-            } else {
-                partitionIndexMem.putLong(m.size());
+                while (len > 0) {
+                    int l = partitionColumnSizes.getReadPageLen(p);
+                    if (Files.write(fd, partitionColumnSizes.getReadPageAddress(p), l, 8) == -1) {
+                        throw new RuntimeException("commit failed");
+                    }
+                    len -= l;
+                    p += l;
+                }
+                Files.close(fd);
             }
+            partitionColumnSizes.jumpTo(0);
         }
+        partitionIndexMem.jumpTo(8);
+        writeColumnSizes(partitionIndexMem);
+        txPartitionCount = 1;
     }
 
     public Row newRow() {
         masterRef++;
+        return row;
+    }
+
+    public Row newRow(long timestamp) {
+        masterRef++;
+        if (timestamp < partitionLo) {
+            throw new RuntimeException("out of order");
+        }
+
+        if (timestamp > partitionHi) {
+            switchPartition(timestamp);
+        }
+
+        partitionLo = timestamp;
         return row;
     }
 
@@ -136,16 +198,65 @@ public class TableWriter {
         return columns.getQuick(column * 2 + 1);
     }
 
-    private void switchPartition(CharSequence name) {
-        path.concat(name);
-        int partitionPathLen = path.length();
+    private void switchPartition(long timestamp) {
+        int y, m, d;
+        boolean leap;
+        boolean doSwitch = true;
+        y = Dates.getYear(timestamp);
+        leap = Dates.isLeapYear(y);
+        path.put(Path.SEPARATOR);
 
+        switch (metadata.getPartitionBy()) {
+            case PartitionBy.DAY:
+                m = Dates.getMonthOfYear(timestamp, y, leap);
+                d = Dates.getDayOfMonth(timestamp, y, m, leap);
+                partitionLo = Dates.yearMillis(y, leap);
+                partitionLo += Dates.monthOfYearMillis(m, leap);
+                partitionLo += (d - 1) * Dates.DAY_MILLIS;
+                partitionHi = partitionLo + 24 * Dates.HOUR_MILLIS;
+                DateFormatUtils.append000(path, y);
+                path.put('-');
+                DateFormatUtils.append0(path, m);
+                path.put('-');
+                DateFormatUtils.append0(path, d);
+                break;
+            case PartitionBy.MONTH:
+                m = Dates.getMonthOfYear(timestamp, y, leap);
+                partitionLo = Dates.yearMillis(y, leap);
+                partitionLo += Dates.monthOfYearMillis(m, leap);
+                partitionHi = partitionLo + Dates.getDaysPerMonth(m, leap) * 24L * Dates.HOUR_MILLIS;
+                DateFormatUtils.append000(path, y);
+                path.put('-');
+                DateFormatUtils.append0(path, m);
+                break;
+            case PartitionBy.YEAR:
+                partitionLo = Dates.yearMillis(y, leap);
+                partitionHi = Dates.addYear(partitionLo, 1);
+                DateFormatUtils.append000(path, y);
+                break;
+            default:
+                doSwitch = false;
+                break;
+        }
+
+        if (doSwitch) {
+            if (txPartitionCount++ > 0) {
+                partitionColumnSizes.putLong(Files.dup(partitionIndexMem.getFd()));
+                writeColumnSizes(partitionColumnSizes);
+            }
+            switchPartition();
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void switchPartition() {
+        int partitionPathLen = path.length();
         if (Files.mkdirs(path.put(Path.SEPARATOR).$(), mode) != 0) {
             throw new RuntimeException("cannot create def partition");
         }
-
         path.trimTo(partitionPathLen);
-        switchPartitionIndex(path.concat("_index.qdb").$());
+        path.concat("_index.qdb").$();
+        switchPartitionIndex();
 
         assert columnCount > 0;
 
@@ -160,16 +271,13 @@ public class TableWriter {
             if (mem2 != null) {
                 path.trimTo(partitionPathLen);
                 mem2.of(path.concat(m.name).put(".i").$(), 4096 * 4096, partitionIndexMem.getLong(secondaryColumnSizeOffset(i)));
-            } else {
-                columns.add(null);
             }
             // set nullers
             configureNuller(i, m.type, mem1, mem2);
-            path.trimTo(rootLen);
         }
     }
 
-    private void switchPartitionIndex(LPSZ path) {
+    private void switchPartitionIndex() {
         boolean exists = Files.exists(path);
         partitionIndexMem.of(path, (int) Files.PAGE_SIZE, 0L, (int) Files.PAGE_SIZE);
         if (exists) {
@@ -201,6 +309,18 @@ public class TableWriter {
             // } COLUMN_SIZE
 
             partitionIndexMem.skip(columnCount * 8 * 3);
+        }
+    }
+
+    private void writeColumnSizes(VirtualMemory mem) {
+        for (int i = 0; i < columnCount; i++) {
+            mem.putLong(getPrimaryColumn(i).size());
+            VirtualMemory m = getSecondaryColumn(i);
+            if (m == null) {
+                mem.skip(8);
+            } else {
+                mem.putLong(m.size());
+            }
         }
     }
 

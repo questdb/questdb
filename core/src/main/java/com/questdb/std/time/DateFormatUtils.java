@@ -21,6 +21,35 @@ public class DateFormatUtils {
     static int prevCenturyLow;
     private static long newYear;
 
+    public static void append0(CharSink sink, int val) {
+        if (Math.abs(val) < 10) {
+            sink.put('0');
+        }
+        Numbers.append(sink, val);
+    }
+
+    public static void append00(CharSink sink, int val) {
+        int v = Math.abs(val);
+        if (v < 10) {
+            sink.put('0').put('0');
+        } else if (v < 100) {
+            sink.put('0');
+        }
+        Numbers.append(sink, val);
+    }
+
+    public static void append000(CharSink sink, int val) {
+        int v = Math.abs(val);
+        if (v < 10) {
+            sink.put('0').put('0').put('0');
+        } else if (v < 100) {
+            sink.put('0').put('0');
+        } else if (v < 1000) {
+            sink.put('0');
+        }
+        Numbers.append(sink, val);
+    }
+
     // YYYY-MM-DDThh:mm:ss.mmmmZ
     public static void appendDateTime(CharSink sink, long millis) {
         if (millis == Long.MIN_VALUE) {
@@ -340,35 +369,6 @@ public class DateFormatUtils {
         }
         prevCenturyLow = thisCenturyLow - 100;
         newYear = Dates.endOfYear(referenceYear);
-    }
-
-    static void append000(CharSink sink, int val) {
-        int v = Math.abs(val);
-        if (v < 10) {
-            sink.put('0').put('0').put('0');
-        } else if (v < 100) {
-            sink.put('0').put('0');
-        } else if (v < 1000) {
-            sink.put('0');
-        }
-        Numbers.append(sink, val);
-    }
-
-    static void append00(CharSink sink, int val) {
-        int v = Math.abs(val);
-        if (v < 10) {
-            sink.put('0').put('0');
-        } else if (v < 100) {
-            sink.put('0');
-        }
-        Numbers.append(sink, val);
-    }
-
-    static void append0(CharSink sink, int val) {
-        if (Math.abs(val) < 10) {
-            sink.put('0');
-        }
-        Numbers.append(sink, val);
     }
 
     static void appendAmPm(CharSink sink, int hour, DateLocale locale) {

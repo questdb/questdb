@@ -42,12 +42,12 @@ public class ReadOnlyMemory extends VirtualMemory {
 
     @Override
     protected void release(long address) {
-        Files.munmap0(address, pageSize);
+        Files.munmap(address, pageSize);
     }
 
     private long mapPage(int page) {
         long address;
-        address = Files.mmap0(fd, pageSize, pageOffset(page), Files.MAP_RO);
+        address = Files.mmap(fd, pageSize, pageOffset(page), Files.MAP_RO);
         if (address == -1) {
             throw new RuntimeException("Cannot mmap");
         }

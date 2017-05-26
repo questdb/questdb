@@ -45,7 +45,11 @@ public class ReadWriteMemory extends VirtualMemory {
 
     @Override
     protected void release(long address) {
-        Files.munmap0(address, pageSize);
+        Files.munmap(address, pageSize);
+    }
+
+    public long getFd() {
+        return fd;
     }
 
     public final void of(LPSZ name, int maxPageSize, long size, int defaultPageSize) {
@@ -75,7 +79,7 @@ public class ReadWriteMemory extends VirtualMemory {
             Files.truncate(fd, offset + pageSize);
         }
 
-        address = Files.mmap0(fd, pageSize, offset, Files.MAP_RW);
+        address = Files.mmap(fd, pageSize, offset, Files.MAP_RW);
 
         if (address == -1) {
             throw new RuntimeException("Cannot mmap");

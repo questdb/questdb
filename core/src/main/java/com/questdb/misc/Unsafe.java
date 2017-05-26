@@ -36,12 +36,12 @@ public final class Unsafe {
     public static final long INT_SCALE;
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
+    static final AtomicLong MEM_USED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final long OBJ_OFFSET;
     private static final long OBJ_SCALE;
     private static final long BOOL_OFFSET;
     private static final long BOOL_SCALE;
-    private static final AtomicLong MEM_USED = new AtomicLong(0);
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
 

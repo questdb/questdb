@@ -59,7 +59,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
     } else if (flags == com_questdb_misc_Files_MAP_RW) {
         prot = PROT_READ | PROT_WRITE;
     }
-    EBADF
+
     return (jlong) mmap(NULL, (size_t) len, prot, MAP_SHARED, (int) fd, offset);
 }
 
@@ -141,6 +141,11 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
     struct stat st;
     int r = fstat((int) fd, &st);
     return r == 0 ? st.st_size : r;
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_dup
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return dup((int) fd);
 }
 
 

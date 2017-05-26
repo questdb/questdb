@@ -63,7 +63,11 @@ public class VirtualMemory implements Closeable {
         for (int i = 0, n = pages.size(); i < n; i++) {
             release(pages.getQuick(i));
         }
+        pages.clear();
         lastPageRemaining = -1;
+        appendPointer = 0;
+        pageHi = 0;
+        baseOffset = 0;
         clearHotPage();
     }
 
@@ -110,6 +114,17 @@ public class VirtualMemory implements Closeable {
             return Unsafe.getUnsafe().getLong(absolutePointer + offset);
         }
         return getLong0(offset);
+    }
+
+    public long getReadPageAddress(long offset) {
+        if (roOffsetLo < offset && offset < roOffsetHi) {
+            return absolutePointer + offset;
+        }
+        return getReadPageAddress0(offset);
+    }
+
+    public int getReadPageLen(long offset) {
+        return pageSize - pageOffset(offset);
     }
 
     public final short getShort(long offset) {
@@ -393,6 +408,10 @@ public class VirtualMemory implements Closeable {
 
     protected long getPageAddress(int page) {
         return pages.getQuick(page);
+    }
+
+    private long getReadPageAddress0(long offset) {
+        return computeHotPage(pageIndex(offset)) + pageOffset(offset);
     }
 
     private short getShort0(long offset) {
