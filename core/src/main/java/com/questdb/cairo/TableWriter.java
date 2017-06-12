@@ -1,15 +1,15 @@
 package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
-import com.questdb.factory.configuration.ColumnMetadata;
-import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.misc.Files;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
-import com.questdb.std.VirtualMemory;
 import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
@@ -17,54 +17,46 @@ import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
-import java.util.function.LongSupplier;
 
 public class TableWriter implements Closeable {
 
-    private static final int PARTITION_INDEX_HEADER_LENGTH = 8;
-    private final JournalMetadata metadata;
+    private static CharSequenceHashSet truncateIgnores = new CharSequenceHashSet();
     private final ObjList<AppendMemory> columns = new ObjList<>();
     private final CompositePath path;
     private final LongList refs = new LongList();
     private final Row row = new Row();
     private final int rootLen;
-    private final ReadWriteMemory partitionIndexMem = new ReadWriteMemory();
-    // struct {
-    //    PARTITION_INFO info[txPartitionCount]
-    // }
-    //
-    // typedef struct {
-    //    long fd;
-    //    long sizes[columnCount];
-    // } PARTITION_INFO;
-    //
-    private final VirtualMemory partitionColumnSizes = new VirtualMemory((int) Files.PAGE_SIZE);
+    private final ReadWriteMemory txMem = new ReadWriteMemory();
+    private final ReadOnlyMemory metaMem = new ReadOnlyMemory();
+    private final VirtualMemory columnSizeMem = new VirtualMemory((int) Files.PAGE_SIZE);
+    private final int columnCount;
+    private final int partitionBy;
+    private final RowFunction switchPartitionFunction = new SwitchPartitionRowFunction();
+    private final RowFunction openPartitionFunction = new OpenPartitionRowFunction();
+    private final RowFunction noPartitionFunction = new NoPartitionFunction();
+    private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private long masterRef = 0;
-    private int columnCount;
     private Runnable[] nullers;
     private int mode = 509;
-    private LongSupplier sizer;
     private long partitionLo;
     private long partitionHi;
     private int txPartitionCount = 0;
+    private long transientRowCount = 0;
+    private long fixedRowCount = 0;
+    private long txn;
+    private RowFunction rowFunction = openPartitionFunction;
 
-    public TableWriter(CharSequence location, JournalMetadata metadata) {
-        this.metadata = metadata;
-        this.columnCount = metadata.getColumnCount();
+    public TableWriter(CharSequence root, CharSequence name) {
+        this.path = new CompositePath().of(root).concat(name);
+        this.rootLen = path.length();
+        metaMem.of(path.concat("_meta").$(), (int) Files.PAGE_SIZE, 0);
+        this.columnCount = metaMem.getInt(0);
+        this.partitionBy = metaMem.getInt(4);
         this.refs.extendAndSet(columnCount, 0);
         this.nullers = new Runnable[columnCount];
-        this.path = new CompositePath().of(location).concat(metadata.getName());
-        this.rootLen = path.length();
+        path.trimTo(rootLen);
         configureColumnMemory();
-
-        if (metadata.getPartitionBy() == PartitionBy.NONE || metadata.getPartitionBy() == PartitionBy.DEFAULT) {
-            path.concat("default");
-            switchPartition();
-            path.trimTo(rootLen);
-            partitionLo = Long.MIN_VALUE;
-            partitionHi = Long.MAX_VALUE;
-            txPartitionCount = 1;
-        }
+        configureAppendPosition();
     }
 
     @Override
@@ -75,59 +67,35 @@ public class TableWriter implements Closeable {
                 m.close();
             }
         }
-        partitionIndexMem.close();
-        if (txPartitionCount > 1) {
-            long p = 0;
-            for (int i = 0; i < txPartitionCount - 1; i++) {
-                Files.close(partitionColumnSizes.getLong(p));
-                p += columnCount * 16;
-            }
-        }
-        partitionColumnSizes.close();
+        txMem.close();
+        metaMem.close();
+        columnSizeMem.close();
         path.close();
     }
 
     public void commit() {
-        if (txPartitionCount > 1) {
-            long p = 0;
-            for (int i = 0; i < txPartitionCount - 1; i++) {
-                long fd = partitionColumnSizes.getLong(p);
-                int len = columnCount * 16;
+        txMem.jumpTo(8);
+        txMem.putLong(transientRowCount);
 
-                while (len > 0) {
-                    int l = partitionColumnSizes.getReadPageLen(p);
-                    if (Files.write(fd, partitionColumnSizes.getReadPageAddress(p), l, 8) == -1) {
-                        throw new RuntimeException("commit failed");
-                    }
-                    len -= l;
-                    p += l;
-                }
-                Files.close(fd);
-            }
-            partitionColumnSizes.jumpTo(0);
+        if (txPartitionCount > 1) {
+            commitPendingPartitions();
+            txMem.putLong(fixedRowCount);
+            txMem.putLong(partitionLo);
         }
-        partitionIndexMem.jumpTo(8);
-        writeColumnSizes(partitionIndexMem);
+
+        Unsafe.getUnsafe().storeFence();
+        txMem.jumpTo(0);
+        txMem.putLong(++txn);
+        Unsafe.getUnsafe().storeFence();
         txPartitionCount = 1;
     }
 
-    public Row newRow() {
-        masterRef++;
-        return row;
+    public Row newRow(long timestamp) {
+        return rowFunction.newRow(timestamp);
     }
 
-    public Row newRow(long timestamp) {
-        masterRef++;
-        if (timestamp < partitionLo) {
-            throw new RuntimeException("out of order");
-        }
-
-        if (timestamp > partitionHi) {
-            switchPartition(timestamp);
-        }
-
-        partitionLo = timestamp;
-        return row;
+    public long size() {
+        return fixedRowCount + transientRowCount;
     }
 
     public void truncate() {
@@ -138,25 +106,97 @@ public class TableWriter implements Closeable {
                 mem.truncate();
             }
         }
+
+        if (partitionBy != PartitionBy.NONE) {
+            removePartitionDirectories();
+        }
+
+        partitionLo = Long.MIN_VALUE;
+        transientRowCount = 0;
+        fixedRowCount = 0;
+        txn = 0;
+        txPartitionCount = 1;
+
+        txMem.jumpTo(8);
+        txMem.putLong(transientRowCount);
+        txMem.putLong(fixedRowCount);
+        txMem.putLong(partitionLo);
+        Unsafe.getUnsafe().storeFence();
+        txMem.jumpTo(0);
+        txMem.putLong(txn);
+        Unsafe.getUnsafe().storeFence();
+        txPartitionCount = 1;
+        rowFunction = openPartitionFunction;
     }
 
-    private static long primaryColumnSizeOffset(int column) {
-        return column * 16 + PARTITION_INDEX_HEADER_LENGTH;
+    private void commitPendingPartitions() {
+        long p = 8;
+        for (int i = 0; i < txPartitionCount - 1; i++) {
+            long partitionTimestamp = columnSizeMem.getLong(p);
+            p += 8;
+            setStateForTimestamp(partitionTimestamp, false);
+            path.concat("_archive").$();
+
+            long fd = Files.openAppend(path);
+            try {
+                int len = 8;
+                while (len > 0) {
+                    int l = Math.min(len, columnSizeMem.getReadPageLen(p));
+                    if (Files.write(fd, columnSizeMem.getReadPageAddress(p), l, 0) == -1) {
+                        throw new RuntimeException("commit failed");
+                    }
+                    len -= l;
+                    p += l;
+                }
+            } finally {
+                Files.close(fd);
+                path.trimTo(rootLen);
+            }
+        }
+        columnSizeMem.jumpTo(0);
     }
 
-    private static long secondaryColumnSizeOffset(int column) {
-        return primaryColumnSizeOffset(column) + 8;
+    private void configureAppendPosition() {
+        path.concat("_txi").$();
+        try {
+            if (Files.exists(path)) {
+                txMem.of(path, (int) Files.PAGE_SIZE, 0, (int) Files.PAGE_SIZE);
+                path.trimTo(rootLen);
+                this.txn = txMem.getLong(0);
+                this.transientRowCount = txMem.getLong(8);
+                this.fixedRowCount = txMem.getLong(16);
+                long timestamp = txMem.getLong(24);
+                if (timestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
+                    openPartition(timestamp);
+                    if (partitionBy == PartitionBy.NONE) {
+                        rowFunction = noPartitionFunction;
+                    } else {
+                        rowFunction = switchPartitionFunction;
+                    }
+                } else {
+                    partitionLo = timestamp;
+                    rowFunction = openPartitionFunction;
+                }
+            } else {
+                throw new RuntimeException("doesnt exist");
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     private void configureColumnMemory() {
         for (int i = 0; i < columnCount; i++) {
-            ColumnMetadata m = metadata.getColumnQuick(i);
             columns.add(new AppendMemory());
-
-            if (m.type == ColumnType.BINARY || m.type == ColumnType.STRING || m.type == ColumnType.SYMBOL) {
-                columns.add(new AppendMemory());
-            } else {
-                columns.add(null);
+            switch (getColumnType(i)) {
+                case ColumnType.BINARY:
+                case ColumnType.SYMBOL:
+                case ColumnType.STRING:
+                    columns.add(new AppendMemory());
+                    break;
+                default:
+                    columns.add(null);
+                    break;
             }
         }
     }
@@ -190,6 +230,27 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private LPSZ dFile(CharSequence columnName) {
+        return path.concat(columnName).put(".d").$();
+    }
+
+    private long getColumnNameOffset() {
+        return 8 + columnCount * 4;
+    }
+
+    private int getColumnType(int columnIndex) {
+        return metaMem.getInt(8 + columnIndex * 4);
+    }
+
+    private int getMapPageSize() {
+        long pageSize = Files.PAGE_SIZE * Files.PAGE_SIZE;
+        if (pageSize < 0 || pageSize > 16 * 1024 * 1024) {
+            return (int) Files.PAGE_SIZE;
+        } else {
+            return (int) pageSize;
+        }
+    }
+
     private AppendMemory getPrimaryColumn(int column) {
         return columns.getQuick(column * 2);
     }
@@ -198,52 +259,173 @@ public class TableWriter implements Closeable {
         return columns.getQuick(column * 2 + 1);
     }
 
-    private void switchPartition(long timestamp) {
+    private LPSZ iFile(CharSequence columnName) {
+        return path.concat(columnName).put(".i").$();
+    }
+
+    private void openPartition(long timestamp) {
+        setStateForTimestamp(timestamp, true);
+
+        int plen = path.length();
+        if (Files.mkdirs(path.put(Path.SEPARATOR).$(), mode) != 0) {
+            throw new RuntimeException("cannot create def partition");
+        }
+        path.trimTo(plen);
+        assert columnCount > 0;
+
+        long nameOffset = getColumnNameOffset();
+
+        long pSz = Unsafe.malloc(8);
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                AppendMemory mem1 = getPrimaryColumn(i);
+                AppendMemory mem2 = getSecondaryColumn(i);
+
+                int type = getColumnType(i);
+
+                CharSequence name = metaMem.getStr(nameOffset);
+                nameOffset += VirtualMemory.getStorageLength(name);
+
+                switch (type) {
+                    case ColumnType.BINARY:
+                        assert mem2 != null;
+                        mem2.of(iFile(name), getMapPageSize(), transientRowCount * 8);
+                        path.trimTo(plen);
+                        mem1.of(dFile(name), getMapPageSize(), 0);
+
+                        if (transientRowCount > 0) {
+                            long varOffset = mem2.getLong((transientRowCount - 1) * 8);
+                            if (Files.read(mem1.getFd(), pSz, 8, varOffset) == -1) {
+                                throw new RuntimeException("cannot read len");
+                            }
+                            mem1.jumpTo(varOffset + Unsafe.getUnsafe().getLong(pSz));
+                        }
+                        break;
+                    case ColumnType.STRING:
+                    case ColumnType.SYMBOL:
+                        assert mem2 != null;
+                        mem2.of(iFile(name), getMapPageSize(), transientRowCount * 8);
+                        path.trimTo(plen);
+                        mem1.of(dFile(name), getMapPageSize());
+                        if (transientRowCount > 0) {
+                            Files.read(mem2.getFd(), pSz, 8, (transientRowCount - 1) * 8);
+                            long offset = Unsafe.getUnsafe().getLong(pSz);
+                            if (Files.read(mem1.getFd(), pSz, 4, offset) == -1) {
+                                throw new RuntimeException("cannot read len");
+                            }
+                            mem1.setSize(offset + Unsafe.getUnsafe().getInt(pSz));
+                        }
+                        break;
+                    default:
+                        mem1.of(path.concat(name).put(".d").$(), getMapPageSize(), transientRowCount * ColumnType.sizeOf(type));
+                        break;
+                }
+                // set nullers
+                configureNuller(i, type, mem1, mem2);
+            }
+        } finally {
+            Unsafe.free(pSz, 8);
+            path.trimTo(rootLen);
+        }
+        txPartitionCount = 1;
+    }
+
+    private void removePartitionDirectories() {
+        for (int i = 0; i < columnCount; i++) {
+            getPrimaryColumn(i).close();
+            AppendMemory mem = getSecondaryColumn(i);
+            if (mem != null) {
+                mem.close();
+            }
+        }
+
+        long p = Files.findFirst(path.$());
+        if (p > 0) {
+            try {
+                do {
+                    long pName = Files.findName(p);
+                    path.trimTo(rootLen);
+                    path.concat(pName).$();
+                    nativeLPSZ.of(pName);
+                    if (!truncateIgnores.contains(nativeLPSZ) && !Files.rmdir(path)) {
+                        throw new RuntimeException("cannot remove");
+                    }
+                } while (Files.findNext(p));
+            } finally {
+                Files.findClose(p);
+            }
+        }
+        path.trimTo(rootLen);
+    }
+
+    private boolean setStateForTimestamp(long timestamp, boolean updatePartitionRange) {
         int y, m, d;
         boolean leap;
-        boolean doSwitch = true;
-        y = Dates.getYear(timestamp);
-        leap = Dates.isLeapYear(y);
         path.put(Path.SEPARATOR);
-
-        switch (metadata.getPartitionBy()) {
+        switch (partitionBy) {
             case PartitionBy.DAY:
+                y = Dates.getYear(timestamp);
+                leap = Dates.isLeapYear(y);
                 m = Dates.getMonthOfYear(timestamp, y, leap);
                 d = Dates.getDayOfMonth(timestamp, y, m, leap);
-                partitionLo = Dates.yearMillis(y, leap);
-                partitionLo += Dates.monthOfYearMillis(m, leap);
-                partitionLo += (d - 1) * Dates.DAY_MILLIS;
-                partitionHi = partitionLo + 24 * Dates.HOUR_MILLIS;
                 DateFormatUtils.append000(path, y);
                 path.put('-');
                 DateFormatUtils.append0(path, m);
                 path.put('-');
                 DateFormatUtils.append0(path, d);
+
+                if (updatePartitionRange) {
+                    partitionLo = Dates.yearMillis(y, leap);
+                    partitionLo += Dates.monthOfYearMillis(m, leap);
+                    partitionLo += (d - 1) * Dates.DAY_MILLIS;
+                    partitionHi = partitionLo + 24 * Dates.HOUR_MILLIS;
+                }
                 break;
             case PartitionBy.MONTH:
+                y = Dates.getYear(timestamp);
+                leap = Dates.isLeapYear(y);
                 m = Dates.getMonthOfYear(timestamp, y, leap);
-                partitionLo = Dates.yearMillis(y, leap);
-                partitionLo += Dates.monthOfYearMillis(m, leap);
-                partitionHi = partitionLo + Dates.getDaysPerMonth(m, leap) * 24L * Dates.HOUR_MILLIS;
                 DateFormatUtils.append000(path, y);
                 path.put('-');
                 DateFormatUtils.append0(path, m);
+
+                if (updatePartitionRange) {
+                    partitionLo = Dates.yearMillis(y, leap);
+                    partitionLo += Dates.monthOfYearMillis(m, leap);
+                    partitionHi = partitionLo + Dates.getDaysPerMonth(m, leap) * 24L * Dates.HOUR_MILLIS;
+                }
                 break;
             case PartitionBy.YEAR:
-                partitionLo = Dates.yearMillis(y, leap);
-                partitionHi = Dates.addYear(partitionLo, 1);
+                y = Dates.getYear(timestamp);
+                leap = Dates.isLeapYear(y);
                 DateFormatUtils.append000(path, y);
+                if (updatePartitionRange) {
+                    partitionLo = Dates.yearMillis(y, leap);
+                    partitionHi = Dates.addYear(partitionLo, 1);
+                }
                 break;
             default:
-                doSwitch = false;
-                break;
+                path.put("default");
+                partitionLo = Long.MIN_VALUE;
+                partitionHi = Long.MAX_VALUE;
+                return false;
         }
+        return true;
+    }
 
-        if (doSwitch) {
+    private void switchPartition(long timestamp) {
+        // we need to store reference on partition so that archive
+        // file can be created in appropriate directory
+        // for simplicity use partitionLo, which can be
+        // translated to directory name when needed
+        long partitionLo = this.partitionLo;
+        if (setStateForTimestamp(timestamp, true)) {
             if (txPartitionCount++ > 0) {
-                partitionColumnSizes.putLong(Files.dup(partitionIndexMem.getFd()));
-                writeColumnSizes(partitionColumnSizes);
+                columnSizeMem.putLong(transientRowCount);
+                columnSizeMem.putLong(partitionLo);
             }
+            fixedRowCount += transientRowCount;
+            transientRowCount = 0;
             switchPartition();
             path.trimTo(rootLen);
         }
@@ -252,75 +434,67 @@ public class TableWriter implements Closeable {
     private void switchPartition() {
         int partitionPathLen = path.length();
         if (Files.mkdirs(path.put(Path.SEPARATOR).$(), mode) != 0) {
-            throw new RuntimeException("cannot create def partition");
+            throw new RuntimeException("cannot create partition");
         }
-        path.trimTo(partitionPathLen);
-        path.concat("_index.qdb").$();
-        switchPartitionIndex();
 
         assert columnCount > 0;
-
+        long nameOffset = getColumnNameOffset();
         for (int i = 0; i < columnCount; i++) {
-            ColumnMetadata m = metadata.getColumnQuick(i);
             AppendMemory mem1 = getPrimaryColumn(i);
             AppendMemory mem2 = getSecondaryColumn(i);
 
+            CharSequence name = metaMem.getStr(nameOffset);
+            nameOffset += VirtualMemory.getStorageLength(name);
+
             path.trimTo(partitionPathLen);
-            mem1.of(path.concat(m.name).put(".d").$(), 4096 * 4096, partitionIndexMem.getLong(primaryColumnSizeOffset(i)));
+            mem1.of(dFile(name), getMapPageSize(), 0);
 
             if (mem2 != null) {
                 path.trimTo(partitionPathLen);
-                mem2.of(path.concat(m.name).put(".i").$(), 4096 * 4096, partitionIndexMem.getLong(secondaryColumnSizeOffset(i)));
+                mem2.of(iFile(name), getMapPageSize(), 0);
             }
-            // set nullers
-            configureNuller(i, m.type, mem1, mem2);
         }
     }
 
-    private void switchPartitionIndex() {
-        boolean exists = Files.exists(path);
-        partitionIndexMem.of(path, (int) Files.PAGE_SIZE, 0L, (int) Files.PAGE_SIZE);
-        if (exists) {
-            if (partitionIndexMem.getInt(0) != 0xdeadbeef) {
-                partitionIndexMem.close();
-                throw new RuntimeException("bad header");
+    /**
+     *
+     */
+    @FunctionalInterface
+    public interface RowFunction {
+        Row newRow(long timestamp);
+    }
+
+    private class OpenPartitionRowFunction implements RowFunction {
+        @Override
+        public Row newRow(long timestamp) {
+            if (partitionLo == Long.MIN_VALUE) {
+                openPartition(timestamp);
             }
-
-            if (partitionIndexMem.getInt(4) != columnCount) {
-                partitionIndexMem.close();
-                throw new RuntimeException("Column count mismatch");
-            }
-        } else {
-            partitionIndexMem.putInt(0xdeadbeef);
-            partitionIndexMem.putInt(columnCount);
-            // reserve space for column sizes and their initial row counts
-            // note: there are two files for string and binary columns, so we keep two 64bit values for each logical column in the table.
-            // note: to save disk space initial row count may be non-zero if column added later on
-
-            // struct {
-            //      int tag;
-            //      int columnCount;
-            //      COLUMN_SIZE sizes[columnCount];
-            //      long firstRows[columnCount];
-            // }
-            // typedef struct {
-            //      long file1Size;
-            //      long file2Size;
-            // } COLUMN_SIZE
-
-            partitionIndexMem.skip(columnCount * 8 * 3);
+            return (rowFunction = switchPartitionFunction).newRow(timestamp);
         }
     }
 
-    private void writeColumnSizes(VirtualMemory mem) {
-        for (int i = 0; i < columnCount; i++) {
-            mem.putLong(getPrimaryColumn(i).size());
-            VirtualMemory m = getSecondaryColumn(i);
-            if (m == null) {
-                mem.skip(8);
-            } else {
-                mem.putLong(m.size());
+    private class NoPartitionFunction implements RowFunction {
+        @Override
+        public Row newRow(long timestamp) {
+            masterRef++;
+            return row;
+        }
+    }
+
+    private class SwitchPartitionRowFunction implements RowFunction {
+        @Override
+        public Row newRow(long timestamp) {
+            masterRef++;
+            if (timestamp < partitionLo) {
+                throw new RuntimeException("out of order");
             }
+
+            if (timestamp > partitionHi) {
+                switchPartition(timestamp);
+            }
+            partitionLo = timestamp;
+            return row;
         }
     }
 
@@ -331,6 +505,7 @@ public class TableWriter implements Closeable {
                     Unsafe.arrayGet(nullers, i).run();
                 }
             }
+            transientRowCount++;
         }
 
         public void putDate(int index, long value) {
@@ -357,5 +532,12 @@ public class TableWriter implements Closeable {
             getSecondaryColumn(index).putLong(r);
             refs.setQuick(index, masterRef);
         }
+    }
+
+    static {
+        truncateIgnores.add("..");
+        truncateIgnores.add(".");
+        truncateIgnores.add("_meta");
+        truncateIgnores.add("_txi");
     }
 }

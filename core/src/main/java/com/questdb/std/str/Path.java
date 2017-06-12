@@ -47,7 +47,7 @@ public final class Path extends AbstractCharSequence implements Closeable, LPSZ 
     public static void copy(CharSequence str, int from, int len, long addr) {
         for (int i = 0; i < len; i++) {
             char c = str.charAt(i + from);
-            Unsafe.getUnsafe().putByte(addr + i, (byte) (Os.type == Os.WINDOWS && c == '/' ? '\\' : c));
+            Unsafe.getUnsafe().putByte(addr + i, (byte) (c == '/' && Os.type == Os.WINDOWS ? '\\' : c));
         }
     }
 

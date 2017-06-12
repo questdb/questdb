@@ -185,6 +185,12 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_remove
     return (jboolean) (remove((const char *) lpsz) == 0);
 }
 
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rmdir
+        (JNIEnv *e, jclass cl, jlong lpsz) {
+    EBADF
+    return (jboolean) (rmdir((const char *) lpsz) == 0);
+}
+
 typedef struct {
     DIR *dir;
     struct dirent *entry;

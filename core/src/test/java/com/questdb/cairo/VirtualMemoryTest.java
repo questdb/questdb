@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.std;
+package com.questdb.cairo;
 
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Rnd;
@@ -183,7 +183,6 @@ public class VirtualMemoryTest {
 
             mem.jumpTo(1);
             for (int i = n; i > 0; i--) {
-//                mem.jumpTo((n - i) * 8 + 1);
                 mem.putLong(n - i);
                 Assert.assertEquals(7993, mem.size());
             }

@@ -47,6 +47,14 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close
 
 /*
  * Class:     com_questdb_misc_Files
+ * Method:    dup
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_dup
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
  * Method:    findClose
  * Signature: (J)V
  */
@@ -95,30 +103,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
 
 /*
  * Class:     com_questdb_misc_Files
- * Method:    dup
- * Signature: (J)J
- */
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_dup
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_questdb_misc_Files
- * Method:    mmap0
- * Signature: (JJJI)J
- */
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
-        (JNIEnv *, jclass, jlong, jlong, jlong, jint);
-
-/*
- * Class:     com_questdb_misc_Files
- * Method:    munmap0
- * Signature: (JJ)I
- */
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_munmap0
-        (JNIEnv *, jclass, jlong, jlong);
-
-/*
- * Class:     com_questdb_misc_Files
  * Method:    read
  * Signature: (JJIJ)J
  */
@@ -151,6 +135,22 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
 
 /*
  * Class:     com_questdb_misc_Files
+ * Method:    munmap0
+ * Signature: (JJ)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_munmap0
+        (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    mmap0
+ * Signature: (JJJI)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
+        (JNIEnv *, jclass, jlong, jlong, jlong, jint);
+
+/*
+ * Class:     com_questdb_misc_Files
  * Method:    getPageSize
  * Signature: ()J
  */
@@ -163,6 +163,14 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getPageSize
  * Signature: (J)Z
  */
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_remove
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    rmdir
+ * Signature: (J)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rmdir
         (JNIEnv *, jclass, jlong);
 
 /*

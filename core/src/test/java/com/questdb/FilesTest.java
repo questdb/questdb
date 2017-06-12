@@ -106,6 +106,19 @@ public class FilesTest {
     }
 
     @Test
+    public void testDeleteDir2() throws Exception {
+        File r = temporaryFolder.newFolder("to_delete");
+        Assert.assertTrue(new File(r, "a/b/c").mkdirs());
+        Assert.assertTrue(new File(r, "d/e/f").mkdirs());
+        touch(new File(r, "d/1.txt"));
+        touch(new File(r, "a/b/2.txt"));
+        try (CompositePath path = new CompositePath().of(r.getAbsolutePath()).$()) {
+            Assert.assertTrue(Files.rmdir(path));
+            Assert.assertFalse(r.exists());
+        }
+    }
+
+    @Test
     public void testLastModified() throws IOException, NumericException {
         Path path = new Path();
         File f = temporaryFolder.newFile();

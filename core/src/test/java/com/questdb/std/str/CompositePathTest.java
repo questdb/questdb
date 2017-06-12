@@ -50,6 +50,17 @@ public class CompositePathTest {
     }
 
     @Test
+    public void testLpszConcat() throws Exception {
+        try (CompositePath p1 = new CompositePath()) {
+            p1.of("abc").concat("123").$();
+            try (CompositePath p = new CompositePath()) {
+                p.of("/xyz/").concat(p1.address()).$();
+                Assert.assertEquals(separator + "xyz" + separator + "abc" + separator + "123", p.toString());
+            }
+        }
+    }
+
+    @Test
     public void testOverflow() throws Exception {
         StringBuilder b = new StringBuilder();
         for (int i = 0; i < 256; i++) {

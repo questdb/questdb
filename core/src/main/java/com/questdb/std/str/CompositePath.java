@@ -24,6 +24,7 @@
 package com.questdb.std.str;
 
 import com.questdb.misc.Chars;
+import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
@@ -78,6 +79,34 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         }
 
         copy(str, l);
+        return this;
+    }
+
+    public CompositePath concat(long lpsz) {
+
+        if (len > 0 && !trailingSlash) {
+            Path.copyPathSeparator(wptr);
+            wptr++;
+            len++;
+        }
+
+        long p = lpsz;
+        while (true) {
+            if (len + OVERHEAD >= capacity) {
+                extend(len * 2 + OVERHEAD);
+            }
+
+            byte b = Unsafe.getUnsafe().getByte(p++);
+            if (b == 0) {
+                this.trailingSlash = p - lpsz > 2 && ((Os.type == Os.WINDOWS && Unsafe.getUnsafe().getByte(p - 2) == '\\') || Unsafe.getUnsafe().getByte(p - 2) == '/');
+                break;
+            }
+
+            Unsafe.getUnsafe().putByte(wptr, (byte) (b == '/' && Os.type == Os.WINDOWS ? '\\' : b));
+            wptr++;
+            len++;
+        }
+
         return this;
     }
 
@@ -137,10 +166,20 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         }
     }
 
+    public CompositePath of(long lpsz) {
+        if (lpsz != ptr) {
+            this.wptr = ptr;
+            this.len = 0;
+            this.trailingSlash = false;
+            return concat(lpsz);
+        }
+        return this;
+    }
+
     @Override
     @NotNull
     public String toString() {
-        return AbstractCharSequence.getString(this);
+        return ptr == 0 ? "" : AbstractCharSequence.getString(this);
     }
 
     public void trimBy(int count) {

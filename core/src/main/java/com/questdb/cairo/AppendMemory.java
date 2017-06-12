@@ -1,10 +1,12 @@
 package com.questdb.cairo;
 
 import com.questdb.misc.Files;
-import com.questdb.std.VirtualMemory;
+import com.questdb.std.ObjectFactory;
 import com.questdb.std.str.LPSZ;
 
 public class AppendMemory extends VirtualMemory {
+    public static final ObjectFactory<AppendMemory> FACTORY = AppendMemory::new;
+
     private long fd = -1;
     private long pageAddress = 0;
     private int page;
@@ -18,13 +20,14 @@ public class AppendMemory extends VirtualMemory {
 
     @Override
     public void close() {
+        long sz = size();
         super.close();
         if (pageAddress != 0) {
             Files.munmap(pageAddress, pageSize);
             pageAddress = 0;
         }
         if (fd != -1) {
-            Files.truncate(fd, size());
+            Files.truncate(fd, sz);
             Files.close(fd);
             fd = -1;
         }
@@ -61,13 +64,30 @@ public class AppendMemory extends VirtualMemory {
         Files.munmap(address, pageSize);
     }
 
+    public long getFd() {
+        return fd;
+    }
+
     public final void of(LPSZ name, int pageSize, long size) {
+        of(name, pageSize);
+        setSize(size);
+    }
+
+    public final void of(LPSZ name, int pageSize) {
         close();
         setPageSize(pageSize);
         fd = Files.openRW(name);
         if (fd == -1) {
             throw new RuntimeException("cannot open file");
         }
+    }
+
+    public final void setSize(long size) {
+        if (pageAddress != 0) {
+            Files.munmap(pageAddress, pageSize);
+            pageAddress = 0;
+        }
+
         page = pageIndex(size);
         updateLimits(page + 1, pageAddress = mapPage(page));
         skip((size - pageOffset(page)));

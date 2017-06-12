@@ -21,11 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.std;
+package com.questdb.cairo;
 
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.LongList;
 import com.questdb.std.str.AbstractCharSequence;
 import sun.nio.ch.DirectBuffer;
 
@@ -54,6 +55,14 @@ public class VirtualMemory implements Closeable {
     protected VirtualMemory() {
     }
 
+    public static int getStorageLength(CharSequence s) {
+        if (s == null) {
+            return 4;
+        }
+
+        return 4 + s.length() * 2;
+    }
+
     public void clearHotPage() {
         roOffsetLo = roOffsetHi = 0;
     }
@@ -69,6 +78,10 @@ public class VirtualMemory implements Closeable {
         pageHi = 0;
         baseOffset = 0;
         clearHotPage();
+    }
+
+    public final long getAppendOffset() {
+        return baseOffset + appendPointer;
     }
 
     public final ByteSequenceView getBin(long offset) {
@@ -153,7 +166,7 @@ public class VirtualMemory implements Closeable {
      */
     public void jumpTo(long offset) {
         storeSize();
-        final long p = offset - baseOffset;
+        final long p = offset + baseOffset - pageSize;
         if (p >= pageHi - pageSize && p < pageHi) {
             appendPointer = absolutePointer + offset;
         } else {
@@ -172,7 +185,7 @@ public class VirtualMemory implements Closeable {
     }
 
     public final long putBin(long from, long len) {
-        final long offset = baseOffset + appendPointer;
+        final long offset = getAppendOffset();
         putLong(len > 0 ? len : -1);
         if (len < 1) {
             return offset;
@@ -232,13 +245,13 @@ public class VirtualMemory implements Closeable {
     }
 
     public final long putNullBin() {
-        final long offset = baseOffset + appendPointer;
+        final long offset = getAppendOffset();
         putLong(-1);
         return offset;
     }
 
     public final long putNullStr() {
-        final long offset = baseOffset + appendPointer;
+        final long offset = getAppendOffset();
         putInt(-1);
         return offset;
     }
@@ -253,7 +266,7 @@ public class VirtualMemory implements Closeable {
     }
 
     public final long putStr(CharSequence value) {
-        final long offset = baseOffset + appendPointer;
+        final long offset = getAppendOffset();
         if (value == null) {
             putInt(-1);
             return offset;
@@ -448,7 +461,7 @@ public class VirtualMemory implements Closeable {
     }
 
     private void nextPage() {
-        int page = pageIndex(baseOffset + appendPointer) + 1;
+        int page = pageIndex(getAppendOffset()) + 1;
         if (page < getMaxPage()) {
             storeSize();
             updateLimits(page, getPageAddress(page));
@@ -472,7 +485,7 @@ public class VirtualMemory implements Closeable {
     }
 
     private long putBin0(ByteBuffer buf) {
-        final long offset = baseOffset + appendPointer;
+        final long offset = getAppendOffset();
 
         if (buf == null) {
             putLong(-1);

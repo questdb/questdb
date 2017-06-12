@@ -25,6 +25,7 @@ package com.questdb.misc;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
+import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 
@@ -50,6 +51,8 @@ public final class Files {
 
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
+
+    private static final ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath::new);
 
     private Files() {
     } // Prevent construction.
@@ -244,6 +247,51 @@ public final class Files {
         return rename(oldName.address(), newName.address());
     }
 
+    public static boolean rmdir(CompositePath path) {
+        long p = findFirst(path.address());
+        int len = path.length();
+
+        if (p > 0) {
+            try {
+                do {
+                    long lpszName = findName(p);
+                    path.trimTo(len);
+                    path.concat(lpszName).$();
+                    switch (findType(p)) {
+                        case DT_DIR:
+                            if (strcmp(lpszName, "..") || strcmp(lpszName, ".")) {
+                                continue;
+                            }
+
+                            if (!rmdir(path)) {
+                                return false;
+                            }
+
+//                            if (!rmdir(path.address())) {
+//                                return false;
+//                            }
+                            break;
+                        default:
+                            if (!remove(path.address())) {
+                                return false;
+                            }
+                            break;
+
+                    }
+                } while (findNext(p));
+            } finally {
+                findClose(p);
+            }
+            path.trimTo(len);
+            path.$();
+
+            return rmdir(path.address());
+
+        }
+
+        return false;
+    }
+
     public native static long sequentialRead(long fd, long address, int len);
 
     public static boolean setLastModified(LPSZ lpsz, long millis) {
@@ -274,6 +322,17 @@ public final class Files {
         }
     }
 
+    private static boolean strcmp(long lpsz, CharSequence s) {
+        int len = s.length();
+        for (int i = 0; i < len; i++) {
+            byte b = Unsafe.getUnsafe().getByte(lpsz + i);
+            if (b == 0 || b != (byte) s.charAt(i)) {
+                return false;
+            }
+        }
+        return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
+    }
+
     private static native int munmap0(long address, long len);
 
     private static native long mmap0(long fd, long len, long offset, int flags);
@@ -281,6 +340,8 @@ public final class Files {
     private native static long getPageSize();
 
     private native static boolean remove(long lpsz);
+
+    private native static boolean rmdir(long lpsz);
 
     private native static long getLastModified(long lpszName);
 

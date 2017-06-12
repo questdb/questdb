@@ -1,7 +1,6 @@
 package com.questdb.cairo;
 
 import com.questdb.misc.Files;
-import com.questdb.std.VirtualMemory;
 import com.questdb.std.str.LPSZ;
 
 public class ReadWriteMemory extends VirtualMemory {
@@ -16,9 +15,10 @@ public class ReadWriteMemory extends VirtualMemory {
 
     @Override
     public void close() {
+        long size = size();
         super.close();
         if (fd != -1) {
-            Files.truncate(fd, size());
+            Files.truncate(fd, size);
             Files.close(fd);
             fd = -1;
         }
@@ -37,7 +37,7 @@ public class ReadWriteMemory extends VirtualMemory {
     @Override
     protected long getPageAddress(int page) {
         long address = pages.getQuick(page);
-        if (address != 0) {
+        if (address > 0) {
             return address;
         }
         return mapPage(page);
