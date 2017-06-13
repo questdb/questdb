@@ -2,6 +2,7 @@ package com.questdb.cairo;
 
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.misc.Files;
+import com.questdb.misc.Unsafe;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.Path;
@@ -37,17 +38,14 @@ public class TableUtils {
 
             path.trimTo(rootLen);
             mem.of(path.concat("_txi").$(), (int) Files.PAGE_SIZE, 0);
-
-
-            // txn
+            // txn to let readers know table is being reset
             mem.putLong(0);
-            // transient count
+            // transient row count
             mem.putLong(0);
-            // fixed count
+            // fixed row count
             mem.putLong(0);
-            // last partition timestamp - identifier
-            mem.putLong(Long.MIN_VALUE);
-
+            // partition low
+            mem.putLong(0);
         }
     }
 
@@ -73,5 +71,21 @@ public class TableUtils {
 
         tlPath.get().close();
         tlPath.remove();
+    }
+
+    static void resetTxn(VirtualMemory txMem) {
+        // txn to let readers know table is being reset
+        txMem.putLong(-1);
+        // transient row count
+        txMem.putLong(0);
+        // fixed row count
+        txMem.putLong(0);
+        // partition low
+        txMem.putLong(0);
+        Unsafe.getUnsafe().storeFence();
+        txMem.jumpTo(0);
+        // txn
+        txMem.putLong(0);
+        Unsafe.getUnsafe().storeFence();
     }
 }

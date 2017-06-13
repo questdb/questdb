@@ -15,6 +15,7 @@ import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -99,6 +100,11 @@ public class TableWriter implements Closeable {
     }
 
     public void truncate() {
+
+        if (size() == 0) {
+            return;
+        }
+
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
             AppendMemory mem = getSecondaryColumn(i);
@@ -109,6 +115,7 @@ public class TableWriter implements Closeable {
 
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirectories();
+            rowFunction = openPartitionFunction;
         }
 
         partitionLo = Long.MIN_VALUE;
@@ -117,16 +124,9 @@ public class TableWriter implements Closeable {
         txn = 0;
         txPartitionCount = 1;
 
-        txMem.jumpTo(8);
-        txMem.putLong(transientRowCount);
-        txMem.putLong(fixedRowCount);
-        txMem.putLong(partitionLo);
-        Unsafe.getUnsafe().storeFence();
         txMem.jumpTo(0);
-        txMem.putLong(txn);
-        Unsafe.getUnsafe().storeFence();
+        TableUtils.resetTxn(txMem);
         txPartitionCount = 1;
-        rowFunction = openPartitionFunction;
     }
 
     private void commitPendingPartitions() {
@@ -478,14 +478,17 @@ public class TableWriter implements Closeable {
         @Override
         public Row newRow(long timestamp) {
             masterRef++;
+            if (timestamp < partitionLo) {
+                throw new RuntimeException("outof order");
+            }
+            partitionLo = timestamp;
             return row;
         }
     }
 
     private class SwitchPartitionRowFunction implements RowFunction {
-        @Override
-        public Row newRow(long timestamp) {
-            masterRef++;
+        @NotNull
+        private Row newRow0(long timestamp) {
             if (timestamp < partitionLo) {
                 throw new RuntimeException("out of order");
             }
@@ -496,6 +499,18 @@ public class TableWriter implements Closeable {
             partitionLo = timestamp;
             return row;
         }
+
+        @Override
+        public Row newRow(long timestamp) {
+            masterRef++;
+            if (timestamp < partitionHi && timestamp >= partitionLo) {
+                partitionLo = timestamp;
+                return row;
+            }
+            return newRow0(timestamp);
+        }
+
+
     }
 
     public class Row {
