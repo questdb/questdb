@@ -203,8 +203,9 @@ public final class Files {
     }
 
     public static void munmap(long address, long len) {
-        Unsafe.MEM_USED.addAndGet(-len);
-        munmap0(address, len);
+        if (address != 0 && munmap0(address, len) != -1) {
+            Unsafe.MEM_USED.addAndGet(-len);
+        }
     }
 
     public static long openAppend(LPSZ lpsz) {

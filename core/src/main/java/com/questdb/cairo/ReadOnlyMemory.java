@@ -24,8 +24,8 @@ public class ReadOnlyMemory extends VirtualMemory {
 
     @Override
     protected long getPageAddress(int page) {
-        long address = pages.getQuick(page);
-        if (address > 0) {
+        long address = super.getPageAddress(page);
+        if (address != 0) {
             return address;
         }
         return mapPage(page);
@@ -62,7 +62,7 @@ public class ReadOnlyMemory extends VirtualMemory {
         if (address == -1) {
             throw new RuntimeException("Cannot mmap");
         }
-        pages.extendAndSet(page, address);
+        cachePageAddress(page, address);
         return address;
     }
 }

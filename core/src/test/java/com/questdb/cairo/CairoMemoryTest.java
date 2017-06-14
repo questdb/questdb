@@ -1,5 +1,6 @@
 package com.questdb.cairo;
 
+import com.questdb.misc.Files;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.str.Path;
 import org.junit.Assert;
@@ -33,6 +34,22 @@ public class CairoMemoryTest {
     }
 
     @Test
+    public void testAppendMemoryJump() throws Exception {
+        long used = Unsafe.getMemUsed();
+        try (Path path = new Path(temp.newFile().getAbsolutePath())) {
+            try (AppendMemory mem = new AppendMemory(path, (int) (Files.PAGE_SIZE), 0)) {
+                for (int i = 0; i < 100; i++) {
+                    mem.putLong(i);
+                    mem.skip(2 * Files.PAGE_SIZE);
+                }
+                mem.jumpTo(0);
+                Assert.assertEquals((8 + 2 * Files.PAGE_SIZE) * 100, mem.size());
+            }
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+    }
+
+    @Test
     public void testAppendMemoryReuse() throws Exception {
         long used = Unsafe.getMemUsed();
         try (AppendMemory mem = new AppendMemory()) {
@@ -51,6 +68,22 @@ public class CairoMemoryTest {
                         }
                     }
                 }
+            }
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testReadWriteMemoryJump() throws Exception {
+        long used = Unsafe.getMemUsed();
+        try (Path path = new Path(temp.newFile().getAbsolutePath())) {
+            try (ReadWriteMemory mem = new ReadWriteMemory(path, (int) (Files.PAGE_SIZE), 0, (int) Files.PAGE_SIZE)) {
+                for (int i = 0; i < 100; i++) {
+                    mem.putLong(i);
+                    mem.skip(2 * Files.PAGE_SIZE);
+                }
+                mem.jumpTo(0);
+                Assert.assertEquals((8 + 2 * Files.PAGE_SIZE) * 100, mem.size());
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());

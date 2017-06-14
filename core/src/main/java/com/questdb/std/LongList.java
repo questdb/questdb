@@ -32,7 +32,7 @@ import java.util.Arrays;
 
 public class LongList implements Mutable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final long noEntryValue = -1;
+    private static final long DEFAULT_NO_ENTRY_VALUE = -1;
     /**
      * The maximum number of runs in merge sort.
      */
@@ -51,6 +51,7 @@ public class LongList implements Mutable {
      * constant, insertion sort is used in preference to Quicksort.
      */
     private static final int INSERTION_SORT_THRESHOLD = 47;
+    private final long noEntryValue;
     private long[] buffer;
     private int pos = 0;
 
@@ -61,13 +62,19 @@ public class LongList implements Mutable {
 
     @SuppressWarnings("unchecked")
     public LongList(int capacity) {
+        this(capacity, DEFAULT_NO_ENTRY_VALUE);
+    }
+
+    public LongList(int capacity, long noEntryValue) {
         this.buffer = new long[capacity < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : capacity];
+        this.noEntryValue = noEntryValue;
     }
 
     public LongList(LongList other) {
         this.buffer = new long[other.size() < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : other.size()];
         setPos(other.size());
         System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
+        this.noEntryValue = other.noEntryValue;
     }
 
     public void add(long value) {

@@ -34,7 +34,7 @@ import java.io.Closeable;
 import java.nio.ByteBuffer;
 
 public class VirtualMemory implements Closeable {
-    protected final LongList pages = new LongList();
+    protected final LongList pages = new LongList(32, 0);
     private final CharSequenceView csview = new CharSequenceView();
     private final ByteSequenceView bsview = new ByteSequenceView();
     protected int pageSize;
@@ -46,7 +46,6 @@ public class VirtualMemory implements Closeable {
     private long roOffsetLo = 0;
     private long roOffsetHi = 0;
     private long absolutePointer;
-    private long lastPageRemaining = -1;
 
     public VirtualMemory(int pageSize) {
         setPageSize(pageSize);
@@ -73,7 +72,6 @@ public class VirtualMemory implements Closeable {
             release(pages.getQuick(i));
         }
         pages.clear();
-        lastPageRemaining = -1;
         appendPointer = 0;
         pageHi = 0;
         baseOffset = 0;
@@ -165,7 +163,6 @@ public class VirtualMemory implements Closeable {
      * @param offset position from 0 in virtual memory.
      */
     public void jumpTo(long offset) {
-        storeSize();
         final long p = offset + baseOffset - pageSize;
         if (p >= pageHi - pageSize && p < pageHi) {
             appendPointer = absolutePointer + offset;
@@ -203,7 +200,7 @@ public class VirtualMemory implements Closeable {
 
     public void putByte(byte b) {
         if (pageHi == appendPointer) {
-            nextPage();
+            pageAt(getAppendOffset() + 1);
         }
         Unsafe.getUnsafe().putByte(appendPointer++, b);
     }
@@ -285,10 +282,6 @@ public class VirtualMemory implements Closeable {
         return offset;
     }
 
-    public long size() {
-        return pageOffset(getMaxPage()) - (lastPageRemaining == -1 ? (pageHi - appendPointer) : lastPageRemaining);
-    }
-
     /**
      * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
      * no memory write takes place.
@@ -296,6 +289,7 @@ public class VirtualMemory implements Closeable {
      * @param bytes number of bytes to skip
      */
     public void skip(long bytes) {
+        assert bytes > 0;
         if (pageHi - appendPointer > bytes) {
             appendPointer += bytes;
         } else {
@@ -310,14 +304,17 @@ public class VirtualMemory implements Closeable {
         }
     }
 
-    protected void addPage(long address) {
-        pages.add(address);
-    }
-
-    protected long allocateNextPage() {
+    protected long allocateNextPage(int page) {
         return Unsafe.getUnsafe().allocateMemory(pageSize);
     }
 
+    protected void cachePageAddress(int index, long address) {
+        pages.extendAndSet(index, address);
+    }
+
+    /**
+     * Computes boundaries of read-only memory page to enable fast-path check of offsets
+     */
     private long computeHotPage(int page) {
         roOffsetLo = pageOffset(page) - 1;
         roOffsetHi = roOffsetLo + pageSize + 1;
@@ -415,10 +412,9 @@ public class VirtualMemory implements Closeable {
         return value;
     }
 
-    protected int getMaxPage() {
-        return pages.size();
-    }
-
+    /**
+     * Provides address of page for read operations. Memory writes never call this.
+     */
     protected long getPageAddress(int page) {
         return pages.getQuick(page);
     }
@@ -456,20 +452,28 @@ public class VirtualMemory implements Closeable {
 
     private void jumpTo0(long offset) {
         final int page = pageIndex(offset);
-        updateLimits(page, computeHotPage(page));
+        updateLimits(page, mapWritePage(page));
         appendPointer += pageOffset(offset);
     }
 
-    private void nextPage() {
-        int page = pageIndex(getAppendOffset()) + 1;
-        if (page < getMaxPage()) {
-            storeSize();
-            updateLimits(page, getPageAddress(page));
+    protected long mapWritePage(int page) {
+        long address;
+        if (page < pages.size()) {
+            address = pages.getQuick(page);
+            if (address == -1) {
+                address = allocateNextPage(page);
+                cachePageAddress(page, address);
+            }
         } else {
-            lastPageRemaining = -1;
-            updateLimits(getMaxPage() + 1, allocateNextPage());
-            addPage(appendPointer);
+            address = allocateNextPage(page);
+            cachePageAddress(page, address);
         }
+        return address;
+    }
+
+    private void pageAt(long offset) {
+        int page = pageIndex(offset);
+        updateLimits(page, mapWritePage(page));
     }
 
     protected final int pageIndex(long offset) {
@@ -518,7 +522,7 @@ public class VirtualMemory implements Closeable {
             }
 
             Unsafe.getUnsafe().copyMemory(start, appendPointer, half);
-            nextPage();
+            pageAt(getAppendOffset() + half);  // +1?
             len -= half;
             start += half;
         } while (true);
@@ -536,7 +540,7 @@ public class VirtualMemory implements Closeable {
             }
 
             copyBufBytes(buf, start, half);
-            nextPage();
+            pageAt(getAppendOffset() + half); // +1?
             len -= half;
             start += half;
         } while (true);
@@ -575,7 +579,7 @@ public class VirtualMemory implements Closeable {
 
     private void putSplitChar(char c) {
         Unsafe.getUnsafe().putByte(pageHi - 1, (byte) (c >> 8));
-        nextPage();
+        pageAt(baseOffset + pageHi);
         Unsafe.getUnsafe().putByte(appendPointer++, (byte) c);
     }
 
@@ -595,7 +599,7 @@ public class VirtualMemory implements Closeable {
             if (half * 2 < pageHi - appendPointer) {
                 putSplitChar(value.charAt(start + half++));
             } else {
-                nextPage();
+                pageAt(getAppendOffset() + half * 2);
             }
 
             len -= half;
@@ -604,7 +608,9 @@ public class VirtualMemory implements Closeable {
     }
 
     protected void release(long address) {
-        Unsafe.getUnsafe().freeMemory(address);
+        if (address != 0) {
+            Unsafe.getUnsafe().freeMemory(address);
+        }
     }
 
     protected final void setPageSize(int pageSize) {
@@ -614,26 +620,12 @@ public class VirtualMemory implements Closeable {
     }
 
     private void skip0(long bytes) {
-        long target = bytes;
-        while (true) {
-            target -= (pageHi - appendPointer);
-            nextPage();
-            if (pageHi - appendPointer > target) {
-                appendPointer += target;
-                break;
-            }
-        }
-    }
-
-    private void storeSize() {
-        if (lastPageRemaining == -1) {
-            lastPageRemaining = (pageHi - appendPointer);
-        }
+        jumpTo(getAppendOffset() + bytes);
     }
 
     protected final void updateLimits(int page, long appendPointer) {
         pageHi = appendPointer + this.pageSize;
-        baseOffset = pageOffset(page) - pageHi;
+        baseOffset = pageOffset(page + 1) - pageHi;
         this.appendPointer = appendPointer;
     }
 

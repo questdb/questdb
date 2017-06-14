@@ -84,11 +84,7 @@ public class TableWriter implements Closeable {
             txMem.putLong(partitionLo);
         }
 
-        Unsafe.getUnsafe().storeFence();
-        txMem.jumpTo(0);
-        txMem.putLong(++txn);
-        Unsafe.getUnsafe().storeFence();
-        txPartitionCount = 1;
+        TableUtils.resetTxn(txMem);
     }
 
     public Row newRow(long timestamp) {

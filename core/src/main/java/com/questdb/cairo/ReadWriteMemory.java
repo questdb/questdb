@@ -4,13 +4,15 @@ import com.questdb.misc.Files;
 import com.questdb.std.str.LPSZ;
 
 public class ReadWriteMemory extends VirtualMemory {
-    protected long fd = -1;
+    private long fd = -1;
+    private long size;
 
     public ReadWriteMemory(LPSZ name, int maxPageSize, long size, int defaultPageSize) {
         of(name, maxPageSize, size, defaultPageSize);
     }
 
     public ReadWriteMemory() {
+        size = 0;
     }
 
     @Override
@@ -25,22 +27,28 @@ public class ReadWriteMemory extends VirtualMemory {
     }
 
     @Override
-    protected void addPage(long address) {
-        // don't call super, page will have already been added
+    public void jumpTo(long offset) {
+        this.size = Math.max(this.size, getAppendOffset());
+        super.jumpTo(offset);
     }
 
     @Override
-    protected long allocateNextPage() {
-        return mapPage(pages.size());
+    protected long allocateNextPage(int page) {
+        return mapPage(page);
     }
 
     @Override
     protected long getPageAddress(int page) {
-        long address = pages.getQuick(page);
-        if (address > 0) {
-            return address;
+        long address;
+        if (page < pages.size()) {
+            address = pages.getQuick(page);
+            if (address != 0) {
+                return address;
+            }
         }
-        return mapPage(page);
+        address = mapPage(page);
+        cachePageAddress(page, address);
+        return address;
     }
 
     @Override
@@ -62,6 +70,13 @@ public class ReadWriteMemory extends VirtualMemory {
         configurePageSize(size, defaultPageSize, maxPageSize);
     }
 
+    public long size() {
+        if (size < getAppendOffset()) {
+            size = getAppendOffset();
+        }
+        return size;
+    }
+
     protected final void configurePageSize(long size, int defaultPageSize, int maxPageSize) {
         if (size > maxPageSize) {
             setPageSize(maxPageSize);
@@ -69,6 +84,7 @@ public class ReadWriteMemory extends VirtualMemory {
             setPageSize(Math.max(defaultPageSize, (int) ((size / Files.PAGE_SIZE) * Files.PAGE_SIZE)));
         }
         pages.ensureCapacity((int) (size / this.pageSize + 1));
+        this.size = size;
     }
 
     private long mapPage(int page) {
@@ -84,7 +100,6 @@ public class ReadWriteMemory extends VirtualMemory {
         if (address == -1) {
             throw new RuntimeException("Cannot mmap");
         }
-        pages.extendAndSet(page, address);
         return address;
     }
 }

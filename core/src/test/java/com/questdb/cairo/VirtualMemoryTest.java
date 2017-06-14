@@ -80,7 +80,7 @@ public class VirtualMemoryTest {
                 mem.putDouble(rnd.nextDouble());
             }
 
-            Assert.assertEquals(7993, mem.size());
+            Assert.assertEquals(7993, mem.getAppendOffset());
 
             rnd = new Rnd();
             long o = 1;
@@ -184,7 +184,6 @@ public class VirtualMemoryTest {
             mem.jumpTo(1);
             for (int i = n; i > 0; i--) {
                 mem.putLong(n - i);
-                Assert.assertEquals(7993, mem.size());
             }
 
             long o = 1;
@@ -333,7 +332,7 @@ public class VirtualMemoryTest {
                 assertEquals(i, mem.getLong(o));
                 o += 11;
             }
-            Assert.assertEquals(10990, mem.size());
+            Assert.assertEquals(10990, mem.getAppendOffset());
         }
     }
 

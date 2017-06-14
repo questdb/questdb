@@ -9,23 +9,21 @@ public class AppendMemory extends VirtualMemory {
 
     private long fd = -1;
     private long pageAddress = 0;
-    private int page;
+    private long size;
 
     public AppendMemory(LPSZ name, int pageSize, long size) {
         of(name, pageSize, size);
     }
 
     public AppendMemory() {
+        size = 0;
     }
 
     @Override
     public void close() {
-        long sz = size();
+        long sz = getAppendOffset();
         super.close();
-        if (pageAddress != 0) {
-            Files.munmap(pageAddress, pageSize);
-            pageAddress = 0;
-        }
+        releaseCurrentPage();
         if (fd != -1) {
             Files.truncate(fd, sz);
             Files.close(fd);
@@ -34,29 +32,24 @@ public class AppendMemory extends VirtualMemory {
     }
 
     @Override
-    protected void addPage(long address) {
-    }
-
-    @Override
-    protected long allocateNextPage() {
-        if (pageAddress != 0) {
-            release(pageAddress);
-        }
-        pageAddress = mapPage(++page);
-        if (pageAddress == -1) {
-            throw new RuntimeException("Cannot mmap");
-        }
-        return pageAddress;
-    }
-
-    @Override
-    protected int getMaxPage() {
-        return page + 1;
+    public void jumpTo(long offset) {
+        updateSize();
+        super.jumpTo(offset);
     }
 
     @Override
     protected long getPageAddress(int page) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    protected long mapWritePage(int page) {
+        releaseCurrentPage();
+        long address = mapPage(page);
+        if (address == -1) {
+            throw new RuntimeException("Cannot mmap");
+        }
+        return pageAddress = address;
     }
 
     @Override
@@ -83,34 +76,41 @@ public class AppendMemory extends VirtualMemory {
     }
 
     public final void setSize(long size) {
-        if (pageAddress != 0) {
-            Files.munmap(pageAddress, pageSize);
-            pageAddress = 0;
-        }
+        this.size = size;
+        releaseCurrentPage();
+        jumpTo(size);
+    }
 
-        page = pageIndex(size);
-        updateLimits(page + 1, pageAddress = mapPage(page));
-        skip((size - pageOffset(page)));
+    public long size() {
+        if (size < getAppendOffset()) {
+            size = getAppendOffset();
+        }
+        return size;
     }
 
     public void truncate() {
-        if (pageAddress != 0) {
-            Files.munmap(pageAddress, pageSize);
-        }
+        this.size = 0;
+        releaseCurrentPage();
         Files.truncate(fd, pageSize);
-        page = 0;
-        updateLimits(page + 1, pageAddress = mapPage(page));
+        updateLimits(0, pageAddress = mapPage(0));
     }
 
     private long mapPage(int page) {
         long target = pageOffset(page + 1);
-        long fileSize = Files.length(fd);
-        if (fileSize < target) {
-            if (!Files.truncate(fd, target)) {
-                throw new RuntimeException("Cannot resize file");
-            }
+        if (Files.length(fd) < target && !Files.truncate(fd, target)) {
+            throw new RuntimeException("Cannot resize file");
         }
         return Files.mmap(fd, pageSize, pageOffset(page), Files.MAP_RW);
     }
 
+    private void releaseCurrentPage() {
+        if (pageAddress != 0) {
+            release(pageAddress);
+            pageAddress = 0;
+        }
+    }
+
+    private void updateSize() {
+        this.size = Math.max(this.size, getAppendOffset());
+    }
 }
