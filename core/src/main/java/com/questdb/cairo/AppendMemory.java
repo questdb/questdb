@@ -11,7 +11,7 @@ public class AppendMemory extends VirtualMemory {
     private long pageAddress = 0;
     private long size;
 
-    public AppendMemory(LPSZ name, int pageSize, long size) {
+    public AppendMemory(LPSZ name, long pageSize, long size) {
         of(name, pageSize, size);
     }
 
@@ -61,12 +61,12 @@ public class AppendMemory extends VirtualMemory {
         return fd;
     }
 
-    public final void of(LPSZ name, int pageSize, long size) {
+    public final void of(LPSZ name, long pageSize, long size) {
         of(name, pageSize);
         setSize(size);
     }
 
-    public final void of(LPSZ name, int pageSize) {
+    public final void of(LPSZ name, long pageSize) {
         close();
         setPageSize(pageSize);
         fd = Files.openRW(name);

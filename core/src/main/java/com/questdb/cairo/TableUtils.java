@@ -38,14 +38,7 @@ public class TableUtils {
 
             path.trimTo(rootLen);
             mem.of(path.concat("_txi").$(), (int) Files.PAGE_SIZE, 0);
-            // txn to let readers know table is being reset
-            mem.putLong(0);
-            // transient row count
-            mem.putLong(0);
-            // fixed row count
-            mem.putLong(0);
-            // partition low
-            mem.putLong(0);
+            resetTxn(mem);
         }
     }
 

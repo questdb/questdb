@@ -387,6 +387,24 @@ public final class Numbers {
         return i;
     }
 
+    public static long ceilPow2(long value) {
+        long i = value;
+        if ((i != 0) && (i & (i - 1)) > 0) {
+            i |= (i >>> 1);
+            i |= (i >>> 2);
+            i |= (i >>> 4);
+            i |= (i >>> 8);
+            i |= (i >>> 16);
+            i |= (i >>> 32);
+            i++;
+
+            if (i < 0) {
+                i >>>= 1;
+            }
+        }
+        return i;
+    }
+
     public static int compare(double a, double b) {
         if (a < b) {
             return -1;
@@ -437,8 +455,16 @@ public final class Numbers {
         return (((long) len) << 32L) | (value);
     }
 
+    public static void main(String[] args) {
+        System.out.println(ceilPow2(242342348882389213L));
+    }
+
     public static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
+    }
+
+    public static int msb(long value) {
+        return 63 - Long.numberOfLeadingZeros(value);
     }
 
     public static double parseDouble(CharSequence sequence) throws NumericException {

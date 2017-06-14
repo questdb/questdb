@@ -125,6 +125,10 @@ public class LongList implements Mutable {
     }
 
     public void ensureCapacity(int capacity) {
+        if (capacity < 0) {
+            throw new IllegalArgumentException("Negative capacity");
+        }
+
         int l = buffer.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);

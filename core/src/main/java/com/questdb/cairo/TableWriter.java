@@ -29,7 +29,7 @@ public class TableWriter implements Closeable {
     private final int rootLen;
     private final ReadWriteMemory txMem = new ReadWriteMemory();
     private final ReadOnlyMemory metaMem = new ReadOnlyMemory();
-    private final VirtualMemory columnSizeMem = new VirtualMemory((int) Files.PAGE_SIZE);
+    private final VirtualMemory columnSizeMem = new VirtualMemory(Files.PAGE_SIZE);
     private final int columnCount;
     private final int partitionBy;
     private final RowFunction switchPartitionFunction = new SwitchPartitionRowFunction();
@@ -50,7 +50,7 @@ public class TableWriter implements Closeable {
     public TableWriter(CharSequence root, CharSequence name) {
         this.path = new CompositePath().of(root).concat(name);
         this.rootLen = path.length();
-        metaMem.of(path.concat("_meta").$(), (int) Files.PAGE_SIZE, 0);
+        metaMem.of(path.concat("_meta").$(), Files.PAGE_SIZE, 0);
         this.columnCount = metaMem.getInt(0);
         this.partitionBy = metaMem.getInt(4);
         this.refs.extendAndSet(columnCount, 0);
@@ -84,7 +84,10 @@ public class TableWriter implements Closeable {
             txMem.putLong(partitionLo);
         }
 
-        TableUtils.resetTxn(txMem);
+        Unsafe.getUnsafe().storeFence();
+        txMem.jumpTo(0);
+        txMem.putLong(txn++);
+        Unsafe.getUnsafe().storeFence();
     }
 
     public Row newRow(long timestamp) {
@@ -126,10 +129,10 @@ public class TableWriter implements Closeable {
     }
 
     private void commitPendingPartitions() {
-        long p = 8;
+        long offset = 8;
         for (int i = 0; i < txPartitionCount - 1; i++) {
-            long partitionTimestamp = columnSizeMem.getLong(p);
-            p += 8;
+            long partitionTimestamp = columnSizeMem.getLong(offset);
+            offset += 8;
             setStateForTimestamp(partitionTimestamp, false);
             path.concat("_archive").$();
 
@@ -137,12 +140,12 @@ public class TableWriter implements Closeable {
             try {
                 int len = 8;
                 while (len > 0) {
-                    int l = Math.min(len, columnSizeMem.getReadPageLen(p));
-                    if (Files.write(fd, columnSizeMem.getReadPageAddress(p), l, 0) == -1) {
+                    long l = Math.min(len, columnSizeMem.pageRemaining(offset));
+                    if (Files.write(fd, columnSizeMem.addressOf(offset), l, 0) == -1) {
                         throw new RuntimeException("commit failed");
                     }
                     len -= l;
-                    p += l;
+                    offset += l;
                 }
             } finally {
                 Files.close(fd);
@@ -156,7 +159,7 @@ public class TableWriter implements Closeable {
         path.concat("_txi").$();
         try {
             if (Files.exists(path)) {
-                txMem.of(path, (int) Files.PAGE_SIZE, 0, (int) Files.PAGE_SIZE);
+                txMem.of(path, Files.PAGE_SIZE, 0, Files.PAGE_SIZE);
                 path.trimTo(rootLen);
                 this.txn = txMem.getLong(0);
                 this.transientRowCount = txMem.getLong(8);
@@ -238,12 +241,12 @@ public class TableWriter implements Closeable {
         return metaMem.getInt(8 + columnIndex * 4);
     }
 
-    private int getMapPageSize() {
+    private long getMapPageSize() {
         long pageSize = Files.PAGE_SIZE * Files.PAGE_SIZE;
         if (pageSize < 0 || pageSize > 16 * 1024 * 1024) {
-            return (int) Files.PAGE_SIZE;
+            return Files.PAGE_SIZE;
         } else {
-            return (int) pageSize;
+            return pageSize;
         }
     }
 

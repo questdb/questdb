@@ -220,7 +220,7 @@ public final class Files {
         return openRW(lpsz.address());
     }
 
-    public native static long read(long fd, long address, int len, long offset);
+    public native static long read(long fd, long address, long len, long offset);
 
     public static String readStringFromFile(File file) throws JournalException {
         try {
@@ -310,7 +310,7 @@ public final class Files {
 
     public native static boolean truncate(long fd, long size);
 
-    public native static long write(long fd, long address, int len, long offset);
+    public native static long write(long fd, long address, long len, long offset);
 
     // used in tests
     public static void writeStringToFile(File file, String s) throws JournalException {

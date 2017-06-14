@@ -45,7 +45,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
-         jint len,
+         jlong len,
          jlong offset) {
     return pwrite((int) fd, (void *) (address), (size_t) len, (off_t) offset);
 }
@@ -80,7 +80,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
-         jint len,
+         jlong len,
          jlong offset) {
 
     return pread((int) fd, (void *) address, (size_t) len, (off_t) offset);
@@ -187,7 +187,6 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_remove
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rmdir
         (JNIEnv *e, jclass cl, jlong lpsz) {
-    EBADF
     return (jboolean) (rmdir((const char *) lpsz) == 0);
 }
 

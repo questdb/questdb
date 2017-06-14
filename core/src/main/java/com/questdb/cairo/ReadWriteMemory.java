@@ -7,7 +7,7 @@ public class ReadWriteMemory extends VirtualMemory {
     private long fd = -1;
     private long size;
 
-    public ReadWriteMemory(LPSZ name, int maxPageSize, long size, int defaultPageSize) {
+    public ReadWriteMemory(LPSZ name, long maxPageSize, long size, long defaultPageSize) {
         of(name, maxPageSize, size, defaultPageSize);
     }
 
@@ -60,7 +60,7 @@ public class ReadWriteMemory extends VirtualMemory {
         return fd;
     }
 
-    public final void of(LPSZ name, int maxPageSize, long size, int defaultPageSize) {
+    public final void of(LPSZ name, long maxPageSize, long size, long defaultPageSize) {
         close();
 
         fd = Files.openRW(name);
@@ -77,11 +77,11 @@ public class ReadWriteMemory extends VirtualMemory {
         return size;
     }
 
-    protected final void configurePageSize(long size, int defaultPageSize, int maxPageSize) {
+    protected final void configurePageSize(long size, long defaultPageSize, long maxPageSize) {
         if (size > maxPageSize) {
             setPageSize(maxPageSize);
         } else {
-            setPageSize(Math.max(defaultPageSize, (int) ((size / Files.PAGE_SIZE) * Files.PAGE_SIZE)));
+            setPageSize(Math.max(defaultPageSize, (size / Files.PAGE_SIZE) * Files.PAGE_SIZE));
         }
         pages.ensureCapacity((int) (size / this.pageSize + 1));
         this.size = size;

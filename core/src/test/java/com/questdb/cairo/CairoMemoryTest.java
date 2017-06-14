@@ -37,7 +37,7 @@ public class CairoMemoryTest {
     public void testAppendMemoryJump() throws Exception {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
-            try (AppendMemory mem = new AppendMemory(path, (int) (Files.PAGE_SIZE), 0)) {
+            try (AppendMemory mem = new AppendMemory(path, Files.PAGE_SIZE, 0)) {
                 for (int i = 0; i < 100; i++) {
                     mem.putLong(i);
                     mem.skip(2 * Files.PAGE_SIZE);
@@ -77,7 +77,7 @@ public class CairoMemoryTest {
     public void testReadWriteMemoryJump() throws Exception {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
-            try (ReadWriteMemory mem = new ReadWriteMemory(path, (int) (Files.PAGE_SIZE), 0, (int) Files.PAGE_SIZE)) {
+            try (ReadWriteMemory mem = new ReadWriteMemory(path, Files.PAGE_SIZE, 0, Files.PAGE_SIZE)) {
                 for (int i = 0; i < 100; i++) {
                     mem.putLong(i);
                     mem.skip(2 * Files.PAGE_SIZE);

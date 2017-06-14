@@ -107,7 +107,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
  * Signature: (JJIJ)J
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
-        (JNIEnv *, jclass, jlong, jlong, jint, jlong);
+        (JNIEnv *, jclass, jlong, jlong, jlong, jlong);
 
 /*
  * Class:     com_questdb_misc_Files
@@ -131,7 +131,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_truncate
  * Signature: (JJIJ)J
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
-        (JNIEnv *, jclass, jlong, jlong, jint, jlong);
+        (JNIEnv *, jclass, jlong, jlong, jlong, jlong);
 
 /*
  * Class:     com_questdb_misc_Files

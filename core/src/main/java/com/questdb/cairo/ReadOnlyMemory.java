@@ -6,7 +6,7 @@ import com.questdb.std.str.LPSZ;
 public class ReadOnlyMemory extends VirtualMemory {
     private long fd;
 
-    public ReadOnlyMemory(LPSZ name, int maxPageSize, long size) {
+    public ReadOnlyMemory(LPSZ name, long maxPageSize, long size) {
         of(name, maxPageSize, size);
     }
 
@@ -36,7 +36,7 @@ public class ReadOnlyMemory extends VirtualMemory {
         Files.munmap(address, pageSize);
     }
 
-    public void of(LPSZ name, int maxPageSize, long size) {
+    public void of(LPSZ name, long maxPageSize, long size) {
         close();
 
         boolean exists = Files.exists(name);
@@ -51,7 +51,7 @@ public class ReadOnlyMemory extends VirtualMemory {
         if (size > maxPageSize) {
             setPageSize(maxPageSize);
         } else {
-            setPageSize((int) Math.max(Files.PAGE_SIZE, (int) ((size / Files.PAGE_SIZE) * Files.PAGE_SIZE)));
+            setPageSize(Math.max(Files.PAGE_SIZE, (size / Files.PAGE_SIZE) * Files.PAGE_SIZE));
         }
         pages.ensureCapacity((int) (size / this.pageSize + 1));
     }
