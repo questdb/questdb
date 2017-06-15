@@ -4,7 +4,7 @@ import com.questdb.misc.Files;
 import com.questdb.std.str.LPSZ;
 
 public class ReadOnlyMemory extends VirtualMemory {
-    private long fd;
+    private long fd = -1;
 
     public ReadOnlyMemory(LPSZ name, long maxPageSize, long size) {
         of(name, maxPageSize, size);
