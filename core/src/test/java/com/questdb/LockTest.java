@@ -25,11 +25,12 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.factory.Factory;
-import com.questdb.std.time.Dates;
 import com.questdb.model.Quote;
 import com.questdb.model.configuration.ModelConfiguration;
+import com.questdb.std.time.Dates;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -41,6 +42,7 @@ import java.util.List;
 public class LockTest extends AbstractTest {
 
     @Test
+    @Ignore
     public void testLockAcrossClassLoaders() throws JournalException, ClassNotFoundException, IllegalAccessException, InstantiationException, NoSuchMethodException, InvocationTargetException {
         URLClassLoader classLoader = new URLClassLoader(((URLClassLoader) this.getClass().getClassLoader()).getURLs(), null);
 
