@@ -38,7 +38,6 @@
 
 #include <stdlib.h>
 #include <dirent.h>
-#include <asm/errno.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
@@ -132,9 +131,8 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length0
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_mkdir
         (JNIEnv *e, jclass cl, jlong pchar, jint mode) {
-    return mkdir((const char *) pchar, (__mode_t) mode);
+    return mkdir((const char *) pchar, (mode_t) mode);
 }
-
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
         (JNIEnv *e, jclass cl, jlong fd) {
@@ -147,7 +145,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_dup
         (JNIEnv *e, jclass cl, jlong fd) {
     return dup((int) fd);
 }
-
 
 #ifdef __APPLE__
 
