@@ -164,7 +164,7 @@ public class JsonLexerTest {
         try {
             long buf = Unsafe.malloc(l);
             try {
-                Files.read(fd, buf, (int) l, 0);
+                Assert.assertEquals(l, Files.read(fd, buf, (int) l, 0));
                 JsonLexer lexer = new JsonLexer(1024);
 
                 long t = System.nanoTime();

@@ -291,10 +291,11 @@ public class TableWriter implements Closeable {
                         mem2.of(iFile(name), getMapPageSize(), transientRowCount * 8);
                         path.trimTo(plen);
                         mem1.of(dFile(name), getMapPageSize(), 0);
+                        path.trimTo(plen);
 
                         if (transientRowCount > 0) {
                             long varOffset = mem2.getLong((transientRowCount - 1) * 8);
-                            if (Files.read(mem1.getFd(), pSz, 8, varOffset) == -1) {
+                            if (Files.read(mem1.getFd(), pSz, 8, varOffset) != 8) {
                                 throw new RuntimeException("cannot read len");
                             }
                             mem1.jumpTo(varOffset + Unsafe.getUnsafe().getLong(pSz));
@@ -306,10 +307,13 @@ public class TableWriter implements Closeable {
                         mem2.of(iFile(name), getMapPageSize(), transientRowCount * 8);
                         path.trimTo(plen);
                         mem1.of(dFile(name), getMapPageSize());
+                        path.trimTo(plen);
                         if (transientRowCount > 0) {
-                            Files.read(mem2.getFd(), pSz, 8, (transientRowCount - 1) * 8);
+                            if (Files.read(mem2.getFd(), pSz, 8, (transientRowCount - 1) * 8) != 8) {
+                                throw new RuntimeException("cannot read offset");
+                            }
                             long offset = Unsafe.getUnsafe().getLong(pSz);
-                            if (Files.read(mem1.getFd(), pSz, 4, offset) == -1) {
+                            if (Files.read(mem1.getFd(), pSz, 4, offset) != 4) {
                                 throw new RuntimeException("cannot read len");
                             }
                             mem1.setSize(offset + Unsafe.getUnsafe().getInt(pSz));
@@ -317,6 +321,7 @@ public class TableWriter implements Closeable {
                         break;
                     default:
                         mem1.of(path.concat(name).put(".d").$(), getMapPageSize(), transientRowCount * ColumnType.sizeOf(type));
+                        path.trimTo(plen);
                         break;
                 }
                 // set nullers
