@@ -1,11 +1,15 @@
 package com.questdb.cairo;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.Files;
+import com.questdb.misc.Os;
 import com.questdb.std.ObjectFactory;
 import com.questdb.std.str.LPSZ;
 
 public class AppendMemory extends VirtualMemory {
     public static final ObjectFactory<AppendMemory> FACTORY = AppendMemory::new;
+    private static final Log LOG = LogFactory.getLog(AppendMemory.class);
 
     private long fd = -1;
     private long pageAddress = 0;
@@ -47,7 +51,7 @@ public class AppendMemory extends VirtualMemory {
         releaseCurrentPage();
         long address = mapPage(page);
         if (address == -1) {
-            throw new RuntimeException("Cannot mmap");
+            throw CairoException.instance(Os.errno()).put("Cannot mmap(append) fd=").put(fd).put(", offset=").put(pageOffset(page));
         }
         return pageAddress = address;
     }
@@ -71,8 +75,9 @@ public class AppendMemory extends VirtualMemory {
         setPageSize(pageSize);
         fd = Files.openRW(name);
         if (fd == -1) {
-            throw new RuntimeException("cannot open file");
+            throw CairoException.instance(Os.errno()).put("Cannot open ").put(name);
         }
+        LOG.info().$("Open for append ").$(name).$(" [").$(fd).$(']').$();
     }
 
     public final void setSize(long size) {
@@ -98,7 +103,7 @@ public class AppendMemory extends VirtualMemory {
     private long mapPage(int page) {
         long target = pageOffset(page + 1);
         if (Files.length(fd) < target && !Files.truncate(fd, target)) {
-            throw new RuntimeException("Cannot resize file");
+            throw CairoException.instance(Os.errno()).put("Appender resize fd=").put(fd).put(", size=").put(target);
         }
         return Files.mmap(fd, pageSize, pageOffset(page), Files.MAP_RW);
     }

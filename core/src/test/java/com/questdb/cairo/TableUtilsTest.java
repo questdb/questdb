@@ -46,7 +46,9 @@ public class TableUtilsTest {
         try (CompositePath path = new CompositePath()) {
             Assert.assertEquals(0, TableUtils.exists(root, metadata.getName()));
 
-            try (ReadOnlyMemory mem = new ReadOnlyMemory(path.of(root).concat(metadata.getName()).concat("_meta").$(), Files.PAGE_SIZE, 0)) {
+            path.of(root).concat(metadata.getName()).concat("_meta").$();
+
+            try (ReadOnlyMemory mem = new ReadOnlyMemory(path, Files.PAGE_SIZE, Files.length(path))) {
                 long p = 0;
                 Assert.assertEquals(metadata.getColumnCount(), mem.getInt(p));
                 p += 4;

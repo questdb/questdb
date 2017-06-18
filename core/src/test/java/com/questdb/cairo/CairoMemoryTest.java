@@ -23,18 +23,28 @@
 
 package com.questdb.cairo;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.Files;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.str.Path;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 public class CairoMemoryTest {
     private static final int N = 1000000;
+    private static final Log LOG = LogFactory.getLog(CairoMemoryTest.class);
+
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
+
+    @BeforeClass
+    public static void setUp() throws Exception {
+        LOG.info().$("Begin test").$();
+    }
 
     @Test
     public void testAppendAndReadWithReadOnlyMem() throws Exception {

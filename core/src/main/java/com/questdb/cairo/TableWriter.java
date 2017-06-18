@@ -74,7 +74,8 @@ public class TableWriter implements Closeable {
     public TableWriter(CharSequence root, CharSequence name) {
         this.path = new CompositePath().of(root).concat(name);
         this.rootLen = path.length();
-        metaMem.of(path.concat("_meta").$(), Files.PAGE_SIZE, 0);
+        path.concat("_meta").$();
+        metaMem.of(path, Files.PAGE_SIZE, Files.length(path));
         this.columnCount = metaMem.getInt(0);
         this.partitionBy = metaMem.getInt(4);
         this.refs.extendAndSet(columnCount, 0);

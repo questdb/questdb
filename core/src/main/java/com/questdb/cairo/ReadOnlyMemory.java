@@ -48,11 +48,6 @@ public class ReadOnlyMemory extends VirtualMemory {
     }
 
     @Override
-    protected void releaseLast(long address) {
-        Files.munmap(address, lastPageSize);
-    }
-
-    @Override
     protected long getPageAddress(int page) {
         long address = super.getPageAddress(page);
         if (address != 0) {
@@ -66,8 +61,15 @@ public class ReadOnlyMemory extends VirtualMemory {
         Files.munmap(address, pageSize);
     }
 
+    @Override
+    protected void releaseLast(long address) {
+        Files.munmap(address, lastPageSize);
+    }
+
     public void of(LPSZ name, long maxPageSize, long size) {
         close();
+
+        assert size > 0;
 
         this.size = size;
         this.lastPageSize = Files.PAGE_SIZE;
