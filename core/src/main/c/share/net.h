@@ -149,6 +149,9 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEWouldBlock
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_sockaddr
         (JNIEnv *, jclass, jint, jint);
 
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_freeSockAddr
+        (JNIEnv *, jclass, jlong);
+
 #ifdef __cplusplus
 }
 #endif

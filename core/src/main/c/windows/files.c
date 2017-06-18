@@ -29,6 +29,7 @@
 typedef HANDLE HWND;
 
 #include <winbase.h>
+#include <direct.h>
 #include "../share/files.h"
 
 int set_file_pos(HANDLE fd, jlong offset) {
@@ -43,7 +44,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
-         jint len,
+         jlong len,
          jlong offset) {
     DWORD count;
     return set_file_pos((HANDLE) fd, offset) &&
@@ -54,7 +55,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
-         jint len,
+         jlong len,
          jlong offset) {
     DWORD count;
     return set_file_pos((HANDLE) fd, offset) &&
@@ -117,12 +118,24 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
     return (jboolean) r;
 }
 
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length0
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+    struct stat st;
+    int r = stat((const char *) lpszName, &st);
+    return r == 0 ? st.st_size : r;
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_mkdir
+        (JNIEnv *e, jclass cl, jlong lpszName, jint mode) {
+    return _mkdir((const char *) lpszName);
+}
+
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRO
         (JNIEnv *e, jclass cl, jlong lpszName) {
     return (jlong) CreateFile(
             (LPCSTR) lpszName,
             GENERIC_READ,
-            FILE_SHARE_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
             NULL,
             OPEN_EXISTING,
             FILE_ATTRIBUTE_NORMAL,
@@ -135,11 +148,16 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close
     return CloseHandle((HANDLE) fd) ? 0 : GetLastError();
 }
 
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_dup
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return _dup((int) fd);
+}
+
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
     return (jlong) CreateFile(
             (LPCSTR) lpszName,
-            GENERIC_WRITE,
+            GENERIC_WRITE | GENERIC_READ,
             FILE_SHARE_READ,
             NULL,
             OPEN_ALWAYS,
@@ -174,11 +192,10 @@ JNIEXPORT void JNICALL Java_com_questdb_misc_Files_append
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
-        (JNIEnv *e, jclass cl, jlong pchar) {
-    struct stat st;
-
-    int r = stat((const char *) pchar, &st);
-    return r == 0 ? st.st_size : r;
+        (JNIEnv *e, jclass cl, jlong fd) {
+    DWORD len;
+    GetFileSize((HANDLE) fd, &len);
+    return len;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
@@ -194,10 +211,70 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_truncate
     return FALSE;
 }
 
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_munmap0
+        (JNIEnv *e, jclass cl, jlong address, jlong len) {
+    if (UnmapViewOfFile((LPCVOID) address) == 0) {
+        return -1;
+    } else {
+        return 0;
+    }
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
+        (JNIEnv *e, jclass cl, jlong fd, jlong len, jlong offset, jint flags) {
+    jlong maxsize = offset + len;
+    DWORD flProtect;
+    DWORD dwDesiredAccess;
+    LPCVOID address;
+
+    if (flags == com_questdb_misc_Files_MAP_RW) {
+        flProtect = PAGE_READWRITE;
+        dwDesiredAccess = FILE_MAP_WRITE;
+    } else {
+        flProtect = PAGE_READONLY;
+        dwDesiredAccess = FILE_MAP_READ;
+    }
+
+    HANDLE hMapping = CreateFileMapping((HANDLE) fd, NULL, flProtect, (DWORD) (maxsize >> 32), (DWORD) maxsize, NULL);
+    if (hMapping == NULL) {
+        printf("no mapping: %lu", GetLastError());
+        return -1;
+    }
+
+    address = MapViewOfFile(hMapping, dwDesiredAccess, (DWORD) (offset >> 32), (DWORD) offset, (SIZE_T) len);
+
+    unsigned long err = GetLastError();
+    if (CloseHandle(hMapping) == 0) {
+        printf("cant close: %lu", GetLastError());
+        if (address != NULL) {
+            UnmapViewOfFile(address);
+        }
+        return -1;
+    }
+
+    if (address == NULL) {
+        printf("no view: %lu", err);
+        return -1;
+    }
+
+    return (jlong) address;
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getPageSize
+        (JNIEnv *e, jclass cl) {
+    SYSTEM_INFO siSysInfo;
+    GetSystemInfo(&siSysInfo);
+    return siSysInfo.dwAllocationGranularity;
+}
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_remove
         (JNIEnv *e, jclass cl, jlong lpsz) {
     return (jboolean) DeleteFile((LPCSTR) lpsz);
+}
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rmdir
+        (JNIEnv *e, jclass cl, jlong lpsz) {
+    return (jboolean) RemoveDirectoryA((LPCSTR) lpsz);
 }
 
 typedef struct {

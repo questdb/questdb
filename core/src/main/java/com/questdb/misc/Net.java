@@ -55,6 +55,8 @@ public final class Net {
 
     public static native int configureNonBlocking(long fd);
 
+    public native static void freeSockAddr(long sockaddr);
+
     public native static long getPeerIP(long fd);
 
     public native static int getPeerPort(long fd);

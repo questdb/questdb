@@ -1,3 +1,26 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.cairo;
 
 import com.questdb.misc.Files;
@@ -18,13 +41,13 @@ public class CairoMemoryTest {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
             long size;
-            try (AppendMemory mem = new AppendMemory(path, 2 * 4096, 0)) {
+            try (AppendMemory mem = new AppendMemory(path, 2 * Files.PAGE_SIZE, 0)) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }
                 Assert.assertEquals(8L * N, size = mem.size());
             }
-            try (ReadOnlyMemory mem = new ReadOnlyMemory(path, 4096, size)) {
+            try (ReadOnlyMemory mem = new ReadOnlyMemory(path, Files.PAGE_SIZE, size)) {
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
@@ -56,13 +79,13 @@ public class CairoMemoryTest {
             for (int j = 0; j < 10; j++) {
                 try (Path path = new Path(temp.newFile().getAbsolutePath())) {
                     long size;
-                    mem.of(path, 2 * 4096, 0);
+                    mem.of(path, 2 * Files.PAGE_SIZE, 0);
                     for (int i = 0; i < N; i++) {
                         mem.putLong(i);
                     }
                     Assert.assertEquals(8L * N, size = mem.size());
 
-                    try (ReadOnlyMemory ro = new ReadOnlyMemory(path, 4096, size)) {
+                    try (ReadOnlyMemory ro = new ReadOnlyMemory(path, Files.PAGE_SIZE, size)) {
                         for (int i = 0; i < N; i++) {
                             Assert.assertEquals(i, ro.getLong(i * 8));
                         }
@@ -94,7 +117,7 @@ public class CairoMemoryTest {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
             long size;
-            try (ReadWriteMemory mem = new ReadWriteMemory(path, 2 * 4096, 0, 4096)) {
+            try (ReadWriteMemory mem = new ReadWriteMemory(path, 2 * Files.PAGE_SIZE, 0, Files.PAGE_SIZE)) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }
@@ -105,7 +128,7 @@ public class CairoMemoryTest {
 
                 Assert.assertEquals(8L * N, size = mem.size());
             }
-            try (ReadWriteMemory mem = new ReadWriteMemory(path, 4096 * 4096, size, 4096)) {
+            try (ReadWriteMemory mem = new ReadWriteMemory(path, Files.PAGE_SIZE * Files.PAGE_SIZE, size, Files.PAGE_SIZE)) {
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
@@ -119,13 +142,13 @@ public class CairoMemoryTest {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
             long size;
-            try (ReadWriteMemory mem = new ReadWriteMemory(path, 2 * 4096, 0, 4096)) {
+            try (ReadWriteMemory mem = new ReadWriteMemory(path, 2 * Files.PAGE_SIZE, 0, Files.PAGE_SIZE)) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }
                 Assert.assertEquals(8L * N, size = mem.size());
             }
-            try (ReadOnlyMemory mem = new ReadOnlyMemory(path, 4096, size)) {
+            try (ReadOnlyMemory mem = new ReadOnlyMemory(path, Files.PAGE_SIZE, size)) {
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }

@@ -39,6 +39,36 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketTcp
     return (jlong) s;
 }
 
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp
+        (JNIEnv *e, jclass cl) {
+    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == INVALID_SOCKET) {
+        return -1;
+    }
+    return s;
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEWouldBlock
+        (JNIEnv *e, jclass cl) {
+    return EWOULDBLOCK;
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_sockaddr
+        (JNIEnv *e, jclass cl, jint address, jint port) {
+    struct sockaddr_in *addr = calloc(1, sizeof(struct sockaddr_in));
+    addr->sin_family = AF_INET;
+    addr->sin_addr.s_addr = htonl((u_long) address);
+    addr->sin_port = htons((u_short) port);
+    return (jlong) addr;
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_freeSockAddr
+        (JNIEnv *e, jclass cl, jlong address) {
+    if (address != 0) {
+        free((void *) address);
+    }
+}
+
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_bind
         (JNIEnv *e, jclass cl, jlong fd, jint address, jint port) {
 
@@ -115,6 +145,12 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_isDead
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_send
         (JNIEnv *e, jclass cl, jlong fd, jlong addr, jint len) {
     return convert_error(send((SOCKET) fd, (const char *) addr, len, 0));
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_sendTo
+        (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len, jlong sockaddr) {
+    return (jint) sendto((SOCKET) fd, (const void *) ptr, len, 0, (const struct sockaddr *) sockaddr,
+                         sizeof(struct sockaddr_in));
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_setSndBuf

@@ -274,9 +274,7 @@ public class PerformanceTest extends AbstractTest {
 
         CharSequence root = getFactory().getConfiguration().getJournalBase().getAbsolutePath();
         TableUtils.create(root, getFactory().getConfiguration().createMetadata(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE)), 509);
-        try {
-            TableWriter w = new TableWriter(root, "quote");
-
+        try (TableWriter w = new TableWriter(root, "quote")) {
             long t = 0;
             int count = 10;
             for (int i = -count; i < count; i++) {

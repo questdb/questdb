@@ -179,6 +179,12 @@ public final class Files {
             for (int i = 0, n = path.length(); i < n; i++) {
                 char c = path.charAt(i);
                 if (c == File.separatorChar) {
+
+                    if (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':') {
+                        pp.put(c);
+                        continue;
+                    }
+
                     pp.$();
                     if (pp.length() > 0 && !Files.exists(pp)) {
                         int r = Files.mkdir(pp, mode);

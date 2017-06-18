@@ -56,7 +56,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_sockaddr
         (JNIEnv *e, jclass cl, jint address, jint port) {
-    struct sockaddr_in *addr = calloc(1, sizeof(struct sockaddr_in));
+    SOCKADDR *addr = calloc(1, sizeof(SOCKADDR));
     addr->sin_family = AF_INET;
     addr->sin_addr.s_addr = htonl((uint32_t) address);
     addr->sin_port = htons((uint16_t) port);

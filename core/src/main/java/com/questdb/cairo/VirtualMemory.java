@@ -75,8 +75,12 @@ public class VirtualMemory implements Closeable {
 
     @Override
     public void close() {
-        for (int i = 0, n = pages.size(); i < n; i++) {
-            release(pages.getQuick(i));
+        int n = pages.size() - 1;
+        if (n > -1) {
+            for (int i = 0; i < n; i++) {
+                release(pages.getQuick(i));
+            }
+            releaseLast(pages.getQuick(n));
         }
         pages.clear();
         appendPointer = 0;
@@ -611,6 +615,10 @@ public class VirtualMemory implements Closeable {
         if (address != 0) {
             Unsafe.getUnsafe().freeMemory(address);
         }
+    }
+
+    protected void releaseLast(long address) {
+        release(address);
     }
 
     protected final void setPageSize(long pageSize) {

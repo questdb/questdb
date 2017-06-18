@@ -30,7 +30,10 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Files;
 import com.questdb.misc.Os;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.*;
+import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.DirectCharSequence;
+import com.questdb.std.str.NativeLPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -156,9 +159,14 @@ public class FilesTest {
     @Test
     public void testMkdirs() throws Exception {
         File r = temporaryFolder.newFolder("to_delete");
-        try (CharSequenceZ cs = new CharSequenceZ(r.getAbsolutePath() + "/a/b/c//f.text")) {
-            Assert.assertEquals(0, Files.mkdirs(cs, 509));
-            Assert.assertTrue(Files.exists(cs.of(r.getAbsolutePath() + "/a/b/c/")));
+        try (CompositePath path = new CompositePath().of(r.getAbsolutePath())) {
+            path.concat("a").concat("b").concat("c").concat("f.text").$();
+            Assert.assertEquals(0, Files.mkdirs(path, 509));
+        }
+
+        try (CompositePath path = new CompositePath().of(r.getAbsolutePath())) {
+            path.concat("a").concat("b").concat("c").$();
+            Assert.assertTrue(Files.exists(path));
         }
     }
 
