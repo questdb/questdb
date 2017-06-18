@@ -45,8 +45,6 @@ public final class Net {
         sink.put(ip & 0xff).put('.').put((ip >> 8) & 0xff).put('.').put((ip >> 16) & 0xff).put('.').put((ip >> 24) & 0xff);
     }
 
-    public native static long available(long fd);
-
     public native static boolean bind(long fd, int address, int port);
 
     public static boolean bind(long fd, CharSequence address, int port) {

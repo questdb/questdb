@@ -157,7 +157,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_setRcvBuf
     return setsockopt((int) fd, SOL_SOCKET, SO_RCVBUF, (char *) &sz, sizeof(sz));
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEWouldBlock
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEwouldblock
         (JNIEnv *e, jclass cl) {
     return EWOULDBLOCK;
 }

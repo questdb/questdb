@@ -23,14 +23,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_accept
 
 /*
  * Class:     com_questdb_misc_Net
- * Method:    available
- * Signature: (J)J
- */
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_available
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_questdb_misc_Net
  * Method:    bind
  * Signature: (JII)Z
  */
@@ -43,6 +35,14 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_bind
  * Signature: (J)I
  */
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_configureNonBlocking
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Net
+ * Method:    freeSockAddr
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_com_questdb_misc_Net_freeSockAddr
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -135,10 +135,10 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp
 
 /*
  * Class:     com_questdb_misc_Net
- * Method:    getEWouldBlock
+ * Method:    getEwouldblock
  * Signature: ()I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEWouldBlock
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEwouldblock
         (JNIEnv *, jclass);
 
 /*
@@ -148,9 +148,6 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEWouldBlock
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_sockaddr
         (JNIEnv *, jclass, jint, jint);
-
-JNIEXPORT void JNICALL Java_com_questdb_misc_Net_freeSockAddr
-        (JNIEnv *, jclass, jlong);
 
 #ifdef __cplusplus
 }

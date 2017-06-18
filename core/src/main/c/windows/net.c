@@ -165,13 +165,6 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_setRcvBuf
     return setsockopt((SOCKET) fd, SOL_SOCKET, SO_RCVBUF, (char *) &sz, sizeof(sz));
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_available
-        (JNIEnv *e, jclass cl, jlong fd) {
-    unsigned long avail;
-
-    ioctlsocket((SOCKET) fd, FIONREAD, &avail);
-    return avail;
-}
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEwouldblock
         (JNIEnv *e, jclass cl) {
