@@ -62,7 +62,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_sockaddr
     return (jlong) addr;
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_freeSockAddr
+JNIEXPORT void JNICALL Java_com_questdb_misc_Net_freeSockAddr
         (JNIEnv *e, jclass cl, jlong address) {
     if (address != 0) {
         free((void *) address);

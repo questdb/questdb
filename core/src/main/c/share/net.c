@@ -56,12 +56,20 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_sockaddr
         (JNIEnv *e, jclass cl, jint address, jint port) {
-    SOCKADDR *addr = calloc(1, sizeof(SOCKADDR));
+    struct sockaddr_in *addr = calloc(1, sizeof(struct sockaddr_in));
     addr->sin_family = AF_INET;
     addr->sin_addr.s_addr = htonl((uint32_t) address);
     addr->sin_port = htons((uint16_t) port);
     return (jlong) addr;
 }
+
+JNIEXPORT void JNICALL Java_com_questdb_misc_Net_freeSockAddr
+        (JNIEnv *e, jclass cl, jlong address) {
+    if (address != 0) {
+        free((void *) address);
+    }
+}
+
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_sendTo
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len, jlong sockaddr) {
@@ -149,7 +157,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_setRcvBuf
     return setsockopt((int) fd, SOL_SOCKET, SO_RCVBUF, (char *) &sz, sizeof(sz));
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEwouldblock
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_getEWouldBlock
         (JNIEnv *e, jclass cl) {
     return EWOULDBLOCK;
 }
