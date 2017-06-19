@@ -162,12 +162,17 @@ public class TableWriter implements Closeable {
             path.concat("_archive").$();
 
             long fd = Files.openAppend(path);
+
+            if (fd == -1) {
+                throw CairoException.instance().put("Cannot open for append: ").put(path);
+            }
+
             try {
                 int len = 8;
                 while (len > 0) {
                     long l = Math.min(len, columnSizeMem.pageRemaining(offset));
                     if (Files.write(fd, columnSizeMem.addressOf(offset), l, 0) == -1) {
-                        throw new RuntimeException("commit failed");
+                        throw CairoException.instance().put("Commit failed, file=").put(path);
                     }
                     len -= l;
                     offset += l;
@@ -202,7 +207,7 @@ public class TableWriter implements Closeable {
                     rowFunction = openPartitionFunction;
                 }
             } else {
-                throw new RuntimeException("doesnt exist");
+                throw CairoException.instance().put("Cannot append. File does not exist: ").put(path);
             }
         } finally {
             path.trimTo(rootLen);
@@ -295,7 +300,7 @@ public class TableWriter implements Closeable {
 
         int plen = path.length();
         if (Files.mkdirs(path.put(Path.SEPARATOR).$(), mode) != 0) {
-            throw new RuntimeException("cannot create def partition");
+            throw CairoException.instance().put("Cannot create directories: ").put(path);
         }
         path.trimTo(plen);
         assert columnCount > 0;
@@ -321,12 +326,16 @@ public class TableWriter implements Closeable {
                         mem1.of(dFile(name), getMapPageSize(), 0);
                         path.trimTo(plen);
 
+                        // same code as for string, except string length is 4 bytes, binary length is 8 bytes
                         if (transientRowCount > 0) {
-                            long varOffset = mem2.getLong((transientRowCount - 1) * 8);
-                            if (Files.read(mem1.getFd(), pSz, 8, varOffset) != 8) {
-                                throw new RuntimeException("cannot read len");
+                            if (Files.read(mem2.getFd(), pSz, 8, (transientRowCount - 1) * 8) != 8) {
+                                throw CairoException.instance().put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((transientRowCount - 1) * 8);
                             }
-                            mem1.jumpTo(varOffset + Unsafe.getUnsafe().getLong(pSz));
+                            long offset = Unsafe.getUnsafe().getLong(pSz);
+                            if (Files.read(mem1.getFd(), pSz, 8, offset) != 8) {
+                                throw CairoException.instance().put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
+                            }
+                            mem1.setSize(offset + Unsafe.getUnsafe().getLong(pSz));
                         }
                         break;
                     case ColumnType.STRING:
@@ -338,11 +347,11 @@ public class TableWriter implements Closeable {
                         path.trimTo(plen);
                         if (transientRowCount > 0) {
                             if (Files.read(mem2.getFd(), pSz, 8, (transientRowCount - 1) * 8) != 8) {
-                                throw new RuntimeException("cannot read offset");
+                                throw CairoException.instance().put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((transientRowCount - 1) * 8);
                             }
                             long offset = Unsafe.getUnsafe().getLong(pSz);
                             if (Files.read(mem1.getFd(), pSz, 4, offset) != 4) {
-                                throw new RuntimeException("cannot read len");
+                                throw CairoException.instance().put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
                             }
                             mem1.setSize(offset + Unsafe.getUnsafe().getInt(pSz));
                         }
@@ -380,7 +389,7 @@ public class TableWriter implements Closeable {
                     path.concat(pName).$();
                     nativeLPSZ.of(pName);
                     if (!truncateIgnores.contains(nativeLPSZ) && !Files.rmdir(path)) {
-                        throw new RuntimeException("cannot remove");
+                        throw CairoException.instance().put("Cannot remove directories: ").put(path);
                     }
                 } while (Files.findNext(p));
             } finally {
@@ -466,7 +475,7 @@ public class TableWriter implements Closeable {
     private void switchPartition() {
         int partitionPathLen = path.length();
         if (Files.mkdirs(path.put(Path.SEPARATOR).$(), mode) != 0) {
-            throw new RuntimeException("cannot create partition");
+            throw CairoException.instance().put("Cannot switch partition. Failed to create dir: ").put(path);
         }
 
         assert columnCount > 0;
@@ -511,7 +520,7 @@ public class TableWriter implements Closeable {
         public Row newRow(long timestamp) {
             masterRef++;
             if (timestamp < partitionLo) {
-                throw new RuntimeException("outof order");
+                throw CairoException.instance().put("Cannot insert rows out of order. Table=").put(path);
             }
             partitionLo = timestamp;
             return row;
@@ -522,7 +531,7 @@ public class TableWriter implements Closeable {
         @NotNull
         private Row newRow0(long timestamp) {
             if (timestamp < partitionLo) {
-                throw new RuntimeException("out of order");
+                throw CairoException.instance().put("Cannot insert rows out of order. Table=").put(path);
             }
 
             if (timestamp > partitionHi) {

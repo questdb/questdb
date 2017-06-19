@@ -15,7 +15,7 @@ public class TableUtils {
         CompositePath path = tlPath.get();
         path.of(root).concat(metadata.getName()).put(Path.SEPARATOR).$();
         if (Files.mkdirs(path, mode) == -1) {
-            throw new RuntimeException("cannot create dir");
+            throw CairoException.instance().put("Cannot create dir: ").put(path);
         }
 
         int rootLen = path.length();

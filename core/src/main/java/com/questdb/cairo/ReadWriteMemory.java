@@ -65,7 +65,7 @@ public class ReadWriteMemory extends VirtualMemory {
 
         fd = Files.openRW(name);
         if (fd == -1) {
-            throw new RuntimeException("cannot open file");
+            throw CairoException.instance().put("Cannot open file: ").put(name);
         }
         configurePageSize(size, defaultPageSize, maxPageSize);
     }
@@ -98,7 +98,7 @@ public class ReadWriteMemory extends VirtualMemory {
         address = Files.mmap(fd, pageSize, offset, Files.MAP_RW);
 
         if (address == -1) {
-            throw new RuntimeException("Cannot mmap");
+            throw CairoException.instance().put("Cannot mmap(RW) fd=").put(fd).put(", offset").put(offset).put(", size").put(pageSize);
         }
         return address;
     }

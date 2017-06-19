@@ -76,11 +76,11 @@ public class ReadOnlyMemory extends VirtualMemory {
 
         boolean exists = Files.exists(name);
         if (!exists) {
-            throw new RuntimeException("file not  found");
+            throw CairoException.instance().put("File not found: ").put(name);
         }
         fd = Files.openRO(name);
         if (fd == -1) {
-            throw new RuntimeException("cannot open file");
+            throw CairoException.instance().put("Cannot open file: ").put(name);
         }
 
         if (size > maxPageSize) {
@@ -96,13 +96,14 @@ public class ReadOnlyMemory extends VirtualMemory {
         long offset = pageOffset(page);
         long sz = size - offset;
         if (sz > pageSize) {
-            address = Files.mmap(fd, pageSize, offset, Files.MAP_RO);
+            sz = pageSize;
         } else {
-            address = Files.mmap(fd, sz, offset, Files.MAP_RO);
             this.lastPageSize = sz;
         }
+
+        address = Files.mmap(fd, sz, offset, Files.MAP_RO);
         if (address == -1) {
-            throw new RuntimeException("Cannot mmap");
+            throw CairoException.instance().put("Cannot mmap(read) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(sz);
         }
         cachePageAddress(page, address);
         return address;
