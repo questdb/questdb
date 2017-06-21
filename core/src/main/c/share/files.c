@@ -104,7 +104,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRO
     return open((const char *) lpszName, O_RDONLY);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close0
         (JNIEnv *e, jclass cl, jlong fd) {
     return close((int) fd);
 }

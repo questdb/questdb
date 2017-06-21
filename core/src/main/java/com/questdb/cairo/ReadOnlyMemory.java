@@ -23,26 +23,34 @@
 
 package com.questdb.cairo;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.Files;
+import com.questdb.misc.FilesFacade;
 import com.questdb.std.str.LPSZ;
 
 public class ReadOnlyMemory extends VirtualMemory {
+    private static final Log LOG = LogFactory.getLog(ReadWriteMemory.class);
+    private final FilesFacade ff;
     private long fd = -1;
     private long size = 0;
     private long lastPageSize;
 
-    public ReadOnlyMemory(LPSZ name, long maxPageSize, long size) {
+    public ReadOnlyMemory(FilesFacade ff, LPSZ name, long maxPageSize, long size) {
+        this(ff);
         of(name, maxPageSize, size);
     }
 
-    public ReadOnlyMemory() {
+    public ReadOnlyMemory(FilesFacade ff) {
+        this.ff = ff;
     }
 
     @Override
     public void close() {
         super.close();
         if (fd != -1) {
-            Files.close(fd);
+            ff.close(fd);
+            LOG.info().$("Closed [").$(fd).$(']').$();
             fd = -1;
         }
     }
@@ -68,25 +76,27 @@ public class ReadOnlyMemory extends VirtualMemory {
 
     public void of(LPSZ name, long maxPageSize, long size) {
         close();
-
         assert size > 0;
+
+        boolean exists = Files.exists(name);
+        if (!exists) {
+            throw CairoException.instance(0).put("File not found: ").put(name);
+        }
+        fd = ff.openRO(name);
+        if (fd == -1) {
+            throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
+        }
+
+        LOG.info().$("Open ").$(name).$(" [").$(fd).$(']').$();
 
         this.size = size;
         this.lastPageSize = Files.PAGE_SIZE;
 
-        boolean exists = Files.exists(name);
-        if (!exists) {
-            throw CairoException.instance().put("File not found: ").put(name);
-        }
-        fd = Files.openRO(name);
-        if (fd == -1) {
-            throw CairoException.instance().put("Cannot open file: ").put(name);
-        }
 
         if (size > maxPageSize) {
             setPageSize(maxPageSize);
         } else {
-            setPageSize(Math.max(Files.PAGE_SIZE, (size / Files.PAGE_SIZE) * Files.PAGE_SIZE));
+            setPageSize(Math.max(ff.getPageSize(), (size / ff.getPageSize()) * ff.getPageSize()));
         }
         pages.ensureCapacity((int) (size / this.pageSize + 1));
     }
@@ -101,9 +111,9 @@ public class ReadOnlyMemory extends VirtualMemory {
             this.lastPageSize = sz;
         }
 
-        address = Files.mmap(fd, sz, offset, Files.MAP_RO);
+        address = ff.mmap(fd, sz, offset, Files.MAP_RO);
         if (address == -1) {
-            throw CairoException.instance().put("Cannot mmap(read) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(sz);
+            throw CairoException.instance(ff.errno()).put("Cannot mmap(read) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(sz);
         }
         cachePageAddress(page, address);
         return address;

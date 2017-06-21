@@ -1,6 +1,5 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.Os;
 import com.questdb.std.Sinkable;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CharSink;
@@ -11,14 +10,10 @@ public class CairoException extends RuntimeException implements Sinkable {
     private final StringSink message = new StringSink();
     private int errno;
 
-    public static CairoException $() {
-        return tlException.get();
-    }
-
-    public static CairoException instance() {
+    public static CairoException instance(int errno) {
         CairoException ex = tlException.get();
         ex.message.clear();
-        ex.errno = Os.errno();
+        ex.errno = errno;
         return ex;
     }
 

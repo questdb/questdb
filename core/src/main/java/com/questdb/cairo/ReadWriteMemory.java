@@ -1,17 +1,21 @@
 package com.questdb.cairo;
 
 import com.questdb.misc.Files;
+import com.questdb.misc.FilesFacade;
 import com.questdb.std.str.LPSZ;
 
 public class ReadWriteMemory extends VirtualMemory {
+    private final FilesFacade ff;
     private long fd = -1;
     private long size;
 
-    public ReadWriteMemory(LPSZ name, long maxPageSize, long size, long defaultPageSize) {
+    public ReadWriteMemory(FilesFacade ff, LPSZ name, long maxPageSize, long size, long defaultPageSize) {
+        this(ff);
         of(name, maxPageSize, size, defaultPageSize);
     }
 
-    public ReadWriteMemory() {
+    public ReadWriteMemory(FilesFacade ff) {
+        this.ff = ff;
         size = 0;
     }
 
@@ -20,8 +24,8 @@ public class ReadWriteMemory extends VirtualMemory {
         long size = size();
         super.close();
         if (fd != -1) {
-            Files.truncate(fd, size);
-            Files.close(fd);
+            ff.truncate(fd, size);
+            ff.close(fd);
             fd = -1;
         }
     }
@@ -53,19 +57,15 @@ public class ReadWriteMemory extends VirtualMemory {
 
     @Override
     protected void release(long address) {
-        Files.munmap(address, pageSize);
-    }
-
-    public long getFd() {
-        return fd;
+        ff.munmap(address, pageSize);
     }
 
     public final void of(LPSZ name, long maxPageSize, long size, long defaultPageSize) {
         close();
 
-        fd = Files.openRW(name);
+        fd = ff.openRW(name);
         if (fd == -1) {
-            throw CairoException.instance().put("Cannot open file: ").put(name);
+            throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
         }
         configurePageSize(size, defaultPageSize, maxPageSize);
     }
@@ -81,7 +81,7 @@ public class ReadWriteMemory extends VirtualMemory {
         if (size > maxPageSize) {
             setPageSize(maxPageSize);
         } else {
-            setPageSize(Math.max(defaultPageSize, (size / Files.PAGE_SIZE) * Files.PAGE_SIZE));
+            setPageSize(Math.max(defaultPageSize, (size / ff.getPageSize()) * ff.getPageSize()));
         }
         pages.ensureCapacity((int) (size / this.pageSize + 1));
         this.size = size;
@@ -91,14 +91,14 @@ public class ReadWriteMemory extends VirtualMemory {
         long address;
         long offset = pageOffset(page);
 
-        if (Files.length(fd) < offset + pageSize) {
-            Files.truncate(fd, offset + pageSize);
+        if (ff.length(fd) < offset + pageSize) {
+            ff.truncate(fd, offset + pageSize);
         }
 
-        address = Files.mmap(fd, pageSize, offset, Files.MAP_RW);
+        address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
 
         if (address == -1) {
-            throw CairoException.instance().put("Cannot mmap(RW) fd=").put(fd).put(", offset").put(offset).put(", size").put(pageSize);
+            throw CairoException.instance(ff.errno()).put("Cannot mmap(RW) fd=").put(fd).put(", offset").put(offset).put(", size").put(pageSize);
         }
         return address;
     }

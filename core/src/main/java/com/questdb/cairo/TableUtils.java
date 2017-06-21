@@ -1,21 +1,43 @@
 package com.questdb.cairo;
 
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.misc.Files;
+import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.Path;
 
-public class TableUtils {
-    private final static ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath.FACTORY);
-    private final static ThreadLocal<AppendMemory> tlMem = new ThreadLocal<>(AppendMemory::new);
+import java.io.Closeable;
 
-    public static void create(CharSequence root, JournalMetadata metadata, int mode) {
+public class TableUtils implements Closeable {
+    private final ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath.FACTORY);
+    private final FilesFacade ff;
+    private final ThreadLocal<AppendMemory> tlMem = new ThreadLocal<>(new ObjectFactory<AppendMemory>() {
+        @Override
+        public AppendMemory newInstance() {
+            return new AppendMemory(ff);
+        }
+    });
+
+    public TableUtils(FilesFacade ff) {
+        this.ff = ff;
+    }
+
+    @Override
+    public void close() {
+        tlMem.get().close();
+        tlMem.remove();
+
+        tlPath.get().close();
+        tlPath.remove();
+    }
+
+    public void create(CharSequence root, JournalMetadata metadata, int mode) {
         CompositePath path = tlPath.get();
         path.of(root).concat(metadata.getName()).put(Path.SEPARATOR).$();
-        if (Files.mkdirs(path, mode) == -1) {
-            throw CairoException.instance().put("Cannot create dir: ").put(path);
+        if (ff.mkdirs(path, mode) == -1) {
+            throw CairoException.instance(ff.errno()).put("Cannot create dir: ").put(path);
         }
 
         int rootLen = path.length();
@@ -23,7 +45,7 @@ public class TableUtils {
 
         try (AppendMemory mem = tlMem.get()) {
 
-            mem.of(path.concat("_meta").$(), (int) Files.PAGE_SIZE, 0);
+            mem.of(path.concat("_meta").$(), ff.getPageSize(), 0);
 
             int count = metadata.getColumnCount();
             mem.putInt(count);
@@ -37,18 +59,18 @@ public class TableUtils {
 
 
             path.trimTo(rootLen);
-            mem.of(path.concat("_txi").$(), (int) Files.PAGE_SIZE, 0);
+            mem.of(path.concat("_txi").$(), ff.getPageSize(), 0);
             resetTxn(mem);
         }
     }
 
-    public static int exists(CharSequence root, CharSequence name) {
+    public int exists(CharSequence root, CharSequence name) {
         CompositePath path = tlPath.get();
         path.of(root).concat(name).$();
-        if (Files.exists(path)) {
+        if (ff.exists(path)) {
             // prepare to replace trailing \0
             path.trimTo(path.length());
-            if (Files.exists(path.concat("_txi").$())) {
+            if (ff.exists(path.concat("_txi").$())) {
                 return 0;
             } else {
                 return 1;
@@ -56,14 +78,6 @@ public class TableUtils {
         } else {
             return 1;
         }
-    }
-
-    public static void freeThreadLocals() {
-        tlMem.get().close();
-        tlMem.remove();
-
-        tlPath.get().close();
-        tlPath.remove();
     }
 
     static void resetTxn(VirtualMemory txMem) {

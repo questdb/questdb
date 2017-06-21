@@ -8,15 +8,15 @@
  * Copyright (C) 2014-2017 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU Affero General Public License, version 3,
+ * it under the terms of the GNU AFFero General Public License, version 3,
  * as published by the Free Software Foundation.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
+ * GNU AFFero General Public License for more details.
  *
- * You should have received a copy of the GNU Affero General Public License
+ * You should have received a copy of the GNU AFFero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  ******************************************************************************/
@@ -25,8 +25,9 @@ package com.questdb.cairo;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Files;
-import com.questdb.misc.Unsafe;
+import com.questdb.misc.*;
+import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -37,6 +38,7 @@ import org.junit.rules.TemporaryFolder;
 public class CairoMemoryTest {
     private static final int N = 1000000;
     private static final Log LOG = LogFactory.getLog(CairoMemoryTest.class);
+    private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
@@ -47,17 +49,125 @@ public class CairoMemoryTest {
     }
 
     @Test
-    public void testAppendAndReadWithReadOnlyMem() throws Exception {
+    public void testAppendAfterMMapFailure() throws Exception {
         long used = Unsafe.getMemUsed();
+        Rnd rnd = new Rnd();
+
+        class X extends FilesFacadeImpl {
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (rnd.nextBoolean()) {
+                    return super.mmap(fd, len, offset, mode);
+                } else {
+                    return -1;
+                }
+            }
+        }
+
+        X ff = new X();
+
+        int openFileCount = 0;
+        int failureCount = 0;
+        try (CompositePath path = new CompositePath()) {
+            path.of(temp.newFile().getAbsolutePath());
+            try (AppendMemory mem = new AppendMemory(ff)) {
+                mem.of(path, ff.getPageSize() * 2, 0);
+                int i = 0;
+                while (i < N) {
+                    try {
+                        mem.putLong(i);
+                        i++;
+                    } catch (CairoException ignore) {
+                        failureCount++;
+                    }
+                }
+                Assert.assertEquals(N * 8, mem.size());
+            }
+        }
+        Assert.assertTrue(failureCount > 0);
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(openFileCount, ff.getOpenFileCount());
+    }
+
+    @Test
+    public void testAppendAndCannotMap() throws Exception {
+        long used = Unsafe.getMemUsed();
+
+        Rnd rnd = new Rnd();
+        class X extends FilesFacadeImpl {
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (rnd.nextBoolean()) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, mode);
+            }
+        }
+
+        X ff = new X();
+
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
             long size;
-            try (AppendMemory mem = new AppendMemory(path, 2 * Files.PAGE_SIZE, 0)) {
+            try (AppendMemory mem = new AppendMemory(FF, path, 2 * FF.getPageSize(), 0)) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }
                 Assert.assertEquals(8L * N, size = mem.size());
             }
-            try (ReadOnlyMemory mem = new ReadOnlyMemory(path, Files.PAGE_SIZE, size)) {
+
+            int failureCount = 0;
+            try (ReadOnlyMemory mem = new ReadOnlyMemory(ff)) {
+                mem.of(path, ff.getPageSize(), size);
+                int i = 0;
+                while (i < N) {
+                    try {
+                        Assert.assertEquals(i, mem.getLong(i * 8));
+                        i++;
+                    } catch (CairoException ignore) {
+                        failureCount++;
+                    }
+                }
+                Assert.assertTrue(failureCount > 0);
+            }
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testAppendAndCannotRead() throws Exception {
+        long used = Unsafe.getMemUsed();
+
+        class X extends FilesFacadeImpl {
+            int count = 2;
+
+            @Override
+            public long openRO(LPSZ name) {
+                return --count > 0 ? -1 : super.openRO(name);
+            }
+        }
+
+        X ff = new X();
+
+        try (Path path = new Path(temp.newFile().getAbsolutePath())) {
+            long size;
+            try (AppendMemory mem = new AppendMemory(FF, path, 2 * FF.getPageSize(), 0)) {
+                for (int i = 0; i < N; i++) {
+                    mem.putLong(i);
+                }
+                Assert.assertEquals(8L * N, size = mem.size());
+            }
+
+            try (ReadOnlyMemory mem = new ReadOnlyMemory(ff)) {
+
+                // open non-existing
+                try {
+                    mem.of(path, ff.getPageSize(), size);
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
+
+                mem.of(path, ff.getPageSize(), size);
+
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
@@ -67,16 +177,109 @@ public class CairoMemoryTest {
     }
 
     @Test
+    public void testAppendAndReadWithReadOnlyMem() throws Exception {
+        long used = Unsafe.getMemUsed();
+        try (Path path = new Path(temp.newFile().getAbsolutePath())) {
+            long size;
+            try (AppendMemory mem = new AppendMemory(FF, path, 2 * FF.getPageSize(), 0)) {
+                for (int i = 0; i < N; i++) {
+                    mem.putLong(i);
+                }
+                Assert.assertEquals(8L * N, size = mem.size());
+            }
+
+            try (ReadOnlyMemory mem = new ReadOnlyMemory(FF)) {
+
+                // open non-existing
+                try {
+                    mem.of(null, FF.getPageSize(), size);
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
+
+                mem.of(path, FF.getPageSize(), size);
+
+                for (int i = 0; i < N; i++) {
+                    Assert.assertEquals(i, mem.getLong(i * 8));
+                }
+            }
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testAppendCannotOpenFile() throws Exception {
+        long used = Unsafe.getMemUsed();
+
+        class X extends FilesFacadeImpl {
+            @Override
+            public long openRW(LPSZ name) {
+                int n = name.length();
+                if (n > 5) {
+                    if (Chars.equals(".fail", name, n - 5, n)) {
+                        return -1;
+                    }
+                }
+                return super.openRW(name);
+            }
+        }
+
+        X ff = new X();
+
+        int openFileCount = 0;
+        int successCount = 0;
+        int failCount = 0;
+        try (CompositePath path = new CompositePath()) {
+            path.of(temp.getRoot().getAbsolutePath());
+            int prefixLen = path.length();
+            try (AppendMemory mem = new AppendMemory(ff)) {
+                Rnd rnd = new Rnd();
+                for (int k = 0; k < 10; k++) {
+                    path.trimTo(prefixLen);
+                    path.concat(rnd.nextString(10));
+
+                    boolean fail = rnd.nextBoolean();
+                    if (fail) {
+                        path.put(".fail").$();
+                        failCount++;
+                    } else {
+                        path.put(".data").$();
+                        successCount++;
+                    }
+
+                    if (fail) {
+                        try {
+                            mem.of(path, 2 * ff.getPageSize(), 0);
+                            Assert.fail();
+                        } catch (CairoException ignored) {
+                        }
+                    } else {
+                        mem.of(path, 2 * ff.getPageSize(), 0);
+                        for (int i = 0; i < N; i++) {
+                            mem.putLong(i);
+                        }
+                        Assert.assertEquals(N * 8, mem.size());
+                    }
+                }
+            }
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(openFileCount, ff.getOpenFileCount());
+        Assert.assertTrue(failCount > 0);
+        Assert.assertTrue(successCount > 0);
+    }
+
+    @Test
     public void testAppendMemoryJump() throws Exception {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
-            try (AppendMemory mem = new AppendMemory(path, Files.PAGE_SIZE, 0)) {
+            try (AppendMemory mem = new AppendMemory(FF, path, FF.getPageSize(), 0)) {
                 for (int i = 0; i < 100; i++) {
                     mem.putLong(i);
-                    mem.skip(2 * Files.PAGE_SIZE);
+                    mem.skip(2 * FF.getPageSize());
                 }
                 mem.jumpTo(0);
-                Assert.assertEquals((8 + 2 * Files.PAGE_SIZE) * 100, mem.size());
+                Assert.assertEquals((8 + 2 * FF.getPageSize()) * 100, mem.size());
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
@@ -85,17 +288,17 @@ public class CairoMemoryTest {
     @Test
     public void testAppendMemoryReuse() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (AppendMemory mem = new AppendMemory()) {
+        try (AppendMemory mem = new AppendMemory(FF)) {
             for (int j = 0; j < 10; j++) {
                 try (Path path = new Path(temp.newFile().getAbsolutePath())) {
                     long size;
-                    mem.of(path, 2 * Files.PAGE_SIZE, 0);
+                    mem.of(path, 2 * FF.getPageSize(), 0);
                     for (int i = 0; i < N; i++) {
                         mem.putLong(i);
                     }
                     Assert.assertEquals(8L * N, size = mem.size());
 
-                    try (ReadOnlyMemory ro = new ReadOnlyMemory(path, Files.PAGE_SIZE, size)) {
+                    try (ReadOnlyMemory ro = new ReadOnlyMemory(FF, path, FF.getPageSize(), size)) {
                         for (int i = 0; i < N; i++) {
                             Assert.assertEquals(i, ro.getLong(i * 8));
                         }
@@ -107,16 +310,111 @@ public class CairoMemoryTest {
     }
 
     @Test
+    public void testAppendTruncateError() throws Exception {
+        long used = Unsafe.getMemUsed();
+
+        class X extends FilesFacadeImpl {
+            int count = 3;
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                return --count > 0 && super.truncate(fd, size);
+            }
+        }
+
+        X ff = new X();
+
+        int openFileCount = 0;
+        try (Path path = new Path(temp.newFile().getAbsolutePath())) {
+            try (AppendMemory mem = new AppendMemory(ff, path, 2 * ff.getPageSize(), 0)) {
+                try {
+                    for (int i = 0; i < N; i++) {
+                        mem.putLong(i);
+                    }
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
+                Assert.assertTrue(mem.size() > 0);
+            }
+        }
+
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(openFileCount, ff.getOpenFileCount());
+    }
+
+    @Test
+    public void testReadWriteCannotOpenFile() throws Exception {
+        long used = Unsafe.getMemUsed();
+
+        class X extends FilesFacadeImpl {
+            @Override
+            public long openRW(LPSZ name) {
+                int n = name.length();
+                if (n > 5) {
+                    if (Chars.equals(".fail", name, n - 5, n)) {
+                        return -1;
+                    }
+                }
+                return super.openRW(name);
+            }
+        }
+
+        X ff = new X();
+
+        int openFileCount = 0;
+        int successCount = 0;
+        int failCount = 0;
+        try (CompositePath path = new CompositePath()) {
+            path.of(temp.getRoot().getAbsolutePath());
+            int prefixLen = path.length();
+            try (ReadWriteMemory mem = new ReadWriteMemory(ff)) {
+                Rnd rnd = new Rnd();
+                for (int k = 0; k < 10; k++) {
+                    path.trimTo(prefixLen);
+                    path.concat(rnd.nextString(10));
+
+                    boolean fail = rnd.nextBoolean();
+                    if (fail) {
+                        path.put(".fail").$();
+                        failCount++;
+                    } else {
+                        path.put(".data").$();
+                        successCount++;
+                    }
+
+                    if (fail) {
+                        try {
+                            mem.of(path, 2 * ff.getPageSize(), 0, ff.getPageSize());
+                            Assert.fail();
+                        } catch (CairoException ignored) {
+                        }
+                    } else {
+                        mem.of(path, 2 * ff.getPageSize(), 0, ff.getPageSize());
+                        for (int i = 0; i < N; i++) {
+                            mem.putLong(i);
+                        }
+                        Assert.assertEquals(N * 8, mem.size());
+                    }
+                }
+            }
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(openFileCount, ff.getOpenFileCount());
+        Assert.assertTrue(failCount > 0);
+        Assert.assertTrue(successCount > 0);
+    }
+
+    @Test
     public void testReadWriteMemoryJump() throws Exception {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
-            try (ReadWriteMemory mem = new ReadWriteMemory(path, Files.PAGE_SIZE, 0, Files.PAGE_SIZE)) {
+            try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, FF.getPageSize(), 0, FF.getPageSize())) {
                 for (int i = 0; i < 100; i++) {
                     mem.putLong(i);
-                    mem.skip(2 * Files.PAGE_SIZE);
+                    mem.skip(2 * FF.getPageSize());
                 }
                 mem.jumpTo(0);
-                Assert.assertEquals((8 + 2 * Files.PAGE_SIZE) * 100, mem.size());
+                Assert.assertEquals((8 + 2 * FF.getPageSize()) * 100, mem.size());
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
@@ -127,7 +425,7 @@ public class CairoMemoryTest {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
             long size;
-            try (ReadWriteMemory mem = new ReadWriteMemory(path, 2 * Files.PAGE_SIZE, 0, Files.PAGE_SIZE)) {
+            try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, 2 * FF.getPageSize(), 0, FF.getPageSize())) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }
@@ -138,7 +436,7 @@ public class CairoMemoryTest {
 
                 Assert.assertEquals(8L * N, size = mem.size());
             }
-            try (ReadWriteMemory mem = new ReadWriteMemory(path, Files.PAGE_SIZE * Files.PAGE_SIZE, size, Files.PAGE_SIZE)) {
+            try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, FF.getPageSize(), size, FF.getPageSize())) {
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
@@ -152,18 +450,60 @@ public class CairoMemoryTest {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
             long size;
-            try (ReadWriteMemory mem = new ReadWriteMemory(path, 2 * Files.PAGE_SIZE, 0, Files.PAGE_SIZE)) {
+            try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, 2 * FF.getPageSize(), 0, FF.getPageSize())) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }
                 Assert.assertEquals(8L * N, size = mem.size());
             }
-            try (ReadOnlyMemory mem = new ReadOnlyMemory(path, Files.PAGE_SIZE, size)) {
+            try (ReadOnlyMemory mem = new ReadOnlyMemory(FF, path, FF.getPageSize(), size)) {
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
             }
         }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testWriteOverMapFailuresAndRead() throws Exception {
+        long used = Unsafe.getMemUsed();
+        Rnd rnd = new Rnd();
+        class X extends FilesFacadeImpl {
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (rnd.nextBoolean()) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, mode);
+            }
+        }
+
+        int writeFailureCount = 0;
+        int readFailureCount = 0;
+
+        final X ff = new X();
+
+        try (Path path = new Path(temp.newFile().getAbsolutePath())) {
+            try (ReadWriteMemory mem = new ReadWriteMemory(ff, path, 2 * ff.getPageSize(), 0, ff.getPageSize())) {
+                int i = 0;
+                while (i < N) {
+                    try {
+                        mem.putLong(i);
+                        i++;
+                    } catch (CairoException ignore) {
+                        writeFailureCount++;
+                    }
+                }
+                // read in place
+                for (i = 0; i < N; i++) {
+                    Assert.assertEquals(i, mem.getLong(i * 8));
+                }
+
+                Assert.assertEquals(8L * N, mem.size());
+            }
+        }
+        Assert.assertTrue(writeFailureCount > 0);
         Assert.assertEquals(used, Unsafe.getMemUsed());
     }
 }

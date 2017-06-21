@@ -34,6 +34,7 @@ import java.io.Closeable;
 import java.nio.ByteBuffer;
 
 public class VirtualMemory implements Closeable {
+    private static final int STRING_LENGTH_BYTES = 4;
     protected final LongList pages = new LongList(32, 0);
     private final CharSequenceView csview = new CharSequenceView();
     private final ByteSequenceView bsview = new ByteSequenceView();
@@ -56,10 +57,10 @@ public class VirtualMemory implements Closeable {
 
     public static int getStorageLength(CharSequence s) {
         if (s == null) {
-            return 4;
+            return STRING_LENGTH_BYTES;
         }
 
-        return 4 + s.length() * 2;
+        return STRING_LENGTH_BYTES + s.length() * 2;
     }
 
     public long addressOf(long offset) {
@@ -151,7 +152,7 @@ public class VirtualMemory implements Closeable {
             return null;
         }
 
-        csview.of(offset + 4, len);
+        csview.of(offset + STRING_LENGTH_BYTES, len);
         return csview;
     }
 
@@ -324,9 +325,9 @@ public class VirtualMemory implements Closeable {
      * Computes boundaries of read-only memory page to enable fast-path check of offsets
      */
     private long computeHotPage(int page) {
+        long pageAddress = getPageAddress(page);
         roOffsetLo = pageOffset(page) - 1;
         roOffsetHi = roOffsetLo + pageSize + 1;
-        long pageAddress = getPageAddress(page);
         absolutePointer = pageAddress - roOffsetLo - 1;
         return pageAddress;
     }

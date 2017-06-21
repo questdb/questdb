@@ -3,22 +3,23 @@ package com.questdb.cairo;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Files;
-import com.questdb.std.ObjectFactory;
+import com.questdb.misc.FilesFacade;
 import com.questdb.std.str.LPSZ;
 
 public class AppendMemory extends VirtualMemory {
-    public static final ObjectFactory<AppendMemory> FACTORY = AppendMemory::new;
     private static final Log LOG = LogFactory.getLog(AppendMemory.class);
-
+    private final FilesFacade ff;
     private long fd = -1;
     private long pageAddress = 0;
     private long size;
 
-    public AppendMemory(LPSZ name, long pageSize, long size) {
+    public AppendMemory(FilesFacade ff, LPSZ name, long pageSize, long size) {
+        this.ff = ff;
         of(name, pageSize, size);
     }
 
-    public AppendMemory() {
+    public AppendMemory(FilesFacade ff) {
+        this.ff = ff;
         size = 0;
     }
 
@@ -28,8 +29,9 @@ public class AppendMemory extends VirtualMemory {
         super.close();
         releaseCurrentPage();
         if (fd != -1) {
-            Files.truncate(fd, sz);
-            Files.close(fd);
+            ff.truncate(fd, sz);
+            ff.close(fd);
+            LOG.info().$("Truncated and closed [").$(fd).$(']').$();
             fd = -1;
         }
     }
@@ -41,11 +43,6 @@ public class AppendMemory extends VirtualMemory {
     }
 
     @Override
-    protected long getPageAddress(int page) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     protected long mapWritePage(int page) {
         releaseCurrentPage();
         long address = mapPage(page);
@@ -54,7 +51,7 @@ public class AppendMemory extends VirtualMemory {
 
     @Override
     protected void release(long address) {
-        Files.munmap(address, pageSize);
+        ff.munmap(address, pageSize);
     }
 
     public long getFd() {
@@ -69,11 +66,11 @@ public class AppendMemory extends VirtualMemory {
     public final void of(LPSZ name, long pageSize) {
         close();
         setPageSize(pageSize);
-        fd = Files.openRW(name);
+        fd = ff.openRW(name);
         if (fd == -1) {
-            throw CairoException.instance().put("Cannot open ").put(name);
+            throw CairoException.instance(ff.errno()).put("Cannot open ").put(name);
         }
-        LOG.info().$("Open for append ").$(name).$(" [").$(fd).$(']').$();
+        LOG.info().$("Open ").$(name).$(" [").$(fd).$(']').$();
     }
 
     public final void setSize(long size) {
@@ -92,19 +89,19 @@ public class AppendMemory extends VirtualMemory {
     public void truncate() {
         this.size = 0;
         releaseCurrentPage();
-        Files.truncate(fd, pageSize);
+        ff.truncate(fd, pageSize);
         updateLimits(0, pageAddress = mapPage(0));
     }
 
     private long mapPage(int page) {
         long target = pageOffset(page + 1);
-        if (Files.length(fd) < target && !Files.truncate(fd, target)) {
-            throw CairoException.instance().put("Appender resize fd=").put(fd).put(", size=").put(target);
+        if (ff.length(fd) < target && !ff.truncate(fd, target)) {
+            throw CairoException.instance(ff.errno()).put("Appender resize failed fd=").put(fd).put(", size=").put(target);
         }
         long offset = pageOffset(page);
-        long address = Files.mmap(fd, pageSize, offset, Files.MAP_RW);
+        long address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
         if (address == -1) {
-            throw CairoException.instance().put("Cannot mmap(append) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(pageSize);
+            throw CairoException.instance(ff.errno()).put("Cannot mmap(append) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(pageSize);
         }
         return address;
     }

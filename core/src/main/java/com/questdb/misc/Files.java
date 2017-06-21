@@ -25,7 +25,6 @@ package com.questdb.misc;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 
@@ -34,6 +33,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.Charset;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class Files {
 
@@ -52,14 +52,20 @@ public final class Files {
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
 
-    private static final ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath::new);
+    private static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
 
     private Files() {
     } // Prevent construction.
 
     public native static void append(long fd, long address, int len);
 
-    public native static int close(long fd);
+    public static int close(long fd) {
+        int res = close0(fd);
+        if (res == 0) {
+            OPEN_FILE_COUNT.decrementAndGet();
+        }
+        return res;
+    }
 
     public static long copy(long fdFrom, long fdTo, long bufPtr, int bufSize) {
         long total = 0;
@@ -101,7 +107,7 @@ public final class Files {
     public static native long dup(long fd);
 
     public static boolean exists(LPSZ lpsz) {
-        return getLastModified(lpsz) != -1;
+        return lpsz != null && getLastModified(lpsz) != -1;
     }
 
     public native static void findClose(long findPtr);
@@ -118,6 +124,10 @@ public final class Files {
 
     public static long getLastModified(LPSZ lpsz) {
         return getLastModified(lpsz.address());
+    }
+
+    public static long getOpenFileCount() {
+        return OPEN_FILE_COUNT.get();
     }
 
     public static long getPageSizeForMapping(long fileSize) {
@@ -215,15 +225,27 @@ public final class Files {
     }
 
     public static long openAppend(LPSZ lpsz) {
-        return openAppend(lpsz.address());
+        long fd = openAppend(lpsz.address());
+        if (fd != -1) {
+            OPEN_FILE_COUNT.incrementAndGet();
+        }
+        return fd;
     }
 
     public static long openRO(LPSZ lpsz) {
-        return openRO(lpsz.address());
+        long fd = openRO(lpsz.address());
+        if (fd != -1) {
+            OPEN_FILE_COUNT.incrementAndGet();
+        }
+        return fd;
     }
 
     public static long openRW(LPSZ lpsz) {
-        return openRW(lpsz.address());
+        long fd = openRW(lpsz.address());
+        if (fd != -1) {
+            OPEN_FILE_COUNT.incrementAndGet();
+        }
+        return fd;
     }
 
     public native static long read(long fd, long address, long len, long offset);
@@ -273,10 +295,6 @@ public final class Files {
                             if (!rmdir(path)) {
                                 return false;
                             }
-
-//                            if (!rmdir(path.address())) {
-//                                return false;
-//                            }
                             break;
                         default:
                             if (!remove(path.address())) {
@@ -328,6 +346,8 @@ public final class Files {
             throw new JournalException("Cannot write to %s", e, file.getAbsolutePath());
         }
     }
+
+    private native static int close0(long fd);
 
     private static boolean strcmp(long lpsz, CharSequence s) {
         int len = s.length();

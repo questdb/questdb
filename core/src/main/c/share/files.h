@@ -42,7 +42,7 @@ JNIEXPORT void JNICALL Java_com_questdb_misc_Files_append
  * Method:    close
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close0
         (JNIEnv *, jclass, jlong);
 
 /*
