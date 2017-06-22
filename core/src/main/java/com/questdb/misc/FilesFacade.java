@@ -24,11 +24,15 @@ public interface FilesFacade {
 
     long length(long fd);
 
+    long length(LPSZ name);
+
     int mkdirs(LPSZ path, int mode);
 
     long mmap(long fd, long size, long offset, int mode);
 
     void munmap(long address, long size);
+
+    long openAppend(LPSZ name);
 
     long openRO(LPSZ name);
 
@@ -39,4 +43,6 @@ public interface FilesFacade {
     boolean rmdir(CompositePath name);
 
     boolean truncate(long fd, long size);
+
+    long write(long fd, long address, long len, long offset);
 }

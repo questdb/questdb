@@ -58,6 +58,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long length(LPSZ name) {
+        return Files.length(name);
+    }
+
+    @Override
     public int mkdirs(LPSZ path, int mode) {
         return Files.mkdirs(path, mode);
     }
@@ -70,6 +75,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public void munmap(long address, long size) {
         Files.munmap(address, size);
+    }
+
+    @Override
+    public long openAppend(LPSZ name) {
+        return Files.openAppend(name);
     }
 
     @Override
@@ -95,5 +105,10 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean truncate(long fd, long size) {
         return Files.truncate(fd, size);
+    }
+
+    @Override
+    public long write(long fd, long address, long len, long offset) {
+        return Files.write(fd, address, len, offset);
     }
 }

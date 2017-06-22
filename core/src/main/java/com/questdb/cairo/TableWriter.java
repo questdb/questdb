@@ -24,7 +24,6 @@
 package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
-import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
@@ -46,6 +45,10 @@ import java.io.Closeable;
 public class TableWriter implements Closeable {
 
     private static final int _16M = 16 * 1024 * 1024;
+    private static final long OFFSET_TXN = 0;
+    private static final long OFFSET_TRANSIENT_ROW_COUNT = 8;
+    private static final long OFFSET_FIXED_ROW_COUNT = 16;
+    private static final long OFFSET_MAX_TIMESTAMP = 24;
     private static CharSequenceHashSet truncateIgnores = new CharSequenceHashSet();
     private final ObjList<AppendMemory> columns = new ObjList<>();
     private final CompositePath path;
@@ -65,6 +68,8 @@ public class TableWriter implements Closeable {
     private long masterRef = 0;
     private Runnable[] nullers;
     private int mode = 509;
+    private long prevTimestamp;
+    private long maxTimestamp;
     private long partitionLo;
     private long partitionHi;
     private int txPartitionCount = 0;
@@ -81,7 +86,7 @@ public class TableWriter implements Closeable {
         this.path = new CompositePath().of(root).concat(name);
         this.rootLen = path.length();
         path.concat("_meta").$();
-        metaMem.of(path, Files.PAGE_SIZE, Files.length(path));
+        metaMem.of(path, ff.getPageSize(), ff.length(path));
         this.columnCount = metaMem.getInt(0);
         this.partitionBy = metaMem.getInt(4);
         this.refs.extendAndSet(columnCount, 0);
@@ -106,17 +111,17 @@ public class TableWriter implements Closeable {
     }
 
     public void commit() {
-        txMem.jumpTo(8);
+        txMem.jumpTo(OFFSET_TRANSIENT_ROW_COUNT);
         txMem.putLong(transientRowCount);
 
         if (txPartitionCount > 1) {
             commitPendingPartitions();
             txMem.putLong(fixedRowCount);
-            txMem.putLong(partitionLo);
+            txMem.putLong(maxTimestamp);
         }
 
         Unsafe.getUnsafe().storeFence();
-        txMem.jumpTo(0);
+        txMem.jumpTo(OFFSET_TXN);
         txMem.putLong(txn++);
         Unsafe.getUnsafe().storeFence();
     }
@@ -148,13 +153,14 @@ public class TableWriter implements Closeable {
             rowFunction = openPartitionFunction;
         }
 
+        maxTimestamp = Long.MIN_VALUE;
         partitionLo = Long.MIN_VALUE;
         transientRowCount = 0;
         fixedRowCount = 0;
         txn = 0;
         txPartitionCount = 1;
 
-        txMem.jumpTo(0);
+        txMem.jumpTo(OFFSET_TXN);
         TableUtils.resetTxn(txMem);
         txPartitionCount = 1;
     }
@@ -167,7 +173,7 @@ public class TableWriter implements Closeable {
             setStateForTimestamp(partitionTimestamp, false);
             path.concat("_archive").$();
 
-            long fd = Files.openAppend(path);
+            long fd = ff.openAppend(path);
 
             if (fd == -1) {
                 throw CairoException.instance(ff.errno()).put("Cannot open for append: ").put(path);
@@ -177,14 +183,14 @@ public class TableWriter implements Closeable {
                 int len = 8;
                 while (len > 0) {
                     long l = Math.min(len, columnSizeMem.pageRemaining(offset));
-                    if (Files.write(fd, columnSizeMem.addressOf(offset), l, 0) == -1) {
+                    if (ff.write(fd, columnSizeMem.addressOf(offset), l, 0) == -1) {
                         throw CairoException.instance(ff.errno()).put("Commit failed, file=").put(path);
                     }
                     len -= l;
                     offset += l;
                 }
             } finally {
-                Files.close(fd);
+                ff.close(fd);
                 path.trimTo(rootLen);
             }
         }
@@ -194,13 +200,13 @@ public class TableWriter implements Closeable {
     private void configureAppendPosition() {
         path.concat("_txi").$();
         try {
-            if (Files.exists(path)) {
-                txMem.of(path, Files.PAGE_SIZE, 0, Files.PAGE_SIZE);
+            if (ff.exists(path)) {
+                txMem.of(path, ff.getPageSize(), 0, ff.getPageSize());
                 path.trimTo(rootLen);
-                this.txn = txMem.getLong(0);
-                this.transientRowCount = txMem.getLong(8);
-                this.fixedRowCount = txMem.getLong(16);
-                long timestamp = txMem.getLong(24);
+                this.txn = txMem.getLong(OFFSET_TXN);
+                this.transientRowCount = txMem.getLong(OFFSET_TRANSIENT_ROW_COUNT);
+                this.fixedRowCount = txMem.getLong(OFFSET_FIXED_ROW_COUNT);
+                long timestamp = txMem.getLong(OFFSET_MAX_TIMESTAMP);
                 if (timestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
                     openPartition(timestamp);
                     if (partitionBy == PartitionBy.NONE) {
@@ -209,7 +215,7 @@ public class TableWriter implements Closeable {
                         rowFunction = switchPartitionFunction;
                     }
                 } else {
-                    partitionLo = timestamp;
+                    maxTimestamp = timestamp;
                     rowFunction = openPartitionFunction;
                 }
             } else {
@@ -405,7 +411,19 @@ public class TableWriter implements Closeable {
         path.trimTo(rootLen);
     }
 
-    private boolean setStateForTimestamp(long timestamp, boolean updatePartitionRange) {
+    /**
+     * Sets path member variable to partition directory for the given timestamp and
+     * partitionLo and partitionHi to partition interval in millis. These values are
+     * determined based on input timestamp and value of partitionBy. For any given
+     * timestamp this method will determine either day, month or year interval timestamp falls to.
+     * Partition directory name is ISO string of interval start.
+     *
+     * @param timestamp               to determine interval for
+     * @param updatePartitionInterval flag indicating that partition interval partitionLo and
+     *                                partitionHi have to be updated as well.
+     * @return false if table is not partitioned
+     */
+    private boolean setStateForTimestamp(long timestamp, boolean updatePartitionInterval) {
         int y, m, d;
         boolean leap;
         path.put(Path.SEPARATOR);
@@ -421,7 +439,7 @@ public class TableWriter implements Closeable {
                 path.put('-');
                 DateFormatUtils.append0(path, d);
 
-                if (updatePartitionRange) {
+                if (updatePartitionInterval) {
                     partitionLo = Dates.yearMillis(y, leap);
                     partitionLo += Dates.monthOfYearMillis(m, leap);
                     partitionLo += (d - 1) * Dates.DAY_MILLIS;
@@ -436,7 +454,7 @@ public class TableWriter implements Closeable {
                 path.put('-');
                 DateFormatUtils.append0(path, m);
 
-                if (updatePartitionRange) {
+                if (updatePartitionInterval) {
                     partitionLo = Dates.yearMillis(y, leap);
                     partitionLo += Dates.monthOfYearMillis(m, leap);
                     partitionHi = partitionLo + Dates.getDaysPerMonth(m, leap) * 24L * Dates.HOUR_MILLIS;
@@ -446,7 +464,7 @@ public class TableWriter implements Closeable {
                 y = Dates.getYear(timestamp);
                 leap = Dates.isLeapYear(y);
                 DateFormatUtils.append000(path, y);
-                if (updatePartitionRange) {
+                if (updatePartitionInterval) {
                     partitionLo = Dates.yearMillis(y, leap);
                     partitionHi = Dates.addYear(partitionLo, 1);
                 }
@@ -465,11 +483,10 @@ public class TableWriter implements Closeable {
         // file can be created in appropriate directory
         // for simplicity use partitionLo, which can be
         // translated to directory name when needed
-        long partitionLo = this.partitionLo;
         if (setStateForTimestamp(timestamp, true)) {
             if (txPartitionCount++ > 0) {
                 columnSizeMem.putLong(transientRowCount);
-                columnSizeMem.putLong(partitionLo);
+                columnSizeMem.putLong(maxTimestamp);
             }
             fixedRowCount += transientRowCount;
             transientRowCount = 0;
@@ -514,7 +531,7 @@ public class TableWriter implements Closeable {
     private class OpenPartitionRowFunction implements RowFunction {
         @Override
         public Row newRow(long timestamp) {
-            if (partitionLo == Long.MIN_VALUE) {
+            if (maxTimestamp == Long.MIN_VALUE) {
                 openPartition(timestamp);
             }
             return (rowFunction = switchPartitionFunction).newRow(timestamp);
@@ -525,10 +542,11 @@ public class TableWriter implements Closeable {
         @Override
         public Row newRow(long timestamp) {
             masterRef++;
-            if (timestamp < partitionLo) {
+            if (timestamp < maxTimestamp) {
                 throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
             }
-            partitionLo = timestamp;
+            prevTimestamp = maxTimestamp;
+            maxTimestamp = timestamp;
             return row;
         }
     }
@@ -536,28 +554,26 @@ public class TableWriter implements Closeable {
     private class SwitchPartitionRowFunction implements RowFunction {
         @NotNull
         private Row newRow0(long timestamp) {
-            if (timestamp < partitionLo) {
+            if (timestamp < maxTimestamp) {
                 throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
             }
 
             if (timestamp > partitionHi) {
                 switchPartition(timestamp);
             }
-            partitionLo = timestamp;
+            maxTimestamp = timestamp;
             return row;
         }
 
         @Override
         public Row newRow(long timestamp) {
             masterRef++;
-            if (timestamp < partitionHi && timestamp >= partitionLo) {
-                partitionLo = timestamp;
+            if (timestamp < partitionHi && timestamp >= maxTimestamp) {
+                maxTimestamp = timestamp;
                 return row;
             }
             return newRow0(timestamp);
         }
-
-
     }
 
     public class Row {
@@ -576,22 +592,25 @@ public class TableWriter implements Closeable {
 
         public void putDouble(int index, double value) {
             getPrimaryColumn(index).putDouble(value);
-            refs.setQuick(index, masterRef);
+            notNull(index);
         }
 
         public void putInt(int index, int value) {
             getPrimaryColumn(index).putInt(value);
-            refs.setQuick(index, masterRef);
+            notNull(index);
         }
 
         public void putLong(int index, long value) {
             getPrimaryColumn(index).putLong(value);
-            refs.setQuick(index, masterRef);
+            notNull(index);
         }
 
         public void putStr(int index, CharSequence value) {
-            long r = getPrimaryColumn(index).putStr(value);
-            getSecondaryColumn(index).putLong(r);
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
+            notNull(index);
+        }
+
+        private void notNull(int index) {
             refs.setQuick(index, masterRef);
         }
     }
