@@ -18,6 +18,8 @@ public interface FilesFacade {
 
     boolean findNext(long findPtr);
 
+    int findType(long findPtr);
+
     long getOpenFileCount();
 
     long getPageSize();

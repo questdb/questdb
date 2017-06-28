@@ -43,6 +43,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int findType(long findPtr) {
+        return Files.findType(findPtr);
+    }
+
+    @Override
     public long getOpenFileCount() {
         return Files.getOpenFileCount();
     }

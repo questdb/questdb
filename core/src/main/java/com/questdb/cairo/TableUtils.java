@@ -88,11 +88,12 @@ public class TableUtils implements Closeable {
         // fixed row count
         txMem.putLong(0);
         // partition low
-        txMem.putLong(0);
+        txMem.putLong(Long.MIN_VALUE);
         Unsafe.getUnsafe().storeFence();
         txMem.jumpTo(0);
         // txn
         txMem.putLong(0);
         Unsafe.getUnsafe().storeFence();
+        txMem.jumpTo(32);
     }
 }

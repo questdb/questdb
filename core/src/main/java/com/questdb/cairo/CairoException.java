@@ -17,9 +17,9 @@ public class CairoException extends RuntimeException implements Sinkable {
         return ex;
     }
 
-    public CairoException put(char c) {
-        message.put(c);
-        return this;
+    @Override
+    public String getMessage() {
+        return message.toString();
     }
 
     public CairoException put(long value) {
@@ -29,6 +29,11 @@ public class CairoException extends RuntimeException implements Sinkable {
 
     public CairoException put(CharSequence cs) {
         message.put(cs);
+        return this;
+    }
+
+    public CairoException put(char c) {
+        message.put(c);
         return this;
     }
 

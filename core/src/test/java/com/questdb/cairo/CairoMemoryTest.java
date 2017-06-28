@@ -54,9 +54,11 @@ public class CairoMemoryTest {
         Rnd rnd = new Rnd();
 
         class X extends FilesFacadeImpl {
+            boolean force = true;
             @Override
             public long mmap(long fd, long len, long offset, int mode) {
-                if (rnd.nextBoolean()) {
+                if (force || rnd.nextBoolean()) {
+                    force = false;
                     return super.mmap(fd, len, offset, mode);
                 } else {
                     return -1;

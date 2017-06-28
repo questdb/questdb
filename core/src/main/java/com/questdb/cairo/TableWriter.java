@@ -24,9 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
-import com.questdb.misc.FilesFacade;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
+import com.questdb.misc.*;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
@@ -65,18 +63,20 @@ public class TableWriter implements Closeable {
     private final RowFunction noPartitionFunction = new NoPartitionFunction();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final FilesFacade ff;
-    private long masterRef = 0;
     private Runnable[] nullers;
     private int mode = 509;
+    private long fixedRowCount = 0;
+    private long txn;
+
+    private RowFunction rowFunction = openPartitionFunction;
     private long prevTimestamp;
+    private long prevTransientRowCount;
     private long maxTimestamp;
     private long partitionLo;
     private long partitionHi;
     private int txPartitionCount = 0;
     private long transientRowCount = 0;
-    private long fixedRowCount = 0;
-    private long txn;
-    private RowFunction rowFunction = openPartitionFunction;
+    private long masterRef = 0;
 
     public TableWriter(FilesFacade ff, CharSequence root, CharSequence name) {
         this.ff = ff;
@@ -111,6 +111,10 @@ public class TableWriter implements Closeable {
     }
 
     public void commit() {
+        if ((masterRef & 1) != 0) {
+            cancelRow();
+        }
+
         txMem.jumpTo(OFFSET_TRANSIENT_ROW_COUNT);
         txMem.putLong(transientRowCount);
 
@@ -124,6 +128,7 @@ public class TableWriter implements Closeable {
         txMem.jumpTo(OFFSET_TXN);
         txMem.putLong(txn++);
         Unsafe.getUnsafe().storeFence();
+        txMem.jumpTo(32);
     }
 
     public Row newRow(long timestamp) {
@@ -153,8 +158,10 @@ public class TableWriter implements Closeable {
             rowFunction = openPartitionFunction;
         }
 
+        prevTimestamp = Long.MIN_VALUE;
         maxTimestamp = Long.MIN_VALUE;
         partitionLo = Long.MIN_VALUE;
+        prevTransientRowCount = 0;
         transientRowCount = 0;
         fixedRowCount = 0;
         txn = 0;
@@ -165,32 +172,100 @@ public class TableWriter implements Closeable {
         txPartitionCount = 1;
     }
 
+    private void bumpMasterRef() {
+        if ((masterRef & 1) != 0) {
+            cancelRow();
+        }
+        masterRef++;
+    }
+
+    private void cancelRow() {
+        if (transientRowCount == 0) {
+            if (partitionBy != PartitionBy.NONE) {
+                // we have to undo creation of partition
+                try {
+                    setStateForTimestamp(maxTimestamp, false);
+                    if (!Files.rmdir(path.$())) {
+                        throw CairoException.instance(Os.errno()).put("Cannot remove directory: ").put(path);
+                    }
+
+                    // undo counts
+                    transientRowCount = prevTransientRowCount;
+                    fixedRowCount -= prevTransientRowCount;
+                    maxTimestamp = prevTimestamp;
+
+                    // open old partition
+                    if (prevTimestamp > Long.MIN_VALUE) {
+                        txPartitionCount--;
+                        columnSizeMem.jumpTo((txPartitionCount - 1) * 16);
+                        setStateForTimestamp(maxTimestamp, true);
+                        setAppendPosition(transientRowCount);
+                    } else {
+                        rowFunction = openPartitionFunction;
+                    }
+                } finally {
+                    path.trimTo(rootLen);
+                }
+            } else {
+                // we only have one partition, jump to start on every column
+                for (int i = 0; i < columnCount; i++) {
+                    getPrimaryColumn(i).jumpTo(0);
+                    AppendMemory mem = getSecondaryColumn(i);
+                    if (mem != null) {
+                        mem.jumpTo(0);
+                    }
+                }
+            }
+        } else {
+            maxTimestamp = prevTimestamp;
+            // we are staying within same partition, prepare append positions for row count
+
+            boolean rowChanged = false;
+            // verify if any of the columns have been changed
+            // if not - we don't have to do
+            for (int i = 0; i < columnCount; i++) {
+                if (refs.getQuick(i) == masterRef) {
+                    rowChanged = true;
+                    break;
+                }
+            }
+
+            // is no column has been changed we take easy option and do nothing
+            if (rowChanged) {
+                setAppendPosition(transientRowCount);
+            }
+        }
+        masterRef--;
+    }
+
     private void commitPendingPartitions() {
         long offset = 8;
         for (int i = 0; i < txPartitionCount - 1; i++) {
-            long partitionTimestamp = columnSizeMem.getLong(offset);
-            offset += 8;
-            setStateForTimestamp(partitionTimestamp, false);
-            path.concat("_archive").$();
-
-            long fd = ff.openAppend(path);
-
-            if (fd == -1) {
-                throw CairoException.instance(ff.errno()).put("Cannot open for append: ").put(path);
-            }
-
             try {
-                int len = 8;
-                while (len > 0) {
-                    long l = Math.min(len, columnSizeMem.pageRemaining(offset));
-                    if (ff.write(fd, columnSizeMem.addressOf(offset), l, 0) == -1) {
-                        throw CairoException.instance(ff.errno()).put("Commit failed, file=").put(path);
+                long partitionTimestamp = columnSizeMem.getLong(offset);
+                offset += 8;
+                setStateForTimestamp(partitionTimestamp, false);
+                path.concat("_archive").$();
+
+                long fd = ff.openAppend(path);
+
+                if (fd == -1) {
+                    throw CairoException.instance(ff.errno()).put("Cannot open for append: ").put(path);
+                }
+                try {
+                    int len = 8;
+                    while (len > 0) {
+                        long l = Math.min(len, columnSizeMem.pageRemaining(offset));
+                        if (ff.write(fd, columnSizeMem.addressOf(offset), l, 0) == -1) {
+                            throw CairoException.instance(ff.errno()).put("Commit failed, file=").put(path);
+                        }
+                        len -= l;
+                        offset += l;
                     }
-                    len -= l;
-                    offset += l;
+                } finally {
+                    ff.close(fd);
                 }
             } finally {
-                ff.close(fd);
                 path.trimTo(rootLen);
             }
         }
@@ -208,7 +283,7 @@ public class TableWriter implements Closeable {
                 this.fixedRowCount = txMem.getLong(OFFSET_FIXED_ROW_COUNT);
                 long timestamp = txMem.getLong(OFFSET_MAX_TIMESTAMP);
                 if (timestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
-                    openPartition(timestamp);
+                    openFirstPartition(timestamp);
                     if (partitionBy == PartitionBy.NONE) {
                         rowFunction = noPartitionFunction;
                     } else {
@@ -240,6 +315,8 @@ public class TableWriter implements Closeable {
                     break;
             }
         }
+
+        configureNullers();
     }
 
     private void configureNuller(int index, int type, AppendMemory mem1, AppendMemory mem2) {
@@ -268,6 +345,12 @@ public class TableWriter implements Closeable {
                 break;
             default:
                 break;
+        }
+    }
+
+    private void configureNullers() {
+        for (int i = 0; i < columnCount; i++) {
+            configureNuller(i, getColumnType(i), getPrimaryColumn(i), getSecondaryColumn(i));
         }
     }
 
@@ -307,80 +390,40 @@ public class TableWriter implements Closeable {
         return path.concat(columnName).put(".i").$();
     }
 
+    private void openFirstPartition(long timestamp) {
+        openPartition(timestamp);
+        setAppendPosition(transientRowCount);
+        txPartitionCount = 1;
+    }
+
     private void openPartition(long timestamp) {
-        setStateForTimestamp(timestamp, true);
-
-        int plen = path.length();
-        if (ff.mkdirs(path.put(Path.SEPARATOR).$(), mode) != 0) {
-            throw CairoException.instance(ff.errno()).put("Cannot create directories: ").put(path);
-        }
-        path.trimTo(plen);
-        assert columnCount > 0;
-
-        long nameOffset = getColumnNameOffset();
-
-        long pSz = Unsafe.malloc(8);
         try {
+            setStateForTimestamp(timestamp, true);
+            int plen = path.length();
+            if (ff.mkdirs(path.put(Path.SEPARATOR).$(), mode) != 0) {
+                path.trimTo(plen);
+                throw CairoException.instance(ff.errno()).put("Cannot create directories: ").put(path);
+            }
+            assert columnCount > 0;
+            long nameOffset = getColumnNameOffset();
             for (int i = 0; i < columnCount; i++) {
                 AppendMemory mem1 = getPrimaryColumn(i);
                 AppendMemory mem2 = getSecondaryColumn(i);
 
-                int type = getColumnType(i);
-
                 CharSequence name = metaMem.getStr(nameOffset);
                 nameOffset += VirtualMemory.getStorageLength(name);
 
-                switch (type) {
-                    case ColumnType.BINARY:
-                        assert mem2 != null;
-                        mem2.of(iFile(name), getMapPageSize(), transientRowCount * 8);
-                        path.trimTo(plen);
-                        mem1.of(dFile(name), getMapPageSize(), 0);
-                        path.trimTo(plen);
+                path.trimTo(plen);
+                mem1.of(dFile(name), getMapPageSize());
 
-                        // same code as for string, except string length is 4 bytes, binary length is 8 bytes
-                        if (transientRowCount > 0) {
-                            if (ff.read(mem2.getFd(), pSz, 8, (transientRowCount - 1) * 8) != 8) {
-                                throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((transientRowCount - 1) * 8);
-                            }
-                            long offset = Unsafe.getUnsafe().getLong(pSz);
-                            if (ff.read(mem1.getFd(), pSz, 8, offset) != 8) {
-                                throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
-                            }
-                            mem1.setSize(offset + Unsafe.getUnsafe().getLong(pSz));
-                        }
-                        break;
-                    case ColumnType.STRING:
-                    case ColumnType.SYMBOL:
-                        assert mem2 != null;
-                        mem2.of(iFile(name), getMapPageSize(), transientRowCount * 8);
-                        path.trimTo(plen);
-                        mem1.of(dFile(name), getMapPageSize());
-                        path.trimTo(plen);
-                        if (transientRowCount > 0) {
-                            if (ff.read(mem2.getFd(), pSz, 8, (transientRowCount - 1) * 8) != 8) {
-                                throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((transientRowCount - 1) * 8);
-                            }
-                            long offset = Unsafe.getUnsafe().getLong(pSz);
-                            if (ff.read(mem1.getFd(), pSz, 4, offset) != 4) {
-                                throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
-                            }
-                            mem1.setSize(offset + Unsafe.getUnsafe().getInt(pSz));
-                        }
-                        break;
-                    default:
-                        mem1.of(path.concat(name).put(".d").$(), getMapPageSize(), transientRowCount * ColumnType.sizeOf(type));
-                        path.trimTo(plen);
-                        break;
+                if (mem2 != null) {
+                    path.trimTo(plen);
+                    mem2.of(iFile(name), getMapPageSize());
                 }
-                // set nullers
-                configureNuller(i, type, mem1, mem2);
             }
         } finally {
-            Unsafe.free(pSz, 8);
             path.trimTo(rootLen);
         }
-        txPartitionCount = 1;
     }
 
     private void removePartitionDirectories() {
@@ -411,19 +454,72 @@ public class TableWriter implements Closeable {
         path.trimTo(rootLen);
     }
 
+    private void setAppendPosition(long position) {
+        long pSz = Unsafe.malloc(8);
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                AppendMemory mem1 = getPrimaryColumn(i);
+                AppendMemory mem2 = getSecondaryColumn(i);
+
+                int type = getColumnType(i);
+                long offset;
+
+                if (position > 0) {
+                    switch (type) {
+                        case ColumnType.BINARY:
+                            assert mem2 != null;
+                            if (ff.read(mem2.getFd(), pSz, 8, (position - 1) * 8) != 8) {
+                                throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((position - 1) * 8);
+                            }
+                            offset = Unsafe.getUnsafe().getLong(pSz);
+                            if (ff.read(mem1.getFd(), pSz, 8, offset) != 8) {
+                                throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
+                            }
+                            mem1.setSize(offset + Unsafe.getUnsafe().getLong(pSz));
+                            break;
+                        case ColumnType.STRING:
+                        case ColumnType.SYMBOL:
+                            assert mem2 != null;
+                            if (ff.read(mem2.getFd(), pSz, 8, (position - 1) * 8) != 8) {
+                                throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((position - 1) * 8);
+                            }
+                            offset = Unsafe.getUnsafe().getLong(pSz);
+                            if (ff.read(mem1.getFd(), pSz, 4, offset) != 4) {
+                                throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
+                            }
+                            mem1.setSize(offset + Unsafe.getUnsafe().getInt(pSz));
+                            break;
+                        default:
+                            mem1.setSize(position * ColumnType.sizeOf(type));
+                            break;
+                    }
+                } else {
+                    mem1.setSize(0);
+                    if (mem2 != null) {
+                        mem2.setSize(0);
+                    }
+                }
+            }
+        } finally {
+            Unsafe.free(pSz, 8);
+        }
+    }
+
     /**
      * Sets path member variable to partition directory for the given timestamp and
      * partitionLo and partitionHi to partition interval in millis. These values are
      * determined based on input timestamp and value of partitionBy. For any given
      * timestamp this method will determine either day, month or year interval timestamp falls to.
      * Partition directory name is ISO string of interval start.
+     * <p>
+     * Because this method modifies "path" member variable, be sure path is trimmed to original
+     * state withing try..finally block.
      *
      * @param timestamp               to determine interval for
      * @param updatePartitionInterval flag indicating that partition interval partitionLo and
      *                                partitionHi have to be updated as well.
-     * @return false if table is not partitioned
      */
-    private boolean setStateForTimestamp(long timestamp, boolean updatePartitionInterval) {
+    private void setStateForTimestamp(long timestamp, boolean updatePartitionInterval) {
         int y, m, d;
         boolean leap;
         path.put(Path.SEPARATOR);
@@ -473,9 +569,7 @@ public class TableWriter implements Closeable {
                 path.put("default");
                 partitionLo = Long.MIN_VALUE;
                 partitionHi = Long.MAX_VALUE;
-                return false;
         }
-        return true;
     }
 
     private void switchPartition(long timestamp) {
@@ -483,41 +577,20 @@ public class TableWriter implements Closeable {
         // file can be created in appropriate directory
         // for simplicity use partitionLo, which can be
         // translated to directory name when needed
-        if (setStateForTimestamp(timestamp, true)) {
-            if (txPartitionCount++ > 0) {
-                columnSizeMem.putLong(transientRowCount);
-                columnSizeMem.putLong(maxTimestamp);
-            }
-            fixedRowCount += transientRowCount;
-            transientRowCount = 0;
-            switchPartition();
-            path.trimTo(rootLen);
+        if (txPartitionCount++ > 0) {
+            columnSizeMem.putLong(transientRowCount);
+            columnSizeMem.putLong(maxTimestamp);
         }
+        fixedRowCount += transientRowCount;
+        prevTransientRowCount = transientRowCount;
+        transientRowCount = 0;
+        openPartition(timestamp);
+        setAppendPosition(0);
     }
 
-    private void switchPartition() {
-        int partitionPathLen = path.length();
-        if (ff.mkdirs(path.put(Path.SEPARATOR).$(), mode) != 0) {
-            throw CairoException.instance(ff.errno()).put("Cannot switch partition. Failed to create dir: ").put(path);
-        }
-
-        assert columnCount > 0;
-        long nameOffset = getColumnNameOffset();
-        for (int i = 0; i < columnCount; i++) {
-            AppendMemory mem1 = getPrimaryColumn(i);
-            AppendMemory mem2 = getSecondaryColumn(i);
-
-            CharSequence name = metaMem.getStr(nameOffset);
-            nameOffset += VirtualMemory.getStorageLength(name);
-
-            path.trimTo(partitionPathLen);
-            mem1.of(dFile(name), getMapPageSize(), 0);
-
-            if (mem2 != null) {
-                path.trimTo(partitionPathLen);
-                mem2.of(iFile(name), getMapPageSize(), 0);
-            }
-        }
+    private void updateMaxTimestamp(long timestamp) {
+        this.prevTimestamp = maxTimestamp;
+        this.maxTimestamp = timestamp;
     }
 
     /**
@@ -532,7 +605,7 @@ public class TableWriter implements Closeable {
         @Override
         public Row newRow(long timestamp) {
             if (maxTimestamp == Long.MIN_VALUE) {
-                openPartition(timestamp);
+                openFirstPartition(timestamp);
             }
             return (rowFunction = switchPartitionFunction).newRow(timestamp);
         }
@@ -541,12 +614,11 @@ public class TableWriter implements Closeable {
     private class NoPartitionFunction implements RowFunction {
         @Override
         public Row newRow(long timestamp) {
-            masterRef++;
+            bumpMasterRef();
             if (timestamp < maxTimestamp) {
                 throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
             }
-            prevTimestamp = maxTimestamp;
-            maxTimestamp = timestamp;
+            updateMaxTimestamp(timestamp);
             return row;
         }
     }
@@ -558,18 +630,19 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
             }
 
-            if (timestamp > partitionHi) {
+            if (timestamp >= partitionHi && partitionBy != PartitionBy.NONE) {
                 switchPartition(timestamp);
             }
-            maxTimestamp = timestamp;
+
+            updateMaxTimestamp(timestamp);
             return row;
         }
 
         @Override
         public Row newRow(long timestamp) {
-            masterRef++;
+            bumpMasterRef();
             if (timestamp < partitionHi && timestamp >= maxTimestamp) {
-                maxTimestamp = timestamp;
+                updateMaxTimestamp(timestamp);
                 return row;
             }
             return newRow0(timestamp);
@@ -578,12 +651,21 @@ public class TableWriter implements Closeable {
 
     public class Row {
         public void append() {
+            if ((masterRef & 1) == 0) {
+                return;
+            }
+
             for (int i = 0; i < columnCount; i++) {
                 if (refs.getQuick(i) < masterRef) {
                     Unsafe.arrayGet(nullers, i).run();
                 }
             }
             transientRowCount++;
+            masterRef++;
+        }
+
+        public void cancel() {
+            cancelRow();
         }
 
         public void putDate(int index, long value) {

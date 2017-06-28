@@ -196,6 +196,23 @@ public class VirtualMemoryTest {
     }
 
     @Test
+    public void testJumpTo2() throws Exception {
+        try (VirtualMemory mem = new VirtualMemory(11)) {
+            mem.jumpTo(8);
+            int n = 999;
+            for (int i = n; i > 0; i--) {
+                mem.putLong(i);
+            }
+            long o = 8;
+            for (int i = n; i > 0; i--) {
+                assertEquals(i, mem.getLong(o));
+                o += 8;
+            }
+
+        }
+    }
+
+    @Test
     public void testLargePageBinBuf() throws Exception {
         assertBuf(ByteBuffer.allocate(1024 * 1024), 4 * 1024 * 1024);
     }
