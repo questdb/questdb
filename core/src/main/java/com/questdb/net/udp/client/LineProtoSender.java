@@ -24,7 +24,6 @@
 package com.questdb.net.udp.client;
 
 import com.questdb.misc.Chars;
-import com.questdb.misc.Files;
 import com.questdb.misc.Net;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.str.AbstractCharSink;
@@ -74,7 +73,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
 
     @Override
     public void close() {
-        Files.close(fd);
+        Net.close(fd);
         Net.freeSockAddr(sockaddr);
         Unsafe.free(bufA, capacity);
         Unsafe.free(bufB, capacity);

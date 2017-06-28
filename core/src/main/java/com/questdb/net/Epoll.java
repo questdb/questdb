@@ -24,7 +24,7 @@
 package com.questdb.net;
 
 import com.questdb.ex.NetworkError;
-import com.questdb.misc.Files;
+import com.questdb.misc.Net;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 
@@ -57,7 +57,7 @@ public final class Epoll implements Closeable {
         if (closed) {
             return;
         }
-        Files.close(epfd);
+        Net.close(epfd);
         Unsafe.free(events, SIZEOF_EVENT * (long) capacity);
         closed = true;
     }

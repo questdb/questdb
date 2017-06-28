@@ -47,6 +47,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
     }
 
     @Test
@@ -70,6 +71,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
     }
 
     @Test
@@ -94,6 +96,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
     }
 
     @Test
@@ -111,6 +114,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
     }
 
     @Test
@@ -169,6 +173,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
     }
 
     @Test
@@ -206,6 +211,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
     }
 
     @Test
@@ -233,6 +239,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
     }
 
     @Test
@@ -266,6 +273,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
     }
 
     @Test
@@ -294,20 +302,21 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
     }
 
     @Test
     public void testNonStandardPageSize() throws Exception {
         long used = Unsafe.getMemUsed();
 
-        class Facade extends FilesFacadeImpl {
+        class X extends FilesFacadeImpl {
             @Override
             public long getPageSize() {
                 return super.getPageSize() * super.getPageSize();
             }
         }
 
-        Facade ff = new Facade();
+        X ff = new X();
 
         try (TableUtils tabU = new TableUtils(ff)) {
             tabU.create(root, getTestStructure().partitionBy(PartitionBy.MONTH).build(), 509);
@@ -331,6 +340,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, ff.getOpenFileCount());
     }
 
     @Test
@@ -350,6 +360,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
     }
 
     private static JournalStructure getTestStructure() {

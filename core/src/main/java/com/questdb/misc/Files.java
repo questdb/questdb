@@ -347,7 +347,7 @@ public final class Files {
         }
     }
 
-    private native static int close0(long fd);
+    native static int close0(long fd);
 
     private static boolean strcmp(long lpsz, CharSequence s) {
         int len = s.length();

@@ -51,6 +51,10 @@ public final class Net {
         return bind(fd, parseIPv4(address), port);
     }
 
+    public static int close(long fd) {
+        return Files.close0(fd);
+    }
+
     public static native int configureNonBlocking(long fd);
 
     public native static void freeSockAddr(long sockaddr);

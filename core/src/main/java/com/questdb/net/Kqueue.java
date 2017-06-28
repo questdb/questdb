@@ -25,7 +25,7 @@ package com.questdb.net;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Files;
+import com.questdb.misc.Net;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 
@@ -58,7 +58,7 @@ public final class Kqueue implements Closeable {
 
     @Override
     public void close() {
-        if (Files.close(this.kq) < 0) {
+        if (Net.close(this.kq) < 0) {
             LOG.error().$("Cannot close kqueue ").$(this.kq).$();
         }
     }

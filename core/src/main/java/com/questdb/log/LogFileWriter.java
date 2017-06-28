@@ -42,7 +42,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private final RingQueue<LogRecordSink> ring;
     private final Sequence subSeq;
     private final int level;
-    private long fd = 0;
+    private long fd = -1;
     private long lim;
     private long buf;
     private long _wptr;
@@ -71,7 +71,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         this.buf = _wptr = Unsafe.malloc(bufSize);
         this.lim = buf + bufSize;
         this.fd = Files.openAppend(new Path(location));
-        if (this.fd < 0) {
+        if (this.fd == -1) {
             throw new LogError("Cannot open file for append: " + location);
         }
     }
@@ -85,9 +85,9 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
             Unsafe.free(buf, bufSize);
             buf = 0;
         }
-        if (this.fd != 0) {
+        if (this.fd != -1) {
             Files.close(this.fd);
-            this.fd = 0;
+            this.fd = -1;
         }
     }
 

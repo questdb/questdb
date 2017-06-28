@@ -27,7 +27,10 @@ import com.questdb.ex.NetworkError;
 import com.questdb.iter.clock.Clock;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.*;
+import com.questdb.misc.Misc;
+import com.questdb.misc.Net;
+import com.questdb.misc.Os;
+import com.questdb.misc.Unsafe;
 import com.questdb.mp.*;
 import com.questdb.std.LongIntHashMap;
 import com.questdb.std.LongMatrix;
@@ -107,7 +110,7 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
         writeFdSet.close();
 
         for (int i = 0, n = pending.size(); i < n; i++) {
-            Files.close(pending.get(i, M_FD));
+            Net.close(pending.get(i, M_FD));
             Misc.free(pending.get(i));
         }
 
@@ -151,7 +154,7 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
 
             if (Net.configureNonBlocking(_fd) < 0) {
                 LOG.error().$("Cannot make FD non-blocking").$();
-                Files.close(_fd);
+                Net.close(_fd);
                 continue;
             }
 
@@ -159,7 +162,7 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
 
             if (connectionCount > maxConnections) {
                 LOG.info().$("Too many connections, kicking out ").$(_fd).$();
-                Files.close(_fd);
+                Net.close(_fd);
                 connectionCount--;
                 return;
             }

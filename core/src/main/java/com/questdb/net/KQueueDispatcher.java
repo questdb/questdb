@@ -27,7 +27,6 @@ import com.questdb.ex.NetworkError;
 import com.questdb.iter.clock.Clock;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Files;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Net;
 import com.questdb.mp.*;
@@ -92,7 +91,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
     @Override
     public void close() throws IOException {
         this.kqueue.close();
-        Files.close(socketFd);
+        Net.close(socketFd);
         int n = pending.size();
         for (int i = 0; i < n; i++) {
             Misc.free(pending.get(i));
@@ -127,7 +126,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
 
         if (Net.configureNonBlocking(_fd) < 0) {
             LOG.error().$("Cannot make FD non-blocking").$();
-            Files.close(_fd);
+            Net.close(_fd);
             return -1;
         }
 
@@ -135,7 +134,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
 
         if (connectionCount > maxConnections) {
             LOG.info().$("Too many connections, kicking out ").$(_fd).$();
-            Files.close(_fd);
+            Net.close(_fd);
             connectionCount--;
             return -1;
         }

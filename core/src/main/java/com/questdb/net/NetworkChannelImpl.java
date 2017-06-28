@@ -24,7 +24,6 @@
 package com.questdb.net;
 
 import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Files;
 import com.questdb.misc.Net;
 
 import java.io.IOException;
@@ -63,7 +62,7 @@ public class NetworkChannelImpl implements NetworkChannel {
 
     @Override
     public void close() throws IOException {
-        Files.close(fd);
+        Net.close(fd);
     }
 
     @Override
