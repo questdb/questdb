@@ -30,9 +30,8 @@ public class AppendMemory extends VirtualMemory {
         releaseCurrentPage();
         if (fd != -1) {
             ff.truncate(fd, sz);
-            ff.close(fd);
             LOG.info().$("Truncated and closed [").$(fd).$(']').$();
-            fd = -1;
+            closeFd();
         }
     }
 
@@ -91,6 +90,11 @@ public class AppendMemory extends VirtualMemory {
         releaseCurrentPage();
         ff.truncate(fd, pageSize);
         updateLimits(0, pageAddress = mapPage(0));
+    }
+
+    private void closeFd() {
+        ff.close(fd);
+        fd = -1;
     }
 
     private long mapPage(int page) {

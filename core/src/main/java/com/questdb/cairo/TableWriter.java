@@ -435,23 +435,26 @@ public class TableWriter implements Closeable {
             }
         }
 
-        long p = ff.findFirst(path.$());
-        if (p > 0) {
-            try {
-                do {
-                    long pName = ff.findName(p);
-                    path.trimTo(rootLen);
-                    path.concat(pName).$();
-                    nativeLPSZ.of(pName);
-                    if (!truncateIgnores.contains(nativeLPSZ) && !ff.rmdir(path)) {
-                        throw CairoException.instance(ff.errno()).put("Cannot remove directories: ").put(path);
-                    }
-                } while (ff.findNext(p));
-            } finally {
-                ff.findClose(p);
+        try {
+            long p = ff.findFirst(path.$());
+            if (p > 0) {
+                try {
+                    do {
+                        long pName = ff.findName(p);
+                        path.trimTo(rootLen);
+                        path.concat(pName).$();
+                        nativeLPSZ.of(pName);
+                        if (!truncateIgnores.contains(nativeLPSZ) && !ff.rmdir(path)) {
+                            throw CairoException.instance(ff.errno()).put("Cannot remove directories: ").put(path);
+                        }
+                    } while (ff.findNext(p));
+                } finally {
+                    ff.findClose(p);
+                }
             }
+        } finally {
+            path.trimTo(rootLen);
         }
-        path.trimTo(rootLen);
     }
 
     private void setAppendPosition(long position) {

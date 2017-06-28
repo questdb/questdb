@@ -290,6 +290,44 @@ public class TableWriterTest extends AbstractOptimiserTest {
                     r.append();
                 }
                 writer.commit();
+                Assert.assertEquals(100000, writer.size());
+            }
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testNonStandardPageSize() throws Exception {
+        long used = Unsafe.getMemUsed();
+
+        class Facade extends FilesFacadeImpl {
+            @Override
+            public long getPageSize() {
+                return super.getPageSize() * super.getPageSize();
+            }
+        }
+
+        Facade ff = new Facade();
+
+        try (TableUtils tabU = new TableUtils(ff)) {
+            tabU.create(root, getTestStructure().partitionBy(PartitionBy.MONTH).build(), 509);
+
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+                Rnd rnd = new Rnd();
+                for (int i = 0; i < 100000; i++) {
+                    TableWriter.Row r = writer.newRow(ts += 60000);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putStr(2, rnd.nextString(4));
+                    r.putStr(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    r.append();
+                }
+                writer.commit();
+                Assert.assertEquals(100000, writer.size());
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());

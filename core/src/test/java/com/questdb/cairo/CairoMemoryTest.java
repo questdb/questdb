@@ -55,6 +55,7 @@ public class CairoMemoryTest {
 
         class X extends FilesFacadeImpl {
             boolean force = true;
+
             @Override
             public long mmap(long fd, long len, long offset, int mode) {
                 if (force || rnd.nextBoolean()) {
@@ -68,7 +69,7 @@ public class CairoMemoryTest {
 
         X ff = new X();
 
-        int openFileCount = 0;
+        long openFileCount = ff.getOpenFileCount();
         int failureCount = 0;
         try (CompositePath path = new CompositePath()) {
             path.of(temp.newFile().getAbsolutePath());
@@ -228,7 +229,7 @@ public class CairoMemoryTest {
 
         X ff = new X();
 
-        int openFileCount = 0;
+        long openFileCount = ff.getOpenFileCount();
         int successCount = 0;
         int failCount = 0;
         try (CompositePath path = new CompositePath()) {
@@ -326,7 +327,7 @@ public class CairoMemoryTest {
 
         X ff = new X();
 
-        int openFileCount = 0;
+        long openFileCount = ff.getOpenFileCount();
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
             try (AppendMemory mem = new AppendMemory(ff, path, 2 * ff.getPageSize(), 0)) {
                 try {
@@ -363,7 +364,7 @@ public class CairoMemoryTest {
 
         X ff = new X();
 
-        int openFileCount = 0;
+        long openFileCount = ff.getOpenFileCount();
         int successCount = 0;
         int failCount = 0;
         try (CompositePath path = new CompositePath()) {
