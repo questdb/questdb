@@ -139,6 +139,13 @@ public class TableWriter implements Closeable {
         return fixedRowCount + transientRowCount;
     }
 
+    /**
+     * Truncates table. When operation is unsuccessful it throws CairoException. With that truncate can be
+     * retried or alternatively table can be closed. Outcome of any other operation with the table is undefined
+     * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
+     * <p>
+     * todo: table must be able to recover if closed after unsuccessful truncate
+     */
     public void truncate() {
 
         if (size() == 0) {
@@ -169,7 +176,6 @@ public class TableWriter implements Closeable {
 
         txMem.jumpTo(OFFSET_TXN);
         TableUtils.resetTxn(txMem);
-        txPartitionCount = 1;
     }
 
     private void bumpMasterRef() {
@@ -445,7 +451,7 @@ public class TableWriter implements Closeable {
                         path.concat(pName).$();
                         nativeLPSZ.of(pName);
                         if (!truncateIgnores.contains(nativeLPSZ) && !ff.rmdir(path)) {
-                            throw CairoException.instance(ff.errno()).put("Cannot remove directories: ").put(path);
+                            throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
                         }
                     } while (ff.findNext(p));
                 } finally {

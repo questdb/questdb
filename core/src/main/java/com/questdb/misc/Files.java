@@ -130,18 +130,6 @@ public final class Files {
         return OPEN_FILE_COUNT.get();
     }
 
-    public static long getPageSizeForMapping(long fileSize) {
-        long max = 512 * 1024 * 1024; // 512MB
-        long alignedSize = (fileSize / PAGE_SIZE) * PAGE_SIZE;
-        if (alignedSize == 0) {
-            return PAGE_SIZE;
-        } else if (alignedSize < max) {
-            return alignedSize;
-        } else {
-            return (max / PAGE_SIZE) * PAGE_SIZE;
-        }
-    }
-
     public native static long getStdOutFd();
 
     public static boolean isDots(CharSequence name) {

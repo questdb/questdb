@@ -1,6 +1,7 @@
 package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
+import com.questdb.ex.NumericException;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.*;
 import com.questdb.ql.parser.AbstractOptimiserTest;
@@ -33,17 +34,15 @@ public class TableWriterTest extends AbstractOptimiserTest {
     @Test
     public void tesFrequentCommit() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (TableUtils tabU = new TableUtils(FF)) {
-            tabU.create(root, getTestStructure().partitionBy(PartitionBy.NONE).build(), 509);
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+        create(FF, PartitionBy.NONE);
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-                Rnd rnd = new Rnd();
-                for (int i = 0; i < 100000; i++) {
-                    ts = populateRow(writer, ts, rnd);
-                    writer.commit();
-                }
+            Rnd rnd = new Rnd();
+            for (int i = 0; i < 100000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+                writer.commit();
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
@@ -53,22 +52,20 @@ public class TableWriterTest extends AbstractOptimiserTest {
     @Test
     public void testAutoCancelFirstRowNonPartitioned() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (TableUtils tabU = new TableUtils(FF)) {
-            tabU.create(root, getTestStructure().partitionBy(PartitionBy.NONE).build(), 509);
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+        create(FF, PartitionBy.NONE);
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
 
-                TableWriter.Row r = writer.newRow(ts);
-                r.putInt(0, 1234);
+            TableWriter.Row r = writer.newRow(ts);
+            r.putInt(0, 1234);
 
-                Rnd rnd = new Rnd();
-                for (int i = 0; i < 10000; i++) {
-                    ts = populateRow(writer, ts, rnd);
-                }
-                Assert.assertEquals(10000, writer.size());
+            Rnd rnd = new Rnd();
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
             }
+            Assert.assertEquals(10000, writer.size());
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
@@ -77,23 +74,21 @@ public class TableWriterTest extends AbstractOptimiserTest {
     @Test
     public void testCancelFirstRowNonPartitioned() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (TableUtils tabU = new TableUtils(FF)) {
-            tabU.create(root, getTestStructure().partitionBy(PartitionBy.NONE).build(), 509);
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+        create(FF, PartitionBy.NONE);
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
 
-                TableWriter.Row r = writer.newRow(ts);
-                r.putInt(0, 1234);
-                r.cancel();
+            TableWriter.Row r = writer.newRow(ts);
+            r.putInt(0, 1234);
+            r.cancel();
 
-                Rnd rnd = new Rnd();
-                for (int i = 0; i < 10000; i++) {
-                    ts = populateRow(writer, ts, rnd);
-                }
-                Assert.assertEquals(10000, writer.size());
+            Rnd rnd = new Rnd();
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
             }
+            Assert.assertEquals(10000, writer.size());
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
@@ -102,16 +97,14 @@ public class TableWriterTest extends AbstractOptimiserTest {
     @Test
     public void testCancelFirstRowPartitioned() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (TableUtils tabU = new TableUtils(FF)) {
-            tabU.create(root, getTestStructure().partitionBy(PartitionBy.DAY).build(), 509);
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-                TableWriter.Row r = writer.newRow(ts);
-                r.cancel();
-                writer.commit();
-                Assert.assertEquals(0, writer.size());
-                Assert.assertTrue(getDirCount() == 2);
-            }
+        create(FF, PartitionBy.DAY);
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            TableWriter.Row r = writer.newRow(ts);
+            r.cancel();
+            writer.commit();
+            Assert.assertEquals(0, writer.size());
+            Assert.assertTrue(getDirCount() == 2);
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
@@ -121,52 +114,50 @@ public class TableWriterTest extends AbstractOptimiserTest {
     public void testCancelMidPartition() throws Exception {
         long used = Unsafe.getMemUsed();
         final Rnd rnd = new Rnd();
-        try (TableUtils tabU = new TableUtils(FF)) {
-            tabU.create(root, getTestStructure().partitionBy(PartitionBy.DAY).build(), 509);
+        create(FF, PartitionBy.DAY);
 
-            // this contraption will verify that all timestamps that are
-            // supposed to be stored have matching partitions
-            try (CompositePath vp = new CompositePath()) {
-                try (VirtualMemory vmem = new VirtualMemory(FF.getPageSize())) {
-                    try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-                        int i = 0;
-                        final int N = 10000;
+        // this contraption will verify that all timestamps that are
+        // supposed to be stored have matching partitions
+        try (CompositePath vp = new CompositePath()) {
+            try (VirtualMemory vmem = new VirtualMemory(FF.getPageSize())) {
+                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                    long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                    int i = 0;
+                    final int N = 10000;
 
-                        int cancelCount = 0;
-                        while (i < N) {
-                            TableWriter.Row r = writer.newRow(ts += 60 * 60000);
-                            r.putInt(0, rnd.nextPositiveInt());
-                            r.putStr(1, rnd.nextString(7));
-                            r.putStr(2, rnd.nextString(4));
-                            r.putStr(3, rnd.nextString(11));
-                            r.putDouble(4, rnd.nextDouble());
-                            if (rnd.nextBoolean()) {
-                                r.cancel();
-                                cancelCount++;
-                            } else {
-                                r.append();
-                                // second append() is expected to be a NOOP
-                                r.append();
-                                vmem.putLong(ts);
-                                i++;
-                            }
+                    int cancelCount = 0;
+                    while (i < N) {
+                        TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+                        r.putInt(0, rnd.nextPositiveInt());
+                        r.putStr(1, rnd.nextString(7));
+                        r.putStr(2, rnd.nextString(4));
+                        r.putStr(3, rnd.nextString(11));
+                        r.putDouble(4, rnd.nextDouble());
+                        if (rnd.nextBoolean()) {
+                            r.cancel();
+                            cancelCount++;
+                        } else {
+                            r.append();
+                            // second append() is expected to be a NOOP
+                            r.append();
+                            vmem.putLong(ts);
+                            i++;
                         }
-                        writer.commit();
-                        Assert.assertEquals(N, writer.size());
-                        Assert.assertTrue(cancelCount > 0);
+                    }
+                    writer.commit();
+                    Assert.assertEquals(N, writer.size());
+                    Assert.assertTrue(cancelCount > 0);
 
-                        DateFormatCompiler compiler = new DateFormatCompiler();
-                        DateFormat fmt = compiler.compile("yyyy-MM-dd", false);
-                        DateLocale enGb = DateLocaleFactory.INSTANCE.getDateLocale("en-gb");
+                    DateFormatCompiler compiler = new DateFormatCompiler();
+                    DateFormat fmt = compiler.compile("yyyy-MM-dd", false);
+                    DateLocale enGb = DateLocaleFactory.INSTANCE.getDateLocale("en-gb");
 
-                        for (i = 0; i < N; i++) {
-                            vp.of(root).concat(PRODUCT).put(Path.SEPARATOR);
-                            fmt.format(vmem.getLong(i * 8), enGb, "UTC", vp);
-                            if (!FF.exists(vp.$())) {
-                                System.out.println(vp.toString());
-                                Assert.fail();
-                            }
+                    for (i = 0; i < N; i++) {
+                        vp.of(root).concat(PRODUCT).put(Path.SEPARATOR);
+                        fmt.format(vmem.getLong(i * 8), enGb, "UTC", vp);
+                        if (!FF.exists(vp.$())) {
+                            System.out.println(vp.toString());
+                            Assert.fail();
                         }
                     }
                 }
@@ -179,36 +170,34 @@ public class TableWriterTest extends AbstractOptimiserTest {
     @Test
     public void testCancelMidRowNonPartitioned() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (TableUtils tabU = new TableUtils(FF)) {
-            tabU.create(root, getTestStructure().partitionBy(PartitionBy.NONE).build(), 509);
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        create(FF, PartitionBy.NONE);
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-                int cancelCount = 0;
-                Rnd rnd = new Rnd();
-                int i = 0;
-                TableWriter.Row r;
-                while (i < 10000) {
-                    r = writer.newRow(ts += 60 * 60000);
-                    r.putInt(0, rnd.nextPositiveInt());
-                    r.putStr(1, rnd.nextString(7));
-                    r.putStr(2, rnd.nextString(4));
-                    r.putStr(3, rnd.nextString(11));
-                    r.putDouble(4, rnd.nextDouble());
-                    if (rnd.nextBoolean()) {
-                        r.append();
-                        i++;
-                    } else {
-                        cancelCount++;
-                    }
+            int cancelCount = 0;
+            Rnd rnd = new Rnd();
+            int i = 0;
+            TableWriter.Row r;
+            while (i < 10000) {
+                r = writer.newRow(ts += 60 * 60000);
+                r.putInt(0, rnd.nextPositiveInt());
+                r.putStr(1, rnd.nextString(7));
+                r.putStr(2, rnd.nextString(4));
+                r.putStr(3, rnd.nextString(11));
+                r.putDouble(4, rnd.nextDouble());
+                if (rnd.nextBoolean()) {
+                    r.append();
+                    i++;
+                } else {
+                    cancelCount++;
                 }
-                r = writer.newRow(ts);
-                r.putStr(2, "XYZ");
-
-                writer.commit();
-                Assert.assertTrue(cancelCount > 0);
-                Assert.assertEquals(10000, writer.size());
             }
+            r = writer.newRow(ts);
+            r.putStr(2, "XYZ");
+
+            writer.commit();
+            Assert.assertTrue(cancelCount > 0);
+            Assert.assertEquals(10000, writer.size());
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
@@ -218,26 +207,39 @@ public class TableWriterTest extends AbstractOptimiserTest {
     public void testDayPartition() throws Exception {
         long used = Unsafe.getMemUsed();
 
-        try (TableUtils tabU = new TableUtils(FF)) {
-            tabU.create(root, getTestStructure().partitionBy(PartitionBy.DAY).build(), 509);
-            int N = 100000;
+        create(FF, PartitionBy.DAY);
+        int N = 100000;
 
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-                Rnd rnd = new Rnd();
-                for (int i = 0; i < N; i++) {
-                    ts = populateRow(writer, ts, rnd);
-                }
-                writer.commit();
-                Assert.assertEquals(N, writer.size());
+            Rnd rnd = new Rnd();
+            for (int i = 0; i < N; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
             }
-
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                Assert.assertEquals((long) N, writer.size());
-            }
+            writer.commit();
+            Assert.assertEquals(N, writer.size());
         }
+
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            Assert.assertEquals((long) N, writer.size());
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
+    }
+
+    @Test
+    public void testDayPartitionRmDirError() throws Exception {
+        long used = Unsafe.getMemUsed();
+        CountingFilesFacade ff = new CountingFilesFacade() {
+            @Override
+            public boolean rmdir(CompositePath name) {
+                return --count != 0 && super.rmdir(name);
+            }
+        };
+
+        testRetryTruncate(ff);
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
     }
@@ -245,33 +247,48 @@ public class TableWriterTest extends AbstractOptimiserTest {
     @Test
     public void testDayPartitionTruncate() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (TableUtils tabU = new TableUtils(FF)) {
-            tabU.create(root, getTestStructure().partitionBy(PartitionBy.DAY).build(), 509);
-            Rnd rnd = new Rnd();
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+        create(FF, PartitionBy.DAY);
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-                for (int k = 0; k < 3; k++) {
-                    for (int i = 0; i < 100000; i++) {
-                        ts = populateRow(writer, ts, rnd);
-                    }
-                    writer.commit();
-                    Assert.assertEquals(100000, writer.size());
-                    writer.truncate();
-                }
-            }
-
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                long ts = DateFormatUtils.parseDateTime("2014-03-04T00:00:00.000Z");
-                Assert.assertEquals(0, writer.size());
+            for (int k = 0; k < 3; k++) {
                 for (int i = 0; i < 100000; i++) {
-                    ts = populateRow(writer, ts, rnd);
+                    ts = populateRow(writer, ts, rnd, 60 * 60000);
                 }
                 writer.commit();
                 Assert.assertEquals(100000, writer.size());
+                writer.truncate();
             }
         }
+
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            long ts = DateFormatUtils.parseDateTime("2014-03-04T00:00:00.000Z");
+            Assert.assertEquals(0, writer.size());
+            for (int i = 0; i < 100000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+            writer.commit();
+            Assert.assertEquals(100000, writer.size());
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
+    }
+
+    @Test
+    public void testDayPartitionTruncateError() throws Exception {
+        long used = Unsafe.getMemUsed();
+
+        class X extends CountingFilesFacade {
+            @Override
+            public boolean truncate(long fd, long size) {
+                return --count != 0 && super.truncate(fd, size);
+            }
+        }
+        X ff = new X();
+
+        testRetryTruncate(ff);
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
     }
@@ -280,26 +297,17 @@ public class TableWriterTest extends AbstractOptimiserTest {
     public void testDefaultPartition() throws Exception {
         long used = Unsafe.getMemUsed();
 
-        try (TableUtils tabU = new TableUtils(FF)) {
-            tabU.create(root, getTestStructure().build(), 509);
+        create(FF, PartitionBy.MONTH);
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-
-                Rnd rnd = new Rnd();
-                for (int i = 0; i < 100000; i++) {
-                    TableWriter.Row r = writer.newRow(ts += 60000);
-                    r.putInt(0, rnd.nextPositiveInt());
-                    r.putStr(1, rnd.nextString(7));
-                    r.putStr(2, rnd.nextString(4));
-                    r.putStr(3, rnd.nextString(11));
-                    r.putDouble(4, rnd.nextDouble());
-                    r.append();
-                }
-                writer.commit();
-                Assert.assertEquals(100000, writer.size());
+            Rnd rnd = new Rnd();
+            for (int i = 0; i < 100000; i++) {
+                ts = populateRow(writer, ts, rnd, 60000);
             }
+            writer.commit();
+            Assert.assertEquals(100000, writer.size());
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
@@ -318,26 +326,16 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
         X ff = new X();
 
-        try (TableUtils tabU = new TableUtils(ff)) {
-            tabU.create(root, getTestStructure().partitionBy(PartitionBy.MONTH).build(), 509);
+        create(ff, PartitionBy.MONTH);
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-
-                Rnd rnd = new Rnd();
-                for (int i = 0; i < 100000; i++) {
-                    TableWriter.Row r = writer.newRow(ts += 60000);
-                    r.putInt(0, rnd.nextPositiveInt());
-                    r.putStr(1, rnd.nextString(7));
-                    r.putStr(2, rnd.nextString(4));
-                    r.putStr(3, rnd.nextString(11));
-                    r.putDouble(4, rnd.nextDouble());
-                    r.append();
-                }
-                writer.commit();
-                Assert.assertEquals(100000, writer.size());
+            Rnd rnd = new Rnd();
+            for (int i = 0; i < 100000; i++) {
+                ts = populateRow(writer, ts, rnd, 60000);
             }
+            writer.commit();
+            Assert.assertEquals(100000, writer.size());
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, ff.getOpenFileCount());
@@ -346,18 +344,15 @@ public class TableWriterTest extends AbstractOptimiserTest {
     @Test
     public void testSinglePartitionTruncate() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (TableUtils tabU = new TableUtils(FF)) {
+        create(FF, PartitionBy.YEAR);
 
-            tabU.create(root, getTestStructure().partitionBy(PartitionBy.YEAR).build(), 509);
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            writer.truncate();
+            Assert.assertEquals(0, writer.size());
+        }
 
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                writer.truncate();
-                Assert.assertEquals(0, writer.size());
-            }
-
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                Assert.assertEquals(0, writer.size());
-            }
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            Assert.assertEquals(0, writer.size());
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
@@ -371,6 +366,12 @@ public class TableWriterTest extends AbstractOptimiserTest {
                 $sym("category").index().buckets(100).
                 $double("price").
                 $ts();
+    }
+
+    private void create(FilesFacade ff, int partitionBy) {
+        try (TableUtils tabU = new TableUtils(ff)) {
+            tabU.create(root, getTestStructure().partitionBy(partitionBy).build(), 509);
+        }
     }
 
     private int getDirCount() {
@@ -393,8 +394,8 @@ public class TableWriterTest extends AbstractOptimiserTest {
         return dirCount;
     }
 
-    private long populateRow(TableWriter writer, long ts, Rnd rnd) {
-        TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+    private long populateRow(TableWriter writer, long ts, Rnd rnd, long increment) {
+        TableWriter.Row r = writer.newRow(ts += increment);
         r.putInt(0, rnd.nextPositiveInt());
         r.putStr(1, rnd.nextString(7));
         r.putStr(2, rnd.nextString(4));
@@ -402,5 +403,50 @@ public class TableWriterTest extends AbstractOptimiserTest {
         r.putDouble(4, rnd.nextDouble());
         r.append();
         return ts;
+    }
+
+    void testRetryTruncate(CountingFilesFacade ff) throws NumericException {
+        create(ff, PartitionBy.DAY);
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+            for (int k = 0; k < 3; k++) {
+                for (int i = 0; i < 2000; i++) {
+                    ts = populateRow(writer, ts, rnd, 60 * 60000);
+                }
+                writer.commit();
+                Assert.assertEquals(2000, writer.size());
+
+                // this truncate will fail quite early and will leave
+                // table in inconsistent state to recover from which
+                // truncate has to be repeated
+                try {
+                    ff.count = 3;
+                    writer.truncate();
+                    Assert.fail();
+                } catch (CairoException ignore) {
+
+                }
+
+                // retry
+                writer.truncate();
+            }
+        }
+
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            long ts = DateFormatUtils.parseDateTime("2014-03-04T00:00:00.000Z");
+            Assert.assertEquals(0, writer.size());
+            for (int i = 0; i < 1000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+            writer.commit();
+            Assert.assertEquals(1000, writer.size());
+        }
+    }
+
+    class CountingFilesFacade extends FilesFacadeImpl {
+        long count = Long.MAX_VALUE;
     }
 }

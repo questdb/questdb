@@ -4,6 +4,7 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacade;
+import com.questdb.misc.Os;
 import com.questdb.std.str.LPSZ;
 
 public class AppendMemory extends VirtualMemory {
@@ -86,9 +87,16 @@ public class AppendMemory extends VirtualMemory {
     }
 
     public void truncate() {
+        if (fd == -1) {
+            // we are closed ?
+            return;
+        }
+
         this.size = 0;
         releaseCurrentPage();
-        ff.truncate(fd, pageSize);
+        if (!ff.truncate(fd, pageSize)) {
+            throw CairoException.instance(Os.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(pageSize).put(" bytes");
+        }
         updateLimits(0, pageAddress = mapPage(0));
     }
 
