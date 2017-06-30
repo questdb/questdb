@@ -23,6 +23,8 @@
 
 package com.questdb.log;
 
+import com.questdb.std.Sinkable;
+
 import java.io.File;
 
 public interface LogRecord {
@@ -45,6 +47,8 @@ public interface LogRecord {
     LogRecord $(Enum e);
 
     LogRecord $(Object x);
+
+    LogRecord $(Sinkable x);
 
     LogRecord $ip(long ip);
 

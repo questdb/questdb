@@ -94,6 +94,21 @@ public final class Chars {
         return false;
     }
 
+    public static boolean endsWith(CharSequence cs, CharSequence ends) {
+        if (ends == null || cs == null) {
+            return false;
+        }
+
+        int l = ends.length();
+        if (l == 0) {
+            return false;
+        }
+
+        int csl = cs.length();
+        return !(csl == 0 || csl < l) && equals(ends, cs, csl - l, csl);
+
+    }
+
     public static boolean equals(CharSequence l, CharSequence r) {
         if (l == r) {
             return true;
@@ -477,7 +492,6 @@ public final class Chars {
         builder.put((char) (b << 6 ^ b2 ^ 3968));
         return 2;
     }
-
 
     private static boolean isNotContinuation(int b) {
         return (b & 192) != 128;

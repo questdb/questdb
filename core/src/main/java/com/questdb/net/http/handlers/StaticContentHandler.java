@@ -31,6 +31,7 @@ import com.questdb.misc.*;
 import com.questdb.net.http.*;
 import com.questdb.std.LocalValue;
 import com.questdb.std.Mutable;
+import com.questdb.std.Sinkable;
 import com.questdb.std.str.*;
 
 import java.io.Closeable;
@@ -74,7 +75,7 @@ public class StaticContentHandler implements ContextHandler {
             if (Files.exists(path)) {
                 send(context, path, context.request.getUrlParam("attachment") != null);
             } else {
-                LOG.info().$("Not found: ").$(path).$();
+                LOG.info().$("Not found: ").$((Sinkable) path).$();
                 context.simpleResponse().send(404);
             }
         }

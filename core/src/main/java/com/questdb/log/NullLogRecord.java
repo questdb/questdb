@@ -23,6 +23,8 @@
 
 package com.questdb.log;
 
+import com.questdb.std.Sinkable;
+
 import java.io.File;
 
 final class NullLogRecord implements LogRecord {
@@ -78,6 +80,11 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public LogRecord $(Object x) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $(Sinkable x) {
         return this;
     }
 

@@ -27,6 +27,7 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Net;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
+import com.questdb.std.Sinkable;
 import com.questdb.std.str.CharSink;
 
 import java.io.File;
@@ -123,6 +124,16 @@ class Logger implements LogRecord, Log {
     @Override
     public LogRecord $(Object x) {
         sink().put(x == null ? "null" : x.toString());
+        return this;
+    }
+
+    @Override
+    public LogRecord $(Sinkable x) {
+        if (x == null) {
+            sink().put("null");
+        } else {
+            x.toSink(sink());
+        }
         return this;
     }
 

@@ -336,6 +336,7 @@ public class CairoMemoryTest {
                     }
                     Assert.fail();
                 } catch (CairoException ignore) {
+
                 }
                 Assert.assertTrue(mem.size() > 0);
             }

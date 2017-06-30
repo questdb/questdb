@@ -57,6 +57,18 @@ public class CharsTest {
     }
 
     @Test
+    public void testEndsWith() throws Exception {
+        Assert.assertFalse(Chars.endsWith(null, null));
+        Assert.assertFalse(Chars.endsWith("a", null));
+        Assert.assertFalse(Chars.endsWith(null, "a"));
+        Assert.assertFalse(Chars.endsWith("", "a"));
+        Assert.assertFalse(Chars.endsWith("a", ""));
+        Assert.assertFalse(Chars.endsWith("ab", "abc"));
+        Assert.assertFalse(Chars.endsWith("abc", "x"));
+        Assert.assertTrue(Chars.endsWith("abcd", "cd"));
+    }
+
+    @Test
     public void testNameFromPath() throws Exception {
         StringBuilder name = new StringBuilder();
         name.append(separator).append("xyz").append(separator).append("dir1").append(separator).append("dir2").append(separator).append("this is my name");

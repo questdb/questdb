@@ -66,19 +66,19 @@ public class ReadOnlyMemory extends VirtualMemory {
 
     @Override
     protected void release(long address) {
-        Files.munmap(address, pageSize);
+        ff.munmap(address, pageSize);
     }
 
     @Override
     protected void releaseLast(long address) {
-        Files.munmap(address, lastPageSize);
+        ff.munmap(address, lastPageSize);
     }
 
     public void of(LPSZ name, long maxPageSize, long size) {
         close();
         assert size > 0;
 
-        boolean exists = Files.exists(name);
+        boolean exists = ff.exists(name);
         if (!exists) {
             throw CairoException.instance(0).put("File not found: ").put(name);
         }
@@ -90,8 +90,7 @@ public class ReadOnlyMemory extends VirtualMemory {
         LOG.info().$("Open ").$(name).$(" [").$(fd).$(']').$();
 
         this.size = size;
-        this.lastPageSize = Files.PAGE_SIZE;
-
+        this.lastPageSize = ff.getPageSize();
 
         if (size > maxPageSize) {
             setPageSize(maxPageSize);

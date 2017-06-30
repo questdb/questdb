@@ -80,34 +80,33 @@ public class TableWriter implements Closeable {
 
     public TableWriter(FilesFacade ff, CharSequence root, CharSequence name) {
         this.ff = ff;
-        this.columnSizeMem = new VirtualMemory(ff.getPageSize());
-        this.metaMem = new ReadOnlyMemory(ff);
-        this.txMem = new ReadWriteMemory(ff);
         this.path = new CompositePath().of(root).concat(name);
         this.rootLen = path.length();
-        path.concat("_meta").$();
-        metaMem.of(path, ff.getPageSize(), ff.length(path));
-        this.columnCount = metaMem.getInt(0);
-        this.partitionBy = metaMem.getInt(4);
-        this.refs.extendAndSet(columnCount, 0);
-        this.nullers = new Runnable[columnCount];
-        path.trimTo(rootLen);
-        configureColumnMemory();
-        configureAppendPosition();
+        try {
+            path.concat("_meta").$();
+            if (!ff.exists(path)) {
+                throw CairoException.instance(0).put("File does not exist: ").put(path);
+            }
+            this.metaMem = new ReadOnlyMemory(ff);
+            metaMem.of(path, ff.getPageSize(), ff.length(path));
+            this.txMem = new ReadWriteMemory(ff);
+            this.columnCount = metaMem.getInt(0);
+            this.partitionBy = metaMem.getInt(4);
+            this.columnSizeMem = new VirtualMemory(ff.getPageSize());
+            this.refs.extendAndSet(columnCount, 0);
+            this.nullers = new Runnable[columnCount];
+            path.trimTo(rootLen);
+            configureColumnMemory();
+            configureAppendPosition();
+        } catch (CairoException e) {
+            close0();
+            throw e;
+        }
     }
 
     @Override
     public void close() {
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            AppendMemory m = columns.getQuick(i);
-            if (m != null) {
-                m.close();
-            }
-        }
-        txMem.close();
-        metaMem.close();
-        columnSizeMem.close();
-        path.close();
+        close0();
     }
 
     public void commit() {
@@ -225,7 +224,6 @@ public class TableWriter implements Closeable {
         } else {
             maxTimestamp = prevTimestamp;
             // we are staying within same partition, prepare append positions for row count
-
             boolean rowChanged = false;
             // verify if any of the columns have been changed
             // if not - we don't have to do
@@ -242,6 +240,23 @@ public class TableWriter implements Closeable {
             }
         }
         masterRef--;
+    }
+
+    private void close0() {
+        closeColumns();
+        Misc.free(txMem);
+        Misc.free(metaMem);
+        Misc.free(columnSizeMem);
+        Misc.free(path);
+    }
+
+    private void closeColumns() {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            AppendMemory m = columns.getQuick(i);
+            if (m != null) {
+                m.close();
+            }
+        }
     }
 
     private void commitPendingPartitions() {
@@ -309,20 +324,23 @@ public class TableWriter implements Closeable {
 
     private void configureColumnMemory() {
         for (int i = 0; i < columnCount; i++) {
-            columns.add(new AppendMemory(ff));
+            final int type = getColumnType(i);
+            final AppendMemory primary = new AppendMemory(ff);
+            final AppendMemory secondary;
             switch (getColumnType(i)) {
                 case ColumnType.BINARY:
                 case ColumnType.SYMBOL:
                 case ColumnType.STRING:
-                    columns.add(new AppendMemory(ff));
+                    secondary = new AppendMemory(ff);
                     break;
                 default:
-                    columns.add(null);
+                    secondary = null;
                     break;
             }
+            columns.add(primary);
+            columns.add(secondary);
+            configureNuller(i, type, primary, secondary);
         }
-
-        configureNullers();
     }
 
     private void configureNuller(int index, int type, AppendMemory mem1, AppendMemory mem2) {
@@ -351,12 +369,6 @@ public class TableWriter implements Closeable {
                 break;
             default:
                 break;
-        }
-    }
-
-    private void configureNullers() {
-        for (int i = 0; i < columnCount; i++) {
-            configureNuller(i, getColumnType(i), getPrimaryColumn(i), getSecondaryColumn(i));
         }
     }
 
@@ -408,7 +420,7 @@ public class TableWriter implements Closeable {
             int plen = path.length();
             if (ff.mkdirs(path.put(Path.SEPARATOR).$(), mode) != 0) {
                 path.trimTo(plen);
-                throw CairoException.instance(ff.errno()).put("Cannot create directories: ").put(path);
+                throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
             }
             assert columnCount > 0;
             long nameOffset = getColumnNameOffset();
