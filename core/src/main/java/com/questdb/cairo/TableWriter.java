@@ -77,6 +77,7 @@ public class TableWriter implements Closeable {
     private int txPartitionCount = 0;
     private long transientRowCount = 0;
     private long masterRef = 0;
+    private boolean removeDirOnCancelRow = true;
 
     public TableWriter(FilesFacade ff, CharSequence root, CharSequence name) {
         this.ff = ff;
@@ -185,29 +186,38 @@ public class TableWriter implements Closeable {
     }
 
     private void cancelRow() {
+
+        if ((masterRef & 1) == 0) {
+            return;
+        }
+
         if (transientRowCount == 0) {
             if (partitionBy != PartitionBy.NONE) {
                 // we have to undo creation of partition
                 try {
-                    setStateForTimestamp(maxTimestamp, false);
-                    if (!Files.rmdir(path.$())) {
-                        throw CairoException.instance(Os.errno()).put("Cannot remove directory: ").put(path);
+                    if (removeDirOnCancelRow) {
+                        setStateForTimestamp(maxTimestamp, false);
+                        if (!ff.rmdir(path.$())) {
+                            throw CairoException.instance(Os.errno()).put("Cannot remove directory: ").put(path);
+                        }
+                        removeDirOnCancelRow = false;
+                    }
+
+                    // open old partition
+                    if (prevTimestamp > Long.MIN_VALUE) {
+                        columnSizeMem.jumpTo((txPartitionCount - 2) * 16);
+                        setStateForTimestamp(prevTimestamp, true);
+                        setAppendPosition(prevTransientRowCount);
+                        txPartitionCount--;
+                    } else {
+                        rowFunction = openPartitionFunction;
                     }
 
                     // undo counts
                     transientRowCount = prevTransientRowCount;
                     fixedRowCount -= prevTransientRowCount;
                     maxTimestamp = prevTimestamp;
-
-                    // open old partition
-                    if (prevTimestamp > Long.MIN_VALUE) {
-                        txPartitionCount--;
-                        columnSizeMem.jumpTo((txPartitionCount - 1) * 16);
-                        setStateForTimestamp(maxTimestamp, true);
-                        setAppendPosition(transientRowCount);
-                    } else {
-                        rowFunction = openPartitionFunction;
-                    }
+                    removeDirOnCancelRow = true;
                 } finally {
                     path.trimTo(rootLen);
                 }

@@ -164,6 +164,7 @@ public class VirtualMemory implements Closeable {
      * @param offset position from 0 in virtual memory.
      */
     public void jumpTo(long offset) {
+        assert offset >= 0;
         final long p = offset + baseOffset - pageSize;
         if (p >= pageHi - pageSize && p < pageHi) {
             appendPointer = absolutePointer + offset;

@@ -55,6 +55,18 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAppendOutOfOrder() throws Exception {
+        create(FF, PartitionBy.NONE);
+        testOutOfOrderRecords();
+    }
+
+    @Test
+    public void testAppendOutOfOrderPartitioned() throws Exception {
+        create(FF, PartitionBy.DAY);
+        testOutOfOrderRecords();
+    }
+
+    @Test
     public void testAutoCancelFirstRowNonPartitioned() throws Exception {
         long used = Unsafe.getMemUsed();
         create(FF, PartitionBy.NONE);
@@ -74,6 +86,61 @@ public class TableWriterTest extends AbstractOptimiserTest {
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
+    }
+
+    @Test
+    public void testCancelFirstRowFailurePartitioned() throws Exception {
+        class X extends FilesFacadeImpl {
+            boolean fail = false;
+
+            @Override
+            public long read(long fd, long buf, int len, long offset) {
+                if (fail) {
+                    return -1;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        }
+
+        X ff = new X();
+
+        long used = Unsafe.getMemUsed();
+        Rnd rnd = new Rnd();
+        create(ff, PartitionBy.DAY);
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            // add 48 hours
+            for (int i = 0; i < 47; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+
+            TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+            r.putInt(0, rnd.nextPositiveInt());
+            r.putStr(1, rnd.nextString(7));
+            r.putStr(2, rnd.nextString(4));
+            r.putStr(3, rnd.nextString(11));
+            r.putDouble(4, rnd.nextDouble());
+
+            ff.fail = true;
+            try {
+                r.cancel();
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+            ff.fail = false;
+            // todo: this is not doing what is expected despite test passing
+            r.cancel();
+
+            for (int i = 0; i < 47; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+
+            writer.commit();
+            Assert.assertEquals(94, writer.size());
+            Assert.assertTrue(getDirCount() == 6);
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, ff.getOpenFileCount());
     }
 
     @Test
@@ -116,6 +183,41 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testCancelFirstRowPartitioned2() throws Exception {
+        long used = Unsafe.getMemUsed();
+        Rnd rnd = new Rnd();
+        create(FF, PartitionBy.DAY);
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            // add 48 hours
+            for (int i = 0; i < 47; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+
+            TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+            r.putInt(0, rnd.nextPositiveInt());
+            r.putStr(1, rnd.nextString(7));
+            r.putStr(2, rnd.nextString(4));
+            r.putStr(3, rnd.nextString(11));
+            r.putDouble(4, rnd.nextDouble());
+
+            for (int i = 0; i < 1000; i++) {
+                r.cancel();
+            }
+
+            for (int i = 0; i < 47; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+
+            writer.commit();
+            Assert.assertEquals(94, writer.size());
+            Assert.assertTrue(getDirCount() == 6);
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
+    }
+
+    @Test
     public void testCancelMidPartition() throws Exception {
         long used = Unsafe.getMemUsed();
         final Rnd rnd = new Rnd();
@@ -123,49 +225,35 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
         // this contraption will verify that all timestamps that are
         // supposed to be stored have matching partitions
-        try (CompositePath vp = new CompositePath()) {
-            try (VirtualMemory vmem = new VirtualMemory(FF.getPageSize())) {
-                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                    long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-                    int i = 0;
-                    final int N = 10000;
+        try (VirtualMemory vmem = new VirtualMemory(FF.getPageSize())) {
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                int i = 0;
+                final int N = 10000;
 
-                    int cancelCount = 0;
-                    while (i < N) {
-                        TableWriter.Row r = writer.newRow(ts += 60 * 60000);
-                        r.putInt(0, rnd.nextPositiveInt());
-                        r.putStr(1, rnd.nextString(7));
-                        r.putStr(2, rnd.nextString(4));
-                        r.putStr(3, rnd.nextString(11));
-                        r.putDouble(4, rnd.nextDouble());
-                        if (rnd.nextBoolean()) {
-                            r.cancel();
-                            cancelCount++;
-                        } else {
-                            r.append();
-                            // second append() is expected to be a NOOP
-                            r.append();
-                            vmem.putLong(ts);
-                            i++;
-                        }
-                    }
-                    writer.commit();
-                    Assert.assertEquals(N, writer.size());
-                    Assert.assertTrue(cancelCount > 0);
-
-                    DateFormatCompiler compiler = new DateFormatCompiler();
-                    DateFormat fmt = compiler.compile("yyyy-MM-dd", false);
-                    DateLocale enGb = DateLocaleFactory.INSTANCE.getDateLocale("en-gb");
-
-                    for (i = 0; i < N; i++) {
-                        vp.of(root).concat(PRODUCT).put(Path.SEPARATOR);
-                        fmt.format(vmem.getLong(i * 8), enGb, "UTC", vp);
-                        if (!FF.exists(vp.$())) {
-                            System.out.println(vp.toString());
-                            Assert.fail();
-                        }
+                int cancelCount = 0;
+                while (i < N) {
+                    TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putStr(2, rnd.nextString(4));
+                    r.putStr(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    if (rnd.nextBoolean()) {
+                        r.cancel();
+                        cancelCount++;
+                    } else {
+                        r.append();
+                        // second append() is expected to be a NOOP
+                        r.append();
+                        vmem.putLong(ts);
+                        i++;
                     }
                 }
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+                Assert.assertTrue(cancelCount > 0);
+                verifyTimestampPartitions(vmem, N);
             }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
@@ -203,6 +291,140 @@ public class TableWriterTest extends AbstractOptimiserTest {
             writer.commit();
             Assert.assertTrue(cancelCount > 0);
             Assert.assertEquals(10000, writer.size());
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
+    }
+
+    @Test
+    public void testCancelRowRecovery() throws Exception {
+        long used = Unsafe.getMemUsed();
+        final Rnd rnd = new Rnd();
+
+        class X extends FilesFacadeImpl {
+            boolean fail = false;
+
+            @Override
+            public boolean rmdir(CompositePath name) {
+                return !fail && super.rmdir(name);
+            }
+
+            @Override
+            public long read(long fd, long buf, int len, long offset) {
+                return fail ? -1 : super.read(fd, buf, len, offset);
+            }
+        }
+
+        X ff = new X();
+
+        create(ff, PartitionBy.DAY);
+
+        // this contraption will verify that all timestamps that are
+        // supposed to be stored have matching partitions
+        try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize())) {
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                int i = 0;
+                final int N = 10000;
+
+                int cancelCount = 0;
+                while (i < N) {
+                    TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putStr(2, rnd.nextString(4));
+                    r.putStr(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    if (rnd.nextBoolean()) {
+                        ff.fail = true;
+                        try {
+                            r.cancel();
+                            Assert.fail();
+                        } catch (CairoException ignored) {
+                        }
+                        ff.fail = false;
+                        r.cancel();
+                        cancelCount++;
+                    } else {
+                        r.append();
+                        // second append() is expected to be a NOOP
+                        r.append();
+                        vmem.putLong(ts);
+                        i++;
+                    }
+                }
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+                Assert.assertTrue(cancelCount > 0);
+                verifyTimestampPartitions(vmem, N);
+            }
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
+    }
+
+    @Test
+    public void testCancelRowRecoveryFromAppendPosErrors() throws Exception {
+        long used = Unsafe.getMemUsed();
+        final Rnd rnd = new Rnd();
+
+        class X extends FilesFacadeImpl {
+            boolean fail = false;
+
+            @Override
+            public long read(long fd, long buf, int len, long offset) {
+                if (fail) {
+                    return -1;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        }
+
+        X ff = new X();
+
+        create(ff, PartitionBy.DAY);
+
+        // this contraption will verify that all timestamps that are
+        // supposed to be stored have matching partitions
+        try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize())) {
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                int i = 0;
+                final int N = 10000;
+
+                int cancelCount = 0;
+                int failCount = 0;
+                while (i < N) {
+                    TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putStr(2, rnd.nextString(4));
+                    r.putStr(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    if (rnd.nextBoolean()) {
+                        ff.fail = true;
+                        try {
+                            r.cancel();
+                        } catch (CairoException ignored) {
+                            failCount++;
+                            ff.fail = false;
+                            r.cancel();
+                        }
+                        cancelCount++;
+                    } else {
+                        r.append();
+                        // second append() is expected to be a NOOP
+                        r.append();
+                        vmem.putLong(ts);
+                        i++;
+                    }
+                }
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+                Assert.assertTrue(cancelCount > 0);
+                Assert.assertTrue(failCount > 0);
+                verifyTimestampPartitions(vmem, N);
+            }
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
@@ -322,6 +544,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
         }, false);
     }
+
     @Test
     public void testDayPartition() throws Exception {
         long used = Unsafe.getMemUsed();
@@ -583,6 +806,51 @@ public class TableWriterTest extends AbstractOptimiserTest {
         Assert.assertEquals(mem, Unsafe.getMemUsed());
     }
 
+    private void testOutOfOrderRecords() throws NumericException {
+        long used = Unsafe.getMemUsed();
+        int N = 10000;
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+            Rnd rnd = new Rnd();
+            int i = 0;
+            long failureCount = 0;
+            while (i < N) {
+                TableWriter.Row r;
+                boolean fail = rnd.nextBoolean();
+                if (fail) {
+                    try {
+                        writer.newRow(0);
+                        Assert.fail();
+                    } catch (CairoException ignore) {
+                        failureCount++;
+                    }
+                    continue;
+                } else {
+                    r = writer.newRow(ts += (long) (60 * 60000));
+                }
+                r.putInt(0, rnd.nextPositiveInt());
+                r.putStr(1, rnd.nextString(7));
+                r.putStr(2, rnd.nextString(4));
+                r.putStr(3, rnd.nextString(11));
+                r.putDouble(4, rnd.nextDouble());
+                r.append();
+                i++;
+            }
+            writer.commit();
+            Assert.assertEquals(N, writer.size());
+            Assert.assertTrue(failureCount > 0);
+        }
+
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            Assert.assertEquals((long) N, writer.size());
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
+
+    }
+
     private void testRetryTruncate(CountingFilesFacade ff) throws NumericException {
         long used = Unsafe.getMemUsed();
         create(ff, PartitionBy.DAY);
@@ -626,6 +894,24 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, ff.getOpenFileCount());
+    }
+
+    void verifyTimestampPartitions(VirtualMemory vmem, int n) {
+        int i;
+        DateFormatCompiler compiler = new DateFormatCompiler();
+        DateFormat fmt = compiler.compile("yyyy-MM-dd", false);
+        DateLocale enGb = DateLocaleFactory.INSTANCE.getDateLocale("en-gb");
+
+        try (CompositePath vp = new CompositePath()) {
+            for (i = 0; i < n; i++) {
+                vp.of(root).concat(PRODUCT).put(Path.SEPARATOR);
+                fmt.format(vmem.getLong(i * 8), enGb, "UTC", vp);
+                if (!FF.exists(vp.$())) {
+                    System.out.println(vp.toString());
+                    Assert.fail();
+                }
+            }
+        }
     }
 
     class CountingFilesFacade extends FilesFacadeImpl {
