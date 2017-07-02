@@ -128,7 +128,6 @@ public class TableWriterTest extends AbstractOptimiserTest {
             } catch (CairoException ignore) {
             }
             ff.fail = false;
-            // todo: this is not doing what is expected despite test passing
             r.cancel();
 
             for (int i = 0; i < 47; i++) {
@@ -628,6 +627,44 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testFailureToOpenArchiveFile() throws Exception {
+        testCommitRetryAfterFailure(new CountingFilesFacade() {
+            @Override
+            public long openAppend(LPSZ name) {
+                if (--count < 1L) {
+                    return -1;
+                }
+                return super.openAppend(name);
+            }
+        });
+    }
+
+    @Test
+    public void testFailureToWriteArchiveFile() throws Exception {
+        testCommitRetryAfterFailure(new CountingFilesFacade() {
+            long fd = -1;
+
+            @Override
+            public long openAppend(LPSZ name) {
+                if (--count < 1L) {
+                    return fd = super.openAppend(name);
+                }
+                return super.openAppend(name);
+            }
+
+            @Override
+            public long write(long fd, long address, long len, long offset) {
+                if (fd == this.fd) {
+                    // single shot failure
+                    this.fd = -1;
+                    return -1;
+                }
+                return super.write(fd, address, len, offset);
+            }
+        });
+    }
+
+    @Test
     public void testMetaFileDoesNotExist() throws Exception {
         testConstructor(new FilesFacadeImpl() {
             @Override
@@ -785,6 +822,54 @@ public class TableWriterTest extends AbstractOptimiserTest {
             writer.commit();
             Assert.assertEquals(100000, writer.size());
         }
+    }
+
+    void testCommitRetryAfterFailure(CountingFilesFacade ff) throws NumericException {
+        long failureCount = 0;
+        long used = Unsafe.getMemUsed();
+        create(ff, PartitionBy.DAY);
+        boolean valid = false;
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+            Rnd rnd = new Rnd();
+            for (int i = 0; i < 100000; i++) {
+                // one record per hour
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+                // do not commit often, let transaction size grow
+                if (rnd.nextPositiveInt() % 100 == 0) {
+
+                    // reduce frequency of failures
+                    boolean fail = rnd.nextPositiveInt() % 20 == 0;
+                    if (fail) {
+                        // if we destined to fail, prepare to retry commit
+                        try {
+                            // do not fail on first partition, fail on last
+                            ff.count = writer.txPartitionCount - 1;
+                            valid = valid || writer.txPartitionCount > 1;
+                            writer.commit();
+                            // sometimes commit may pass because transaction does not span multiple partition
+                            // out transaction size is random after all
+                            // if this happens return count to non-failing state
+                            ff.count = Long.MAX_VALUE;
+                        } catch (CairoException ignore) {
+                            failureCount++;
+                            ff.count = Long.MAX_VALUE;
+                            writer.commit();
+                        }
+                    } else {
+                        writer.commit();
+                    }
+                }
+            }
+        }
+        // test is valid if we covered cases of failed commit on transactions that span
+        // multiple partitions
+        Assert.assertTrue(valid);
+        Assert.assertTrue(failureCount > 0);
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
     }
 
     private void testConstructor(FilesFacade ff) {

@@ -63,18 +63,17 @@ public class TableWriter implements Closeable {
     private final RowFunction noPartitionFunction = new NoPartitionFunction();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final FilesFacade ff;
+    int txPartitionCount = 0;
     private Runnable[] nullers;
     private int mode = 509;
     private long fixedRowCount = 0;
     private long txn;
-
     private RowFunction rowFunction = openPartitionFunction;
     private long prevTimestamp;
     private long prevTransientRowCount;
     private long maxTimestamp;
     private long partitionLo;
     private long partitionHi;
-    private int txPartitionCount = 0;
     private long transientRowCount = 0;
     private long masterRef = 0;
     private boolean removeDirOnCancelRow = true;
@@ -122,6 +121,8 @@ public class TableWriter implements Closeable {
             commitPendingPartitions();
             txMem.putLong(fixedRowCount);
             txMem.putLong(maxTimestamp);
+            columnSizeMem.jumpTo(0);
+            txPartitionCount = 1;
         }
 
         Unsafe.getUnsafe().storeFence();
@@ -300,7 +301,6 @@ public class TableWriter implements Closeable {
                 path.trimTo(rootLen);
             }
         }
-        columnSizeMem.jumpTo(0);
     }
 
     private void configureAppendPosition() {
