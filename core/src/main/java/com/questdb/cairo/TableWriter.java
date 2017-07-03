@@ -535,6 +535,7 @@ public class TableWriter implements Closeable {
                                 throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
                             }
                             mem1.setSize(offset + Unsafe.getUnsafe().getLong(pSz));
+                            mem2.setSize(position * 8);
                             break;
                         case ColumnType.STRING:
                         case ColumnType.SYMBOL:
@@ -547,6 +548,7 @@ public class TableWriter implements Closeable {
                                 throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
                             }
                             mem1.setSize(offset + Unsafe.getUnsafe().getInt(pSz));
+                            mem2.setSize(position * 8);
                             break;
                         default:
                             mem1.setSize(position * ColumnType.sizeOf(type));
