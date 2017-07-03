@@ -6,7 +6,9 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacade;
 import com.questdb.misc.FilesFacadeImpl;
+import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.LPSZ;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -21,22 +23,9 @@ public class TableUtilsTest {
 
     @Test
     public void testCreate() throws Exception {
-        JournalStructure struct = new JournalStructure("abc")
-                .$int("i")
-                .$double("d")
-                .$float("f")
-                .$byte("b")
-                .$long("l")
-                .$str("str")
-                .$bool("boo")
-                .$sym("sym")
-                .$short("sho")
-                .$date("date")
-                .$ts()
-                .$();
 
         final CharSequence root = temp.getRoot().getAbsolutePath();
-        final JournalMetadata metadata = struct.build();
+        final JournalMetadata metadata = getJournalStructure().build();
 
         try (TableUtils tabU = new TableUtils(FF)) {
             tabU.create(root, metadata, 509);
@@ -51,6 +40,8 @@ public class TableUtilsTest {
                     Assert.assertEquals(metadata.getColumnCount(), mem.getInt(p));
                     p += 4;
                     Assert.assertEquals(PartitionBy.NONE, mem.getInt(p));
+                    p += 4;
+                    Assert.assertEquals(metadata.getTimestampIndex(), mem.getInt(p));
                     p += 4;
                     Assert.assertEquals(ColumnType.INT, mem.getInt(p));
                     p += 4;
@@ -92,11 +83,53 @@ public class TableUtilsTest {
         }
     }
 
+    @Test
+    public void testCreateFailure() throws Exception {
+        class X extends FilesFacadeImpl {
+            @Override
+            public int mkdirs(LPSZ path, int mode) {
+                return -1;
+            }
+        }
+
+        X ff = new X();
+        JournalMetadata metadata = getJournalStructure().build();
+
+        long mem = Unsafe.getMemUsed();
+        try (TableUtils tu = new TableUtils(ff)) {
+            try {
+                tu.create(temp.getRoot().getAbsolutePath(), metadata, 509);
+                Assert.fail();
+            } catch (CairoException e) {
+                Assert.assertNotNull(e.getMessage());
+            }
+        }
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
+        Assert.assertEquals(0, ff.getOpenFileCount());
+    }
+
+
     private static long assertCol(ReadOnlyMemory mem, long p, CharSequence expected) {
         CharSequence name = mem.getStr(p);
         TestUtils.assertEquals(expected, name);
         Assert.assertNotNull(name);
         p += 4 + name.length() * 2;
         return p;
+    }
+
+    private JournalStructure getJournalStructure() {
+        return new JournalStructure("abc")
+                .$int("i")
+                .$double("d")
+                .$float("f")
+                .$byte("b")
+                .$long("l")
+                .$str("str")
+                .$bool("boo")
+                .$sym("sym")
+                .$short("sho")
+                .$date("date")
+                .$ts()
+                .$();
     }
 }

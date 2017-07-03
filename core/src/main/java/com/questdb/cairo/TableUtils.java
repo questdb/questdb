@@ -50,6 +50,7 @@ public class TableUtils implements Closeable {
             int count = metadata.getColumnCount();
             mem.putInt(count);
             mem.putInt(metadata.getPartitionBy());
+            mem.putInt(metadata.getTimestampIndex());
             for (int i = 0; i < count; i++) {
                 mem.putInt(metadata.getColumnQuick(i).type);
             }
@@ -73,7 +74,7 @@ public class TableUtils implements Closeable {
             if (ff.exists(path.concat("_txi").$())) {
                 return 0;
             } else {
-                return 1;
+                return 2;
             }
         } else {
             return 1;

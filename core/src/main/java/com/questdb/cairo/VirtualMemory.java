@@ -165,9 +165,9 @@ public class VirtualMemory implements Closeable {
      */
     public void jumpTo(long offset) {
         assert offset >= 0;
-        final long p = offset + baseOffset - pageSize;
+        final long p = offset - baseOffset;
         if (p >= pageHi - pageSize && p < pageHi) {
-            appendPointer = absolutePointer + offset;
+            appendPointer = p;
         } else {
             jumpTo0(offset);
         }
@@ -466,7 +466,7 @@ public class VirtualMemory implements Closeable {
         long address;
         if (page < pages.size()) {
             address = pages.getQuick(page);
-            if (address == -1) {
+            if (address == 0) {
                 address = allocateNextPage(page);
                 cachePageAddress(page, address);
             }
@@ -633,10 +633,10 @@ public class VirtualMemory implements Closeable {
         jumpTo(getAppendOffset() + bytes);
     }
 
-    protected final void updateLimits(int page, long appendPointer) {
-        pageHi = appendPointer + this.pageSize;
+    protected final void updateLimits(int page, long pageAddress) {
+        pageHi = pageAddress + this.pageSize;
         baseOffset = pageOffset(page + 1) - pageHi;
-        this.appendPointer = appendPointer;
+        this.appendPointer = pageAddress;
     }
 
     public class CharSequenceView extends AbstractCharSequence {

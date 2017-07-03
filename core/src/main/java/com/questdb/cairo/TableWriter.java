@@ -35,18 +35,23 @@ import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.function.LongConsumer;
 
 public class TableWriter implements Closeable {
 
     private static final int _16M = 16 * 1024 * 1024;
-    private static final long OFFSET_TXN = 0;
-    private static final long OFFSET_TRANSIENT_ROW_COUNT = 8;
-    private static final long OFFSET_FIXED_ROW_COUNT = 16;
-    private static final long OFFSET_MAX_TIMESTAMP = 24;
+    private static final long TX_OFFSET_TXN = 0;
+    private static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
+    private static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
+    private static final long TX_OFFSET_MAX_TIMESTAMP = 24;
+
+    private static final long META_OFFSET_COUNT = 0;
+    private static final long META_OFFSET_PARTITION_BY = 4;
+    private static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    private static final long META_OFFSET_COLUMN_TYPES = 12;
     private static CharSequenceHashSet truncateIgnores = new CharSequenceHashSet();
     private final ObjList<AppendMemory> columns = new ObjList<>();
     private final CompositePath path;
@@ -63,6 +68,7 @@ public class TableWriter implements Closeable {
     private final RowFunction noPartitionFunction = new NoPartitionFunction();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final FilesFacade ff;
+    private final LongConsumer timestampSetter;
     int txPartitionCount = 0;
     private Runnable[] nullers;
     private int mode = 509;
@@ -90,13 +96,27 @@ public class TableWriter implements Closeable {
             this.metaMem = new ReadOnlyMemory(ff);
             metaMem.of(path, ff.getPageSize(), ff.length(path));
             this.txMem = new ReadWriteMemory(ff);
-            this.columnCount = metaMem.getInt(0);
-            this.partitionBy = metaMem.getInt(4);
+            this.columnCount = metaMem.getInt(META_OFFSET_COUNT);
+            this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.columnSizeMem = new VirtualMemory(ff.getPageSize());
             this.refs.extendAndSet(columnCount, 0);
             this.nullers = new Runnable[columnCount];
             path.trimTo(rootLen);
             configureColumnMemory();
+
+            int index = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+            final AppendMemory timestampColumn;
+            if (index == -1) {
+                timestampSetter = value -> {
+                };
+            } else {
+                // validate type
+                if (getColumnType(index) != ColumnType.DATE) {
+                    throw CairoException.instance(0).put("Column ").put(index).put(" is ").put(ColumnType.nameOf(getColumnType(index))).put(". Expected DATE.");
+                }
+                timestampColumn = getPrimaryColumn(index);
+                timestampSetter = timestampColumn::putLong;
+            }
             configureAppendPosition();
         } catch (CairoException e) {
             close0();
@@ -114,7 +134,7 @@ public class TableWriter implements Closeable {
             cancelRow();
         }
 
-        txMem.jumpTo(OFFSET_TRANSIENT_ROW_COUNT);
+        txMem.jumpTo(TX_OFFSET_TRANSIENT_ROW_COUNT);
         txMem.putLong(transientRowCount);
 
         if (txPartitionCount > 1) {
@@ -126,7 +146,7 @@ public class TableWriter implements Closeable {
         }
 
         Unsafe.getUnsafe().storeFence();
-        txMem.jumpTo(OFFSET_TXN);
+        txMem.jumpTo(TX_OFFSET_TXN);
         txMem.putLong(txn++);
         Unsafe.getUnsafe().storeFence();
         txMem.jumpTo(32);
@@ -175,7 +195,7 @@ public class TableWriter implements Closeable {
         txn = 0;
         txPartitionCount = 1;
 
-        txMem.jumpTo(OFFSET_TXN);
+        txMem.jumpTo(TX_OFFSET_TXN);
         TableUtils.resetTxn(txMem);
     }
 
@@ -309,10 +329,10 @@ public class TableWriter implements Closeable {
             if (ff.exists(path)) {
                 txMem.of(path, ff.getPageSize(), 0, ff.getPageSize());
                 path.trimTo(rootLen);
-                this.txn = txMem.getLong(OFFSET_TXN);
-                this.transientRowCount = txMem.getLong(OFFSET_TRANSIENT_ROW_COUNT);
-                this.fixedRowCount = txMem.getLong(OFFSET_FIXED_ROW_COUNT);
-                long timestamp = txMem.getLong(OFFSET_MAX_TIMESTAMP);
+                this.txn = txMem.getLong(TX_OFFSET_TXN);
+                this.transientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+                this.fixedRowCount = txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+                long timestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
                 if (timestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
                     openFirstPartition(timestamp);
                     if (partitionBy == PartitionBy.NONE) {
@@ -355,25 +375,33 @@ public class TableWriter implements Closeable {
 
     private void configureNuller(int index, int type, AppendMemory mem1, AppendMemory mem2) {
         switch (type) {
-            case ColumnType.STRING:
-                nullers[index] = () -> mem2.putLong(mem1.putNullStr());
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+                nullers[index] = () -> mem1.putByte((byte) 0);
                 break;
-            case ColumnType.SYMBOL:
-                nullers[index] = () -> mem1.putInt(SymbolTable.VALUE_IS_NULL);
-                break;
-            case ColumnType.INT:
-                nullers[index] = () -> mem1.putInt(Numbers.INT_NaN);
+            case ColumnType.DOUBLE:
+                nullers[index] = () -> mem1.putDouble(Double.NaN);
                 break;
             case ColumnType.FLOAT:
                 nullers[index] = () -> mem1.putFloat(Float.NaN);
                 break;
-            case ColumnType.DOUBLE:
-                nullers[index] = () -> mem1.putDouble(Double.NaN);
+            case ColumnType.INT:
+                nullers[index] = () -> mem1.putInt(Numbers.INT_NaN);
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:
                 nullers[index] = () -> mem1.putLong(Numbers.LONG_NaN);
                 break;
+            case ColumnType.SHORT:
+                nullers[index] = () -> mem1.putShort((short) 0);
+                break;
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+                nullers[index] = () -> mem2.putLong(mem1.putNullStr());
+                break;
+//            case ColumnType.SYMBOL:
+//                nullers[index] = () -> mem1.putInt(SymbolTable.VALUE_IS_NULL);
+//                break;
             case ColumnType.BINARY:
                 nullers[index] = () -> mem2.putLong(mem1.putNullBin());
                 break;
@@ -387,11 +415,11 @@ public class TableWriter implements Closeable {
     }
 
     private long getColumnNameOffset() {
-        return 8 + columnCount * 4;
+        return META_OFFSET_COLUMN_TYPES + columnCount * 4;
     }
 
     private int getColumnType(int columnIndex) {
-        return metaMem.getInt(8 + columnIndex * 4);
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * 4);
     }
 
     private long getMapPageSize() {
@@ -622,6 +650,7 @@ public class TableWriter implements Closeable {
     private void updateMaxTimestamp(long timestamp) {
         this.prevTimestamp = maxTimestamp;
         this.maxTimestamp = timestamp;
+        this.timestampSetter.accept(timestamp);
     }
 
     /**
@@ -699,12 +728,31 @@ public class TableWriter implements Closeable {
             cancelRow();
         }
 
+        public void putBin(int index, long address, long len) {
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putBin(address, len));
+            notNull(index);
+        }
+
+        public void putBool(int index, boolean value) {
+            putByte(index, value ? (byte) 1 : 0);
+        }
+
+        public void putByte(int index, byte value) {
+            getPrimaryColumn(index).putByte(value);
+            notNull(index);
+        }
+
         public void putDate(int index, long value) {
             putLong(index, value);
         }
 
         public void putDouble(int index, double value) {
             getPrimaryColumn(index).putDouble(value);
+            notNull(index);
+        }
+
+        public void putFloat(int index, float value) {
+            getPrimaryColumn(index).putFloat(value);
             notNull(index);
         }
 
@@ -715,6 +763,11 @@ public class TableWriter implements Closeable {
 
         public void putLong(int index, long value) {
             getPrimaryColumn(index).putLong(value);
+            notNull(index);
+        }
+
+        public void putShort(int index, short value) {
+            getPrimaryColumn(index).putShort(value);
             notNull(index);
         }
 

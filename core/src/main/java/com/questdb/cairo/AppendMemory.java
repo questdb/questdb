@@ -75,7 +75,6 @@ public class AppendMemory extends VirtualMemory {
 
     public final void setSize(long size) {
         this.size = size;
-        releaseCurrentPage();
         jumpTo(size);
     }
 

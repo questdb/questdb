@@ -688,6 +688,33 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testNonStandardPageSize2() throws Exception {
+        populateTable(new FilesFacadeImpl() {
+            @Override
+            public long getPageSize() {
+                return 32 * 1024 * 1024;
+            }
+        });
+    }
+
+    @Test
+    public void testNulls() throws Exception {
+        long mem = Unsafe.getMemUsed();
+        createAllTable();
+        Rnd rnd = new Rnd();
+        testAppendNulls(rnd, FF);
+        testAppendNulls(rnd, FF);
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
+        Assert.assertEquals(0, FF.getOpenFileCount());
+    }
+
+    @Test
+    public void testSetAppendPositionFailureBin() throws Exception {
+        testSetAppendPositionFailure("bin.d");
+        testSetAppendPositionFailure("bin.i");
+    }
+
+    @Test
     public void testSinglePartitionTruncate() throws Exception {
         long used = Unsafe.getMemUsed();
         create(FF, PartitionBy.YEAR);
@@ -771,6 +798,25 @@ public class TableWriterTest extends AbstractOptimiserTest {
         }
     }
 
+    private void createAllTable() {
+        JournalStructure struct = new JournalStructure("all").
+                $int("int").
+                $short("short").
+                $byte("byte").
+                $double("double").
+                $float("float").
+                $long("long").
+                $str("str").
+                $sym("sym").
+                $bool("bool").
+                $bin("bin").
+                $date("date");
+
+        try (TableUtils tu = new TableUtils(FF)) {
+            tu.create(root, struct.build(), 509);
+        }
+    }
+
     private int getDirCount() {
         int dirCount = 0;
         try (CompositePath path = new CompositePath()) {
@@ -821,6 +867,61 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
             writer.commit();
             Assert.assertEquals(100000, writer.size());
+        }
+    }
+
+    private void testAppendNulls(Rnd rnd, FilesFacade ff) throws NumericException {
+        final int blobLen = 64 * 1024;
+        long blob = Unsafe.malloc(blobLen);
+        try (TableWriter writer = new TableWriter(ff, root, "all")) {
+            long size = writer.size();
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            for (int i = 0; i < 10000; i++) {
+                TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+                if (rnd.nextBoolean()) {
+                    r.putByte(2, rnd.nextByte());
+                }
+
+                if (rnd.nextBoolean()) {
+                    r.putBool(8, rnd.nextBoolean());
+                }
+
+                if (rnd.nextBoolean()) {
+                    r.putShort(1, rnd.nextShort());
+                }
+
+                if (rnd.nextBoolean()) {
+                    r.putInt(0, rnd.nextInt());
+                }
+
+                if (rnd.nextBoolean()) {
+                    r.putDouble(3, rnd.nextDouble());
+                }
+
+                if (rnd.nextBoolean()) {
+                    r.putFloat(4, rnd.nextFloat());
+                }
+
+                if (rnd.nextBoolean()) {
+                    r.putLong(5, rnd.nextLong());
+                }
+
+                if (rnd.nextBoolean()) {
+                    r.putDate(10, ts);
+                }
+
+                if (rnd.nextBoolean()) {
+                    rnd.nextChars(blob, blobLen);
+                    r.putBin(9, blob, blobLen);
+                }
+
+                r.append();
+            }
+            writer.commit();
+
+            Assert.assertEquals(size + 10000, writer.size());
+        } finally {
+            Unsafe.free(blob, blobLen);
         }
     }
 
@@ -979,6 +1080,39 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, ff.getOpenFileCount());
+    }
+
+    private void testSetAppendPositionFailure(String failFile) throws NumericException {
+        createAllTable();
+        class X extends FilesFacadeImpl {
+            long fd = -1;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, failFile)) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public long read(long fd, long buf, int len, long offset) {
+                if (fd == this.fd) {
+                    return -1;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        }
+        final X ff = new X();
+        long mem = Unsafe.getMemUsed();
+        testAppendNulls(new Rnd(), FF);
+        try {
+            new TableWriter(ff, root, "all");
+            Assert.fail();
+        } catch (CairoException ignore) {
+        }
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
+        Assert.assertEquals(0, ff.getOpenFileCount());
     }
 
     void verifyTimestampPartitions(VirtualMemory vmem, int n) {

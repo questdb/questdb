@@ -213,6 +213,36 @@ public class VirtualMemoryTest {
     }
 
     @Test
+    public void testJumpTo3() throws Exception {
+        try (VirtualMemory mem = new VirtualMemory(11)) {
+            mem.jumpTo(256);
+            int n = 999;
+            for (int i = n; i > 0; i--) {
+                mem.putLong(i);
+            }
+            long o = 256;
+            for (int i = n; i > 0; i--) {
+                assertEquals(i, mem.getLong(o));
+                o += 8;
+            }
+
+            mem.jumpTo(0);
+            mem.jumpTo(5);
+            mem.jumpTo(0);
+            for (int i = n; i > 0; i--) {
+                mem.putLong(i);
+            }
+
+            o = 0;
+            for (int i = n; i > 0; i--) {
+                assertEquals(i, mem.getLong(o));
+                o += 8;
+            }
+
+        }
+    }
+
+    @Test
     public void testLargePageBinBuf() throws Exception {
         assertBuf(ByteBuffer.allocate(1024 * 1024), 4 * 1024 * 1024);
     }
@@ -277,12 +307,14 @@ public class VirtualMemoryTest {
         try (VirtualMemory mem = new VirtualMemory(1024)) {
             ByteBuffer buf = ByteBuffer.allocate(1024);
             mem.putBin(null);
+            mem.putBin(0, 0);
             buf.flip();
             mem.putBin(buf);
             long o1 = mem.putNullBin();
 
             Assert.assertNull(mem.getBin(0));
-            VirtualMemory.ByteSequenceView bsview = mem.getBin(8);
+            Assert.assertNull(mem.getBin(8));
+            VirtualMemory.ByteSequenceView bsview = mem.getBin(16);
             Assert.assertNotNull(bsview);
             Assert.assertEquals(0, bsview.length());
             Assert.assertNull(mem.getBin(o1));
@@ -365,6 +397,13 @@ public class VirtualMemoryTest {
         try (VirtualMemory mem = new VirtualMemory(2)) {
             assertStrings(mem, true);
         }
+    }
+
+    @Test
+    public void testStringStorageDimensions() throws Exception {
+        Assert.assertEquals(10, VirtualMemory.getStorageLength("xyz"));
+        Assert.assertEquals(4, VirtualMemory.getStorageLength(""));
+        Assert.assertEquals(4, VirtualMemory.getStorageLength(null));
     }
 
     private void assertBuf(ByteBuffer buf, int pageSize) {
