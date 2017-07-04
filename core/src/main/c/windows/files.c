@@ -143,7 +143,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRO
     );
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close0
         (JNIEnv *e, jclass cl, jlong fd) {
     return CloseHandle((HANDLE) fd) ? 0 : GetLastError();
 }
@@ -193,9 +193,9 @@ JNIEXPORT void JNICALL Java_com_questdb_misc_Files_append
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
         (JNIEnv *e, jclass cl, jlong fd) {
-    DWORD len;
-    GetFileSize((HANDLE) fd, &len);
-    return len;
+    DWORD high;
+    DWORD low = GetFileSize((HANDLE) fd, &high);
+    return low | (__int64) high << 32;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd

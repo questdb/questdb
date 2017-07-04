@@ -8,15 +8,15 @@
  * Copyright (C) 2014-2017 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
- * it under the terms of the GNU AFFero General Public License, version 3,
+ * it under the terms of the GNU Affero General Public License, version 3,
  * as published by the Free Software Foundation.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU AFFero General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU AFFero General Public License
+ * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  ******************************************************************************/
@@ -435,6 +435,9 @@ public class CairoMemoryTest {
                 }
                 // read in place
                 for (int i = 0; i < N; i++) {
+                    if (i == 8192) {
+                        System.out.println("ok");
+                    }
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
 
@@ -442,6 +445,9 @@ public class CairoMemoryTest {
             }
             try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, FF.getPageSize(), size, FF.getPageSize())) {
                 for (int i = 0; i < N; i++) {
+                    if (i == 8192) {
+                        System.out.println("ok");
+                    }
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
             }

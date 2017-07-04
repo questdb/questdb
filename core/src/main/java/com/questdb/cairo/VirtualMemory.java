@@ -41,9 +41,9 @@ public class VirtualMemory implements Closeable {
     protected long pageSize;
     private int bits;
     private long mod;
-    private long appendPointer = Long.MIN_VALUE;
-    private long pageHi = Long.MIN_VALUE;
-    private long baseOffset = 0;
+    private long appendPointer = -1;
+    private long pageHi = -1;
+    private long baseOffset = 1;
     private long roOffsetLo = 0;
     private long roOffsetHi = 0;
     private long absolutePointer;
@@ -84,9 +84,9 @@ public class VirtualMemory implements Closeable {
             releaseLast(pages.getQuick(n));
         }
         pages.clear();
-        appendPointer = Long.MIN_VALUE;
-        pageHi = Long.MIN_VALUE;
-        baseOffset = 0;
+        appendPointer = -1;
+        pageHi = -1;
+        baseOffset = 1;
         clearHotPage();
     }
 

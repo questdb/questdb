@@ -215,33 +215,34 @@ public class TableWriter implements Closeable {
         if (transientRowCount == 0) {
             if (partitionBy != PartitionBy.NONE) {
                 // we have to undo creation of partition
-                try {
-                    if (removeDirOnCancelRow) {
+                closeColumns(false);
+                if (removeDirOnCancelRow) {
+                    try {
                         setStateForTimestamp(maxTimestamp, false);
                         if (!ff.rmdir(path.$())) {
                             throw CairoException.instance(Os.errno()).put("Cannot remove directory: ").put(path);
                         }
                         removeDirOnCancelRow = false;
+                    } finally {
+                        path.trimTo(rootLen);
                     }
-
-                    // open old partition
-                    if (prevTimestamp > Long.MIN_VALUE) {
-                        columnSizeMem.jumpTo((txPartitionCount - 2) * 16);
-                        setStateForTimestamp(prevTimestamp, true);
-                        setAppendPosition(prevTransientRowCount);
-                        txPartitionCount--;
-                    } else {
-                        rowFunction = openPartitionFunction;
-                    }
-
-                    // undo counts
-                    transientRowCount = prevTransientRowCount;
-                    fixedRowCount -= prevTransientRowCount;
-                    maxTimestamp = prevTimestamp;
-                    removeDirOnCancelRow = true;
-                } finally {
-                    path.trimTo(rootLen);
                 }
+
+                // open old partition
+                if (prevTimestamp > Long.MIN_VALUE) {
+                    columnSizeMem.jumpTo((txPartitionCount - 2) * 16);
+                    openPartition(prevTimestamp);
+                    setAppendPosition(prevTransientRowCount);
+                    txPartitionCount--;
+                } else {
+                    rowFunction = openPartitionFunction;
+                }
+
+                // undo counts
+                transientRowCount = prevTransientRowCount;
+                fixedRowCount -= prevTransientRowCount;
+                maxTimestamp = prevTimestamp;
+                removeDirOnCancelRow = true;
             } else {
                 // we only have one partition, jump to start on every column
                 for (int i = 0; i < columnCount; i++) {
@@ -274,18 +275,18 @@ public class TableWriter implements Closeable {
     }
 
     private void close0() {
-        closeColumns();
+        closeColumns(true);
         Misc.free(txMem);
         Misc.free(metaMem);
         Misc.free(columnSizeMem);
         Misc.free(path);
     }
 
-    private void closeColumns() {
+    private void closeColumns(boolean truncate) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             AppendMemory m = columns.getQuick(i);
             if (m != null) {
-                m.close();
+                m.close(truncate);
             }
         }
     }
@@ -424,7 +425,7 @@ public class TableWriter implements Closeable {
 
     private long getMapPageSize() {
         long pageSize = ff.getPageSize() * ff.getPageSize();
-        if (pageSize < 0 || pageSize > _16M) {
+        if (pageSize < ff.getPageSize() || pageSize > _16M) {
             if (_16M % ff.getPageSize() == 0) {
                 return _16M;
             }
