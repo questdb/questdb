@@ -89,6 +89,58 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testCancelFailureFollowedByTableClose() throws Exception {
+        long used = Unsafe.getMemUsed();
+        create(FF, PartitionBy.DAY);
+        Rnd rnd = new Rnd();
+        final int N = 47;
+        class X extends FilesFacadeImpl {
+            long fd = -1;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "supplier.i")) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public long read(long fd, long buf, int len, long offset) {
+                if (this.fd == fd) {
+                    return -1;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        }
+
+        X ff = new X();
+
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            for (int i = 0; i < N; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+            writer.commit();
+            Assert.assertEquals(N, writer.size());
+
+            TableWriter.Row r = writer.newRow(ts + 60 * 60000);
+            r.putInt(0, rnd.nextInt());
+            try {
+                r.cancel();
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+        }
+
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            Assert.assertEquals(N, writer.size());
+        }
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, FF.getOpenFileCount());
+    }
+
+    @Test
     public void testCancelFirstRowFailurePartitioned() throws Exception {
         class X extends FilesFacadeImpl {
             boolean fail = false;

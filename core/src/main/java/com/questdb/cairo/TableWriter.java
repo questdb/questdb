@@ -230,10 +230,15 @@ public class TableWriter implements Closeable {
 
                 // open old partition
                 if (prevTimestamp > Long.MIN_VALUE) {
-                    columnSizeMem.jumpTo((txPartitionCount - 2) * 16);
-                    openPartition(prevTimestamp);
-                    setAppendPosition(prevTransientRowCount);
-                    txPartitionCount--;
+                    try {
+                        columnSizeMem.jumpTo((txPartitionCount - 2) * 16);
+                        openPartition(prevTimestamp);
+                        setAppendPosition(prevTransientRowCount);
+                        txPartitionCount--;
+                    } catch (CairoException e) {
+                        closeColumns(false);
+                        throw e;
+                    }
                 } else {
                     rowFunction = openPartitionFunction;
                 }
