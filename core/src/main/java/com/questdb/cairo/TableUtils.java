@@ -45,7 +45,7 @@ public class TableUtils implements Closeable {
 
         try (AppendMemory mem = tlMem.get()) {
 
-            mem.of(path.concat("_meta").$(), ff.getPageSize(), 0);
+            mem.of(path.concat(TableWriter.META_FILE_NAME).$(), ff.getPageSize(), 0);
 
             int count = metadata.getColumnCount();
             mem.putInt(count);
@@ -60,7 +60,7 @@ public class TableUtils implements Closeable {
 
 
             path.trimTo(rootLen);
-            mem.of(path.concat("_txi").$(), ff.getPageSize(), 0);
+            mem.of(path.concat(TableWriter.TXN_FILE_NAME).$(), ff.getPageSize(), 0);
             resetTxn(mem);
         }
     }
@@ -71,7 +71,7 @@ public class TableUtils implements Closeable {
         if (ff.exists(path)) {
             // prepare to replace trailing \0
             path.trimTo(path.length());
-            if (ff.exists(path.concat("_txi").$())) {
+            if (ff.exists(path.concat(TableWriter.TXN_FILE_NAME).$())) {
                 return 0;
             } else {
                 return 2;

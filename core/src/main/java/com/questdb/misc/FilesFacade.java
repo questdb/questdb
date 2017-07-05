@@ -4,6 +4,8 @@ import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 
 public interface FilesFacade {
+    long append(long fd, long buf, int len);
+
     int close(long fd);
 
     int errno();
@@ -41,6 +43,8 @@ public interface FilesFacade {
     long openRW(LPSZ name);
 
     long read(long fd, long buf, int size, long offset);
+
+    boolean remove(LPSZ name);
 
     boolean rmdir(CompositePath name);
 

@@ -34,8 +34,8 @@ extern "C" {
  * Method:    append
  * Signature: (JJI)V
  */
-JNIEXPORT void JNICALL Java_com_questdb_misc_Files_append
-        (JNIEnv *, jclass, jlong, jlong, jint);
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
+        (JNIEnv *, jclass, jlong, jlong, jlong);
 
 /*
  * Class:     com_questdb_misc_Files

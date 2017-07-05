@@ -57,7 +57,7 @@ public final class Files {
     private Files() {
     } // Prevent construction.
 
-    public native static void append(long fd, long address, int len);
+    public native static long append(long fd, long address, long len);
 
     public static int close(long fd) {
         int res = close0(fd);

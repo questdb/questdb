@@ -67,12 +67,12 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_munmap0
     return munmap((void *) address, (size_t) len);
 }
 
-JNIEXPORT void JNICALL Java_com_questdb_misc_Files_append
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
-         jint len) {
-    write((int) fd, (void *) (address), (size_t) len);
+         jlong len) {
+    return write((int) fd, (void *) (address), (size_t) len);
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read

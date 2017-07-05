@@ -502,7 +502,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "_txi") && --count == 0) {
+                if (Chars.endsWith(name, TableWriter.TXN_FILE_NAME) && --count == 0) {
                     return fd = super.openRW(name);
                 }
                 return super.openRW(name);
@@ -538,7 +538,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "_txi") && --count == 0) {
+                if (Chars.endsWith(name, TableWriter.TXN_FILE_NAME) && --count == 0) {
                     return -1;
                 }
                 return super.openRW(name);
@@ -623,12 +623,12 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
     @Test
     public void testDayPartitionRmDirError() throws Exception {
-        testRetryTruncate(new CountingFilesFacade() {
+        testTruncate(new CountingFilesFacade() {
             @Override
             public boolean rmdir(CompositePath name) {
                 return --count != 0 && super.rmdir(name);
             }
-        });
+        }, true);
     }
 
     @Test
@@ -665,12 +665,23 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
     @Test
     public void testDayPartitionTruncateError() throws Exception {
-        testRetryTruncate(new CountingFilesFacade() {
+        testTruncate(new CountingFilesFacade() {
             @Override
             public boolean truncate(long fd, long size) {
                 return --count != 0 && super.truncate(fd, size);
             }
-        });
+        }, true);
+    }
+
+    @Test
+    public void testDayPartitionTruncateErrorConstructorRecovery() throws Exception {
+        class X extends CountingFilesFacade {
+            @Override
+            public boolean truncate(long fd, long size) {
+                return --count != 0 && super.truncate(fd, size);
+            }
+        }
+        testTruncate(new X(), false);
     }
 
     @Test
@@ -721,7 +732,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         testConstructor(new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, "_meta")) {
+                if (Chars.endsWith(name, TableWriter.META_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -825,7 +836,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         testConstructor(new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return !Chars.endsWith(path, "_txi") && super.exists(path);
+                return !Chars.endsWith(path, TableWriter.TXN_FILE_NAME) && super.exists(path);
             }
         });
     }
@@ -1089,51 +1100,6 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
     }
 
-    private void testRetryTruncate(CountingFilesFacade ff) throws NumericException {
-        long used = Unsafe.getMemUsed();
-        create(ff, PartitionBy.DAY);
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-
-            for (int k = 0; k < 3; k++) {
-                for (int i = 0; i < 2000; i++) {
-                    ts = populateRow(writer, ts, rnd, 60 * 60000);
-                }
-                writer.commit();
-                Assert.assertEquals(2000, writer.size());
-
-                // this truncate will fail quite early and will leave
-                // table in inconsistent state to recover from which
-                // truncate has to be repeated
-                try {
-                    ff.count = 3;
-                    writer.truncate();
-                    Assert.fail();
-                } catch (CairoException e) {
-                    LOG.info().$((Sinkable) e).$();
-                }
-
-                // retry
-                writer.truncate();
-            }
-        }
-
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            long ts = DateFormatUtils.parseDateTime("2014-03-04T00:00:00.000Z");
-            Assert.assertEquals(0, writer.size());
-            for (int i = 0; i < 1000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
-            writer.commit();
-            Assert.assertEquals(1000, writer.size());
-        }
-
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, ff.getOpenFileCount());
-    }
-
     private void testSetAppendPositionFailure(String failFile) throws NumericException {
         createAllTable();
         class X extends FilesFacadeImpl {
@@ -1165,6 +1131,60 @@ public class TableWriterTest extends AbstractOptimiserTest {
         }
         Assert.assertEquals(mem, Unsafe.getMemUsed());
         Assert.assertEquals(0, ff.getOpenFileCount());
+    }
+
+    private void testTruncate(CountingFilesFacade ff, boolean retry) throws NumericException {
+        long used = Unsafe.getMemUsed();
+        create(ff, PartitionBy.DAY);
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+            for (int k = 0; k < 3; k++) {
+                for (int i = 0; i < 2000; i++) {
+                    ts = populateRow(writer, ts, rnd, 60 * 60000);
+                }
+                writer.commit();
+                Assert.assertEquals(2000, writer.size());
+
+                // this truncate will fail quite early and will leave
+                // table in inconsistent state to recover from which
+                // truncate has to be repeated
+                try {
+                    ff.count = 3;
+                    writer.truncate();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    LOG.info().$((Sinkable) e).$();
+                }
+
+                if (retry) {
+                    // retry
+                    writer.truncate();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            long ts = DateFormatUtils.parseDateTime("2014-03-04T00:00:00.000Z");
+            Assert.assertEquals(0, writer.size());
+            for (int i = 0; i < 1000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+            writer.commit();
+            Assert.assertEquals(1000, writer.size());
+        }
+
+        // open writer one more time and just assert the size
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            Assert.assertEquals(1000, writer.size());
+        }
+
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, ff.getOpenFileCount());
     }
 
     void verifyTimestampPartitions(VirtualMemory vmem, int n) {

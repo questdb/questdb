@@ -42,16 +42,18 @@ import java.util.function.LongConsumer;
 
 public class TableWriter implements Closeable {
 
+    static final String TXN_FILE_NAME = "_txn";
+    static final String META_FILE_NAME = "_meta";
     private static final int _16M = 16 * 1024 * 1024;
     private static final long TX_OFFSET_TXN = 0;
     private static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
     private static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
     private static final long TX_OFFSET_MAX_TIMESTAMP = 24;
-
     private static final long META_OFFSET_COUNT = 0;
     private static final long META_OFFSET_PARTITION_BY = 4;
     private static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     private static final long META_OFFSET_COLUMN_TYPES = 12;
+    private static final String TODO_FILE_NAME = "_todo";
     private static CharSequenceHashSet truncateIgnores = new CharSequenceHashSet();
     private final ObjList<AppendMemory> columns = new ObjList<>();
     private final CompositePath path;
@@ -89,34 +91,19 @@ public class TableWriter implements Closeable {
         this.path = new CompositePath().of(root).concat(name);
         this.rootLen = path.length();
         try {
-            path.concat("_meta").$();
-            if (!ff.exists(path)) {
-                throw CairoException.instance(0).put("File does not exist: ").put(path);
+            this.txMem = openTxnFile();
+            byte task = readTodoTaskCode();
+            if (task == 1) {
+                repairTruncate();
             }
-            this.metaMem = new ReadOnlyMemory(ff);
-            metaMem.of(path, ff.getPageSize(), ff.length(path));
-            this.txMem = new ReadWriteMemory(ff);
+            this.metaMem = openMetaFile();
             this.columnCount = metaMem.getInt(META_OFFSET_COUNT);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.columnSizeMem = new VirtualMemory(ff.getPageSize());
             this.refs.extendAndSet(columnCount, 0);
             this.nullers = new Runnable[columnCount];
-            path.trimTo(rootLen);
             configureColumnMemory();
-
-            int index = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-            final AppendMemory timestampColumn;
-            if (index == -1) {
-                timestampSetter = value -> {
-                };
-            } else {
-                // validate type
-                if (getColumnType(index) != ColumnType.DATE) {
-                    throw CairoException.instance(0).put("Column ").put(index).put(" is ").put(ColumnType.nameOf(getColumnType(index))).put(". Expected DATE.");
-                }
-                timestampColumn = getPrimaryColumn(index);
-                timestampSetter = timestampColumn::putLong;
-            }
+            timestampSetter = configureTimestampSetter();
             configureAppendPosition();
         } catch (CairoException e) {
             close0();
@@ -167,12 +154,13 @@ public class TableWriter implements Closeable {
      * <p>
      * todo: table must be able to recover if closed after unsuccessful truncate
      */
-    public void truncate() {
+    public final void truncate() {
 
         if (size() == 0) {
             return;
         }
 
+        writeTruncateTodo();
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
             AppendMemory mem = getSecondaryColumn(i);
@@ -182,6 +170,7 @@ public class TableWriter implements Closeable {
         }
 
         if (partitionBy != PartitionBy.NONE) {
+            closeColumns(false);
             removePartitionDirectories();
             rowFunction = openPartitionFunction;
         }
@@ -330,31 +319,20 @@ public class TableWriter implements Closeable {
     }
 
     private void configureAppendPosition() {
-        path.concat("_txi").$();
-        try {
-            if (ff.exists(path)) {
-                txMem.of(path, ff.getPageSize(), 0, ff.getPageSize());
-                path.trimTo(rootLen);
-                this.txn = txMem.getLong(TX_OFFSET_TXN);
-                this.transientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
-                this.fixedRowCount = txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-                long timestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
-                if (timestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
-                    openFirstPartition(timestamp);
-                    if (partitionBy == PartitionBy.NONE) {
-                        rowFunction = noPartitionFunction;
-                    } else {
-                        rowFunction = switchPartitionFunction;
-                    }
-                } else {
-                    maxTimestamp = timestamp;
-                    rowFunction = openPartitionFunction;
-                }
+        this.txn = txMem.getLong(TX_OFFSET_TXN);
+        this.transientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+        this.fixedRowCount = txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+        long timestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        if (timestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
+            openFirstPartition(timestamp);
+            if (partitionBy == PartitionBy.NONE) {
+                rowFunction = noPartitionFunction;
             } else {
-                throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+                rowFunction = switchPartitionFunction;
             }
-        } finally {
-            path.trimTo(rootLen);
+        } else {
+            maxTimestamp = timestamp;
+            rowFunction = openPartitionFunction;
         }
     }
 
@@ -416,6 +394,20 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private LongConsumer configureTimestampSetter() {
+        int index = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+        if (index == -1) {
+            return value -> {
+            };
+        } else {
+            // validate type
+            if (getColumnType(index) != ColumnType.DATE) {
+                throw CairoException.instance(0).put("Column ").put(index).put(" is ").put(ColumnType.nameOf(getColumnType(index))).put(". Expected DATE.");
+            }
+            return getPrimaryColumn(index)::putLong;
+        }
+    }
+
     private LPSZ dFile(CharSequence columnName) {
         return path.concat(columnName).put(".d").$();
     }
@@ -458,6 +450,15 @@ public class TableWriter implements Closeable {
         txPartitionCount = 1;
     }
 
+    private ReadOnlyMemory openMetaFile() {
+        try {
+            path.concat(META_FILE_NAME).$();
+            return new ReadOnlyMemory(ff, path, ff.getPageSize(), ff.length(path));
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     private void openPartition(long timestamp) {
         try {
             setStateForTimestamp(timestamp, true);
@@ -488,15 +489,47 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void removePartitionDirectories() {
-        for (int i = 0; i < columnCount; i++) {
-            getPrimaryColumn(i).close();
-            AppendMemory mem = getSecondaryColumn(i);
-            if (mem != null) {
-                mem.close();
+    private ReadWriteMemory openTxnFile() {
+        try {
+            path.concat(TXN_FILE_NAME).$();
+            if (ff.exists(path)) {
+                return new ReadWriteMemory(ff, path, ff.getPageSize(), 0, ff.getPageSize());
             }
-        }
+            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
 
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private byte readTodoTaskCode() {
+        try {
+            if (ff.exists(path.concat(TODO_FILE_NAME).$())) {
+                long todoFd = ff.openRO(path);
+                if (todoFd == -1) {
+                    throw CairoException.instance(Os.errno()).put("Cannot open *todo*: ").put(path);
+                }
+                try {
+                    long buf = Unsafe.malloc(1);
+                    try {
+                        if (ff.read(todoFd, buf, 1, 0) != 1) {
+                            throw CairoException.instance(Os.errno()).put("Cannot read *todo*: ").put(path);
+                        }
+                        return Unsafe.getUnsafe().getByte(buf);
+                    } finally {
+                        Unsafe.free(buf, 1);
+                    }
+                } finally {
+                    ff.close(todoFd);
+                }
+            }
+            return -1;
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void removePartitionDirectories() {
         try {
             long p = ff.findFirst(path.$());
             if (p > 0) {
@@ -517,6 +550,25 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    private void removeTodoFile() {
+        try {
+            if (!ff.remove(path.concat(TODO_FILE_NAME).$())) {
+                throw CairoException.instance(Os.errno()).put("Recovery operation completed successfully but I cannot remove todo file: ").put(path).put(". Please remove manually before opening table again,");
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void repairTruncate() {
+        if (partitionBy != PartitionBy.NONE) {
+            removePartitionDirectories();
+        }
+        txMem.jumpTo(TX_OFFSET_TXN);
+        TableUtils.resetTxn(txMem);
+        removeTodoFile();
     }
 
     private void setAppendPosition(long position) {
@@ -661,6 +713,27 @@ public class TableWriter implements Closeable {
         this.timestampSetter.accept(timestamp);
     }
 
+    private void writeTruncateTodo() {
+        try {
+            long fd = ff.openAppend(path.concat(TODO_FILE_NAME).$());
+            try {
+                long buf = Unsafe.malloc(1);
+                try {
+                    Unsafe.getUnsafe().putByte(buf, (byte) 1);
+                    if (ff.append(fd, buf, 1) != 1) {
+                        throw CairoException.instance(Os.errno()).put("Cannot write truncate *todo*: ").put(path);
+                    }
+                } finally {
+                    Unsafe.free(buf, 1);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     /**
      *
      */
@@ -792,7 +865,8 @@ public class TableWriter implements Closeable {
     static {
         truncateIgnores.add("..");
         truncateIgnores.add(".");
-        truncateIgnores.add("_meta");
-        truncateIgnores.add("_txi");
+        truncateIgnores.add(META_FILE_NAME);
+        truncateIgnores.add(TXN_FILE_NAME);
+        truncateIgnores.add(TODO_FILE_NAME);
     }
 }

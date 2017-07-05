@@ -8,6 +8,11 @@ public class FilesFacadeImpl implements FilesFacade {
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
 
     @Override
+    public long append(long fd, long buf, int len) {
+        return Files.append(fd, buf, len);
+    }
+
+    @Override
     public int close(long fd) {
         return Files.close(fd);
     }
@@ -100,6 +105,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long read(long fd, long buf, int len, long offset) {
         return Files.read(fd, buf, len, offset);
+    }
+
+    @Override
+    public boolean remove(LPSZ name) {
+        return Files.remove(name);
     }
 
     @Override
