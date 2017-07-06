@@ -1339,7 +1339,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
     void verifyTimestampPartitions(VirtualMemory vmem, int n) {
         int i;
         DateFormatCompiler compiler = new DateFormatCompiler();
-        DateFormat fmt = compiler.compile("yyyy-MM-dd", false);
+        DateFormat fmt = compiler.compile("yyyy-MM-dd");
         DateLocale enGb = DateLocaleFactory.INSTANCE.getDateLocale("en-gb");
 
         try (CompositePath vp = new CompositePath()) {

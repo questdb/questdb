@@ -17,6 +17,6 @@ public class DateFormatFactory {
      * @return compiled implementation of DateFormat
      */
     public DateFormat get(CharSequence pattern) {
-        return cache.computeIfAbsent(pattern, p -> tlCompiler.get().compile(p, false));
+        return cache.computeIfAbsent(pattern, p -> tlCompiler.get().compile(p));
     }
 }

@@ -43,9 +43,9 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testBasicParserCompiler() throws Exception {
-        DateFormat fmt = compiler.compile("E, dd MMM yyyy a KK:m:s.S Z", false);
+        DateFormat fmt = compiler.compile("E, dd MMM yyyy a KK:m:s.S Z");
         String utcPattern = "yyyy-MM-ddTHH:mm:ss.SSSz";
-        DateFormat utc = compiler.compile(utcPattern, false);
+        DateFormat utc = compiler.compile(utcPattern);
         long millis = fmt.parse("Mon, 08 Apr 2017 PM 11:11:10.123 UTC", defaultLocale);
         sink.clear();
         utc.format(millis, defaultLocale, "Z", sink);
@@ -484,7 +484,7 @@ public class DateFormatCompilerTest {
         for (int i = 0; i < 1000; i++) {
             b.append("KK").append(' ').append('Z').append(',');
         }
-        compiler.compile(b, false);
+        compiler.compile(b);
     }
 
     @Test
@@ -700,7 +700,7 @@ public class DateFormatCompilerTest {
         DateFormat format = get(pattern);
         TestUtils.assertEquals(expected, Dates.toString(format.parse(input, locale)));
 
-        DateFormat compiled = compiler.compile(pattern, false);
+        DateFormat compiled = compiler.compile(pattern);
         TestUtils.assertEquals(expected, Dates.toString(compiled.parse(input, locale)));
     }
 }

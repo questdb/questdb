@@ -577,8 +577,8 @@ public class DateFormatUtils {
     static {
         updateReferenceYear(System.currentTimeMillis());
         DateFormatCompiler compiler = new DateFormatCompiler();
-        UTC_FORMAT = compiler.compile(UTC_PATTERN, false);
-        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z", false);
-        FMT4 = compiler.compile("MMM d yyyy", false);
+        UTC_FORMAT = compiler.compile(UTC_PATTERN);
+        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
+        FMT4 = compiler.compile("MMM d yyyy");
     }
 }
