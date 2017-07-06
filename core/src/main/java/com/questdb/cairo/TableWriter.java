@@ -24,6 +24,9 @@
 package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
+import com.questdb.ex.NumericException;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.LongList;
@@ -32,8 +35,7 @@ import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
-import com.questdb.std.time.DateFormatUtils;
-import com.questdb.std.time.Dates;
+import com.questdb.std.time.*;
 import com.questdb.store.ColumnType;
 import org.jetbrains.annotations.NotNull;
 
@@ -44,6 +46,8 @@ public class TableWriter implements Closeable {
 
     static final String TXN_FILE_NAME = "_txn";
     static final String META_FILE_NAME = "_meta";
+    static final String TODO_FILE_NAME = "_todo";
+    private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final int _16M = 16 * 1024 * 1024;
     private static final long TX_OFFSET_TXN = 0;
     private static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
@@ -53,7 +57,9 @@ public class TableWriter implements Closeable {
     private static final long META_OFFSET_PARTITION_BY = 4;
     private static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     private static final long META_OFFSET_COLUMN_TYPES = 12;
-    private static final String TODO_FILE_NAME = "_todo";
+    private static final DateFormat fmtDay;
+    private static final DateFormat fmtMonth;
+    private static final DateFormat fmtYear;
     private static CharSequenceHashSet truncateIgnores = new CharSequenceHashSet();
     private final ObjList<AppendMemory> columns = new ObjList<>();
     private final CompositePath path;
@@ -71,6 +77,8 @@ public class TableWriter implements Closeable {
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final FilesFacade ff;
     private final LongConsumer timestampSetter;
+    private final DateFormat partitionDirFmt;
+    private final DateLocale partitionDirLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
     int txPartitionCount = 0;
     private Runnable[] nullers;
     private int mode = 509;
@@ -102,9 +110,11 @@ public class TableWriter implements Closeable {
             this.columnSizeMem = new VirtualMemory(ff.getPageSize());
             this.refs.extendAndSet(columnCount, 0);
             this.nullers = new Runnable[columnCount];
+            this.partitionDirFmt = selectPartitionDirFmt();
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
             configureAppendPosition();
+            purgeUnusedPartitions();
         } catch (CairoException e) {
             close0();
             throw e;
@@ -143,6 +153,13 @@ public class TableWriter implements Closeable {
         return rowFunction.newRow(timestamp);
     }
 
+    public void rollback() {
+        closeColumns(false);
+        columnSizeMem.jumpTo(0);
+        configureAppendPosition();
+        purgeUnusedPartitions();
+    }
+
     public long size() {
         return fixedRowCount + transientRowCount;
     }
@@ -151,8 +168,6 @@ public class TableWriter implements Closeable {
      * Truncates table. When operation is unsuccessful it throws CairoException. With that truncate can be
      * retried or alternatively table can be closed. Outcome of any other operation with the table is undefined
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
-     * <p>
-     * todo: table must be able to recover if closed after unsuccessful truncate
      */
     public final void truncate() {
 
@@ -186,6 +201,7 @@ public class TableWriter implements Closeable {
 
         txMem.jumpTo(TX_OFFSET_TXN);
         TableUtils.resetTxn(txMem);
+        removeTodoFile();
     }
 
     private void bumpMasterRef() {
@@ -322,16 +338,15 @@ public class TableWriter implements Closeable {
         this.txn = txMem.getLong(TX_OFFSET_TXN);
         this.transientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
         this.fixedRowCount = txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-        long timestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
-        if (timestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
-            openFirstPartition(timestamp);
+        this.maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        if (this.maxTimestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
+            openFirstPartition(this.maxTimestamp);
             if (partitionBy == PartitionBy.NONE) {
                 rowFunction = noPartitionFunction;
             } else {
                 rowFunction = switchPartitionFunction;
             }
         } else {
-            maxTimestamp = timestamp;
             rowFunction = openPartitionFunction;
         }
     }
@@ -502,6 +517,12 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void purgeUnusedPartitions() {
+        if (partitionBy != PartitionBy.NONE) {
+            removePartitionDirsNewerThan(maxTimestamp);
+        }
+    }
+
     private byte readTodoTaskCode() {
         try {
             if (ff.exists(path.concat(TODO_FILE_NAME).$())) {
@@ -552,6 +573,44 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void removePartitionDirsNewerThan(long timestamp) {
+        LOG.info().$("Removing partitions newer than ").$ts(timestamp).$(" from ").$(path.$()).$();
+        try {
+            long p = ff.findFirst(path.$());
+            if (p > 0) {
+                try {
+                    do {
+                        long pName = ff.findName(p);
+                        path.trimTo(rootLen);
+                        path.concat(pName).$();
+                        nativeLPSZ.of(pName);
+                        if (!truncateIgnores.contains(nativeLPSZ)) {
+                            try {
+                                long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, partitionDirLocale);
+                                if (dirTimestamp < timestamp) {
+                                    continue;
+                                }
+                            } catch (NumericException ignore) {
+                                // not a date?
+                                // ignore exception and remove directory
+                            }
+
+                            if (ff.rmdir(path)) {
+                                LOG.info().$("Removing partition dir: ").$(path).$();
+                            } else {
+                                throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
+                            }
+                        }
+                    } while (ff.findNext(p));
+                } finally {
+                    ff.findClose(p);
+                }
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     private void removeTodoFile() {
         try {
             if (!ff.remove(path.concat(TODO_FILE_NAME).$())) {
@@ -563,12 +622,27 @@ public class TableWriter implements Closeable {
     }
 
     private void repairTruncate() {
+        LOG.info().$("Repairing abnormally terminated truncate on ").$(path).$();
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirectories();
         }
         txMem.jumpTo(TX_OFFSET_TXN);
         TableUtils.resetTxn(txMem);
         removeTodoFile();
+    }
+
+    private DateFormat selectPartitionDirFmt() {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return fmtDay;
+            case PartitionBy.MONTH:
+                return fmtMonth;
+            case PartitionBy.YEAR:
+                return fmtYear;
+            default:
+                return null;
+
+        }
     }
 
     private void setAppendPosition(long position) {
@@ -868,5 +942,12 @@ public class TableWriter implements Closeable {
         truncateIgnores.add(META_FILE_NAME);
         truncateIgnores.add(TXN_FILE_NAME);
         truncateIgnores.add(TODO_FILE_NAME);
+    }
+
+    static {
+        DateFormatCompiler compiler = new DateFormatCompiler();
+        fmtDay = compiler.compile("yyyy-MM-dd");
+        fmtMonth = compiler.compile("yyyy-MM");
+        fmtYear = compiler.compile("yyyy");
     }
 }

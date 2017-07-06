@@ -532,6 +532,17 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testCannotOpenTodo() throws Exception {
+        // trick constructor into thinking "_todo" file exists
+        testConstructor(new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                return Chars.endsWith(path, TableWriter.TODO_FILE_NAME) || super.exists(path);
+            }
+        });
+    }
+
+    @Test
     public void testCannotOpenTxFile() throws Exception {
         testConstructor(new FilesFacadeImpl() {
             int count = 2;
@@ -542,6 +553,25 @@ public class TableWriterTest extends AbstractOptimiserTest {
                     return -1;
                 }
                 return super.openRW(name);
+            }
+        });
+    }
+
+    @Test
+    public void testCannotReadTodo() throws Exception {
+        // trick constructor into thinking "_todo" file exists
+        testConstructor(new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                return Chars.endsWith(path, TableWriter.TODO_FILE_NAME) || super.exists(path);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, TableWriter.TODO_FILE_NAME)) {
+                    return 5555555555L;
+                }
+                return super.openRO(name);
             }
         });
     }
@@ -772,6 +802,18 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testRollbackNonPartitioned() throws Exception {
+        create(FF, PartitionBy.NONE);
+        testRollback();
+    }
+
+    @Test
+    public void testRollbackPartitioned() throws Exception {
+        create(FF, PartitionBy.DAY);
+        testRollback();
+    }
+
+    @Test
     public void testSetAppendPositionFailureBin() throws Exception {
         testSetAppendPositionFailure("bin.d");
         testSetAppendPositionFailure("bin.i");
@@ -805,6 +847,85 @@ public class TableWriterTest extends AbstractOptimiserTest {
         }
         Assert.assertEquals(0, FF.getOpenFileCount());
         Assert.assertEquals(mem, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testTruncateCannotCreateTodo() throws Exception {
+        class X extends FilesFacadeImpl {
+            @Override
+            public long openAppend(LPSZ name) {
+                if (Chars.endsWith(name, TableWriter.TODO_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openAppend(name);
+            }
+        }
+
+        X ff = new X();
+
+        create(ff, PartitionBy.DAY);
+        Rnd rnd = new Rnd();
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            for (int i = 0; i < 1000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 6000);
+            }
+            writer.commit();
+
+            try {
+                writer.truncate();
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+            Assert.assertEquals(1000, writer.size());
+        }
+
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            for (int i = 0; i < 1000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 6000);
+            }
+            writer.commit();
+            Assert.assertEquals(2000, writer.size());
+        }
+    }
+
+    @Test
+    public void testTruncateCannotRemoveTodo() throws Exception {
+        class X extends FilesFacadeImpl {
+            @Override
+            public boolean remove(LPSZ name) {
+                return !Chars.endsWith(name, TableWriter.TODO_FILE_NAME) && super.remove(name);
+            }
+        }
+
+        X ff = new X();
+
+        create(ff, PartitionBy.DAY);
+        Rnd rnd = new Rnd();
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            for (int i = 0; i < 1000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 6000);
+            }
+            writer.commit();
+
+            try {
+                writer.truncate();
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+
+            // truncate should succeed even though exception is thrown
+            Assert.assertEquals(0, writer.size());
+        }
+
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            for (int i = 0; i < 1000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 6000);
+            }
+            writer.commit();
+            Assert.assertEquals(1000, writer.size());
+        }
     }
 
     @Test
@@ -1100,6 +1221,34 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
     }
 
+    private void testRollback() throws NumericException {
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+            writer.commit();
+
+            long timestampAfterCommit = ts;
+
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+            writer.rollback();
+
+            ts = timestampAfterCommit;
+
+            // we should be able to repeat timestamps
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+            writer.commit();
+
+            Assert.assertEquals(20000, writer.size());
+        }
+    }
+
     private void testSetAppendPositionFailure(String failFile) throws NumericException {
         createAllTable();
         class X extends FilesFacadeImpl {
@@ -1198,7 +1347,6 @@ public class TableWriterTest extends AbstractOptimiserTest {
                 vp.of(root).concat(PRODUCT).put(Path.SEPARATOR);
                 fmt.format(vmem.getLong(i * 8), enGb, "UTC", vp);
                 if (!FF.exists(vp.$())) {
-                    System.out.println(vp.toString());
                     Assert.fail();
                 }
             }

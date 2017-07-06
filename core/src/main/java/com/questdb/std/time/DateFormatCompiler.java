@@ -125,6 +125,10 @@ public class DateFormatCompiler {
         }
     }
 
+    public DateFormat compile(CharSequence pattern) {
+        return compile(pattern, false);
+    }
+
     public DateFormat compile(CharSequence pattern, boolean generic) {
         return compile(pattern, 0, pattern.length(), generic);
     }
