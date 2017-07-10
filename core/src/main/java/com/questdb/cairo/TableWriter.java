@@ -574,7 +574,7 @@ public class TableWriter implements Closeable {
     }
 
     private void removePartitionDirsNewerThan(long timestamp) {
-        LOG.info().$("Removing partitions newer than ").$ts(timestamp).$(" from ").$(path.$()).$();
+        LOG.info().$("Removing partitions newer than '").$ts(timestamp).$("' from ").$(path.$()).$();
         try {
             long p = ff.findFirst(path.$());
             if (p > 0) {
@@ -587,7 +587,7 @@ public class TableWriter implements Closeable {
                         if (!truncateIgnores.contains(nativeLPSZ)) {
                             try {
                                 long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, partitionDirLocale);
-                                if (dirTimestamp < timestamp) {
+                                if (dirTimestamp <= timestamp) {
                                     continue;
                                 }
                             } catch (NumericException ignore) {
