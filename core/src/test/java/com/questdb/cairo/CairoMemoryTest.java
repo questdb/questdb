@@ -74,7 +74,7 @@ public class CairoMemoryTest {
         try (CompositePath path = new CompositePath()) {
             path.of(temp.newFile().getAbsolutePath());
             try (AppendMemory mem = new AppendMemory(ff)) {
-                mem.of(path, ff.getPageSize() * 2, 0);
+                mem.of(path.$(), ff.getPageSize() * 2, 0);
                 int i = 0;
                 while (i < N) {
                     try {
@@ -435,9 +435,6 @@ public class CairoMemoryTest {
                 }
                 // read in place
                 for (int i = 0; i < N; i++) {
-                    if (i == 8192) {
-                        System.out.println("ok");
-                    }
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
 
@@ -445,9 +442,6 @@ public class CairoMemoryTest {
             }
             try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, FF.getPageSize(), size, FF.getPageSize())) {
                 for (int i = 0; i < N; i++) {
-                    if (i == 8192) {
-                        System.out.println("ok");
-                    }
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
             }

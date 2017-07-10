@@ -46,6 +46,8 @@ public interface FilesFacade {
 
     boolean remove(LPSZ name);
 
+    boolean rename(LPSZ from, LPSZ to);
+
     boolean rmdir(CompositePath name);
 
     boolean truncate(long fd, long size);

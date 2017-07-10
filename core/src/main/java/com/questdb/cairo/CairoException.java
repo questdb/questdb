@@ -19,7 +19,7 @@ public class CairoException extends RuntimeException implements Sinkable {
 
     @Override
     public String getMessage() {
-        return message.toString();
+        return "[" + errno + "] " + message.toString();
     }
 
     public CairoException put(long value) {

@@ -113,6 +113,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean rename(LPSZ from, LPSZ to) {
+        return Files.rename(from, to);
+    }
+
+    @Override
     public boolean rmdir(CompositePath name) {
         return Files.rmdir(name);
     }

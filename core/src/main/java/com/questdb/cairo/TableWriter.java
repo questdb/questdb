@@ -46,6 +46,7 @@ public class TableWriter implements Closeable {
 
     static final String TXN_FILE_NAME = "_txn";
     static final String META_FILE_NAME = "_meta";
+    static final String META_SWAP_FILE_NAME = "_meta.swp";
     static final String TODO_FILE_NAME = "_todo";
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final int _16M = 16 * 1024 * 1024;
@@ -61,7 +62,7 @@ public class TableWriter implements Closeable {
     private static final DateFormat fmtMonth;
     private static final DateFormat fmtYear;
     private static CharSequenceHashSet truncateIgnores = new CharSequenceHashSet();
-    private final ObjList<AppendMemory> columns = new ObjList<>();
+    private final ObjList<AppendMemory> columns;
     private final CompositePath path;
     private final LongList refs = new LongList();
     private final Row row = new Row();
@@ -79,8 +80,9 @@ public class TableWriter implements Closeable {
     private final LongConsumer timestampSetter;
     private final DateFormat partitionDirFmt;
     private final DateLocale partitionDirLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
+    private final AppendMemory ddlMem;
     int txPartitionCount = 0;
-    private Runnable[] nullers;
+    private ObjList<Runnable> nullers = new ObjList<>();
     private int mode = 509;
     private long fixedRowCount = 0;
     private long txn;
@@ -104,12 +106,14 @@ public class TableWriter implements Closeable {
             if (task == 1) {
                 repairTruncate();
             }
+            this.ddlMem = new AppendMemory(ff);
             this.metaMem = openMetaFile();
             this.columnCount = metaMem.getInt(META_OFFSET_COUNT);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.columnSizeMem = new VirtualMemory(ff.getPageSize());
             this.refs.extendAndSet(columnCount, 0);
-            this.nullers = new Runnable[columnCount];
+            this.columns = new ObjList<>(columnCount);
+            this.nullers = new ObjList<>(columnCount);
             this.partitionDirFmt = selectPartitionDirFmt();
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
@@ -119,6 +123,57 @@ public class TableWriter implements Closeable {
             close0();
             throw e;
         }
+    }
+
+    public void addColumn(CharSequence name, int type) {
+        try {
+            path.concat(TableWriter.META_SWAP_FILE_NAME).$();
+            if (Files.exists(path) && !ff.remove(path)) {
+                throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
+            }
+            writeSwapMeta(name, type);
+            metaMem.close();
+
+            try (CompositePath other = new CompositePath()) {
+                path.trimTo(rootLen);
+                other.of(path);
+
+                // move meta file aside
+                writeTruncateTodo();
+                if (!ff.rename(path.concat(TableWriter.META_FILE_NAME).$(), other.concat("meta.swapsy").$())) {
+                    int errno = Os.errno();
+                    metaMem.of(path, ff.getPageSize(), ff.length(path));
+                    throw CairoException.instance(errno).put("Cannot rename ").put(path).put(" -> ").put(other);
+                }
+
+                // write "todo" to restore meta from swapsy if things break
+                path.trimTo(rootLen);
+                other.trimTo(rootLen);
+
+                // move newly created
+
+
+//
+//
+//                path.concat(TableWriter.META_SWAP_FILE_NAME);
+//                other.of(path).concat(TableWriter.META_FILE_NAME).$();
+//                path.concat(TableWriter.META_SWAP_FILE_NAME).$();
+//                renamed = Files.rename(path, other);
+            }
+
+        } finally {
+            path.trimTo(rootLen);
+        }
+
+        boolean renamed;
+        try (CompositePath other = new CompositePath()) {
+            other.of(path).concat(TableWriter.META_FILE_NAME).$();
+            path.concat(TableWriter.META_SWAP_FILE_NAME).$();
+            renamed = Files.rename(path, other);
+        }
+
+        commit(); //todo: can fail
+        configureColumn(type);
     }
 
     @Override
@@ -289,14 +344,17 @@ public class TableWriter implements Closeable {
         Misc.free(txMem);
         Misc.free(metaMem);
         Misc.free(columnSizeMem);
+        Misc.free(ddlMem);
         Misc.free(path);
     }
 
     private void closeColumns(boolean truncate) {
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            AppendMemory m = columns.getQuick(i);
-            if (m != null) {
-                m.close(truncate);
+        if (columns != null) {
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                AppendMemory m = columns.getQuick(i);
+                if (m != null) {
+                    m.close(truncate);
+                }
             }
         }
     }
@@ -351,58 +409,61 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void configureColumn(int type) {
+        final AppendMemory primary = new AppendMemory(ff);
+        final AppendMemory secondary;
+        switch (type) {
+            case ColumnType.BINARY:
+            case ColumnType.SYMBOL:
+            case ColumnType.STRING:
+                secondary = new AppendMemory(ff);
+                break;
+            default:
+                secondary = null;
+                break;
+        }
+        columns.add(primary);
+        columns.add(secondary);
+        configureNuller(type, primary, secondary);
+    }
+
     private void configureColumnMemory() {
         for (int i = 0; i < columnCount; i++) {
-            final int type = getColumnType(i);
-            final AppendMemory primary = new AppendMemory(ff);
-            final AppendMemory secondary;
-            switch (getColumnType(i)) {
-                case ColumnType.BINARY:
-                case ColumnType.SYMBOL:
-                case ColumnType.STRING:
-                    secondary = new AppendMemory(ff);
-                    break;
-                default:
-                    secondary = null;
-                    break;
-            }
-            columns.add(primary);
-            columns.add(secondary);
-            configureNuller(i, type, primary, secondary);
+            configureColumn(getColumnType(i));
         }
     }
 
-    private void configureNuller(int index, int type, AppendMemory mem1, AppendMemory mem2) {
+    private void configureNuller(int type, AppendMemory mem1, AppendMemory mem2) {
         switch (type) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
-                nullers[index] = () -> mem1.putByte((byte) 0);
+                nullers.add(() -> mem1.putByte((byte) 0));
                 break;
             case ColumnType.DOUBLE:
-                nullers[index] = () -> mem1.putDouble(Double.NaN);
+                nullers.add(() -> mem1.putDouble(Double.NaN));
                 break;
             case ColumnType.FLOAT:
-                nullers[index] = () -> mem1.putFloat(Float.NaN);
+                nullers.add(() -> mem1.putFloat(Float.NaN));
                 break;
             case ColumnType.INT:
-                nullers[index] = () -> mem1.putInt(Numbers.INT_NaN);
+                nullers.add(() -> mem1.putInt(Numbers.INT_NaN));
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:
-                nullers[index] = () -> mem1.putLong(Numbers.LONG_NaN);
+                nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
                 break;
             case ColumnType.SHORT:
-                nullers[index] = () -> mem1.putShort((short) 0);
+                nullers.add(() -> mem1.putShort((short) 0));
                 break;
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
-                nullers[index] = () -> mem2.putLong(mem1.putNullStr());
+                nullers.add(() -> mem2.putLong(mem1.putNullStr()));
                 break;
 //            case ColumnType.SYMBOL:
 //                nullers[index] = () -> mem1.putInt(SymbolTable.VALUE_IS_NULL);
 //                break;
             case ColumnType.BINARY:
-                nullers[index] = () -> mem2.putLong(mem1.putNullBin());
+                nullers.add(() -> mem2.putLong(mem1.putNullBin()));
                 break;
             default:
                 break;
@@ -787,6 +848,29 @@ public class TableWriter implements Closeable {
         this.timestampSetter.accept(timestamp);
     }
 
+    private void writeSwapMeta(CharSequence name, int type) {
+        try {
+            ddlMem.of(path, ff.getPageSize(), 0);
+            ddlMem.putLong(columnCount + 1);
+            ddlMem.putInt(partitionBy);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+            for (int i = 0; i < columnCount; i++) {
+                ddlMem.putInt(getColumnType(i));
+            }
+            ddlMem.putInt(type);
+
+            long nameOffset = getColumnNameOffset();
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                ddlMem.putStr(columnName);
+                nameOffset += VirtualMemory.getStorageLength(columnName);
+            }
+            ddlMem.putStr(name);
+        } finally {
+            ddlMem.close();
+        }
+    }
+
     private void writeTruncateTodo() {
         try {
             long fd = ff.openAppend(path.concat(TODO_FILE_NAME).$());
@@ -872,7 +956,7 @@ public class TableWriter implements Closeable {
 
             for (int i = 0; i < columnCount; i++) {
                 if (refs.getQuick(i) < masterRef) {
-                    Unsafe.arrayGet(nullers, i).run();
+                    nullers.getQuick(i).run();
                 }
             }
             transientRowCount++;
