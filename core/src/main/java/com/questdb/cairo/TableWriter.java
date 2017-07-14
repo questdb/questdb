@@ -44,9 +44,12 @@ import java.util.function.LongConsumer;
 
 public class TableWriter implements Closeable {
 
+    public static final int TODO_TRUNCATE = 1;
+    public static final int TODO_RESTORE_META = 2;
     static final String TXN_FILE_NAME = "_txn";
     static final String META_FILE_NAME = "_meta";
     static final String META_SWAP_FILE_NAME = "_meta.swp";
+    static final String META_PREV_FILE_NAME = "_meta.prev";
     static final String TODO_FILE_NAME = "_todo";
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final int _16M = 16 * 1024 * 1024;
@@ -64,24 +67,26 @@ public class TableWriter implements Closeable {
     private static CharSequenceHashSet truncateIgnores = new CharSequenceHashSet();
     private final ObjList<AppendMemory> columns;
     private final CompositePath path;
+    private final CompositePath other;
     private final LongList refs = new LongList();
     private final Row row = new Row();
     private final int rootLen;
     private final ReadWriteMemory txMem;
     private final ReadOnlyMemory metaMem;
     private final VirtualMemory columnSizeMem;
-    private final int columnCount;
     private final int partitionBy;
     private final RowFunction switchPartitionFunction = new SwitchPartitionRowFunction();
     private final RowFunction openPartitionFunction = new OpenPartitionRowFunction();
     private final RowFunction noPartitionFunction = new NoPartitionFunction();
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
+    private final LongList columnTops;
     private final FilesFacade ff;
     private final LongConsumer timestampSetter;
     private final DateFormat partitionDirFmt;
     private final DateLocale partitionDirLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
     private final AppendMemory ddlMem;
     int txPartitionCount = 0;
+    private int columnCount;
     private ObjList<Runnable> nullers = new ObjList<>();
     private int mode = 509;
     private long fixedRowCount = 0;
@@ -99,6 +104,7 @@ public class TableWriter implements Closeable {
     public TableWriter(FilesFacade ff, CharSequence root, CharSequence name) {
         this.ff = ff;
         this.path = new CompositePath().of(root).concat(name);
+        this.other = new CompositePath().of(root).concat(name);
         this.rootLen = path.length();
         try {
             this.txMem = openTxnFile();
@@ -114,6 +120,7 @@ public class TableWriter implements Closeable {
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount);
             this.nullers = new ObjList<>(columnCount);
+            this.columnTops = new LongList(columnCount);
             this.partitionDirFmt = selectPartitionDirFmt();
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
@@ -126,54 +133,89 @@ public class TableWriter implements Closeable {
     }
 
     public void addColumn(CharSequence name, int type) {
+        LOG.info().$("Adding column '").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
+
+        commit();
+
         try {
+            // delete stale _meta.swp
             path.concat(TableWriter.META_SWAP_FILE_NAME).$();
             if (Files.exists(path) && !ff.remove(path)) {
                 throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
             }
+
+            // create new _meta.swp
             writeSwapMeta(name, type);
             metaMem.close();
 
-            try (CompositePath other = new CompositePath()) {
-                path.trimTo(rootLen);
-                other.of(path);
+            // after we moved _meta to _meta.prev
+            // we have to have _todo to restore _meta should anything go wront
+            path.trimTo(rootLen);
+            writeTodo(TODO_RESTORE_META);
 
-                // move meta file aside
-                writeTruncateTodo();
-                if (!ff.rename(path.concat(TableWriter.META_FILE_NAME).$(), other.concat("meta.swapsy").$())) {
-                    int errno = Os.errno();
-                    metaMem.of(path, ff.getPageSize(), ff.length(path));
-                    throw CairoException.instance(errno).put("Cannot rename ").put(path).put(" -> ").put(other);
-                }
+            // rename _meta to _meta.prev
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
 
-                // write "todo" to restore meta from swapsy if things break
-                path.trimTo(rootLen);
-                other.trimTo(rootLen);
-
-                // move newly created
-
-
-//
-//
-//                path.concat(TableWriter.META_SWAP_FILE_NAME);
-//                other.of(path).concat(TableWriter.META_FILE_NAME).$();
-//                path.concat(TableWriter.META_SWAP_FILE_NAME).$();
-//                renamed = Files.rename(path, other);
+            if (!ff.rename(path.concat(TableWriter.META_FILE_NAME).$(), other.concat(META_PREV_FILE_NAME).$())) {
+                int errno = Os.errno();
+                metaMem.of(path, ff.getPageSize(), ff.length(path));
+                throw CairoException.instance(errno).put("Cannot rename ").put(path).put(" -> ").put(other);
             }
 
+            // rename _meta.swp to _meta
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
+            other.concat(META_FILE_NAME).$();
+            if (!ff.rename(path.concat(META_SWAP_FILE_NAME).$(), other)) {
+                int errno = Os.errno();
+                // todo: restore _meta from _meta.prev
+                throw CairoException.instance(errno).put("Cannot rename ").put(path).put(" -> ").put(other);
+            }
+
+            // add column objects
+            configureColumn(type);
+
+            // increment column count
+            columnCount++;
+
+            // extend columnTop list to make sure row cancel can work
+            // need for setting correct top is hard to test without being able to read from table
+            columnTops.extendAndSet(columnCount - 1, transientRowCount);
+
+            // open _meta file
+            path.trimTo(rootLen);
+            path.concat(META_FILE_NAME).$();
+            metaMem.of(path, getMapPageSize(), ff.length(path));
+
+            if (transientRowCount > 0 || partitionBy == PartitionBy.NONE) {
+                // open column files
+                path.trimTo(rootLen);
+                setStateForTimestamp(maxTimestamp, false);
+
+                int plen = path.length();
+                AppendMemory mem = getPrimaryColumn(columnCount - 1);
+                mem.of(dFile(name), getMapPageSize(), 0);
+                mem = getSecondaryColumn(columnCount - 1);
+                if (mem != null) {
+                    path.trimTo(plen);
+                    mem.of(iFile(name), getMapPageSize(), 0);
+                }
+
+                // keep partition name in path
+                path.trimTo(plen);
+
+                if (transientRowCount > 0) {
+                    // write .top file
+                    writeColumnTop(name);
+                }
+            }
+            path.trimTo(rootLen);
+            removeTodoFile();
         } finally {
             path.trimTo(rootLen);
         }
-
-        boolean renamed;
-        try (CompositePath other = new CompositePath()) {
-            other.of(path).concat(TableWriter.META_FILE_NAME).$();
-            path.concat(TableWriter.META_SWAP_FILE_NAME).$();
-            renamed = Files.rename(path, other);
-        }
-
-        commit(); //todo: can fail
-        configureColumn(type);
+        LOG.info().$("ADDED column '").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
     }
 
     @Override
@@ -186,22 +228,31 @@ public class TableWriter implements Closeable {
             cancelRow();
         }
 
-        txMem.jumpTo(TX_OFFSET_TRANSIENT_ROW_COUNT);
-        txMem.putLong(transientRowCount);
+        if (inTransaction()) {
+            txMem.jumpTo(TX_OFFSET_TRANSIENT_ROW_COUNT);
+            txMem.putLong(transientRowCount);
 
-        if (txPartitionCount > 1) {
-            commitPendingPartitions();
-            txMem.putLong(fixedRowCount);
+            if (txPartitionCount > 1) {
+                commitPendingPartitions();
+                txMem.putLong(fixedRowCount);
+                columnSizeMem.jumpTo(0);
+                txPartitionCount = 1;
+            } else {
+                txMem.skip(8);
+            }
+
             txMem.putLong(maxTimestamp);
-            columnSizeMem.jumpTo(0);
-            txPartitionCount = 1;
-        }
 
-        Unsafe.getUnsafe().storeFence();
-        txMem.jumpTo(TX_OFFSET_TXN);
-        txMem.putLong(txn++);
-        Unsafe.getUnsafe().storeFence();
-        txMem.jumpTo(32);
+            Unsafe.getUnsafe().storeFence();
+            txMem.jumpTo(TX_OFFSET_TXN);
+            txMem.putLong(txn++);
+            Unsafe.getUnsafe().storeFence();
+            txMem.jumpTo(32);
+        }
+    }
+
+    public boolean inTransaction() {
+        return txPartitionCount > 1 || transientRowCount != prevTransientRowCount;
     }
 
     public Row newRow(long timestamp) {
@@ -209,10 +260,12 @@ public class TableWriter implements Closeable {
     }
 
     public void rollback() {
-        closeColumns(false);
-        columnSizeMem.jumpTo(0);
-        configureAppendPosition();
-        purgeUnusedPartitions();
+        if (inTransaction()) {
+            closeColumns(false);
+            columnSizeMem.jumpTo(0);
+            configureAppendPosition();
+            purgeUnusedPartitions();
+        }
     }
 
     public long size() {
@@ -230,7 +283,7 @@ public class TableWriter implements Closeable {
             return;
         }
 
-        writeTruncateTodo();
+        writeTodo(TODO_TRUNCATE);
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
             AppendMemory mem = getSecondaryColumn(i);
@@ -257,6 +310,17 @@ public class TableWriter implements Closeable {
         txMem.jumpTo(TX_OFFSET_TXN);
         TableUtils.resetTxn(txMem);
         removeTodoFile();
+    }
+
+    private static String getTodoText(int code) {
+        switch (code) {
+            case 1:
+                return "truncate";
+            case 2:
+                return "restore meta";
+            default:
+                return "unknown";
+        }
     }
 
     private void bumpMasterRef() {
@@ -346,6 +410,7 @@ public class TableWriter implements Closeable {
         Misc.free(columnSizeMem);
         Misc.free(ddlMem);
         Misc.free(path);
+        Misc.free(other);
     }
 
     private void closeColumns(boolean truncate) {
@@ -395,8 +460,10 @@ public class TableWriter implements Closeable {
     private void configureAppendPosition() {
         this.txn = txMem.getLong(TX_OFFSET_TXN);
         this.transientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+        this.prevTransientRowCount = this.transientRowCount;
         this.fixedRowCount = txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
         this.maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        this.prevTimestamp = this.maxTimestamp;
         if (this.maxTimestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
             openFirstPartition(this.maxTimestamp);
             if (partitionBy == PartitionBy.NONE) {
@@ -544,6 +611,7 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
             }
             assert columnCount > 0;
+
             long nameOffset = getColumnNameOffset();
             for (int i = 0; i < columnCount; i++) {
                 AppendMemory mem1 = getPrimaryColumn(i);
@@ -558,6 +626,14 @@ public class TableWriter implements Closeable {
                 if (mem2 != null) {
                     path.trimTo(plen);
                     mem2.of(iFile(name), getMapPageSize());
+                }
+
+                path.trimTo(plen);
+                path.concat(name).put(".top").$();
+                if (ff.exists(path)) {
+                    columnTops.extendAndSet(i, readColumnTop());
+                } else {
+                    columnTops.extendAndSet(i, 0L);
                 }
             }
         } finally {
@@ -581,6 +657,28 @@ public class TableWriter implements Closeable {
     private void purgeUnusedPartitions() {
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirsNewerThan(maxTimestamp);
+        }
+    }
+
+    /**
+     * path member variable has to be set to location of "top" file.
+     *
+     * @return number of rows column doesn't have when column was added to table that already had data.
+     */
+    private long readColumnTop() {
+        long fd = ff.openRO(path);
+        try {
+            long buf = Unsafe.malloc(8);
+            try {
+                if (ff.read(fd, buf, 8, 0) != 8) {
+                    throw CairoException.instance(Os.errno()).put("Cannot read top of column ").put(path);
+                }
+                return Unsafe.getUnsafe().getLong(buf);
+            } finally {
+                Unsafe.free(buf, 1);
+            }
+        } finally {
+            ff.close(fd);
         }
     }
 
@@ -656,10 +754,12 @@ public class TableWriter implements Closeable {
                                 // ignore exception and remove directory
                             }
 
-                            if (ff.rmdir(path)) {
-                                LOG.info().$("Removing partition dir: ").$(path).$();
-                            } else {
-                                throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
+                            if (ff.findType(p) == Files.DT_DIR) {
+                                if (ff.rmdir(path)) {
+                                    LOG.info().$("Removing partition dir: ").$(path).$();
+                                } else {
+                                    throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
+                                }
                             }
                         }
                     } while (ff.findNext(p));
@@ -706,7 +806,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void setAppendPosition(long position) {
+    private void setAppendPosition(final long position) {
         long pSz = Unsafe.malloc(8);
         try {
             for (int i = 0; i < columnCount; i++) {
@@ -715,36 +815,38 @@ public class TableWriter implements Closeable {
 
                 int type = getColumnType(i);
                 long offset;
+                long actualPosition = position - columnTops.getQuick(i);
 
-                if (position > 0) {
+                if (actualPosition > 0) {
+                    // subtract column top
                     switch (type) {
                         case ColumnType.BINARY:
                             assert mem2 != null;
-                            if (ff.read(mem2.getFd(), pSz, 8, (position - 1) * 8) != 8) {
-                                throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((position - 1) * 8);
+                            if (ff.read(mem2.getFd(), pSz, 8, (actualPosition - 1) * 8) != 8) {
+                                throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((actualPosition - 1) * 8);
                             }
                             offset = Unsafe.getUnsafe().getLong(pSz);
                             if (ff.read(mem1.getFd(), pSz, 8, offset) != 8) {
                                 throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
                             }
                             mem1.setSize(offset + Unsafe.getUnsafe().getLong(pSz));
-                            mem2.setSize(position * 8);
+                            mem2.setSize(actualPosition * 8);
                             break;
                         case ColumnType.STRING:
                         case ColumnType.SYMBOL:
                             assert mem2 != null;
-                            if (ff.read(mem2.getFd(), pSz, 8, (position - 1) * 8) != 8) {
-                                throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((position - 1) * 8);
+                            if (ff.read(mem2.getFd(), pSz, 8, (actualPosition - 1) * 8) != 8) {
+                                throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((actualPosition - 1) * 8);
                             }
                             offset = Unsafe.getUnsafe().getLong(pSz);
                             if (ff.read(mem1.getFd(), pSz, 4, offset) != 4) {
                                 throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
                             }
                             mem1.setSize(offset + Unsafe.getUnsafe().getInt(pSz));
-                            mem2.setSize(position * 8);
+                            mem2.setSize(actualPosition * 8);
                             break;
                         default:
-                            mem1.setSize(position * ColumnType.sizeOf(type));
+                            mem1.setSize(actualPosition * ColumnType.sizeOf(type));
                             break;
                     }
                 } else {
@@ -848,10 +950,27 @@ public class TableWriter implements Closeable {
         this.timestampSetter.accept(timestamp);
     }
 
+    private void writeColumnTop(CharSequence name) {
+        long fd = ff.openAppend(path.concat(name).put(".top").$());
+        try {
+            long buf = Unsafe.malloc(8);
+            try {
+                Unsafe.getUnsafe().putLong(buf, transientRowCount);
+                if (ff.append(fd, buf, 8) != 8) {
+                    throw CairoException.instance(Os.errno()).put("Cannot write ").put(path);
+                }
+            } finally {
+                Unsafe.free(buf, 1);
+            }
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     private void writeSwapMeta(CharSequence name, int type) {
         try {
             ddlMem.of(path, ff.getPageSize(), 0);
-            ddlMem.putLong(columnCount + 1);
+            ddlMem.putInt(columnCount + 1);
             ddlMem.putInt(partitionBy);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
             for (int i = 0; i < columnCount; i++) {
@@ -871,15 +990,15 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void writeTruncateTodo() {
+    private void writeTodo(int code) {
         try {
             long fd = ff.openAppend(path.concat(TODO_FILE_NAME).$());
             try {
                 long buf = Unsafe.malloc(1);
                 try {
-                    Unsafe.getUnsafe().putByte(buf, (byte) 1);
+                    Unsafe.getUnsafe().putByte(buf, (byte) code);
                     if (ff.append(fd, buf, 1) != 1) {
-                        throw CairoException.instance(Os.errno()).put("Cannot write truncate *todo*: ").put(path);
+                        throw CairoException.instance(Os.errno()).put("Cannot write ").put(getTodoText(code)).put(" *todo*: ").put(path);
                     }
                 } finally {
                     Unsafe.free(buf, 1);
