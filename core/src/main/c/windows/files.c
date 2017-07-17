@@ -185,10 +185,13 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openAppend
     return (jlong) h;
 }
 
-JNIEXPORT void JNICALL Java_com_questdb_misc_Files_append
-        (JNIEnv *e, jclass cl, jlong fd, jlong address, jint length) {
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
+        (JNIEnv *e, jclass cl,
+         jlong fd,
+         jlong address,
+         jlong len) {
     DWORD count;
-    WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) length, &count, NULL) ? count : 0;
+    return WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL) ? count : 0;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
@@ -237,7 +240,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
 
     HANDLE hMapping = CreateFileMapping((HANDLE) fd, NULL, flProtect, (DWORD) (maxsize >> 32), (DWORD) maxsize, NULL);
     if (hMapping == NULL) {
-        printf("no mapping: %lu", GetLastError());
         return -1;
     }
 
@@ -245,7 +247,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
 
     unsigned long err = GetLastError();
     if (CloseHandle(hMapping) == 0) {
-        printf("cant close: %lu", GetLastError());
         if (address != NULL) {
             UnmapViewOfFile(address);
         }
@@ -253,7 +254,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
     }
 
     if (address == NULL) {
-        printf("no view: %lu", err);
         return -1;
     }
 
@@ -327,9 +327,5 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rename
         (JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
-    BOOL r = MoveFile((LPCSTR) lpszOld, (LPCSTR) lpszNew);
-    if (!r) {
-        printf("error: %lu\n\n", GetLastError());
-    }
-    return (jboolean) r;
+    return (jboolean) MoveFile((LPCSTR) lpszOld, (LPCSTR) lpszNew);
 }

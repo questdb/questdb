@@ -207,6 +207,7 @@ public class TableWriter implements Closeable {
                 openNewColumnFiles(name);
             } catch (CairoException e) {
                 try {
+                    removeMetaFile();
                     removeLastColumn();
                     rename(META_PREV_FILE_NAME, META_FILE_NAME);
                     openMetaFile();
@@ -754,6 +755,19 @@ public class TableWriter implements Closeable {
         columns.remove(columnCount * 2 + 1);
         columns.remove(columnCount * 2);
         columnTops.removeIndex(columnCount);
+    }
+
+    private void removeMetaFile() {
+        try {
+            path.concat(META_FILE_NAME).$();
+            if (ff.exists(path)) {
+                if (!ff.remove(path)) {
+                    throw CairoException.instance(Os.errno()).put("Recovery failed. Cannot remove: ").put(path);
+                }
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     private void removePartitionDirectories() {
