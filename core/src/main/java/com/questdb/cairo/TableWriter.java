@@ -163,10 +163,15 @@ public class TableWriter implements Closeable {
      * <p>
      * <b>Transactions</b>
      * <p>
-     * Pendinng transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
+     * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
      * still have committed transaction.
      */
     public void addColumn(CharSequence name, int type) {
+
+        if (columnExists(name)) {
+            throw CairoException.instance(0).put("Duplicate column name: ").put(name);
+        }
+
         LOG.info().$("Adding column '").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
 
         commit();
@@ -441,6 +446,26 @@ public class TableWriter implements Closeable {
                 }
             }
         }
+    }
+
+    /**
+     * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
+     * is that we don't keep column name strings on heap. We only use this method when adding new column, where
+     * high performance of name check does not matter much.
+     *
+     * @param name to check
+     * @return true if name already exists in meta file.
+     */
+    private boolean columnExists(CharSequence name) {
+        long nameOffset = getColumnNameOffset();
+        for (int i = 0; i < columnCount; i++) {
+            CharSequence col = metaMem.getStr(nameOffset);
+            if (Chars.equals(col, name)) {
+                return true;
+            }
+            nameOffset += VirtualMemory.getStorageLength(col);
+        }
+        return false;
     }
 
     private void commitPendingPartitions() {
@@ -820,7 +845,6 @@ public class TableWriter implements Closeable {
                                     LOG.info().$("Removing partition dir: ").$(path).$();
                                 } else {
                                     LOG.error().$('[').$(ff.errno()).$("] Cannot remove: ").$(path).$();
-//                                    throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
                                 }
                             }
                         }
