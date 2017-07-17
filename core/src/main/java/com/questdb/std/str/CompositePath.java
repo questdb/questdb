@@ -192,9 +192,10 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         }
     }
 
-    public void trimTo(int len) {
+    public CompositePath trimTo(int len) {
         this.len = len;
         wptr = ptr + len;
+        return this;
     }
 
     private void alloc(int len) {

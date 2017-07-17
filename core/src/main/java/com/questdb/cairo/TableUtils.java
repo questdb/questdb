@@ -40,12 +40,10 @@ public class TableUtils implements Closeable {
             throw CairoException.instance(ff.errno()).put("Cannot create dir: ").put(path);
         }
 
-        int rootLen = path.length();
-        path.trimTo(rootLen);
-
+        final int rootLen = path.length();
         try (AppendMemory mem = tlMem.get()) {
 
-            mem.of(path.concat(TableWriter.META_FILE_NAME).$(), ff.getPageSize(), 0);
+            mem.of(path.trimTo(rootLen).concat(TableWriter.META_FILE_NAME).$(), ff.getPageSize(), 0);
 
             int count = metadata.getColumnCount();
             mem.putInt(count);
@@ -58,9 +56,7 @@ public class TableUtils implements Closeable {
                 mem.putStr(metadata.getColumnQuick(i).name);
             }
 
-
-            path.trimTo(rootLen);
-            mem.of(path.concat(TableWriter.TXN_FILE_NAME).$(), ff.getPageSize(), 0);
+            mem.of(path.trimTo(rootLen).concat(TableWriter.TXN_FILE_NAME).$(), ff.getPageSize(), 0);
             resetTxn(mem);
         }
     }
@@ -70,8 +66,7 @@ public class TableUtils implements Closeable {
         path.of(root).concat(name).$();
         if (ff.exists(path)) {
             // prepare to replace trailing \0
-            path.trimTo(path.length());
-            if (ff.exists(path.concat(TableWriter.TXN_FILE_NAME).$())) {
+            if (ff.exists(path.trimTo(path.length()).concat(TableWriter.TXN_FILE_NAME).$())) {
                 return 0;
             } else {
                 return 2;

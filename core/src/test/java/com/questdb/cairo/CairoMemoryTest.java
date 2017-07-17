@@ -238,8 +238,7 @@ public class CairoMemoryTest {
             try (AppendMemory mem = new AppendMemory(ff)) {
                 Rnd rnd = new Rnd();
                 for (int k = 0; k < 10; k++) {
-                    path.trimTo(prefixLen);
-                    path.concat(rnd.nextString(10));
+                    path.trimTo(prefixLen).concat(rnd.nextString(10));
 
                     boolean fail = rnd.nextBoolean();
                     if (fail) {
@@ -374,8 +373,7 @@ public class CairoMemoryTest {
             try (ReadWriteMemory mem = new ReadWriteMemory(ff)) {
                 Rnd rnd = new Rnd();
                 for (int k = 0; k < 10; k++) {
-                    path.trimTo(prefixLen);
-                    path.concat(rnd.nextString(10));
+                    path.trimTo(prefixLen).concat(rnd.nextString(10));
 
                     boolean fail = rnd.nextBoolean();
                     if (fail) {

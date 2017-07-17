@@ -56,6 +56,54 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAddColumnAndFailToReadTopFile() throws Exception {
+        create(FF, PartitionBy.DAY);
+
+        long mem = Unsafe.getMemUsed();
+
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            int N = 10000;
+            Rnd rnd = new Rnd();
+            for (int i = 0; i < N; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+            writer.addColumn("xyz", ColumnType.STRING);
+            Assert.assertEquals(N, writer.size());
+        }
+
+        class X extends FilesFacadeImpl {
+            long fd = -1;
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, "xyz.top")) {
+                    return this.fd = super.openRO(name);
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long read(long fd, long buf, int len, long offset) {
+                if (this.fd == fd) {
+                    return -1;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        }
+
+        try {
+            new TableWriter(new X(), root, PRODUCT);
+            Assert.fail();
+        } catch (CairoException ignore) {
+
+        }
+
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
+        Assert.assertEquals(0, Files.getOpenFileCount());
+    }
+
+    @Test
     public void testAddColumnCommitPartitioned() throws Exception {
         create(FF, PartitionBy.DAY);
         Rnd rnd = new Rnd();
@@ -85,6 +133,107 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAddColumnFileOpenFail() throws Exception {
+        // simulate existence of _meta.swp
+        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "abc.d")) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnFileOpenFail2() throws Exception {
+        // simulate existence of _meta.swp
+        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "abc.i")) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnFileOpenFail3() throws Exception {
+        // simulate existence of _meta.swp
+        testAddColumnUnrecoverableFault(new FilesFacadeImpl() {
+            int count = 1;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "abc.d")) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                return !(Chars.endsWith(from, TableWriter.META_PREV_FILE_NAME) && --count == 0) && super.rename(from, to);
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnMetaOpenFail() throws Exception {
+        testAddColumnUnrecoverableFault(new FilesFacadeImpl() {
+            int counter = 2;
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, TableWriter.META_FILE_NAME) && --counter == 0) {
+                    return -1L;
+                }
+                return super.openRO(name);
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnMetaRenameFail() throws Exception {
+        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                return !Chars.endsWith(to, TableWriter.META_PREV_FILE_NAME) && super.rename(from, to);
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnMetaSwapRenameFail() throws Exception {
+        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                return !Chars.endsWith(from, TableWriter.META_SWAP_FILE_NAME) && super.rename(from, to);
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnMetaSwapRenameFail2() throws Exception {
+        testAddColumnUnrecoverableFault(new FilesFacadeImpl() {
+            int count = 1;
+
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                return !Chars.endsWith(from, TableWriter.META_SWAP_FILE_NAME) && super.rename(from, to);
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                return !(Chars.endsWith(name, TableWriter.TODO_FILE_NAME) && --count == 0) && super.remove(name);
+            }
+        });
+    }
+
+    @Test
     public void testAddColumnNonPartitioned() throws Exception {
         create(FF, PartitionBy.NONE);
         addColumnAndPopulate();
@@ -97,6 +246,125 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAddColumnRepairFail() throws Exception {
+        class X extends FilesFacadeImpl {
+            int counter = 2;
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, TableWriter.META_FILE_NAME) && --counter == 0) {
+                    return -1L;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                return !Chars.endsWith(name, TableWriter.META_FILE_NAME) && super.remove(name);
+            }
+        }
+        testAddColumnErrorFollowedByRepairFail(new X());
+    }
+
+    @Test
+    public void testAddColumnRepairFail2() throws Exception {
+        class X extends FilesFacadeImpl {
+            int counter = 2;
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, TableWriter.META_FILE_NAME) && --counter == 0) {
+                    return -1L;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                return !Chars.endsWith(from, TableWriter.META_PREV_FILE_NAME) && super.rename(from, to);
+            }
+        }
+        testAddColumnErrorFollowedByRepairFail(new X());
+    }
+
+    @Test
+    public void testAddColumnSwpFileDelete() throws Exception {
+
+        populateTable(FF);
+        // simulate existence of _meta.swp
+
+        class X extends FilesFacadeImpl {
+            boolean deleteAttempted = false;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                return Chars.endsWith(path, TableWriter.META_SWAP_FILE_NAME) || super.exists(path);
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                if (Chars.endsWith(name, TableWriter.META_SWAP_FILE_NAME)) {
+                    return deleteAttempted = true;
+                }
+                return super.remove(name);
+            }
+        }
+
+        long mem = Unsafe.getMemUsed();
+
+        X ff = new X();
+
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            Assert.assertEquals(12, writer.columns.size());
+            writer.addColumn("abc", ColumnType.STRING);
+            Assert.assertEquals(14, writer.columns.size());
+            Assert.assertTrue(ff.deleteAttempted);
+        }
+
+        Assert.assertEquals(0, Files.getOpenFileCount());
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
+    }
+
+    @Test
+    public void testAddColumnSwpFileDeleteFail() throws Exception {
+        // simulate existence of _meta.swp
+        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                return Chars.endsWith(path, TableWriter.META_SWAP_FILE_NAME) || super.exists(path);
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                return !Chars.endsWith(name, TableWriter.META_SWAP_FILE_NAME) && super.remove(name);
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnSwpFileMapFail() throws Exception {
+        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+            long fd = -1;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, TableWriter.META_SWAP_FILE_NAME)) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (fd == this.fd) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, mode);
+            }
+        });
+    }
+
+    @Test
     public void testAddColumnToNonEmptyNonPartitioned() throws Exception {
         create(FF, PartitionBy.NONE);
         populateAndColumnPopulate(1000000);
@@ -106,6 +374,70 @@ public class TableWriterTest extends AbstractOptimiserTest {
     public void testAddColumnToNonEmptyPartitioned() throws Exception {
         create(FF, PartitionBy.DAY);
         populateAndColumnPopulate(10000);
+    }
+
+    @Test
+    public void testAddColumnTodoOpenFail() throws Exception {
+        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+            @Override
+            public long openAppend(LPSZ name) {
+                if (Chars.endsWith(name, TableWriter.TODO_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openAppend(name);
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnTodoWriteFail() throws Exception {
+        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+            long fd = -1;
+
+            @Override
+            public long append(long fd, long buf, int len) {
+                if (this.fd == fd) {
+                    return -1;
+                }
+                return super.append(fd, buf, len);
+            }
+
+            @Override
+            public long openAppend(LPSZ name) {
+                if (Chars.endsWith(name, TableWriter.TODO_FILE_NAME)) {
+                    return fd = super.openAppend(name);
+                }
+                return super.openAppend(name);
+            }
+
+
+        });
+    }
+
+    @Test
+    public void testAddColumnTopFileWriteFail() throws Exception {
+        // simulate existence of _meta.swp
+        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+            long fd = -1;
+
+            @Override
+            public long append(long fd, long buf, int len) {
+                if (this.fd == fd) {
+                    return -1;
+                }
+                return super.append(fd, buf, len);
+            }
+
+            @Override
+            public long openAppend(LPSZ name) {
+                if (Chars.endsWith(name, "abc.top")) {
+                    return fd = super.openAppend(name);
+                }
+                return super.openAppend(name);
+            }
+
+
+        });
     }
 
     @Test
@@ -419,6 +751,8 @@ public class TableWriterTest extends AbstractOptimiserTest {
             r.putInt(0, rnd.nextInt());
             r.cancel();
 
+            Assert.assertEquals(0L, writer.columns.getQuick(13).getAppendOffset());
+
             // add more data including updating new column
             ts = populateTable2(rnd, writer, ts, 10000);
             Assert.assertEquals(2 * 10000, writer.size());
@@ -645,25 +979,6 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testCannotReadTodo() throws Exception {
-        // trick constructor into thinking "_todo" file exists
-        testConstructor(new FilesFacadeImpl() {
-            @Override
-            public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableWriter.TODO_FILE_NAME) || super.exists(path);
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.TODO_FILE_NAME)) {
-                    return 5555555555L;
-                }
-                return super.openRO(name);
-            }
-        });
-    }
-
-    @Test
     public void testCannotSetAppendPosition() throws Exception {
         create(FF, PartitionBy.NONE);
         populateTable0(FF);
@@ -864,7 +1179,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             public long getPageSize() {
                 return super.getPageSize() * super.getPageSize();
             }
-        });
+        }, PartitionBy.MONTH);
     }
 
     @Test
@@ -874,7 +1189,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             public long getPageSize() {
                 return 32 * 1024 * 1024;
             }
-        });
+        }, PartitionBy.YEAR);
     }
 
     @Test
@@ -964,33 +1279,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
                 return super.openAppend(name);
             }
         }
-
-        X ff = new X();
-
-        create(ff, PartitionBy.DAY);
-        Rnd rnd = new Rnd();
-        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            for (int i = 0; i < 1000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 6000);
-            }
-            writer.commit();
-
-            try {
-                writer.truncate();
-                Assert.fail();
-            } catch (CairoException ignore) {
-            }
-            Assert.assertEquals(1000, writer.size());
-        }
-
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            for (int i = 0; i < 1000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 6000);
-            }
-            writer.commit();
-            Assert.assertEquals(2000, writer.size());
-        }
+        testTruncateRecoverableFailure(new X());
     }
 
     @Test
@@ -1016,10 +1305,8 @@ public class TableWriterTest extends AbstractOptimiserTest {
             try {
                 writer.truncate();
                 Assert.fail();
-            } catch (CairoException ignore) {
+            } catch (CairoError ignore) {
             }
-
-            // truncate should succeed even though exception is thrown
             Assert.assertEquals(0, writer.size());
         }
 
@@ -1030,6 +1317,60 @@ public class TableWriterTest extends AbstractOptimiserTest {
             writer.commit();
             Assert.assertEquals(1000, writer.size());
         }
+    }
+
+    @Test
+    public void testTruncateCannotWriteTodo() throws Exception {
+        class X extends FilesFacadeImpl {
+            long fd = -1;
+
+            @Override
+            public long openAppend(LPSZ name) {
+                if (Chars.endsWith(name, TableWriter.TODO_FILE_NAME)) {
+                    return fd = super.openAppend(name);
+                }
+                return super.openAppend(name);
+            }
+
+            @Override
+            public long append(long fd, long buf, int len) {
+                if (this.fd == fd) {
+                    return -1;
+                }
+                return super.append(fd, buf, len);
+            }
+        }
+        testTruncateRecoverableFailure(new X());
+    }
+
+    @Test
+    public void testTruncatedTodo() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            long fd = 7686876823L;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                return Chars.endsWith(path, TableWriter.TODO_FILE_NAME) || super.exists(path);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, TableWriter.TODO_FILE_NAME)) {
+                    return this.fd;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long read(long fd, long buf, int len, long offset) {
+                if (fd == this.fd) {
+                    return -1;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        };
+
+        populateTable(ff);
     }
 
     @Test
@@ -1088,6 +1429,18 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
             writer.commit();
             Assert.assertEquals(N, writer.size());
+        }
+    }
+
+    private void appendAndAssert10K(long ts, Rnd rnd) {
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            Assert.assertEquals(12, writer.columns.size());
+
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60000);
+            }
+            writer.commit();
+            Assert.assertEquals(30000, writer.size());
         }
     }
 
@@ -1181,25 +1534,29 @@ public class TableWriterTest extends AbstractOptimiserTest {
         return ts;
     }
 
-    void populateTable(FilesFacade ff) throws NumericException {
-        long used = Unsafe.getMemUsed();
-        create(ff, PartitionBy.MONTH);
-        populateTable0(ff);
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, ff.getOpenFileCount());
-
+    long populateTable(FilesFacade ff) throws NumericException {
+        return populateTable(ff, PartitionBy.DAY);
     }
 
-    private void populateTable0(FilesFacade ff) throws NumericException {
+    long populateTable(FilesFacade ff, int partitionBy) throws NumericException {
+        long used = Unsafe.getMemUsed();
+        create(ff, partitionBy);
+        long ts = populateTable0(ff);
+        Assert.assertEquals(used, Unsafe.getMemUsed());
+        Assert.assertEquals(0L, ff.getOpenFileCount());
+        return ts;
+    }
+
+    private long populateTable0(FilesFacade ff) throws NumericException {
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-
             Rnd rnd = new Rnd();
-            for (int i = 0; i < 100000; i++) {
+            for (int i = 0; i < 10000; i++) {
                 ts = populateRow(writer, ts, rnd, 60000);
             }
             writer.commit();
-            Assert.assertEquals(100000, writer.size());
+            Assert.assertEquals(10000, writer.size());
+            return ts;
         }
     }
 
@@ -1215,6 +1572,100 @@ public class TableWriterTest extends AbstractOptimiserTest {
             r.append();
         }
         return ts;
+    }
+
+    private void testAddColumnErrorFollowedByRepairFail(FilesFacade ff) throws NumericException {
+        long ts = populateTable(FF);
+        long mem = Unsafe.getMemUsed();
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60000);
+            }
+            writer.commit();
+            Assert.assertEquals(20000, writer.size());
+
+            Assert.assertEquals(12, writer.columns.size());
+
+            try {
+                writer.addColumn("abc", ColumnType.STRING);
+                Assert.fail();
+            } catch (CairoError ignore) {
+            }
+        }
+
+        try {
+            new TableWriter(ff, root, PRODUCT);
+            Assert.fail();
+        } catch (CairoException ignore) {
+        }
+
+        appendAndAssert10K(ts, rnd);
+
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
+        Assert.assertEquals(0, Files.getOpenFileCount());
+    }
+
+    private void testAddColumnRecoverableFault(FilesFacade ff) throws NumericException {
+        long ts = populateTable(FF);
+        long mem = Unsafe.getMemUsed();
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            Assert.assertEquals(12, writer.columns.size());
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60000);
+            }
+            writer.commit();
+            try {
+                writer.addColumn("abc", ColumnType.STRING);
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+
+            // ignore error and add more rows
+
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60000);
+            }
+            writer.commit();
+            Assert.assertEquals(30000, writer.size());
+        }
+
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60000);
+            }
+            writer.commit();
+            Assert.assertEquals(40000, writer.size());
+        }
+
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
+        Assert.assertEquals(0, Files.getOpenFileCount());
+    }
+
+    private void testAddColumnUnrecoverableFault(FilesFacade ff) throws NumericException {
+        long ts = populateTable(FF);
+        long mem = Unsafe.getMemUsed();
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60000);
+            }
+            writer.commit();
+
+            Assert.assertEquals(12, writer.columns.size());
+
+            try {
+                writer.addColumn("abc", ColumnType.STRING);
+                Assert.fail();
+            } catch (CairoError ignore) {
+            }
+        }
+
+        appendAndAssert10K(ts, rnd);
+
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
+        Assert.assertEquals(0, Files.getOpenFileCount());
     }
 
     private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts) throws NumericException {
@@ -1505,6 +1956,33 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, ff.getOpenFileCount());
+    }
+
+    private void testTruncateRecoverableFailure(FilesFacade ff) throws NumericException {
+        create(ff, PartitionBy.DAY);
+        Rnd rnd = new Rnd();
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            for (int i = 0; i < 1000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 6000);
+            }
+            writer.commit();
+
+            try {
+                writer.truncate();
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+            Assert.assertEquals(1000, writer.size());
+        }
+
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            for (int i = 0; i < 1000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 6000);
+            }
+            writer.commit();
+            Assert.assertEquals(2000, writer.size());
+        }
     }
 
     void verifyTimestampPartitions(VirtualMemory vmem, int n) {

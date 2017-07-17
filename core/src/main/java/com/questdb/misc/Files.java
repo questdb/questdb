@@ -272,8 +272,7 @@ public final class Files {
             try {
                 do {
                     long lpszName = findName(p);
-                    path.trimTo(len);
-                    path.concat(lpszName).$();
+                    path.trimTo(len).concat(lpszName).$();
                     switch (findType(p)) {
                         case DT_DIR:
                             if (strcmp(lpszName, "..") || strcmp(lpszName, ".")) {
@@ -295,11 +294,7 @@ public final class Files {
             } finally {
                 findClose(p);
             }
-            path.trimTo(len);
-            path.$();
-
-            return rmdir(path.address());
-
+            return rmdir(path.trimTo(len).$().address());
         }
 
         return false;
