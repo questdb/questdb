@@ -1159,14 +1159,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    /**
-     *
-     */
-    @FunctionalInterface
-    public interface RowFunction {
-        Row newRow(long timestamp);
-    }
-
     private class OpenPartitionRowFunction implements RowFunction {
         @Override
         public Row newRow(long timestamp) {

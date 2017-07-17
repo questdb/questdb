@@ -1268,6 +1268,60 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testRollbackPartitionRemoveFailure() throws Exception {
+        create(FF, PartitionBy.DAY);
+
+        class X extends FilesFacadeImpl {
+            boolean removeAttempted = false;
+
+            @Override
+            public boolean rmdir(CompositePath name) {
+                if (Chars.endsWith(name, "2014-08-22")) {
+                    removeAttempted = true;
+                    return false;
+                }
+                return super.rmdir(name);
+            }
+        }
+
+        X ff = new X();
+
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+            writer.commit();
+
+            long timestampAfterCommit = ts;
+
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+
+            Assert.assertEquals(20000, writer.size());
+            writer.rollback();
+
+            Assert.assertTrue(ff.removeAttempted);
+
+            ts = timestampAfterCommit;
+
+            // make sure row rollback works after rollback
+            writer.newRow(ts).cancel();
+
+            // we should be able to repeat timestamps
+            for (int i = 0; i < 10000; i++) {
+                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            }
+            writer.commit();
+
+            Assert.assertEquals(20000, writer.size());
+        }
+    }
+
+    @Test
     public void testRollbackPartitioned() throws Exception {
         create(FF, PartitionBy.DAY);
         testRollback();

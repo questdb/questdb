@@ -108,6 +108,12 @@ public class TableUtilsTest {
         Assert.assertEquals(0, ff.getOpenFileCount());
     }
 
+    @Test
+    public void testForeignDirectory() throws Exception {
+        try (TableUtils tabU = new TableUtils(FF)) {
+            Assert.assertEquals(2, tabU.exists(temp.getRoot().getAbsolutePath(), ""));
+        }
+    }
 
     private static long assertCol(ReadOnlyMemory mem, long p, CharSequence expected) {
         CharSequence name = mem.getStr(p);
