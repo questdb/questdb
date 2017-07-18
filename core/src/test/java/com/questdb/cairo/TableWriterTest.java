@@ -717,7 +717,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
                     r.putStr(2, rnd.nextString(4));
                     r.putStr(3, rnd.nextString(11));
                     r.putDouble(4, rnd.nextDouble());
-                    if (rnd.nextBoolean()) {
+                    if (rnd.nextPositiveInt() % 30 == 0) {
                         r.cancel();
                         cancelCount++;
                     } else {
@@ -848,7 +848,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
                     r.putStr(2, rnd.nextString(4));
                     r.putStr(3, rnd.nextString(11));
                     r.putDouble(4, rnd.nextDouble());
-                    if (rnd.nextBoolean()) {
+                    if (rnd.nextPositiveInt() % 50 == 0) {
                         ff.fail = true;
                         try {
                             r.cancel();
@@ -914,7 +914,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
                     r.putStr(2, rnd.nextString(4));
                     r.putStr(3, rnd.nextString(11));
                     r.putDouble(4, rnd.nextDouble());
-                    if (rnd.nextBoolean()) {
+                    if (rnd.nextPositiveInt() % 50 == 0) {
                         ff.fail = true;
                         try {
                             r.cancel();
