@@ -325,6 +325,14 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
            com_questdb_misc_Files_DT_DIR : com_questdb_misc_Files_DT_REG;
 }
 
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_lock
+        (JNIEnv *e, jclass cl, jlong fd) {
+    DWORD high;
+    DWORD low = GetFileSize((HANDLE) fd, &high);
+    return LockFile((HANDLE) fd, 0, 0, low, high) ? 0 : 1;
+}
+
+
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rename
         (JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
     return (jboolean) MoveFile((LPCSTR) lpszOld, (LPCSTR) lpszNew);
