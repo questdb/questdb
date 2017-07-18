@@ -142,6 +142,8 @@ public final class Files {
 
     public native static long length(long fd);
 
+    public static native int lock(long fd);
+
     public static File makeTempDir() {
         File result;
         try {

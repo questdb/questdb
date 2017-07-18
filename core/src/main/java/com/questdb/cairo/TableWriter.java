@@ -109,6 +109,11 @@ public class TableWriter implements Closeable {
         this.rootLen = path.length();
         try {
             this.txMem = openTxnFile();
+
+            if (Files.lock(txMem.getFd()) != 0) {
+                throw CairoException.instance(Os.errno()).put("Cannot lock table: ").put(path.$());
+            }
+
             this.txMem.jumpTo(TX_EOF);
             byte todo = readTodoTaskCode();
             switch (todo) {

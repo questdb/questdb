@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/fcntl.h>
+#include <sys/file.h>
 #include <sys/mman.h>
 
 #ifdef __APPLE__
@@ -245,6 +246,10 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
     return ((FIND *) findPtr)->entry->d_type;
 }
 
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_lock
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return flock((int) fd, LOCK_EX | LOCK_NB);
+}
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rename
         (JNIEnv *e, jclass cls, jlong lpszOld, jlong lpszNew) {

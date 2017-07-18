@@ -32,18 +32,10 @@ extern "C" {
 /*
  * Class:     com_questdb_misc_Files
  * Method:    append
- * Signature: (JJI)V
+ * Signature: (JJJ)J
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
         (JNIEnv *, jclass, jlong, jlong, jlong);
-
-/*
- * Class:     com_questdb_misc_Files
- * Method:    close
- * Signature: (J)I
- */
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close0
-        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_questdb_misc_Files
@@ -87,6 +79,14 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
 
 /*
  * Class:     com_questdb_misc_Files
+ * Method:    lock
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_lock
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
  * Method:    getStdOutFd
  * Signature: ()J
  */
@@ -104,7 +104,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
 /*
  * Class:     com_questdb_misc_Files
  * Method:    read
- * Signature: (JJIJ)J
+ * Signature: (JJJJ)J
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
         (JNIEnv *, jclass, jlong, jlong, jlong, jlong);
@@ -128,10 +128,18 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_truncate
 /*
  * Class:     com_questdb_misc_Files
  * Method:    write
- * Signature: (JJIJ)J
+ * Signature: (JJJJ)J
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
         (JNIEnv *, jclass, jlong, jlong, jlong, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    close0
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close0
+        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_questdb_misc_Files

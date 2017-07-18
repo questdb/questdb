@@ -1364,6 +1364,19 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testTableLock() throws Exception {
+        createAllTable();
+
+        try (TableWriter ignored = new TableWriter(FF, root, "all")) {
+            try {
+                new TableWriter(FF, root, "all");
+                Assert.fail();
+            } catch (Exception ignored2) {
+            }
+        }
+    }
+
+    @Test
     public void testTruncateCannotCreateTodo() throws Exception {
         class X extends FilesFacadeImpl {
             @Override
