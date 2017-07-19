@@ -33,6 +33,7 @@ import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.std.Sinkable;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.*;
 import com.questdb.store.ColumnType;
@@ -40,6 +41,8 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableWriterTest extends AbstractOptimiserTest {
 
@@ -1201,6 +1204,19 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testGetColumnIndex() throws Exception {
+        createAllTable();
+        try (TableWriter writer = new TableWriter(FF, root, "all")) {
+            Assert.assertEquals(1, writer.getColumnIndex("short"));
+            try {
+                writer.getColumnIndex("bad");
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+        }
+    }
+
+    @Test
     public void testMetaFileDoesNotExist() throws Exception {
         testConstructor(new FilesFacadeImpl() {
             @Override
@@ -1259,6 +1275,74 @@ public class TableWriterTest extends AbstractOptimiserTest {
         }
         Assert.assertEquals(mem, Unsafe.getMemUsed());
         Assert.assertEquals(0, FF.getOpenFileCount());
+    }
+
+    @Test
+    public void testRemoveColumnAfterTimestamp() throws Exception {
+        JournalStructure struct = new JournalStructure("ABC").
+                $int("productId").
+                $str("productName").
+                $sym("category").
+                $double("price").
+                $ts().
+                $sym("supplier").$();
+
+        testRemoveColumn(struct);
+    }
+
+    @Test
+    public void testRemoveColumnBeforeTimestamp() throws Exception {
+        JournalStructure struct = new JournalStructure("ABC").
+                $int("productId").
+                $str("productName").
+                $sym("supplier").
+                $sym("category").
+                $double("price").
+                $ts();
+
+        testRemoveColumn(struct);
+    }
+
+    @Test
+    public void testRemoveTimestamp() throws Exception {
+        JournalStructure struct = new JournalStructure("ABC").
+                $int("productId").
+                $str("productName").
+                $sym("category").
+                $double("price").
+                $ts().
+                $sym("supplier").$();
+
+        String name = struct.getName();
+        try (TableUtils tabU = new TableUtils(FF)) {
+            if (tabU.exists(root, name) == 1) {
+                tabU.create(root, struct.partitionBy(PartitionBy.NONE).build(), 509);
+            } else {
+                throw CairoException.instance(0).put("Table ").put(name).put(" already exists");
+            }
+        }
+
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(FF, root, name)) {
+
+            append10KProducts(ts, rnd, writer);
+
+            writer.removeColumn("timestamp");
+
+            append10KNoTimestamp(rnd, writer);
+
+            writer.commit();
+
+            Assert.assertEquals(20000, writer.size());
+        }
+
+        try (TableWriter writer = new TableWriter(FF, root, name)) {
+            append10KNoTimestamp(rnd, writer);
+            writer.commit();
+            Assert.assertEquals(30000, writer.size());
+        }
     }
 
     @Test
@@ -1540,6 +1624,61 @@ public class TableWriterTest extends AbstractOptimiserTest {
         }
     }
 
+    private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {
+        int productId = writer.getColumnIndex("productId");
+        int productName = writer.getColumnIndex("productName");
+        int category = writer.getColumnIndex("category");
+        int price = writer.getColumnIndex("price");
+
+        for (int i = 0; i < 10000; i++) {
+            TableWriter.Row r = writer.newRow(ts += (long) 60000);
+            r.putInt(productId, rnd.nextPositiveInt());
+            r.putStr(productName, rnd.nextString(4));
+            r.putStr(category, rnd.nextString(11));
+            r.putDouble(price, rnd.nextDouble());
+            r.append();
+        }
+        return ts;
+    }
+
+    private void append10KNoTimestamp(Rnd rnd, TableWriter writer) {
+        int productId = writer.getColumnIndex("productId");
+        int productName = writer.getColumnIndex("productName");
+        int supplier = writer.getColumnIndex("supplier");
+        int category = writer.getColumnIndex("category");
+        int price = writer.getColumnIndex("price");
+
+        for (int i = 0; i < 10000; i++) {
+            TableWriter.Row r = writer.newRow(0);
+            r.putInt(productId, rnd.nextPositiveInt());
+            r.putStr(productName, rnd.nextString(10));
+            r.putStr(supplier, rnd.nextString(4));
+            r.putStr(category, rnd.nextString(11));
+            r.putDouble(price, rnd.nextDouble());
+            r.append();
+        }
+    }
+
+    private long append10KProducts(long ts, Rnd rnd, TableWriter writer) {
+        int productId = writer.getColumnIndex("productId");
+        int productName = writer.getColumnIndex("productName");
+        int supplier = writer.getColumnIndex("supplier");
+        int category = writer.getColumnIndex("category");
+        int price = writer.getColumnIndex("price");
+
+        for (int i = 0; i < 10000; i++) {
+            TableWriter.Row r = writer.newRow(ts += (long) 60000);
+            r.putInt(productId, rnd.nextPositiveInt());
+            r.putStr(productName, rnd.nextString(10));
+            r.putStr(supplier, rnd.nextString(4));
+            r.putStr(category, rnd.nextString(11));
+            r.putDouble(price, rnd.nextDouble());
+            r.append();
+        }
+
+        return ts;
+    }
+
     private void appendAndAssert10K(long ts, Rnd rnd) {
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
             Assert.assertEquals(12, writer.columns.size());
@@ -1582,23 +1721,15 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     private int getDirCount() {
-        int dirCount = 0;
+        AtomicInteger count = new AtomicInteger();
         try (CompositePath path = new CompositePath()) {
-            path.of(root).concat(PRODUCT).$();
-            long find = FF.findFirst(path);
-            Assert.assertTrue(find > 0);
-
-            try {
-                do {
-                    if (FF.findType(find) == Files.DT_DIR) {
-                        dirCount++;
-                    }
-                } while (FF.findNext(find));
-            } finally {
-                FF.findClose(find);
-            }
+            FF.iterateDir(path.of(root).concat(PRODUCT).$(), (name, type) -> {
+                if (type == Files.DT_DIR) {
+                    count.incrementAndGet();
+                }
+            });
         }
-        return dirCount;
+        return count.get();
     }
 
     private void populateAndColumnPopulate(int n) throws NumericException {
@@ -1940,7 +2071,58 @@ public class TableWriterTest extends AbstractOptimiserTest {
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
+    }
 
+    private void testRemoveColumn(JournalStructure struct) throws NumericException {
+        String name = struct.getName();
+        try (TableUtils tabU = new TableUtils(FF)) {
+            if (tabU.exists(root, name) == 1) {
+                tabU.create(root, struct.partitionBy(PartitionBy.DAY).build(), 509);
+            } else {
+                throw CairoException.instance(0).put("Table ").put(name).put(" already exists");
+            }
+        }
+
+        long mem = Unsafe.getMemUsed();
+
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(FF, root, name)) {
+
+            ts = append10KProducts(ts, rnd, writer);
+
+            writer.removeColumn("supplier");
+
+            final NativeLPSZ lpsz = new NativeLPSZ();
+            try (CompositePath path = new CompositePath()) {
+                path.of(root).concat(name);
+                final int plen = path.length();
+                FF.iterateDir(path.$(), (file, type) -> {
+                    lpsz.of(file);
+                    if (type == Files.DT_DIR && !Chars.equals(lpsz, '.') && !Chars.equals(lpsz, "..")) {
+                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.i").$()));
+                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.d").$()));
+                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.top").$()));
+                    }
+                });
+            }
+
+            ts = append10KNoSupplier(ts, rnd, writer);
+
+            writer.commit();
+
+            Assert.assertEquals(20000, writer.size());
+        }
+
+        try (TableWriter writer = new TableWriter(FF, root, name)) {
+            append10KNoSupplier(ts, rnd, writer);
+            writer.commit();
+            Assert.assertEquals(30000, writer.size());
+        }
+
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
+        Assert.assertEquals(0, Files.getOpenFileCount());
     }
 
     private void testRollback() throws NumericException {

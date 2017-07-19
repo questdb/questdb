@@ -62,6 +62,10 @@ public class FilesFacadeImpl implements FilesFacade {
         return Files.PAGE_SIZE;
     }
 
+    public void iterateDir(LPSZ path, FindVisitor func) {
+        Files.iterateDir(path, func);
+    }
+
     @Override
     public long length(long fd) {
         return Files.length(fd);

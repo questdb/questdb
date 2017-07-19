@@ -136,6 +136,19 @@ public final class Files {
         return Chars.equals(name, '.') || Chars.equals(name, "..");
     }
 
+    public static void iterateDir(LPSZ path, FindVisitor func) {
+        long p = findFirst(path);
+        if (p > 0) {
+            try {
+                do {
+                    func.onFind(findName(p), findType(p));
+                } while (findNext(p));
+            } finally {
+                findClose(p);
+            }
+        }
+    }
+
     public static long length(LPSZ lpsz) {
         return length0(lpsz.address());
     }

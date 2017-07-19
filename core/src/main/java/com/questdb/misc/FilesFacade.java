@@ -26,6 +26,8 @@ public interface FilesFacade {
 
     long getPageSize();
 
+    void iterateDir(LPSZ path, FindVisitor func);
+
     long length(long fd);
 
     long length(LPSZ name);

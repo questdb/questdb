@@ -65,7 +65,7 @@ public class TableWriter implements Closeable {
     private static final DateFormat fmtDay;
     private static final DateFormat fmtMonth;
     private static final DateFormat fmtYear;
-    private static CharSequenceHashSet truncateIgnores = new CharSequenceHashSet();
+    private static CharSequenceHashSet ignoredFiles = new CharSequenceHashSet();
     final ObjList<AppendMemory> columns;
     private final CompositePath path;
     private final CompositePath other;
@@ -82,11 +82,11 @@ public class TableWriter implements Closeable {
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final LongList columnTops;
     private final FilesFacade ff;
-    private final LongConsumer timestampSetter;
     private final DateFormat partitionDirFmt;
     private final DateLocale partitionDirLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
     private final AppendMemory ddlMem;
     int txPartitionCount = 0;
+    private LongConsumer timestampSetter;
     private int columnCount;
     private ObjList<Runnable> nullers = new ObjList<>();
     private int mode = 509;
@@ -124,7 +124,7 @@ public class TableWriter implements Closeable {
                     repairTruncate();
                     break;
                 case 2:
-                    repairColumnRename();
+                    repairMetaRename();
                     break;
                 default:
                     LOG.error().$("Ignoring unknown *todo* code: ").$(todo).$();
@@ -173,7 +173,7 @@ public class TableWriter implements Closeable {
      */
     public void addColumn(CharSequence name, int type) {
 
-        if (columnExists(name)) {
+        if (getColumnIndexQuiet(name) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
         }
 
@@ -182,7 +182,7 @@ public class TableWriter implements Closeable {
         commit();
 
         // create new _meta.swp
-        writeSwapMeta(name, type);
+        addColumnToMeta(name, type);
 
         // after we moved _meta to _meta.prev
         // we have to have _todo to restore _meta should anything go wront
@@ -276,12 +276,83 @@ public class TableWriter implements Closeable {
         }
     }
 
+    public int getColumnIndex(CharSequence name) {
+        int index = getColumnIndexQuiet(name);
+        if (index == -1) {
+            throw CairoException.instance(0).put("Invalid column name: ").put(name);
+        }
+        return index;
+    }
+
     public boolean inTransaction() {
         return txPartitionCount > 1 || transientRowCount != prevTransientRowCount;
     }
 
     public Row newRow(long timestamp) {
         return rowFunction.newRow(timestamp);
+    }
+
+    public void removeColumn(CharSequence name) {
+        int index = getColumnIndex(name);
+
+        LOG.info().$("Removing column '").$(name).$("' from ").$(path).$();
+
+        // check if we are movoving timestamp from a partitioned table
+        boolean timestamp = index == metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+
+        if (timestamp && partitionBy != PartitionBy.NONE) {
+            throw CairoException.instance(0).put("Cannot remove timestamp from partitioned table");
+        }
+
+        commit();
+
+        removeColumnFromMeta(index);
+
+        // after we moved _meta to _meta.prev
+        // we have to have _todo to restore _meta should anything go wront
+        writeTodo(TODO_RESTORE_META);
+
+        // close _meta so we can rename it
+        metaMem.close();
+
+        // rename _meta to _meta.prev
+        renameOrElse(META_FILE_NAME, META_PREV_FILE_NAME, this::openMetaFile);
+
+        // rename _meta.swp to _meta
+        renameOrElse(META_SWAP_FILE_NAME, META_FILE_NAME, () -> {
+            rename(META_PREV_FILE_NAME, META_FILE_NAME);
+            openMetaFile();
+            removeTodoFile();
+        });
+
+        // remove column objects
+        removeColumn(index);
+
+        // decrement column count
+        columnCount--;
+
+        // reset timestamp limits
+        if (timestamp) {
+            maxTimestamp = prevTimestamp = Long.MIN_VALUE;
+            timestampSetter = value -> {
+            };
+        }
+
+        try {
+            // open _meta file
+            openMetaFile();
+
+            // remove _todo
+            removeTodoFile();
+
+            // remove column files has to be done after _todo is removed
+            removeColumnFiles(name);
+
+        } catch (CairoException err) {
+            throw new CairoError(err);
+        }
+
+        LOG.info().$("REMOVED column '").$(name).$("' from ").$(path).$();
     }
 
     public void rollback() {
@@ -349,6 +420,48 @@ public class TableWriter implements Closeable {
                 return "restore meta";
             default:
                 return "unknown";
+        }
+    }
+
+    private static int getPrimaryColumnIndex(int index) {
+        return index * 2;
+    }
+
+    private static int getSecondaryColumnIndex(int index) {
+        return getPrimaryColumnIndex(index) + 1;
+    }
+
+    private void addColumnToMeta(CharSequence name, int type) {
+        try {
+            // delete stale _meta.swp
+            path.concat(TableWriter.META_SWAP_FILE_NAME).$();
+
+            if (ff.exists(path) && !ff.remove(path)) {
+                throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
+            }
+
+            try {
+                ddlMem.of(path, ff.getPageSize(), 0);
+                ddlMem.putInt(columnCount + 1);
+                ddlMem.putInt(partitionBy);
+                ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+                for (int i = 0; i < columnCount; i++) {
+                    ddlMem.putInt(getColumnType(i));
+                }
+                ddlMem.putInt(type);
+
+                long nameOffset = getColumnNameOffset();
+                for (int i = 0; i < columnCount; i++) {
+                    CharSequence columnName = metaMem.getStr(nameOffset);
+                    ddlMem.putStr(columnName);
+                    nameOffset += VirtualMemory.getStorageLength(columnName);
+                }
+                ddlMem.putStr(name);
+            } finally {
+                ddlMem.close();
+            }
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 
@@ -451,26 +564,6 @@ public class TableWriter implements Closeable {
                 }
             }
         }
-    }
-
-    /**
-     * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
-     * is that we don't keep column name strings on heap. We only use this method when adding new column, where
-     * high performance of name check does not matter much.
-     *
-     * @param name to check
-     * @return true if name already exists in meta file.
-     */
-    private boolean columnExists(CharSequence name) {
-        long nameOffset = getColumnNameOffset();
-        for (int i = 0; i < columnCount; i++) {
-            CharSequence col = metaMem.getStr(nameOffset);
-            if (Chars.equals(col, name)) {
-                return true;
-            }
-            nameOffset += VirtualMemory.getStorageLength(col);
-        }
-        return false;
     }
 
     private void commitPendingPartitions() {
@@ -599,6 +692,26 @@ public class TableWriter implements Closeable {
         return path.concat(columnName).put(".d").$();
     }
 
+    /**
+     * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
+     * is that we don't keep column name strings on heap. We only use this method when adding new column, where
+     * high performance of name check does not matter much.
+     *
+     * @param name to check
+     * @return 0 based column index.
+     */
+    private int getColumnIndexQuiet(CharSequence name) {
+        long nameOffset = getColumnNameOffset();
+        for (int i = 0; i < columnCount; i++) {
+            CharSequence col = metaMem.getStr(nameOffset);
+            if (Chars.equals(col, name)) {
+                return i;
+            }
+            nameOffset += VirtualMemory.getStorageLength(col);
+        }
+        return -1;
+    }
+
     private long getColumnNameOffset() {
         return META_OFFSET_COLUMN_TYPES + columnCount * 4;
     }
@@ -620,11 +733,11 @@ public class TableWriter implements Closeable {
     }
 
     private AppendMemory getPrimaryColumn(int column) {
-        return columns.getQuick(column * 2);
+        return columns.getQuick(getPrimaryColumnIndex(column));
     }
 
     private AppendMemory getSecondaryColumn(int column) {
-        return columns.getQuick(column * 2 + 1);
+        return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
     private LPSZ iFile(CharSequence columnName) {
@@ -778,13 +891,91 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void removeColumn(int index) {
+        Misc.free(getPrimaryColumn(index));
+        Misc.free(getSecondaryColumn(index));
+        columns.remove(getSecondaryColumnIndex(index));
+        columns.remove(getPrimaryColumnIndex(index));
+        columnTops.removeIndex(index);
+    }
+
+    private void removeColumnFiles(CharSequence name) {
+        try {
+            ff.iterateDir(path.$(), (file, type) -> {
+                nativeLPSZ.of(file);
+                if (type == Files.DT_DIR && !ignoredFiles.contains(nativeLPSZ)) {
+                    path.trimTo(rootLen);
+                    path.concat(nativeLPSZ);
+                    int plen = path.length();
+                    removeFileAndOrLog(dFile(name));
+                    path.trimTo(plen);
+                    removeFileAndOrLog(iFile(name));
+                    path.trimTo(plen);
+                    removeFileAndOrLog(topFile(name));
+                }
+            });
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void removeColumnFromMeta(int index) {
+        try {
+            // delete stale _meta.swp
+            path.concat(TableWriter.META_SWAP_FILE_NAME).$();
+
+            if (ff.exists(path) && !ff.remove(path)) {
+                throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
+            }
+
+            try {
+                int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+                ddlMem.of(path, ff.getPageSize(), 0);
+                ddlMem.putInt(columnCount - 1);
+                ddlMem.putInt(partitionBy);
+
+                if (timestampIndex == index) {
+                    ddlMem.putInt(-1);
+                } else if (index < timestampIndex) {
+                    ddlMem.putInt(timestampIndex - 1);
+                } else {
+                    ddlMem.putInt(timestampIndex);
+                }
+
+                for (int i = 0; i < columnCount; i++) {
+                    if (i != index) {
+                        ddlMem.putInt(getColumnType(i));
+                    }
+                }
+
+                long nameOffset = getColumnNameOffset();
+                for (int i = 0; i < columnCount; i++) {
+                    CharSequence columnName = metaMem.getStr(nameOffset);
+                    if (i != index) {
+                        ddlMem.putStr(columnName);
+                    }
+                    nameOffset += VirtualMemory.getStorageLength(columnName);
+                }
+            } finally {
+                ddlMem.close();
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void removeFileAndOrLog(LPSZ name) {
+        if (ff.exists(name)) {
+            if (ff.remove(name)) {
+                LOG.info().$("Removed: ").$(path).$();
+            } else {
+                LOG.error().$("Cannot remove: ").$(name).$();
+            }
+        }
+    }
+
     private void removeLastColumn() {
-        columnCount--;
-        Misc.free(getPrimaryColumn(columnCount));
-        Misc.free(getSecondaryColumn(columnCount));
-        columns.remove(columnCount * 2 + 1);
-        columns.remove(columnCount * 2);
-        columnTops.removeIndex(columnCount);
+        removeColumn(--columnCount);
     }
 
     private void removeMetaFile() {
@@ -802,22 +993,14 @@ public class TableWriter implements Closeable {
 
     private void removePartitionDirectories() {
         try {
-            long p = ff.findFirst(path.$());
-            if (p > 0) {
-                try {
-                    do {
-                        long pName = ff.findName(p);
-                        path.trimTo(rootLen);
-                        path.concat(pName).$();
-                        nativeLPSZ.of(pName);
-                        if (!truncateIgnores.contains(nativeLPSZ) && !ff.rmdir(path)) {
-                            throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
-                        }
-                    } while (ff.findNext(p));
-                } finally {
-                    ff.findClose(p);
+            ff.iterateDir(path.$(), (name, type) -> {
+                path.trimTo(rootLen);
+                path.concat(name).$();
+                nativeLPSZ.of(name);
+                if (!ignoredFiles.contains(nativeLPSZ) && !ff.rmdir(path)) {
+                    throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
                 }
-            }
+            });
         } finally {
             path.trimTo(rootLen);
         }
@@ -826,38 +1009,30 @@ public class TableWriter implements Closeable {
     private void removePartitionDirsNewerThan(long timestamp) {
         LOG.info().$("Removing partitions newer than '").$ts(timestamp).$("' from ").$(path.$()).$();
         try {
-            long p = ff.findFirst(path.$());
-            if (p > 0) {
-                try {
-                    do {
-                        long pName = ff.findName(p);
-                        path.trimTo(rootLen);
-                        path.concat(pName).$();
-                        nativeLPSZ.of(pName);
-                        if (!truncateIgnores.contains(nativeLPSZ)) {
-                            try {
-                                long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, partitionDirLocale);
-                                if (dirTimestamp <= timestamp) {
-                                    continue;
-                                }
-                            } catch (NumericException ignore) {
-                                // not a date?
-                                // ignore exception and remove directory
-                            }
-
-                            if (ff.findType(p) == Files.DT_DIR) {
-                                if (ff.rmdir(path)) {
-                                    LOG.info().$("Removing partition dir: ").$(path).$();
-                                } else {
-                                    LOG.error().$('[').$(ff.errno()).$("] Cannot remove: ").$(path).$();
-                                }
-                            }
+            ff.iterateDir(path.$(), (pName, type) -> {
+                path.trimTo(rootLen);
+                path.concat(pName).$();
+                nativeLPSZ.of(pName);
+                if (!ignoredFiles.contains(nativeLPSZ)) {
+                    try {
+                        long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, partitionDirLocale);
+                        if (dirTimestamp <= timestamp) {
+                            return;
                         }
-                    } while (ff.findNext(p));
-                } finally {
-                    ff.findClose(p);
+                    } catch (NumericException ignore) {
+                        // not a date?
+                        // ignore exception and remove directory
+                    }
+
+                    if (type == Files.DT_DIR) {
+                        if (ff.rmdir(path)) {
+                            LOG.info().$("Removing partition dir: ").$(path).$();
+                        } else {
+                            LOG.error().$('[').$(ff.errno()).$("] Cannot remove: ").$(path).$();
+                        }
+                    }
                 }
-            }
+            });
         } finally {
             path.trimTo(rootLen);
         }
@@ -897,7 +1072,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void repairColumnRename() {
+    private void repairMetaRename() {
         try {
             if (ff.exists(path.concat(META_PREV_FILE_NAME).$())) {
 
@@ -1109,40 +1284,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void writeSwapMeta(CharSequence name, int type) {
-        try {
-            // delete stale _meta.swp
-            path.concat(TableWriter.META_SWAP_FILE_NAME).$();
-
-            if (ff.exists(path) && !ff.remove(path)) {
-                throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
-            }
-
-            try {
-                ddlMem.of(path, ff.getPageSize(), 0);
-                ddlMem.putInt(columnCount + 1);
-                ddlMem.putInt(partitionBy);
-                ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-                for (int i = 0; i < columnCount; i++) {
-                    ddlMem.putInt(getColumnType(i));
-                }
-                ddlMem.putInt(type);
-
-                long nameOffset = getColumnNameOffset();
-                for (int i = 0; i < columnCount; i++) {
-                    CharSequence columnName = metaMem.getStr(nameOffset);
-                    ddlMem.putStr(columnName);
-                    nameOffset += VirtualMemory.getStorageLength(columnName);
-                }
-                ddlMem.putStr(name);
-            } finally {
-                ddlMem.close();
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     private void writeTodo(int code) {
         try {
             long fd = openAppend(path.concat(TODO_FILE_NAME).$());
@@ -1285,11 +1426,11 @@ public class TableWriter implements Closeable {
     }
 
     static {
-        truncateIgnores.add("..");
-        truncateIgnores.add(".");
-        truncateIgnores.add(META_FILE_NAME);
-        truncateIgnores.add(TXN_FILE_NAME);
-        truncateIgnores.add(TODO_FILE_NAME);
+        ignoredFiles.add("..");
+        ignoredFiles.add(".");
+        ignoredFiles.add(META_FILE_NAME);
+        ignoredFiles.add(TXN_FILE_NAME);
+        ignoredFiles.add(TODO_FILE_NAME);
     }
 
     static {
