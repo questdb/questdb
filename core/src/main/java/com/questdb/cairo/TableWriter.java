@@ -195,11 +195,7 @@ public class TableWriter implements Closeable {
         renameOrElse(META_FILE_NAME, META_PREV_FILE_NAME, this::openMetaFile);
 
         // rename _meta.swp to _meta
-        renameOrElse(META_SWAP_FILE_NAME, META_FILE_NAME, () -> {
-            rename(META_PREV_FILE_NAME, META_FILE_NAME);
-            openMetaFile();
-            removeTodoFile();
-        });
+        rollbackMeta();
 
         // add column objects
         configureColumn(type);
@@ -297,7 +293,7 @@ public class TableWriter implements Closeable {
 
         LOG.info().$("Removing column '").$(name).$("' from ").$(path).$();
 
-        // check if we are movoving timestamp from a partitioned table
+        // check if we are moving timestamp from a partitioned table
         boolean timestamp = index == metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
 
         if (timestamp && partitionBy != PartitionBy.NONE) {
@@ -319,11 +315,7 @@ public class TableWriter implements Closeable {
         renameOrElse(META_FILE_NAME, META_PREV_FILE_NAME, this::openMetaFile);
 
         // rename _meta.swp to _meta
-        renameOrElse(META_SWAP_FILE_NAME, META_FILE_NAME, () -> {
-            rename(META_PREV_FILE_NAME, META_FILE_NAME);
-            openMetaFile();
-            removeTodoFile();
-        });
+        rollbackMeta();
 
         // remove column objects
         removeColumn(index);
@@ -1075,7 +1067,7 @@ public class TableWriter implements Closeable {
     private void repairMetaRename() {
         try {
             if (ff.exists(path.concat(META_PREV_FILE_NAME).$())) {
-
+                LOG.info().$("Repairing metadata from: ").$(path).$();
                 if (ff.exists(other.concat(META_FILE_NAME).$()) && !ff.remove(other)) {
                     throw CairoException.instance(Os.errno()).put("Repair failed. Cannot replace ").put(other);
                 }
@@ -1099,6 +1091,15 @@ public class TableWriter implements Closeable {
         txMem.jumpTo(TX_OFFSET_TXN);
         TableUtils.resetTxn(txMem);
         removeTodoFile();
+    }
+
+    private void rollbackMeta() {
+        // rename _meta.swp to _meta
+        renameOrElse(META_SWAP_FILE_NAME, META_FILE_NAME, () -> {
+            rename(META_PREV_FILE_NAME, META_FILE_NAME);
+            openMetaFile();
+            removeTodoFile();
+        });
     }
 
     private DateFormat selectPartitionDirFmt() {
