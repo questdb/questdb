@@ -111,7 +111,8 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long read(long fd, long buf, int len, long offset) {
-                if (this.fd == fd) {
+                if (fd == this.fd) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.read(fd, buf, len, offset);
@@ -415,6 +416,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             @Override
             public long mmap(long fd, long len, long offset, int mode) {
                 if (fd == this.fd) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.mmap(fd, len, offset, mode);
@@ -442,7 +444,8 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long append(long fd, long buf, int len) {
-                if (this.fd == fd) {
+                if (fd == this.fd) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.append(fd, buf, len);
@@ -513,7 +516,8 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long read(long fd, long buf, int len, long offset) {
-                if (this.fd == fd) {
+                if (fd == this.fd) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.read(fd, buf, len, offset);
@@ -952,6 +956,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             @Override
             public long mmap(long fd, long len, long offset, int mode) {
                 if (fd == this.fd) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.mmap(fd, len, offset, mode);
@@ -1016,6 +1021,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             @Override
             public long read(long fd, long buf, int len, long offset) {
                 if (fd == this.fd) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.read(fd, buf, len, offset);
@@ -1041,6 +1047,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             @Override
             public long read(long fd, long buf, int len, long offset) {
                 if (fd == this.fd) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.read(fd, buf, len, offset);
@@ -1069,6 +1076,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             @Override
             public long read(long fd, long buf, int len, long offset) {
                 if (fd == this.fd) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.read(fd, buf, len, offset);
@@ -1331,6 +1339,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             @Override
             public long mmap(long fd, long len, long offset, int mode) {
                 if (fd == this.fd) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.mmap(fd, len, offset, mode);
@@ -1451,7 +1460,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableWriter.TODO_FILE_NAME) || --count != 0 && super.remove(name);
+                return (!Chars.endsWith(name, TableWriter.TODO_FILE_NAME) || --count != 0) && super.remove(name);
             }
         }
         testUnrecoverableRemoveColumn(new X());
@@ -2304,6 +2313,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             @Override
             public long read(long fd, long buf, int len, long offset) {
                 if (fd == this.fd) {
+                    this.fd = -1;
                     return -1;
                 }
                 return super.read(fd, buf, len, offset);
@@ -2499,7 +2509,8 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
         @Override
         public long append(long fd, long buf, int len) {
-            if (this.fd == fd) {
+            if (fd == this.fd) {
+                this.fd = -1;
                 return -1;
             }
             return super.append(fd, buf, len);
