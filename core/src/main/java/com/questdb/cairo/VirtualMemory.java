@@ -32,13 +32,14 @@ import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;
+import java.util.function.Supplier;
 
 public class VirtualMemory implements Closeable {
     private static final int STRING_LENGTH_BYTES = 4;
-    protected final LongList pages = new LongList(32, 0);
-    private final CharSequenceView csview = new CharSequenceView();
-    private final ByteSequenceView bsview = new ByteSequenceView();
+    protected final LongList pages = new LongList(4, 0);
     protected long pageSize;
+    private ByteSequenceView bsview;
+    private CharSequenceView csview;
     private int bits;
     private long mod;
     private long appendPointer = -1;
@@ -47,12 +48,24 @@ public class VirtualMemory implements Closeable {
     private long roOffsetLo = 0;
     private long roOffsetHi = 0;
     private long absolutePointer;
+    private Supplier<CharSequenceView> csViewSupplier;
+    private Supplier<ByteSequenceView> bsViewSupplier;
 
     public VirtualMemory(long pageSize) {
+        this();
         setPageSize(pageSize);
     }
 
     protected VirtualMemory() {
+        csViewSupplier = () -> {
+            csViewSupplier = () -> csview;
+            return csview = new CharSequenceView();
+        };
+
+        bsViewSupplier = () -> {
+            bsViewSupplier = () -> bsview;
+            return bsview = new ByteSequenceView();
+        };
     }
 
     public static int getStorageLength(CharSequence s) {
@@ -99,9 +112,7 @@ public class VirtualMemory implements Closeable {
         if (len == -1) {
             return null;
         }
-
-        bsview.of(offset + 8, len);
-        return bsview;
+        return getByteSequenceView().of(offset + 8, len);
     }
 
     public final byte getByte(long offset) {
@@ -151,9 +162,7 @@ public class VirtualMemory implements Closeable {
         if (len == -1) {
             return null;
         }
-
-        csview.of(offset + STRING_LENGTH_BYTES, len);
-        return csview;
+        return getCharSequenceView().of(offset + STRING_LENGTH_BYTES, len);
     }
 
     /**
@@ -342,6 +351,14 @@ public class VirtualMemory implements Closeable {
 
     private byte getByte0(long offset) {
         return Unsafe.getUnsafe().getByte(computeHotPage(pageIndex(offset)) + pageOffset(offset));
+    }
+
+    private ByteSequenceView getByteSequenceView() {
+        return bsViewSupplier.get();
+    }
+
+    private CharSequenceView getCharSequenceView() {
+        return csViewSupplier.get();
     }
 
     private double getDouble0(long offset) {
@@ -666,13 +683,14 @@ public class VirtualMemory implements Closeable {
             return c;
         }
 
-        void of(long offset, int len) {
+        CharSequenceView of(long offset, int len) {
             this.offset = offset;
             this.len = len;
             this.lastIndex = -1;
             this.page = pageIndex(offset);
             this.pageAddress = getPageAddress(page);
             this.pageOffset = pageOffset(offset);
+            return this;
         }
 
         private char updatePosAndGet(int index) {
@@ -720,13 +738,14 @@ public class VirtualMemory implements Closeable {
             return len;
         }
 
-        void of(long offset, long len) {
+        ByteSequenceView of(long offset, long len) {
             this.offset = offset;
             this.len = len;
             this.lastIndex = -1;
             this.page = pageIndex(offset);
             this.pageAddress = getPageAddress(page);
             this.pageOffset = pageOffset(offset);
+            return this;
         }
 
         private byte updatePosAndGet(long index) {
