@@ -32,7 +32,6 @@ import sun.nio.ch.DirectBuffer;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;
-import java.util.function.Supplier;
 
 public class VirtualMemory implements Closeable {
     private static final int STRING_LENGTH_BYTES = 4;
@@ -48,8 +47,8 @@ public class VirtualMemory implements Closeable {
     private long roOffsetLo = 0;
     private long roOffsetHi = 0;
     private long absolutePointer;
-    private Supplier<CharSequenceView> csViewSupplier;
-    private Supplier<ByteSequenceView> bsViewSupplier;
+    private ViewSupplier<CharSequenceView> csViewSupplier;
+    private ViewSupplier<ByteSequenceView> bsViewSupplier;
 
     public VirtualMemory(long pageSize) {
         this();
@@ -57,15 +56,8 @@ public class VirtualMemory implements Closeable {
     }
 
     protected VirtualMemory() {
-        csViewSupplier = () -> {
-            csViewSupplier = () -> csview;
-            return csview = new CharSequenceView();
-        };
-
-        bsViewSupplier = () -> {
-            bsViewSupplier = () -> bsview;
-            return bsview = new ByteSequenceView();
-        };
+        csViewSupplier = VirtualMemory::createCharSequenceView;
+        bsViewSupplier = VirtualMemory::createByteSequenceView;
     }
 
     public static int getStorageLength(CharSequence s) {
@@ -349,16 +341,26 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    private ByteSequenceView createByteSequenceView() {
+        bsViewSupplier = (mem) -> mem.bsview;
+        return bsview = new ByteSequenceView();
+    }
+
+    private CharSequenceView createCharSequenceView() {
+        csViewSupplier = (mem) -> mem.csview;
+        return csview = new CharSequenceView();
+    }
+
     private byte getByte0(long offset) {
         return Unsafe.getUnsafe().getByte(computeHotPage(pageIndex(offset)) + pageOffset(offset));
     }
 
     private ByteSequenceView getByteSequenceView() {
-        return bsViewSupplier.get();
+        return bsViewSupplier.get(this);
     }
 
     private CharSequenceView getCharSequenceView() {
-        return csViewSupplier.get();
+        return csViewSupplier.get(this);
     }
 
     private double getDouble0(long offset) {
@@ -654,6 +656,11 @@ public class VirtualMemory implements Closeable {
         pageHi = pageAddress + this.pageSize;
         baseOffset = pageOffset(page + 1) - pageHi;
         this.appendPointer = pageAddress;
+    }
+
+    @FunctionalInterface
+    private interface ViewSupplier<T> {
+        T get(VirtualMemory mem);
     }
 
     public class CharSequenceView extends AbstractCharSequence {

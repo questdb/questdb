@@ -66,7 +66,7 @@ public class LongList implements Mutable {
     }
 
     public LongList(int capacity, long noEntryValue) {
-        this.buffer = new long[capacity < DEFAULT_ARRAY_SIZE ? DEFAULT_ARRAY_SIZE : capacity];
+        this.buffer = new long[capacity];
         this.noEntryValue = noEntryValue;
     }
 
