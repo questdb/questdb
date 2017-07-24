@@ -121,7 +121,7 @@ public class CharsTest {
         String in = expected.toString();
         long p = Unsafe.malloc(8 * 0xffff);
         try {
-            byte[] bytes = in.getBytes();
+            byte[] bytes = in.getBytes("UTF-8");
             for (int i = 0, n = bytes.length; i < n; i++) {
                 Unsafe.getUnsafe().putByte(p + i, bytes[i]);
             }
