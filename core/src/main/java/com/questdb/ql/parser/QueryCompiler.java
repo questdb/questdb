@@ -1186,7 +1186,7 @@ public class QueryCompiler {
                                 break;
                         }
 
-                        int lambdaColType = m.getColumn(lambdaColIndex).getType();
+                        int lambdaColType = m.getColumnQuick(lambdaColIndex).getType();
                         mutableSig.setParamCount(2).setName("").paramType(0, latestByMetadata.getType(), true).paramType(1, lambdaColType, false);
                         LatestByLambdaRowSourceFactory fact = LAMBDA_ROW_SOURCE_FACTORIES.get(mutableSig);
                         if (fact != null) {

@@ -57,11 +57,6 @@ public class VirtualRecordMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumn(int index) {
-        return index < split ? delegate.getColumn(index) : virtualColumns.get(index - split);
-    }
-
-    @Override
     public int getColumnCount() {
         return delegate.getColumnCount() + virtualColumns.size();
     }

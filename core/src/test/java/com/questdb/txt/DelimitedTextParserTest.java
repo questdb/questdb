@@ -61,16 +61,16 @@ public class DelimitedTextParserTest extends AbstractTest {
         try (Journal r = getFactory().reader(location)) {
             JournalMetadata m = r.getMetadata();
             Assert.assertEquals(10, m.getColumnCount());
-            Assert.assertEquals(ColumnType.STRING, m.getColumn(0).type);
-            Assert.assertEquals(ColumnType.INT, m.getColumn(1).type);
-            Assert.assertEquals(ColumnType.INT, m.getColumn(2).type);
-            Assert.assertEquals(ColumnType.DOUBLE, m.getColumn(3).type);
-            Assert.assertEquals(ColumnType.DATE, m.getColumn(4).type);
-            Assert.assertEquals(ColumnType.DATE, m.getColumn(5).type);
-            Assert.assertEquals(ColumnType.DATE, m.getColumn(6).type);
-            Assert.assertEquals(ColumnType.STRING, m.getColumn(7).type);
-            Assert.assertEquals(ColumnType.BOOLEAN, m.getColumn(8).type);
-            Assert.assertEquals(ColumnType.LONG, m.getColumn(9).type);
+            Assert.assertEquals(ColumnType.STRING, m.getColumnQuick(0).type);
+            Assert.assertEquals(ColumnType.INT, m.getColumnQuick(1).type);
+            Assert.assertEquals(ColumnType.INT, m.getColumnQuick(2).type);
+            Assert.assertEquals(ColumnType.DOUBLE, m.getColumnQuick(3).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumnQuick(4).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumnQuick(5).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumnQuick(6).type);
+            Assert.assertEquals(ColumnType.STRING, m.getColumnQuick(7).type);
+            Assert.assertEquals(ColumnType.BOOLEAN, m.getColumnQuick(8).type);
+            Assert.assertEquals(ColumnType.LONG, m.getColumnQuick(9).type);
         }
 
         File actual = new File(getFactory().getConfiguration().getJournalBase(), "exp.csv");
@@ -94,16 +94,16 @@ public class DelimitedTextParserTest extends AbstractTest {
         try (Journal r = getFactory().reader(location)) {
             JournalMetadata m = r.getMetadata();
             Assert.assertEquals(10, m.getColumnCount());
-            Assert.assertEquals(ColumnType.STRING, m.getColumn(0).type);
-            Assert.assertEquals(ColumnType.STRING, m.getColumn(1).type);
-            Assert.assertEquals(ColumnType.INT, m.getColumn(2).type);
-            Assert.assertEquals(ColumnType.DOUBLE, m.getColumn(3).type);
-            Assert.assertEquals(ColumnType.DATE, m.getColumn(4).type);
-            Assert.assertEquals(ColumnType.DATE, m.getColumn(5).type);
-            Assert.assertEquals(ColumnType.DATE, m.getColumn(6).type);
-            Assert.assertEquals(ColumnType.STRING, m.getColumn(7).type);
-            Assert.assertEquals(ColumnType.BOOLEAN, m.getColumn(8).type);
-            Assert.assertEquals(ColumnType.LONG, m.getColumn(9).type);
+            Assert.assertEquals(ColumnType.STRING, m.getColumnQuick(0).type);
+            Assert.assertEquals(ColumnType.STRING, m.getColumnQuick(1).type);
+            Assert.assertEquals(ColumnType.INT, m.getColumnQuick(2).type);
+            Assert.assertEquals(ColumnType.DOUBLE, m.getColumnQuick(3).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumnQuick(4).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumnQuick(5).type);
+            Assert.assertEquals(ColumnType.DATE, m.getColumnQuick(6).type);
+            Assert.assertEquals(ColumnType.STRING, m.getColumnQuick(7).type);
+            Assert.assertEquals(ColumnType.BOOLEAN, m.getColumnQuick(8).type);
+            Assert.assertEquals(ColumnType.LONG, m.getColumnQuick(9).type);
         }
         File actual = new File(factoryContainer.getConfiguration().getJournalBase(), "exp.csv");
         File expected = new File(this.getClass().getResource("/csv/test-import-malformed-expected.csv").getFile());
@@ -136,8 +136,8 @@ public class DelimitedTextParserTest extends AbstractTest {
 
         try (Journal r = getFactory().reader(location)) {
             JournalMetadata m = r.getMetadata();
-            Assert.assertEquals(ColumnType.SYMBOL, m.getColumn(1).type);
-            Assert.assertEquals(ColumnType.STRING, m.getColumn(6).type);
+            Assert.assertEquals(ColumnType.SYMBOL, m.getColumnQuick(1).type);
+            Assert.assertEquals(ColumnType.STRING, m.getColumnQuick(6).type);
         }
     }
 

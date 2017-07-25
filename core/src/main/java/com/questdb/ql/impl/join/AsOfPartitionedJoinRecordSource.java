@@ -82,7 +82,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
         for (int i = 0, n = masterKeyColumns.size(); i < n; i++) {
             int index = m.getColumnIndex(masterKeyColumns.get(i));
             indices.add(index);
-            types.add(m.getColumn(index).getType());
+            types.add(m.getColumnQuick(index).getType());
         }
 
         RecordKeyCopier masterCopier = compiler.compile(m, indices, true);

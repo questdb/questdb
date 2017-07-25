@@ -66,7 +66,7 @@ class SelectedColumnsMetadata extends AbstractRecordMetadata {
             CharSequence _newName = aliases == null ? null : aliases.get(i);
             String result = (_newName != null ? _newName : name).toString();
             int index = delegate.getColumnIndex(name);
-            columnMetadata[i] = meta(delegate.getColumn(index), result);
+            columnMetadata[i] = meta(delegate.getColumnQuick(index), result);
             nameIndex.put(result, i);
             if (index == delegate.getTimestampIndex()) {
                 timestampIndex = i;
@@ -86,11 +86,6 @@ class SelectedColumnsMetadata extends AbstractRecordMetadata {
     @Override
     public void setAlias(String alias) {
         delegate.setAlias(alias);
-    }
-
-    @Override
-    public RecordColumnMetadata getColumn(int index) {
-        return columnMetadata[index];
     }
 
     @Override

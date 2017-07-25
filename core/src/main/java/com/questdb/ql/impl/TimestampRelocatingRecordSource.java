@@ -80,11 +80,6 @@ public class TimestampRelocatingRecordSource extends AbstractRecordSource implem
     }
 
     @Override
-    public RecordColumnMetadata getColumn(int index) {
-        return metadata.getColumn(index);
-    }
-
-    @Override
     public int getColumnCount() {
         return metadata.getColumnCount();
     }

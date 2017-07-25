@@ -123,6 +123,22 @@ public class DatesTest {
     }
 
     @Test
+    public void testDaysBetween() throws Exception {
+        Assert.assertEquals(41168,
+                Dates.getDaysBetween(
+                        DateFormatUtils.parseDateTime("1904-11-05T23:45:41.045Z"),
+                        DateFormatUtils.parseDateTime("2017-07-24T23:45:31.045Z")
+                )
+        );
+        Assert.assertEquals(41169,
+                Dates.getDaysBetween(
+                        DateFormatUtils.parseDateTime("1904-11-05T23:45:41.045Z"),
+                        DateFormatUtils.parseDateTime("2017-07-24T23:45:51.045Z")
+                )
+        );
+    }
+
+    @Test
     public void testFloorDD() throws Exception {
         long millis = DateFormatUtils.parseDateTime("2008-05-12T23:45:51.045Z");
         DateFormatUtils.appendDateTime(sink, Dates.floorDD(millis));
@@ -218,6 +234,45 @@ public class DatesTest {
         TestUtils.assertEquals("Interval{lo=2016-02-29T14:00:00.000Z, hi=2016-02-29T14:59:59.999Z}", DateFormatUtils.parseInterval("2016-02-29T14").toString());
         TestUtils.assertEquals("Interval{lo=2016-02-29T10:15:00.000Z, hi=2016-02-29T10:15:59.999Z}", DateFormatUtils.parseInterval("2016-02-29T10:15").toString());
         TestUtils.assertEquals("Interval{lo=2016-02-29T08:25:30.000Z, hi=2016-02-29T08:25:30.999Z}", DateFormatUtils.parseInterval("2016-02-29T08:25:30").toString());
+    }
+
+    @Test
+    public void testMonthsBetween() throws Exception {
+        // a < b, same year
+        Assert.assertEquals(2,
+                Dates.getMonthsBetween(
+                        DateFormatUtils.parseDateTime("2014-05-12T23:45:51.045Z"),
+                        DateFormatUtils.parseDateTime("2014-07-15T23:45:51.045Z")
+                )
+        );
+
+        // a > b, same year
+        Assert.assertEquals(2,
+                Dates.getMonthsBetween(
+                        DateFormatUtils.parseDateTime("2014-07-15T23:45:51.045Z"),
+                        DateFormatUtils.parseDateTime("2014-05-12T23:45:51.045Z")
+                )
+        );
+
+        // a < b, different year
+        Assert.assertEquals(26,
+                Dates.getMonthsBetween(
+                        DateFormatUtils.parseDateTime("2014-05-12T23:45:51.045Z"),
+                        DateFormatUtils.parseDateTime("2016-07-15T23:45:51.045Z")
+                )
+        );
+
+        // a < b, same year, a has higher residuals
+        Assert.assertEquals(1,
+                Dates.getMonthsBetween(DateFormatUtils.parseDateTime("2014-05-12T23:45:51.045Z"),
+                        DateFormatUtils.parseDateTime("2014-07-03T23:45:51.045Z"))
+        );
+
+        // a < b, a before epoch, a has higher residuals
+        Assert.assertEquals(109 * 12 + 1,
+                Dates.getMonthsBetween(DateFormatUtils.parseDateTime("1905-05-12T23:45:51.045Z"),
+                        DateFormatUtils.parseDateTime("2014-07-03T23:45:51.045Z"))
+        );
     }
 
     @Test
@@ -336,6 +391,23 @@ public class DatesTest {
         long millis = DateFormatUtils.parseDateTime("2017-04-06T00:00:00.000Z");
         DateFormatUtils.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 4));
         TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testYearsBetween() throws Exception {
+        Assert.assertEquals(112,
+                Dates.getYearsBetween(
+                        DateFormatUtils.parseDateTime("1904-11-05T23:45:41.045Z"),
+                        DateFormatUtils.parseDateTime("2017-07-24T23:45:31.045Z")
+                )
+        );
+
+        Assert.assertEquals(113,
+                Dates.getYearsBetween(
+                        DateFormatUtils.parseDateTime("1904-11-05T23:45:41.045Z"),
+                        DateFormatUtils.parseDateTime("2017-12-24T23:45:51.045Z")
+                )
+        );
     }
 
     private void assertTrue(String date) throws NumericException {

@@ -51,17 +51,18 @@ public class TableWriter implements Closeable {
     static final String META_SWAP_FILE_NAME = "_meta.swp";
     static final String META_PREV_FILE_NAME = "_meta.prev";
     static final String TODO_FILE_NAME = "_todo";
+    static final String ARCHIVE_FILE_NAME = "_archive";
+    static final long META_OFFSET_COUNT = 0;
+    static final long META_OFFSET_PARTITION_BY = 4;
+    static final long TX_OFFSET_TXN = 0;
+    static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
+    static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
+    static final long TX_OFFSET_MAX_TIMESTAMP = 24;
+    static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    static final long META_OFFSET_COLUMN_TYPES = 12;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final int _16M = 16 * 1024 * 1024;
-    private static final long TX_OFFSET_TXN = 0;
-    private static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
-    private static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
-    private static final long TX_OFFSET_MAX_TIMESTAMP = 24;
     private static final long TX_EOF = 32;
-    private static final long META_OFFSET_COUNT = 0;
-    private static final long META_OFFSET_PARTITION_BY = 4;
-    private static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-    private static final long META_OFFSET_COLUMN_TYPES = 12;
     private static final DateFormat fmtDay;
     private static final DateFormat fmtMonth;
     private static final DateFormat fmtYear;
@@ -83,7 +84,6 @@ public class TableWriter implements Closeable {
     private final LongList columnTops;
     private final FilesFacade ff;
     private final DateFormat partitionDirFmt;
-    private final DateLocale partitionDirLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
     private final AppendMemory ddlMem;
     int txPartitionCount = 0;
     private LongConsumer timestampSetter;
@@ -140,7 +140,7 @@ public class TableWriter implements Closeable {
             this.columns = new ObjList<>(columnCount);
             this.nullers = new ObjList<>(columnCount);
             this.columnTops = new LongList(columnCount);
-            this.partitionDirFmt = selectPartitionDirFmt();
+            this.partitionDirFmt = selectPartitionDirFmt(partitionBy);
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
             configureAppendPosition();
@@ -149,6 +149,10 @@ public class TableWriter implements Closeable {
             close0();
             throw e;
         }
+    }
+
+    public static long getColumnNameOffset(int columnCount) {
+        return META_OFFSET_COLUMN_TYPES + columnCount * 4;
     }
 
     /**
@@ -423,6 +427,19 @@ public class TableWriter implements Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
+    static DateFormat selectPartitionDirFmt(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return fmtDay;
+            case PartitionBy.MONTH:
+                return fmtMonth;
+            case PartitionBy.YEAR:
+                return fmtYear;
+            default:
+                return null;
+        }
+    }
+
     private void addColumnToMeta(CharSequence name, int type) {
         try {
             // delete stale _meta.swp
@@ -442,7 +459,7 @@ public class TableWriter implements Closeable {
                 }
                 ddlMem.putInt(type);
 
-                long nameOffset = getColumnNameOffset();
+                long nameOffset = getColumnNameOffset(columnCount);
                 for (int i = 0; i < columnCount; i++) {
                     CharSequence columnName = metaMem.getStr(nameOffset);
                     ddlMem.putStr(columnName);
@@ -566,7 +583,7 @@ public class TableWriter implements Closeable {
                 offset += 8;
                 setStateForTimestamp(partitionTimestamp, false);
 
-                long fd = openAppend(path.concat("_archive").$());
+                long fd = openAppend(path.concat(ARCHIVE_FILE_NAME).$());
                 try {
                     int len = 8;
                     while (len > 0) {
@@ -693,7 +710,7 @@ public class TableWriter implements Closeable {
      * @return 0 based column index.
      */
     private int getColumnIndexQuiet(CharSequence name) {
-        long nameOffset = getColumnNameOffset();
+        long nameOffset = getColumnNameOffset(columnCount);
         for (int i = 0; i < columnCount; i++) {
             CharSequence col = metaMem.getStr(nameOffset);
             if (Chars.equals(col, name)) {
@@ -702,10 +719,6 @@ public class TableWriter implements Closeable {
             nameOffset += VirtualMemory.getStorageLength(col);
         }
         return -1;
-    }
-
-    private long getColumnNameOffset() {
-        return META_OFFSET_COLUMN_TYPES + columnCount * 4;
     }
 
     private int getColumnType(int columnIndex) {
@@ -796,7 +809,7 @@ public class TableWriter implements Closeable {
             }
             assert columnCount > 0;
 
-            long nameOffset = getColumnNameOffset();
+            long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(nameOffset);
                 openColumnFiles(name, i, plen);
@@ -940,7 +953,7 @@ public class TableWriter implements Closeable {
                     }
                 }
 
-                long nameOffset = getColumnNameOffset();
+                long nameOffset = getColumnNameOffset(columnCount);
                 for (int i = 0; i < columnCount; i++) {
                     CharSequence columnName = metaMem.getStr(nameOffset);
                     if (i != index) {
@@ -1007,7 +1020,7 @@ public class TableWriter implements Closeable {
                 nativeLPSZ.of(pName);
                 if (!ignoredFiles.contains(nativeLPSZ)) {
                     try {
-                        long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, partitionDirLocale);
+                        long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, DateLocaleFactory.INSTANCE.getDefaultDateLocale());
                         if (dirTimestamp <= timestamp) {
                             return;
                         }
@@ -1100,20 +1113,6 @@ public class TableWriter implements Closeable {
             openMetaFile();
             removeTodoFile();
         });
-    }
-
-    private DateFormat selectPartitionDirFmt() {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return fmtDay;
-            case PartitionBy.MONTH:
-                return fmtMonth;
-            case PartitionBy.YEAR:
-                return fmtYear;
-            default:
-                return null;
-
-        }
     }
 
     private void setAppendPosition(final long position) {

@@ -234,6 +234,14 @@ final public class Dates {
         return 1 + (int) ((d + 4) % 7);
     }
 
+    public static long getDaysBetween(long a, long b) {
+        if (b >= a) {
+            return (b - a) / DAY_MILLIS;
+        } else {
+            return getDaysBetween(b, a);
+        }
+    }
+
     /**
      * Days in a given month. This method expects you to know if month is in leap year.
      *
@@ -296,6 +304,29 @@ final public class Dates {
                 : ((i < 304 * 84375) ? 10 : (i < 334 * 84375) ? 11 : 12)));
     }
 
+    public static long getMonthsBetween(long a, long b) {
+        if (b < a) {
+            return getMonthsBetween(b, a);
+        }
+
+        int aYear = getYear(a);
+        int bYear = getYear(b);
+        boolean aLeap = isLeapYear(aYear);
+        boolean bLeap = isLeapYear(bYear);
+        int aMonth = getMonthOfYear(a, aYear, aLeap);
+        int bMonth = getMonthOfYear(b, bYear, bLeap);
+
+        long aResidual = a - yearMillis(aYear, aLeap) - monthOfYearMillis(aMonth, aLeap);
+        long bResidual = b - yearMillis(bYear, bLeap) - monthOfYearMillis(bMonth, bLeap);
+        long months = 12 * (bYear - aYear) + (bMonth - aMonth);
+
+        if (aResidual > bResidual) {
+            return months - 1;
+        } else {
+            return months;
+        }
+    }
+
     public static int getSecondOfMinute(long millis) {
         if (millis > -1) {
             return (int) ((millis / SECOND_MILLIS) % MINUTE_SECONDS);
@@ -331,6 +362,27 @@ final public class Dates {
         }
 
         return year;
+    }
+
+    public static long getYearsBetween(long a, long b) {
+        if (b < a) {
+            return getYearsBetween(b, a);
+        }
+
+        int aYear = getYear(a);
+        int bYear = getYear(b);
+        boolean aLeap = isLeapYear(aYear);
+        boolean bLeap = isLeapYear(bYear);
+
+        long aResidual = a - yearMillis(aYear, aLeap);
+        long bResidual = b - yearMillis(bYear, bLeap);
+        long months = bYear - aYear;
+
+        if (aResidual > bResidual) {
+            return months - 1;
+        } else {
+            return months;
+        }
     }
 
     /**

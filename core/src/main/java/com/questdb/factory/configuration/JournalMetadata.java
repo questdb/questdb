@@ -141,11 +141,6 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         System.arraycopy(columnMetadata, 0, meta, 0, meta.length);
     }
 
-    @Override
-    public ColumnMetadata getColumn(int columnIndex) {
-        return columnMetadata[columnIndex];
-    }
-
     public int getColumnCount() {
         return columnCount;
     }

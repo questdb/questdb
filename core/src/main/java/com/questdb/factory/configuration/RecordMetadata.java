@@ -31,8 +31,6 @@ public interface RecordMetadata {
 
     RecordColumnMetadata getColumn(CharSequence name);
 
-    RecordColumnMetadata getColumn(int index);
-
     int getColumnCount();
 
     /**
@@ -47,6 +45,12 @@ public interface RecordMetadata {
 
     String getColumnName(int index);
 
+    /**
+     * Finds column metadata by column index. Method does not perform boundary checks, relying on caller to do so.
+     *
+     * @param index must be >=0 and < getColumnCount()
+     * @return column metadata
+     */
     RecordColumnMetadata getColumnQuick(int index);
 
     int getTimestampIndex();

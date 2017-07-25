@@ -181,11 +181,6 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
         private final ObjList<TestColumnMetadata> columns = new ObjList<>();
 
         @Override
-        public RecordColumnMetadata getColumn(int index) {
-            return columns.get(index);
-        }
-
-        @Override
         public int getColumnCount() {
             return columns.size();
         }

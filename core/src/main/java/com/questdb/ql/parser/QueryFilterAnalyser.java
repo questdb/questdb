@@ -85,7 +85,7 @@ final class QueryFilterAnalyser {
                 if (index == -1) {
                     throw QueryError.invalidColumn(a.position, a.token);
                 }
-                RecordColumnMetadata meta = m.getColumn(index);
+                RecordColumnMetadata meta = m.getColumnQuick(index);
 
                 switch (meta.getType()) {
                     case ColumnType.SYMBOL:
@@ -436,7 +436,7 @@ final class QueryFilterAnalyser {
                 if (index == -1) {
                     throw QueryError.invalidColumn(a.position, a.token);
                 }
-                RecordColumnMetadata meta = m.getColumn(index);
+                RecordColumnMetadata meta = m.getColumnQuick(index);
 
                 switch (meta.getType()) {
                     case ColumnType.SYMBOL:

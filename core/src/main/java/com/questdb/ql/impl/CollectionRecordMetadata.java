@@ -45,11 +45,6 @@ public class CollectionRecordMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumn(int index) {
-        return columns.get(index);
-    }
-
-    @Override
     public int getColumnCount() {
         return columns.size();
     }

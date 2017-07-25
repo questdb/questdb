@@ -214,7 +214,7 @@ public class ComparatorCompiler {
             // decrement to get real column index
             index--;
 
-            switch (m.getColumn(index).getType()) {
+            switch (m.getColumnQuick(index).getType()) {
                 case ColumnType.BOOLEAN:
                     fieldType = "Z";
                     getterNameA = "getBool";
@@ -264,7 +264,7 @@ public class ComparatorCompiler {
                     comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
                     break;
                 default:
-                    throw new JournalUnsupportedTypeException(ColumnType.nameOf(m.getColumn(index).getType()));
+                    throw new JournalUnsupportedTypeException(ColumnType.nameOf(m.getColumnQuick(index).getType()));
             }
 
             int nameIndex;

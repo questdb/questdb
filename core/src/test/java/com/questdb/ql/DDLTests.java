@@ -105,7 +105,7 @@ public class DDLTests extends AbstractTest {
 
         try (RecordSource rs = compiler.compile(getFactory(), "x")) {
             Rnd rnd = new Rnd();
-            Assert.assertEquals(to, rs.getMetadata().getColumn(0).getType());
+            Assert.assertEquals(to, rs.getMetadata().getColumnQuick(0).getType());
             RecordCursor cursor = rs.prepareCursor(getFactory());
             try {
                 while (cursor.hasNext()) {

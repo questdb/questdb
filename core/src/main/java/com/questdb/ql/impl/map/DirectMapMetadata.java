@@ -61,11 +61,6 @@ public final class DirectMapMetadata extends AbstractRecordMetadata {
     }
 
     @Override
-    public RecordColumnMetadata getColumn(int index) {
-        return columns[index];
-    }
-
-    @Override
     public int getColumnCount() {
         return columnCount;
     }
