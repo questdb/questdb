@@ -39,6 +39,7 @@ public class VirtualMemory implements Closeable {
     protected long pageSize;
     private ByteSequenceView bsview;
     private CharSequenceView csview;
+    private CharSequenceView csview2;
     private int bits;
     private long mod;
     private long appendPointer = -1;
@@ -155,6 +156,17 @@ public class VirtualMemory implements Closeable {
             return null;
         }
         return getCharSequenceView().of(offset + STRING_LENGTH_BYTES, len);
+    }
+
+    public final CharSequence getStr2(long offset) {
+        final int len = getInt(offset);
+        if (len == -1) {
+            return null;
+        }
+        if (csview2 == null) {
+            csview2 = new CharSequenceView();
+        }
+        return csview2.of(offset + STRING_LENGTH_BYTES, len);
     }
 
     /**

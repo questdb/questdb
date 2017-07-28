@@ -24,6 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.misc.ByteBuffers;
+import com.questdb.misc.Chars;
 import com.questdb.misc.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -457,9 +458,18 @@ public class VirtualMemoryTest {
         }
 
         TestUtils.assertEquals("123", mem.getStr(o1));
+        TestUtils.assertEquals("123", mem.getStr2(o1));
         TestUtils.assertEquals("0987654321abcd", mem.getStr(o2));
+        TestUtils.assertEquals("0987654321abcd", mem.getStr2(o2));
         assertNull(mem.getStr(o3));
+        assertNull(mem.getStr2(o3));
         TestUtils.assertEquals("xyz123", mem.getStr(o4));
+        TestUtils.assertEquals("xyz123", mem.getStr2(o4));
         assertNull(mem.getStr(o5));
+        assertNull(mem.getStr2(o5));
+
+        CharSequence s1 = mem.getStr(o1);
+        CharSequence s2 = mem.getStr2(o2);
+        Assert.assertFalse(Chars.equals(s1, s2));
     }
 }

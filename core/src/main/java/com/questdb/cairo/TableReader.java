@@ -9,14 +9,13 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
 import com.questdb.ql.CancellationHandler;
+import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.DirectInputStream;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.CompositePath;
-import com.questdb.std.str.LPSZ;
-import com.questdb.std.str.NativeLPSZ;
-import com.questdb.std.str.Path;
+import com.questdb.std.str.*;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.std.time.Dates;
@@ -25,6 +24,7 @@ import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.concurrent.locks.LockSupport;
 
 import static com.questdb.cairo.TableWriter.*;
@@ -433,6 +433,105 @@ public class TableReader implements Closeable {
         @Override
         public boolean isIndexed() {
             return false;
+        }
+    }
+
+    private class TableRecord implements Record {
+
+        private int baseColumnIndex;
+        private long baseOffset;
+
+        @Override
+        public byte get(int col) {
+            return colA(col).getByte(baseOffset);
+        }
+
+        @Override
+        public void getBin(int col, OutputStream s) {
+
+        }
+
+        @Override
+        public DirectInputStream getBin(int col) {
+            return null;
+        }
+
+        @Override
+        public long getBinLen(int col) {
+            return 0;
+        }
+
+        @Override
+        public boolean getBool(int col) {
+            return colA(col).getByte(baseOffset) == TableWriter.BOOL_TRUE;
+        }
+
+        @Override
+        public long getDate(int col) {
+            return colA(col).getLong(baseOffset * 8);
+        }
+
+        @Override
+        public double getDouble(int col) {
+            return colA(col).getDouble(baseOffset * 8);
+        }
+
+        @Override
+        public float getFloat(int col) {
+            return colA(col).getFloat(baseOffset * 4);
+        }
+
+        @Override
+        public CharSequence getFlyweightStr(int col) {
+            return colB(col).getStr(colA(col).getLong(baseOffset * 8));
+        }
+
+        @Override
+        public CharSequence getFlyweightStrB(int col) {
+            return colB(col).getStr2(colA(col).getLong(baseOffset * 8));
+        }
+
+        @Override
+        public int getInt(int col) {
+            return colA(col).getInt(baseOffset * 4);
+        }
+
+        @Override
+        public long getLong(int col) {
+            return colA(col).getLong(baseOffset * 8);
+        }
+
+        @Override
+        public long getRowId() {
+            return 0;
+        }
+
+        @Override
+        public short getShort(int col) {
+            return colA(col).getShort(baseOffset * 2);
+        }
+
+        @Override
+        public void getStr(int col, CharSink sink) {
+
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            return 0;
+        }
+
+        @Override
+        public String getSym(int col) {
+            return null;
+        }
+
+        private ReadOnlyMemory colA(int col) {
+            return columns.getQuick(baseColumnIndex + col * 2);
+        }
+
+        private ReadOnlyMemory colB(int col) {
+            return columns.getQuick(baseColumnIndex + col * 2 + 1);
         }
     }
 
