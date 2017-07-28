@@ -15,7 +15,10 @@ import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.*;
+import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.NativeLPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.std.time.Dates;
@@ -458,12 +461,12 @@ public class TableReader implements Closeable {
 
         @Override
         public long getBinLen(int col) {
-            return 0;
+            return colA(col).getLong(colB(col).getLong(baseOffset * 8));
         }
 
         @Override
         public boolean getBool(int col) {
-            return colA(col).getByte(baseOffset) == TableWriter.BOOL_TRUE;
+            return colA(col).getBool(baseOffset);
         }
 
         @Override
@@ -483,12 +486,12 @@ public class TableReader implements Closeable {
 
         @Override
         public CharSequence getFlyweightStr(int col) {
-            return colB(col).getStr(colA(col).getLong(baseOffset * 8));
+            return colA(col).getStr(colB(col).getLong(baseOffset * 8));
         }
 
         @Override
         public CharSequence getFlyweightStrB(int col) {
-            return colB(col).getStr2(colA(col).getLong(baseOffset * 8));
+            return colA(col).getStr2(colB(col).getLong(baseOffset * 8));
         }
 
         @Override
@@ -512,12 +515,8 @@ public class TableReader implements Closeable {
         }
 
         @Override
-        public void getStr(int col, CharSink sink) {
-        }
-
-        @Override
         public int getStrLen(int col) {
-            return 0;
+            return colA(col).getInt(colB(col).getLong(baseOffset * 8));
         }
 
         @Override

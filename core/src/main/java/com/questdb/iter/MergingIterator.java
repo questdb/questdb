@@ -23,14 +23,13 @@
 
 package com.questdb.iter;
 
-import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.ImmutableIterator;
 
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 
-public class MergingIterator<T> extends AbstractImmutableIterator<T> {
+public class MergingIterator<T> implements ImmutableIterator<T> {
 
     Iterator<T> a;
     Iterator<T> b;

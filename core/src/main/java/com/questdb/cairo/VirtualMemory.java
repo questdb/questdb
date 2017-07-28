@@ -108,6 +108,10 @@ public class VirtualMemory implements Closeable {
         return getByteSequenceView().of(offset + 8, len);
     }
 
+    public boolean getBool(long offset) {
+        return getByte(offset) == 1;
+    }
+
     public final byte getByte(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi - 1) {
             return Unsafe.getUnsafe().getByte(absolutePointer + offset);
@@ -187,7 +191,7 @@ public class VirtualMemory implements Closeable {
     }
 
     public long pageRemaining(long offset) {
-        return pageSize - pageOffset(offset);
+        return pageSize - offsetInPage(offset);
     }
 
     public final long putBin(ByteBuffer buf) {
@@ -215,6 +219,10 @@ public class VirtualMemory implements Closeable {
         }
 
         return offset;
+    }
+
+    public void putBool(boolean value) {
+        putByte((byte) (value ? 1 : 0));
     }
 
     public void putByte(byte b) {
@@ -324,7 +332,7 @@ public class VirtualMemory implements Closeable {
     }
 
     private long addressOf0(long offset) {
-        return computeHotPage(pageIndex(offset)) + pageOffset(offset);
+        return computeHotPage(pageIndex(offset)) + offsetInPage(offset);
     }
 
     protected long allocateNextPage(int page) {
@@ -364,7 +372,7 @@ public class VirtualMemory implements Closeable {
     }
 
     private byte getByte0(long offset) {
-        return Unsafe.getUnsafe().getByte(computeHotPage(pageIndex(offset)) + pageOffset(offset));
+        return Unsafe.getUnsafe().getByte(computeHotPage(pageIndex(offset)) + offsetInPage(offset));
     }
 
     private ByteSequenceView getByteSequenceView() {
@@ -377,7 +385,7 @@ public class VirtualMemory implements Closeable {
 
     private double getDouble0(long offset) {
         int page = pageIndex(offset);
-        long pageOffset = pageOffset(offset);
+        long pageOffset = offsetInPage(offset);
 
         if (pageSize - pageOffset > 7) {
             return Unsafe.getUnsafe().getDouble(computeHotPage(page) + pageOffset);
@@ -391,7 +399,7 @@ public class VirtualMemory implements Closeable {
 
     private float getFloat0(long offset) {
         int page = pageIndex(offset);
-        long pageOffset = pageOffset(offset);
+        long pageOffset = offsetInPage(offset);
 
         if (pageSize - pageOffset > 3) {
             return Unsafe.getUnsafe().getFloat(computeHotPage(page) + pageOffset);
@@ -405,7 +413,7 @@ public class VirtualMemory implements Closeable {
 
     private int getInt0(long offset) {
         int page = pageIndex(offset);
-        long pageOffset = pageOffset(offset);
+        long pageOffset = offsetInPage(offset);
 
         if (pageSize - pageOffset > 3) {
             return Unsafe.getUnsafe().getInt(computeHotPage(page) + pageOffset);
@@ -430,7 +438,7 @@ public class VirtualMemory implements Closeable {
 
     private long getLong0(long offset) {
         int page = pageIndex(offset);
-        long pageOffset = pageOffset(offset);
+        long pageOffset = offsetInPage(offset);
 
         if (pageSize - pageOffset > 7) {
             return Unsafe.getUnsafe().getLong(computeHotPage(page) + pageOffset);
@@ -462,7 +470,7 @@ public class VirtualMemory implements Closeable {
 
     private short getShort0(long offset) {
         int page = pageIndex(offset);
-        long pageOffset = pageOffset(offset);
+        long pageOffset = offsetInPage(offset);
 
         if (pageSize - pageOffset > 1) {
             return Unsafe.getUnsafe().getShort(computeHotPage(page) + pageOffset);
@@ -489,8 +497,10 @@ public class VirtualMemory implements Closeable {
 
     private void jumpTo0(long offset) {
         final int page = pageIndex(offset);
-        updateLimits(page, mapWritePage(page));
-        appendPointer += pageOffset(offset);
+        long pageAddress = mapWritePage(page);
+        pageHi = pageAddress + this.pageSize;
+        baseOffset = pageOffset(page + 1) - pageHi;
+        appendPointer = pageAddress + offsetInPage(offset);
     }
 
     protected long mapWritePage(int page) {
@@ -508,6 +518,10 @@ public class VirtualMemory implements Closeable {
         return address;
     }
 
+    private long offsetInPage(long offset) {
+        return offset & mod;
+    }
+
     private void pageAt(long offset) {
         int page = pageIndex(offset);
         updateLimits(page, mapWritePage(page));
@@ -519,10 +533,6 @@ public class VirtualMemory implements Closeable {
 
     protected final long pageOffset(int page) {
         return ((long) page << bits);
-    }
-
-    private long pageOffset(long offset) {
-        return offset & mod;
     }
 
     private long putBin0(ByteBuffer buf) {
@@ -708,7 +718,7 @@ public class VirtualMemory implements Closeable {
             this.lastIndex = -1;
             this.page = pageIndex(offset);
             this.pageAddress = getPageAddress(page);
-            this.pageOffset = pageOffset(offset);
+            this.pageOffset = offsetInPage(offset);
             return this;
         }
 
@@ -717,7 +727,7 @@ public class VirtualMemory implements Closeable {
             long offset = this.offset + index * 2;
             page = pageIndex(offset);
             pageAddress = getPageAddress(page);
-            pageOffset = pageOffset(offset);
+            pageOffset = offsetInPage(offset);
 
             if (pageSize - pageOffset > 1) {
                 c = Unsafe.getUnsafe().getChar(pageAddress + pageOffset);
@@ -763,7 +773,7 @@ public class VirtualMemory implements Closeable {
             this.lastIndex = -1;
             this.page = pageIndex(offset);
             this.pageAddress = getPageAddress(page);
-            this.pageOffset = pageOffset(offset);
+            this.pageOffset = offsetInPage(offset);
             return this;
         }
 
@@ -772,7 +782,7 @@ public class VirtualMemory implements Closeable {
             long offset = this.offset + index;
             page = pageIndex(offset);
             pageAddress = getPageAddress(page);
-            pageOffset = pageOffset(offset);
+            pageOffset = offsetInPage(offset);
             c = Unsafe.getUnsafe().getByte(pageAddress + pageOffset);
             pageOffset++;
             return c;

@@ -29,9 +29,8 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.iter.JournalIterator;
 import com.questdb.iter.PeekingIterator;
 import com.questdb.query.ResultSet;
-import com.questdb.std.AbstractImmutableIterator;
 
-public class ResultSetBufferedIterator<T> extends AbstractImmutableIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
+public class ResultSetBufferedIterator<T> implements JournalIterator<T>, PeekingIterator<T>, com.questdb.std.ImmutableIterator<T> {
 
     private final ResultSet<T> rs;
     private final T obj;

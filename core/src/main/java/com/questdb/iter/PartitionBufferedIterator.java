@@ -27,9 +27,8 @@ import com.questdb.Journal;
 import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.std.AbstractImmutableIterator;
 
-public class PartitionBufferedIterator<T> extends AbstractImmutableIterator<T> implements JournalIterator<T>, PeekingIterator<T> {
+public class PartitionBufferedIterator<T> implements JournalIterator<T>, PeekingIterator<T>, com.questdb.std.ImmutableIterator<T> {
     private final long hi;
     private final long lo;
     private final T obj;

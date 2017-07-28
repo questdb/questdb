@@ -28,7 +28,7 @@ import com.questdb.iter.PeekingIterator;
 import java.util.Iterator;
 import java.util.List;
 
-public class PeekingListIterator<T> extends AbstractImmutableIterator<T> implements PeekingIterator<T> {
+public class PeekingListIterator<T> implements PeekingIterator<T>, ImmutableIterator<T> {
     private List<T> delegate;
     private Iterator<T> iterator;
 

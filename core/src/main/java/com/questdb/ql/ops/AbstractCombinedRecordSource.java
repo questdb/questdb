@@ -27,13 +27,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 
-import java.util.Iterator;
-
 public abstract class AbstractCombinedRecordSource extends AbstractRecordSource implements RecordSource, RecordCursor {
-    @Override
-    public Iterator<Record> iterator() {
-        return this;
-    }
 
     @Override
     public Record recordAt(long rowId) {

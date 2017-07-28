@@ -61,8 +61,6 @@ public class TableWriter implements Closeable {
     static final long TX_OFFSET_MAX_TIMESTAMP = 24;
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     static final long META_OFFSET_COLUMN_TYPES = 12;
-    static final byte BOOL_TRUE = 1;
-    static final byte BOOL_FALSE = 0;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final int _16M = 16 * 1024 * 1024;
     private static final long TX_EOF = 32;
@@ -1378,7 +1376,8 @@ public class TableWriter implements Closeable {
         }
 
         public void putBool(int index, boolean value) {
-            putByte(index, value ? BOOL_TRUE : BOOL_FALSE);
+            getPrimaryColumn(index).putBool(value);
+            notNull(index);
         }
 
         public void putByte(int index, byte value) {

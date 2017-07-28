@@ -33,11 +33,10 @@ import com.questdb.ql.PartitionCursor;
 import com.questdb.ql.PartitionSlice;
 import com.questdb.ql.PartitionSource;
 import com.questdb.ql.StorageFacade;
-import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.FileNameExtractorCharSequence;
 
-public class JournalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
+public class JournalPartitionSource implements PartitionSource, PartitionCursor, com.questdb.std.ImmutableIterator<PartitionSlice> {
 
     private final boolean open;
     private final PartitionSlice slice = new PartitionSlice();

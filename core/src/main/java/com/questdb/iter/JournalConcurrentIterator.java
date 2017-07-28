@@ -38,8 +38,8 @@ import com.questdb.std.ObjectFactory;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public class JournalConcurrentIterator<T> extends com.questdb.std.AbstractImmutableIterator<T>
-        implements ObjectFactory<JournalConcurrentIterator.Holder<T>>, ConcurrentIterator<T> {
+public class JournalConcurrentIterator<T>
+        implements ObjectFactory<JournalConcurrentIterator.Holder<T>>, ConcurrentIterator<T>, com.questdb.std.ImmutableIterator<T> {
     private final Journal<T> journal;
     private final ObjList<JournalIteratorRange> ranges;
     private final ExecutorService service;

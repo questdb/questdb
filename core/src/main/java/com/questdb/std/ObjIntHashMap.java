@@ -25,6 +25,7 @@ package com.questdb.std;
 
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 import java.util.Iterator;
@@ -86,6 +87,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     }
 
     @Override
+    @NotNull
     public Iterator<Entry<K>> iterator() {
         iterator.index = 0;
         return iterator;
@@ -196,7 +198,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         public int value;
     }
 
-    public class EntryIterator extends AbstractImmutableIterator<Entry<K>> {
+    public class EntryIterator implements ImmutableIterator<Entry<K>> {
 
         private final Entry<K> entry = new Entry<>();
         private int index = 0;

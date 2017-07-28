@@ -23,7 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.str.DelimitedCharSink;
 import com.questdb.std.str.FlexBufferSink;
 
@@ -33,7 +32,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.channels.WritableByteChannel;
 
-public class TxIterator extends AbstractImmutableIterator<Tx> {
+public class TxIterator implements com.questdb.std.ImmutableIterator<Tx> {
     private final TxLog txLog;
     private final Tx tx = new Tx();
     private long txAddress = -1;

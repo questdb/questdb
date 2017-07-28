@@ -27,10 +27,9 @@ import com.questdb.Journal;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.misc.Rows;
-import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.ObjList;
 
-public class JournalIteratorImpl<T> extends AbstractImmutableIterator<T> implements JournalPeekingIterator<T> {
+public class JournalIteratorImpl<T> implements JournalPeekingIterator<T>, com.questdb.std.ImmutableIterator<T> {
     private final ObjList<JournalIteratorRange> ranges;
     private final Journal<T> journal;
     private boolean hasNext = true;

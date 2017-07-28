@@ -31,13 +31,12 @@ import com.questdb.ql.PartitionSlice;
 import com.questdb.ql.PartitionSource;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.parser.IntervalCompiler;
-import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.LongList;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.BSearchType;
 import com.questdb.store.FixedColumn;
 
-public class MultiIntervalPartitionSource extends AbstractImmutableIterator<PartitionSlice> implements PartitionSource, PartitionCursor {
+public class MultiIntervalPartitionSource implements PartitionSource, PartitionCursor, com.questdb.std.ImmutableIterator<PartitionSlice> {
     private final PartitionSource partitionSource;
     private final PartitionSlice result = new PartitionSlice();
     private final LongList intervals;

@@ -31,7 +31,6 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
-import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.MemoryPages;
 import com.questdb.std.Mutable;
@@ -40,7 +39,7 @@ import com.questdb.store.VariableColumn;
 
 import java.io.Closeable;
 
-public class RecordList extends AbstractImmutableIterator<Record> implements Closeable, RecordCursor, Mutable {
+public class RecordList implements Closeable, RecordCursor, Mutable {
     private final MemoryPages mem;
     private final RecordListRecord record;
     private final RecordMetadata metadata;

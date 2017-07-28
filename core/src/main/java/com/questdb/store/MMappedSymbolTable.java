@@ -30,7 +30,6 @@ import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Hash;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
-import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
 
@@ -276,7 +275,7 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
         public CharSequence value;
     }
 
-    private class Iter extends AbstractImmutableIterator<Entry> {
+    private class Iter implements com.questdb.std.ImmutableIterator<Entry> {
         private final Entry e = new Entry();
         private int pos;
         private int size;

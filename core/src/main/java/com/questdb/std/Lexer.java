@@ -32,7 +32,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-public class Lexer extends AbstractImmutableIterator<CharSequence> {
+public class Lexer implements ImmutableIterator<CharSequence> {
     public static final LenComparator COMPARATOR = new LenComparator();
     private static final CharSequenceHashSet whitespace = new CharSequenceHashSet();
     private final IntObjHashMap<List<CharSequence>> symbols = new IntObjHashMap<>();

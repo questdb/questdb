@@ -34,10 +34,7 @@ import com.questdb.factory.configuration.ColumnMetadata;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.iter.JournalIterator;
-import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Rnd;
-import com.questdb.misc.Unsafe;
+import com.questdb.misc.*;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.printer.JournalPrinter;
@@ -259,6 +256,14 @@ public final class TestUtils {
         }
     }
 
+    public static void assertMemoryLeak(Runnable runnable) {
+        long mem = Unsafe.getMemUsed();
+        long fileCount = Files.getOpenFileCount();
+        runnable.run();
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
+        Assert.assertEquals(fileCount, Files.getOpenFileCount());
+    }
+
     public static <T> void assertOrder(JournalIterator<T> rs) {
         ColumnMetadata meta = rs.getJournal().getMetadata().getTimestampMetadata();
         long max = 0;
@@ -477,9 +482,9 @@ public final class TestUtils {
             case 2:
                 return toRpn(node.lhs) + toRpn(node.rhs) + node.token;
             default:
-                String result = "";
+                StringBuilder result = new StringBuilder();
                 for (int i = 0; i < node.paramCount; i++) {
-                    result = toRpn(node.args.getQuick(i)) + result;
+                    result.insert(0, toRpn(node.args.getQuick(i)));
                 }
                 return result + node.token;
         }
@@ -503,5 +508,9 @@ public final class TestUtils {
         for (T o : iterator) {
             p.out(o);
         }
+    }
+
+    static {
+        Os.init();
     }
 }

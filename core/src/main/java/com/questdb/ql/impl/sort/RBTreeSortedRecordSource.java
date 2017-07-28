@@ -32,7 +32,6 @@ import com.questdb.ql.impl.RecordList;
 import com.questdb.ql.impl.join.hash.FakeRecord;
 import com.questdb.ql.impl.map.MapUtils;
 import com.questdb.ql.ops.AbstractRecordSource;
-import com.questdb.std.AbstractImmutableIterator;
 import com.questdb.std.MemoryPages;
 import com.questdb.std.Mutable;
 import com.questdb.std.str.CharSink;
@@ -401,7 +400,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
         recordList.setStorageFacade(sourceCursor.getStorageFacade());
     }
 
-    private class TreeCursor extends AbstractImmutableIterator<Record> implements RecordCursor {
+    private class TreeCursor implements RecordCursor, com.questdb.std.ImmutableIterator<Record> {
 
         private long current;
 
