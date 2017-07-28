@@ -52,6 +52,7 @@ public class TableWriter implements Closeable {
     static final String META_PREV_FILE_NAME = "_meta.prev";
     static final String TODO_FILE_NAME = "_todo";
     static final String ARCHIVE_FILE_NAME = "_archive";
+    static final String DEFAULT_PARTITION_NAME = "default";
     static final long META_OFFSET_COUNT = 0;
     static final long META_OFFSET_PARTITION_BY = 4;
     static final long TX_OFFSET_TXN = 0;
@@ -440,6 +441,59 @@ public class TableWriter implements Closeable {
         }
     }
 
+    static LPSZ dFile(CompositePath path, CharSequence columnName) {
+        return path.concat(columnName).put(".d").$();
+    }
+
+    static LPSZ iFile(CompositePath path, CharSequence columnName) {
+        return path.concat(columnName).put(".i").$();
+    }
+
+    static LPSZ topFile(CompositePath path, CharSequence columnName) {
+        return path.concat(columnName).put(".top").$();
+    }
+
+    static long getMapPageSize(FilesFacade ff) {
+        long pageSize = ff.getPageSize() * ff.getPageSize();
+        if (pageSize < ff.getPageSize() || pageSize > _16M) {
+            if (_16M % ff.getPageSize() == 0) {
+                return _16M;
+            }
+            return ff.getPageSize();
+        } else {
+            return pageSize;
+        }
+    }
+
+    /**
+     * path member variable has to be set to location of "top" file.
+     *
+     * @return number of rows column doesn't have when column was added to table that already had data.
+     */
+    static long readColumnTop(FilesFacade ff, CompositePath path, CharSequence name, int plen) {
+        try {
+            if (ff.exists(topFile(path, name))) {
+                long fd = ff.openRO(path);
+                try {
+                    long buf = Unsafe.malloc(8);
+                    try {
+                        if (ff.read(fd, buf, 8, 0) != 8) {
+                            throw CairoException.instance(Os.errno()).put("Cannot read top of column ").put(path);
+                        }
+                        return Unsafe.getUnsafe().getLong(buf);
+                    } finally {
+                        Unsafe.free(buf, 8);
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            }
+            return 0L;
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     private void addColumnToMeta(CharSequence name, int type) {
         try {
             // delete stale _meta.swp
@@ -697,10 +751,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private LPSZ dFile(CharSequence columnName) {
-        return path.concat(columnName).put(".d").$();
-    }
-
     /**
      * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
      * is that we don't keep column name strings on heap. We only use this method when adding new column, where
@@ -725,28 +775,12 @@ public class TableWriter implements Closeable {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * 4);
     }
 
-    private long getMapPageSize() {
-        long pageSize = ff.getPageSize() * ff.getPageSize();
-        if (pageSize < ff.getPageSize() || pageSize > _16M) {
-            if (_16M % ff.getPageSize() == 0) {
-                return _16M;
-            }
-            return ff.getPageSize();
-        } else {
-            return pageSize;
-        }
-    }
-
     private AppendMemory getPrimaryColumn(int column) {
         return columns.getQuick(getPrimaryColumnIndex(column));
     }
 
     private AppendMemory getSecondaryColumn(int column) {
         return columns.getQuick(getSecondaryColumnIndex(column));
-    }
-
-    private LPSZ iFile(CharSequence columnName) {
-        return path.concat(columnName).put(".i").$();
     }
 
     private long openAppend(LPSZ name) {
@@ -760,12 +794,11 @@ public class TableWriter implements Closeable {
     private void openColumnFiles(CharSequence name, int i, int plen) {
         AppendMemory mem1 = getPrimaryColumn(i);
         AppendMemory mem2 = getSecondaryColumn(i);
-        path.trimTo(plen);
-        mem1.of(dFile(name), getMapPageSize());
+
+        mem1.of(dFile(path.trimTo(plen), name), getMapPageSize(ff));
 
         if (mem2 != null) {
-            path.trimTo(plen);
-            mem2.of(iFile(name), getMapPageSize());
+            mem2.of(iFile(path.trimTo(plen), name), getMapPageSize(ff));
         }
 
         path.trimTo(plen);
@@ -813,7 +846,7 @@ public class TableWriter implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(nameOffset);
                 openColumnFiles(name, i, plen);
-                columnTops.extendAndSet(i, readColumnTop(name, plen));
+                columnTops.extendAndSet(i, readColumnTop(ff, path, name, plen));
                 nameOffset += VirtualMemory.getStorageLength(name);
             }
         } finally {
@@ -836,35 +869,6 @@ public class TableWriter implements Closeable {
     private void purgeUnusedPartitions() {
         if (partitionBy != PartitionBy.NONE && maxTimestamp != Numbers.LONG_NaN) {
             removePartitionDirsNewerThan(maxTimestamp);
-        }
-    }
-
-    /**
-     * path member variable has to be set to location of "top" file.
-     *
-     * @return number of rows column doesn't have when column was added to table that already had data.
-     */
-    private long readColumnTop(CharSequence name, int plen) {
-        try {
-            if (ff.exists(topFile(name))) {
-                long fd = ff.openRO(path);
-                try {
-                    long buf = Unsafe.malloc(8);
-                    try {
-                        if (ff.read(fd, buf, 8, 0) != 8) {
-                            throw CairoException.instance(Os.errno()).put("Cannot read top of column ").put(path);
-                        }
-                        return Unsafe.getUnsafe().getLong(buf);
-                    } finally {
-                        Unsafe.free(buf, 8);
-                    }
-                } finally {
-                    ff.close(fd);
-                }
-            }
-            return 0L;
-        } finally {
-            path.trimTo(plen);
         }
     }
 
@@ -912,11 +916,9 @@ public class TableWriter implements Closeable {
                     path.trimTo(rootLen);
                     path.concat(nativeLPSZ);
                     int plen = path.length();
-                    removeFileAndOrLog(dFile(name));
-                    path.trimTo(plen);
-                    removeFileAndOrLog(iFile(name));
-                    path.trimTo(plen);
-                    removeFileAndOrLog(topFile(name));
+                    removeFileAndOrLog(dFile(path, name));
+                    removeFileAndOrLog(iFile(path.trimTo(plen), name));
+                    removeFileAndOrLog(topFile(path.trimTo(plen), name));
                 }
             });
         } finally {
@@ -1231,7 +1233,7 @@ public class TableWriter implements Closeable {
                 }
                 break;
             default:
-                path.put("default");
+                path.put(DEFAULT_PARTITION_NAME);
                 partitionLo = Long.MIN_VALUE;
                 partitionHi = Long.MAX_VALUE;
         }
@@ -1251,10 +1253,6 @@ public class TableWriter implements Closeable {
         transientRowCount = 0;
         openPartition(timestamp);
         setAppendPosition(0);
-    }
-
-    private LPSZ topFile(CharSequence columnName) {
-        return path.concat(columnName).put(".top").$();
     }
 
     private void updateMaxTimestamp(long timestamp) {

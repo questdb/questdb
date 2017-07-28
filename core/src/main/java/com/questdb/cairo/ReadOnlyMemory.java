@@ -30,7 +30,7 @@ import com.questdb.misc.FilesFacade;
 import com.questdb.std.str.LPSZ;
 
 public class ReadOnlyMemory extends VirtualMemory {
-    private static final Log LOG = LogFactory.getLog(ReadWriteMemory.class);
+    private static final Log LOG = LogFactory.getLog(ReadOnlyMemory.class);
     private final FilesFacade ff;
     private long fd = -1;
     private long size = 0;
@@ -75,9 +75,12 @@ public class ReadOnlyMemory extends VirtualMemory {
     }
 
     public void of(LPSZ name, long maxPageSize, long size) {
-        close();
-        assert size > 0;
+        of(name);
+        setSize(maxPageSize, size);
+    }
 
+    public void of(LPSZ name) {
+        close();
         boolean exists = ff.exists(name);
         if (!exists) {
             throw CairoException.instance(0).put("File not found: ").put(name);
@@ -89,9 +92,12 @@ public class ReadOnlyMemory extends VirtualMemory {
 
         LOG.info().$("Open ").$(name).$(" [").$(fd).$(']').$();
 
-        this.size = size;
         this.lastPageSize = ff.getPageSize();
+    }
 
+    public void setSize(long maxPageSize, long size) {
+        assert size > 0;
+        this.size = size;
         if (size > maxPageSize) {
             setPageSize(maxPageSize);
         } else {

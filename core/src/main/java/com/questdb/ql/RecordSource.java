@@ -25,6 +25,7 @@ package com.questdb.ql;
 
 import com.questdb.factory.ReaderFactory;
 import com.questdb.factory.configuration.RecordMetadata;
+import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.ops.Parameter;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.Sinkable;
@@ -40,7 +41,9 @@ public interface RecordSource extends Sinkable, Closeable, RecordFactory {
 
     Parameter getParam(CharSequence name);
 
-    RecordCursor prepareCursor(ReaderFactory factory);
+    default RecordCursor prepareCursor(ReaderFactory factory) {
+        return prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
+    }
 
     RecordCursor prepareCursor(ReaderFactory factory, CancellationHandler cancellationHandler);
 

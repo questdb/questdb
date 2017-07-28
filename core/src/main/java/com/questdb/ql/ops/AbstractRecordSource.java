@@ -24,10 +24,7 @@
 package com.questdb.ql.ops;
 
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.ReaderFactory;
-import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.std.CharSequenceObjHashMap;
 
 public abstract class AbstractRecordSource implements RecordSource {
@@ -42,10 +39,6 @@ public abstract class AbstractRecordSource implements RecordSource {
         return p;
     }
 
-    @Override
-    public final RecordCursor prepareCursor(ReaderFactory factory) {
-        return prepareCursor(factory, NoOpCancellationHandler.INSTANCE);
-    }
 
     @Override
     public void setParameterMap(CharSequenceObjHashMap<Parameter> map) {
