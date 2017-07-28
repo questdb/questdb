@@ -26,7 +26,6 @@ package com.questdb.ql.impl.join.asof;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
-import com.questdb.std.str.CharSink;
 import com.questdb.store.SymbolTable;
 
 import java.io.OutputStream;
@@ -100,11 +99,6 @@ abstract class AbstractMemRecord implements Record {
     @Override
     public short getShort(int col) {
         return Unsafe.getUnsafe().getShort(address(col));
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

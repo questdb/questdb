@@ -27,7 +27,6 @@ import com.questdb.Partition;
 import com.questdb.misc.Rows;
 import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
-import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
@@ -104,11 +103,6 @@ public class JournalRecord implements Record {
     @Override
     public short getShort(int col) {
         return partition.getShort(rowid, col);
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        partition.getStr(rowid, col, sink);
     }
 
     @Override

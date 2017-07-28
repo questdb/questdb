@@ -28,7 +28,6 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
@@ -115,15 +114,6 @@ class VirtualRecord implements Record {
     @Override
     public short getShort(int col) {
         return col < split ? base.getShort(col) : getVc(col).getShort(base);
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        if (col < split) {
-            base.getStr(col, sink);
-        } else {
-            getVc(col).getStr(base, sink);
-        }
     }
 
     @Override

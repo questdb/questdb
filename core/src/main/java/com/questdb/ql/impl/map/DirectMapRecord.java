@@ -26,7 +26,6 @@ package com.questdb.ql.impl.map;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.DirectInputStream;
-import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
@@ -106,11 +105,6 @@ public class DirectMapRecord implements Record {
     @Override
     public short getShort(int col) {
         return entry.getShort(col);
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        entry.getStr(col, sink);
     }
 
     @Override

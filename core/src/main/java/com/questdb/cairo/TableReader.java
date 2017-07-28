@@ -513,7 +513,6 @@ public class TableReader implements Closeable {
 
         @Override
         public void getStr(int col, CharSink sink) {
-
         }
 
         @Override

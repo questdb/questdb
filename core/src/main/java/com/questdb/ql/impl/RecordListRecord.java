@@ -30,7 +30,6 @@ import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.MemoryPages;
-import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectCharSequence;
 import com.questdb.store.ColumnType;
 
@@ -176,16 +175,6 @@ public class RecordListRecord implements Record {
     public short getShort(int col) {
         assert offsets[col] >= 0;
         return Unsafe.getUnsafe().getShort(address + Unsafe.arrayGet(offsets, col));
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        long readAddress = addressOf(col);
-        final int len = Unsafe.getUnsafe().getInt(readAddress);
-        readAddress += 2;
-        for (int i = 0; i < len; i++) {
-            sink.put(Unsafe.getUnsafe().getChar(readAddress += 2));
-        }
     }
 
     @Override

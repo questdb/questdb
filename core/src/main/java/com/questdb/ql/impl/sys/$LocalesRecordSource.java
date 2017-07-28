@@ -177,11 +177,6 @@ public class $LocalesRecordSource extends AbstractCombinedRecordSource {
         }
 
         @Override
-        public void getStr(int col, CharSink sink) {
-            sink.put(locales.getQuick(index));
-        }
-
-        @Override
         public int getStrLen(int col) {
             return locales.getQuick(index).length();
         }

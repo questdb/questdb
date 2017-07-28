@@ -108,7 +108,6 @@ public class NullRecord implements Record {
 
     @Override
     public void getStr(int col, CharSink sink) {
-
     }
 
     @Override

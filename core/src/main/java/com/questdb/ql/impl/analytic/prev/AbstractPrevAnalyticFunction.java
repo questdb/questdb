@@ -30,7 +30,6 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
@@ -79,16 +78,6 @@ public abstract class AbstractPrevAnalyticFunction implements AnalyticFunction, 
     }
 
     @Override
-    public CharSequence getFlyweightStr() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public CharSequence getFlyweightStrB() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getInt() {
         return nextNull ? (valueColumn.getType() == ColumnType.SYMBOL ? SymbolTable.VALUE_IS_NULL : Numbers.INT_NaN) : Unsafe.getUnsafe().getInt(bufPtr);
     }
@@ -108,15 +97,6 @@ public abstract class AbstractPrevAnalyticFunction implements AnalyticFunction, 
         return nextNull ? 0 : (short) Unsafe.getUnsafe().getInt(bufPtr);
     }
 
-    @Override
-    public void getStr(CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getStrLen() {
-        throw new UnsupportedOperationException();
-    }
 
     @Override
     public String getSym() {

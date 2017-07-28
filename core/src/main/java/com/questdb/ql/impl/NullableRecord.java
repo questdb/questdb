@@ -25,7 +25,6 @@ package com.questdb.ql.impl;
 
 import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
-import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
@@ -106,11 +105,6 @@ public class NullableRecord implements Record {
     @Override
     public short getShort(int col) {
         return rec.getShort(col);
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        rec.getStr(col, sink);
     }
 
     @Override

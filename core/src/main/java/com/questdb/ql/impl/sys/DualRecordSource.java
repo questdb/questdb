@@ -164,11 +164,6 @@ public class DualRecordSource extends AbstractCombinedRecordSource {
         }
 
         @Override
-        public void getStr(int col, CharSink sink) {
-            sink.put(getFlyweightStr(col));
-        }
-
-        @Override
         public int getStrLen(int col) {
             return 1;
         }

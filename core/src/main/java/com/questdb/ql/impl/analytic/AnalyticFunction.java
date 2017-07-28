@@ -36,35 +36,63 @@ public interface AnalyticFunction {
 
     void add(Record record);
 
-    byte get();
+    default byte get() {
+        throw new UnsupportedOperationException();
+    }
 
-    boolean getBool();
+    default boolean getBool() {
+        throw new UnsupportedOperationException();
+    }
 
-    long getDate();
+    default long getDate() {
+        throw new UnsupportedOperationException();
+    }
 
-    double getDouble();
+    default double getDouble() {
+        throw new UnsupportedOperationException();
+    }
 
-    float getFloat();
+    default float getFloat() {
+        throw new UnsupportedOperationException();
+    }
 
-    CharSequence getFlyweightStr();
+    default CharSequence getFlyweightStr() {
+        throw new UnsupportedOperationException();
+    }
 
-    CharSequence getFlyweightStrB();
+    default CharSequence getFlyweightStrB() {
+        throw new UnsupportedOperationException();
+    }
 
-    int getInt();
+    default int getInt() {
+        throw new UnsupportedOperationException();
+    }
 
-    long getLong();
+    default long getLong() {
+        throw new UnsupportedOperationException();
+    }
 
     RecordColumnMetadata getMetadata();
 
-    short getShort();
+    default short getShort() {
+        throw new UnsupportedOperationException();
+    }
 
-    void getStr(CharSink sink);
+    default void getStr(CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
 
-    int getStrLen();
+    default int getStrLen() {
+        throw new UnsupportedOperationException();
+    }
 
-    String getSym();
+    default String getSym() {
+        throw new UnsupportedOperationException();
+    }
 
-    SymbolTable getSymbolTable();
+    default SymbolTable getSymbolTable() {
+        throw new UnsupportedOperationException();
+    }
 
     int getType();
 

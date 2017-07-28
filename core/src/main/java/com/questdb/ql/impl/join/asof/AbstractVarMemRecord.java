@@ -59,15 +59,27 @@ abstract class AbstractVarMemRecord extends AbstractMemRecord {
     @Override
     public CharSequence getFlyweightStr(int col) {
         long address = address() + getInt(col);
-        return Unsafe.arrayGet(csA, col).of(address + 4, address + 4 + Unsafe.getUnsafe().getInt(address) * 2);
+        int len = Unsafe.getUnsafe().getInt(address);
+        if (len == -1) {
+            return null;
+        }
+        return Unsafe.arrayGet(csA, col).of(address + 4, address + 4 + len * 2);
     }
 
     @Override
     public CharSequence getFlyweightStrB(int col) {
         long address = address() + getInt(col);
-        return Unsafe.arrayGet(csB, col).of(address + 4, address + 4 + Unsafe.getUnsafe().getInt(address) * 2);
+        int len = Unsafe.getUnsafe().getInt(address);
+        if (len == -1) {
+            return null;
+        }
+        return Unsafe.arrayGet(csB, col).of(address + 4, address + 4 + len * 2);
     }
 
+    @Override
+    public int getStrLen(int col) {
+        return Unsafe.getUnsafe().getInt(address() + getInt(col));
+    }
 
     @Override
     public void getStr(int col, CharSink sink) {
@@ -75,11 +87,6 @@ abstract class AbstractVarMemRecord extends AbstractMemRecord {
         for (long p = address + 4, n = address + 4 + Unsafe.getUnsafe().getInt(address) * 2; p < n; p += 2) {
             sink.put(Unsafe.getUnsafe().getChar(p));
         }
-    }
-
-    @Override
-    public int getStrLen(int col) {
-        return Unsafe.getUnsafe().getInt(address() + getInt(col));
     }
 
     protected abstract long address();

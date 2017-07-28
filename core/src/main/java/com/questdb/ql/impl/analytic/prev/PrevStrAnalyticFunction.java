@@ -67,31 +67,6 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     }
 
     @Override
-    public byte get() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean getBool() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getDate() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public double getDouble() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public float getFloat() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public CharSequence getFlyweightStr() {
         return bufLen == -1 ? null : cs;
     }
@@ -102,23 +77,8 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     }
 
     @Override
-    public int getInt() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getLong() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public RecordColumnMetadata getMetadata() {
         return valueColumn;
-    }
-
-    @Override
-    public short getShort() {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -131,11 +91,6 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     @Override
     public int getStrLen() {
         return bufLen == -1 ? VariableColumn.NULL_LEN : bufLen;
-    }
-
-    @Override
-    public String getSym() {
-        throw new UnsupportedOperationException();
     }
 
     @Override

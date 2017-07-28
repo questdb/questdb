@@ -32,8 +32,6 @@ public class DenseRankOrderedAnalyticFunction extends AbstractRankOrderedAnalyti
 
     @Override
     public void add(Record record) {
-//        DirectMap.KeyWriter kw = map.keyWriter();
-//        kw.putLong(record.getRowId());
         map.locate(record.getRowId());
         map.getOrCreateValues().putLong(0, ++rank);
     }

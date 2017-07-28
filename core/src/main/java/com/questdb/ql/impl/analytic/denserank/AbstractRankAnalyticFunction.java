@@ -28,9 +28,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.impl.analytic.AnalyticFunction;
-import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
-import com.questdb.store.MMappedSymbolTable;
 
 public abstract class AbstractRankAnalyticFunction implements AnalyticFunction {
 
@@ -46,46 +44,6 @@ public abstract class AbstractRankAnalyticFunction implements AnalyticFunction {
     }
 
     @Override
-    public byte get() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean getBool() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getDate() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public double getDouble() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public float getFloat() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public CharSequence getFlyweightStr() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public CharSequence getFlyweightStrB() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getInt() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public long getLong() {
         return rank;
     }
@@ -93,31 +51,6 @@ public abstract class AbstractRankAnalyticFunction implements AnalyticFunction {
     @Override
     public RecordColumnMetadata getMetadata() {
         return metadata;
-    }
-
-    @Override
-    public short getShort() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void getStr(CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getStrLen() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public String getSym() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public MMappedSymbolTable getSymbolTable() {
-        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -26,7 +26,6 @@ package com.questdb.ql.impl.analytic;
 import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
@@ -118,15 +117,6 @@ public class AnalyticRecord implements Record {
     @Override
     public short getShort(int col) {
         return col < split ? base.getShort(col) : functions.getQuick(col - split).getShort();
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        if (col < split) {
-            base.getStr(col, sink);
-        } else {
-            functions.getQuick(col - split).getStr(sink);
-        }
     }
 
     @Override

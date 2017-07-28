@@ -29,7 +29,6 @@ import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
 import com.questdb.std.Transient;
-import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
@@ -122,11 +121,6 @@ public class SelectedColumnsRecord implements Record {
     @Override
     public short getShort(int col) {
         return base.getShort(Unsafe.arrayGet(reindex, col));
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        base.getStr(Unsafe.arrayGet(reindex, col), sink);
     }
 
     @Override

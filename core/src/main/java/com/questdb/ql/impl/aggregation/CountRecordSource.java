@@ -201,11 +201,6 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
         }
 
         @Override
-        public void getStr(int col, CharSink sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public int getStrLen(int col) {
             throw new UnsupportedOperationException();
         }

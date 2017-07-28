@@ -58,7 +58,9 @@ public interface Record {
 
     short getShort(int col);
 
-    void getStr(int col, CharSink sink);
+    default void getStr(int col, CharSink sink) {
+        sink.put(getFlyweightStr(col));
+    }
 
     int getStrLen(int col);
 

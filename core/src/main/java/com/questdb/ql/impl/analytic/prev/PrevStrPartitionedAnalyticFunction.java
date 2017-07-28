@@ -68,31 +68,6 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
     }
 
     @Override
-    public byte get() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean getBool() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getDate() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public double getDouble() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public float getFloat() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public CharSequence getFlyweightStr() {
         return nextNull ? null : cs;
     }
@@ -103,23 +78,8 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
     }
 
     @Override
-    public int getInt() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getLong() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public RecordColumnMetadata getMetadata() {
         return valueColumn;
-    }
-
-    @Override
-    public short getShort() {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -133,11 +93,6 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
     @Override
     public int getStrLen() {
         return nextNull ? VariableColumn.NULL_LEN : cs.length();
-    }
-
-    @Override
-    public String getSym() {
-        throw new UnsupportedOperationException();
     }
 
     @Override

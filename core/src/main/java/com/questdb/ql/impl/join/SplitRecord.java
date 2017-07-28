@@ -27,7 +27,6 @@ import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
@@ -108,11 +107,6 @@ public class SplitRecord implements Record {
     @Override
     public short getShort(int col) {
         return getRec(col).getShort(idx(col));
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        getRec(col).getStr(idx(col), sink);
     }
 
     @Override

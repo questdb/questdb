@@ -25,7 +25,6 @@ package com.questdb.ql.impl.join.hash;
 
 import com.questdb.ql.Record;
 import com.questdb.std.DirectInputStream;
-import com.questdb.std.str.CharSink;
 
 import java.io.OutputStream;
 
@@ -99,11 +98,6 @@ public class FakeRecord implements Record {
 
     @Override
     public short getShort(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 
