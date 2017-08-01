@@ -259,7 +259,7 @@ public class ComparatorCompiler {
                     break;
                 case ColumnType.SYMBOL:
                     getterNameA = "getSym";
-                    fieldType = "Ljava/lang/String;";
+                    fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
                     comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
                     break;

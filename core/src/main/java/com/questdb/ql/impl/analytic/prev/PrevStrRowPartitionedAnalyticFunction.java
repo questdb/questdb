@@ -113,7 +113,7 @@ public class PrevStrRowPartitionedAnalyticFunction extends AbstractPrevAnalyticF
     }
 
     @Override
-    public String getSym() {
+    public CharSequence getSym() {
         return nextNull ? null : valueColumn.getSym(getParentRecord());
     }
 

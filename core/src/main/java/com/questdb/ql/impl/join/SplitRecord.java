@@ -115,7 +115,7 @@ public class SplitRecord implements Record {
     }
 
     @Override
-    public String getSym(int col) {
+    public CharSequence getSym(int col) {
         return getRec(col).getSym(idx(col));
     }
 

@@ -122,7 +122,7 @@ public class PrevRowAnalyticFunction implements AnalyticFunction {
     }
 
     @Override
-    public String getSym() {
+    public CharSequence getSym() {
         return prevRowId == -1 ? null : valueColumn.getSym(getParentRecord());
     }
 

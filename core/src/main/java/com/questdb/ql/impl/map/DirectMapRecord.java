@@ -113,7 +113,7 @@ public class DirectMapRecord implements Record {
     }
 
     @Override
-    public String getSym(int col) {
+    public CharSequence getSym(int col) {
         return storageFacade.getSymbolTable(col).value(entry.getInt(col));
     }
 

@@ -183,7 +183,7 @@ public class RecordListRecord implements Record {
     }
 
     @Override
-    public String getSym(int col) {
+    public CharSequence getSym(int col) {
         return storageFacade.getSymbolTable(col).value(getInt(col));
     }
 

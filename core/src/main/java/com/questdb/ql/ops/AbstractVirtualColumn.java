@@ -126,7 +126,7 @@ public abstract class AbstractVirtualColumn implements VirtualColumn {
     }
 
     @Override
-    public String getSym(Record rec) {
+    public CharSequence getSym(Record rec) {
         throw new UnsupportedOperationException();
     }
 

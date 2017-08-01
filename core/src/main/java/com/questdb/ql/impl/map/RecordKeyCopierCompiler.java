@@ -56,7 +56,7 @@ public class RecordKeyCopierCompiler {
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
         int rGetStr = asm.poolInterfaceMethod(Record.class, "getFlyweightStr", "(I)Ljava/lang/CharSequence;");
-        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/String;");
+        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
 
         //
         int wPutInt = asm.poolMethod(DirectMap.KeyWriter.class, "putInt", "(I)V");

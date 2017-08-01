@@ -206,7 +206,7 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
         }
 
         @Override
-        public String getSym(int col) {
+        public CharSequence getSym(int col) {
             throw new UnsupportedOperationException();
         }
     }

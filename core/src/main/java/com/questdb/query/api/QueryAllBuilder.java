@@ -24,14 +24,14 @@
 package com.questdb.query.api;
 
 import com.questdb.ex.JournalException;
-import com.questdb.std.time.Interval;
 import com.questdb.query.UnorderedResultSet;
+import com.questdb.std.time.Interval;
 
 public interface QueryAllBuilder<T> {
 
     UnorderedResultSet<T> asResultSet() throws JournalException;
 
-    QueryAllBuilder<T> filter(String symbol, String value);
+    QueryAllBuilder<T> filter(String symbol, CharSequence value);
 
     void resetFilter();
 

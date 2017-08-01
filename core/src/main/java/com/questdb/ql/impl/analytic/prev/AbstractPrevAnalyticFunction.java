@@ -99,7 +99,7 @@ public abstract class AbstractPrevAnalyticFunction implements AnalyticFunction, 
 
 
     @Override
-    public String getSym() {
+    public CharSequence getSym() {
         return nextNull ? null : valueColumn.getSymbolTable().value(getInt());
     }
 

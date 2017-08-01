@@ -107,7 +107,7 @@ abstract class AbstractMemRecord implements Record {
     }
 
     @Override
-    public String getSym(int col) {
+    public CharSequence getSym(int col) {
         return getSymbolTable(col).value(Unsafe.getUnsafe().getInt(address(col)));
     }
 

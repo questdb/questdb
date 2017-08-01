@@ -116,7 +116,7 @@ public class NullRecord implements Record {
     }
 
     @Override
-    public String getSym(int col) {
+    public CharSequence getSym(int col) {
         return null;
     }
 }

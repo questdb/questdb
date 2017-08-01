@@ -65,7 +65,7 @@ public interface VirtualColumn extends RecordColumnMetadata {
 
     int getStrLen(Record rec);
 
-    String getSym(Record rec);
+    CharSequence getSym(Record rec);
 
     boolean isConstant();
 

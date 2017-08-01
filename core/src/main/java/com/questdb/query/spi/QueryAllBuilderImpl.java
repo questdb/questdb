@@ -25,11 +25,11 @@ package com.questdb.query.spi;
 
 import com.questdb.Journal;
 import com.questdb.ex.JournalException;
-import com.questdb.std.time.Interval;
 import com.questdb.query.UnorderedResultSet;
 import com.questdb.query.api.QueryAllBuilder;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
+import com.questdb.std.time.Interval;
 import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.SymbolTable;
 
@@ -52,7 +52,7 @@ public class QueryAllBuilderImpl<T> implements QueryAllBuilder<T> {
     }
 
     @Override
-    public QueryAllBuilder<T> filter(String symbol, String value) {
+    public QueryAllBuilder<T> filter(String symbol, CharSequence value) {
         MMappedSymbolTable tab = journal.getSymbolTable(symbol);
         int key = tab.get(value);
         filterSymbols.add(symbol);

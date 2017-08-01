@@ -34,6 +34,7 @@ import com.questdb.query.iterator.ResultSetIterator;
 import com.questdb.std.LongList;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Iterator;
 
@@ -78,12 +79,13 @@ public class ResultSet<T> implements Iterable<T> {
         return journal.getPartition(Rows.toPartitionIndex(rowID), true).getStr(Rows.toLocalRowID(rowID), columnIndex);
     }
 
-    public String getSymbol(int rsIndex, int columnIndex) throws JournalException {
+    public CharSequence getSymbol(int rsIndex, int columnIndex) throws JournalException {
         long rowID = rowIDs.get(rsIndex);
         return journal.getPartition(Rows.toPartitionIndex(rowID), true).getSym(Rows.toLocalRowID(rowID), columnIndex);
     }
 
     @Override
+    @NotNull
     public Iterator<T> iterator() {
         return new ResultSetIterator<>(this);
     }

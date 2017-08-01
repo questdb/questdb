@@ -30,7 +30,9 @@ import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.iter.PartitionBufferedIterator;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.*;
+import com.questdb.misc.Hash;
+import com.questdb.misc.Misc;
+import com.questdb.misc.Unsafe;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
@@ -245,7 +247,7 @@ public class Partition<T> implements Closeable {
         return varCol(columnIndex).getStrLen(localRowID);
     }
 
-    public String getSym(long localRowID, int columnIndex) {
+    public CharSequence getSym(long localRowID, int columnIndex) {
         int symbolIndex = fixCol(columnIndex).getInt(localRowID);
         switch (symbolIndex) {
             case SymbolTable.VALUE_IS_NULL:

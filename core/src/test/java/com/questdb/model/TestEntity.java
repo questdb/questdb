@@ -77,7 +77,7 @@ public class TestEntity {
         return this;
     }
 
-    public String getSym() {
+    public CharSequence getSym() {
         return sym;
     }
 

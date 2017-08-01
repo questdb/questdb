@@ -54,7 +54,7 @@ public class SymRecordSourceColumn extends AbstractVirtualColumn {
     }
 
     @Override
-    public String getSym(Record rec) {
+    public CharSequence getSym(Record rec) {
         return rec.getSym(index);
     }
 

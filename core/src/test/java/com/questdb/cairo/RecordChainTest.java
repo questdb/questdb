@@ -127,6 +127,7 @@ public class RecordChainTest {
                     Assert.assertEquals(expected.getShort(i), actual.getShort(i));
                     break;
                 case ColumnType.SYMBOL:
+                    TestUtils.assertEquals(expected.getSym(i), actual.getSym(i));
                     break;
                 case ColumnType.FLOAT:
                     Assert.assertEquals(expected.getFloat(i), actual.getFloat(i), 0.00000001f);
@@ -255,8 +256,8 @@ public class RecordChainTest {
         }
 
         @Override
-        public String getSym(int col) {
-            return rnd.nextString(10);
+        public CharSequence getSym(int col) {
+            return rnd.nextChars(10);
         }
     }
 
@@ -272,5 +273,6 @@ public class RecordChainTest {
         metadata.add(new RecordColumnMetadataImpl("date", ColumnType.DATE));
         metadata.add(new RecordColumnMetadataImpl("bool", ColumnType.BOOLEAN));
         metadata.add(new RecordColumnMetadataImpl("str2", ColumnType.STRING));
+        metadata.add(new RecordColumnMetadataImpl("sym", ColumnType.SYMBOL));
     }
 }

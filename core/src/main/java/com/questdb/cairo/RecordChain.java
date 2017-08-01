@@ -320,8 +320,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         }
 
         @Override
-        public String getSym(int col) {
-            return null;
+        public CharSequence getSym(int col) {
+            return getFlyweightStr(col);
         }
 
         private long fixedWithColumnOffset(int index) {

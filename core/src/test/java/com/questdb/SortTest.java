@@ -125,8 +125,8 @@ public class SortTest extends AbstractTest {
     public void testSortSymbol() throws Exception {
         String last = "";
         for (TestEntity v : q.all().asResultSet().sort("sym").bufferedIterator()) {
-            Assert.assertTrue("Journal records are out of order", last.compareTo(v.getSym() == null ? "" : v.getSym()) <= 0);
-            last = v.getSym() == null ? "" : v.getSym();
+            Assert.assertTrue("Journal records are out of order", last.compareTo(v.getSym() == null ? "" : v.getSym().toString()) <= 0);
+            last = v.getSym() == null ? "" : v.getSym().toString();
         }
     }
 }

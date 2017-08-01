@@ -107,7 +107,7 @@ public class FakeRecord implements Record {
     }
 
     @Override
-    public String getSym(int col) {
+    public CharSequence getSym(int col) {
         throw new UnsupportedOperationException();
     }
 

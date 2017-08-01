@@ -127,7 +127,7 @@ public abstract class AbstractOrderedAnalyticFunction implements AnalyticFunctio
     }
 
     @Override
-    public String getSym() {
+    public CharSequence getSym() {
         return valueColumn.getSym(out);
     }
 

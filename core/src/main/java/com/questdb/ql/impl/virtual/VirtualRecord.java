@@ -122,7 +122,7 @@ class VirtualRecord implements Record {
     }
 
     @Override
-    public String getSym(int col) {
+    public CharSequence getSym(int col) {
         return col < split ? base.getSym(col) : getVc(col).getSym(base);
     }
 

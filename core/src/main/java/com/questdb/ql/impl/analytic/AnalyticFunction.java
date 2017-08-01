@@ -86,7 +86,7 @@ public interface AnalyticFunction {
         throw new UnsupportedOperationException();
     }
 
-    default String getSym() {
+    default CharSequence getSym() {
         throw new UnsupportedOperationException();
     }
 

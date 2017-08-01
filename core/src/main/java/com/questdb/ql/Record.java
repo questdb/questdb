@@ -64,5 +64,5 @@ public interface Record {
 
     int getStrLen(int col);
 
-    String getSym(int col);
+    CharSequence getSym(int col);
 }

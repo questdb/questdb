@@ -125,7 +125,7 @@ public class AnalyticRecord implements Record {
     }
 
     @Override
-    public String getSym(int col) {
+    public CharSequence getSym(int col) {
         return col < split ? base.getSym(col) : functions.getQuick(col - split).getSym();
     }
 

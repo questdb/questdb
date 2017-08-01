@@ -113,7 +113,7 @@ public class NullableRecord implements Record {
     }
 
     @Override
-    public String getSym(int col) {
+    public CharSequence getSym(int col) {
         return rec.getSym(col);
     }
 
