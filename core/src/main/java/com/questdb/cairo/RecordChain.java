@@ -5,7 +5,6 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
-import com.questdb.ql.impl.RecordListRecord;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.Mutable;
 import com.questdb.store.ColumnType;
@@ -63,11 +62,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         if (prevOffset != -1) {
             mem.jumpTo(prevOffset);
             mem.putLong(recordOffset);
-            mem.jumpTo(recordOffset + varOffset + 8);
+            mem.jumpTo(rowToDataOffset(recordOffset + varOffset));
         } else {
             mem.skip(varOffset);
         }
-        varAppendOffset = recordOffset + varOffset + fixOffset + 8;
+        varAppendOffset = rowToDataOffset(recordOffset + varOffset + fixOffset);
         return recordOffset;
     }
 
@@ -99,13 +98,28 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     }
 
     @Override
-    public Record recordAt(long rowId) {
-        return record.of(rowId);
+    public Record next() {
+        long offset = nextRecordOffset;
+        nextRecordOffset = mem.getLong(nextRecordOffset);
+        return record.of(rowToDataOffset(offset));
     }
 
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        ((RecordListRecord) record).of(atRowId);
+    public void putStr(CharSequence value) {
+        long offset = mem.getAppendOffset();
+        if (value == null) {
+            mem.jumpTo(rowToDataOffset(recordOffset));
+            mem.putLong(-1);
+            recordOffset += 8;
+            mem.jumpTo(offset);
+        } else {
+            mem.jumpTo(rowToDataOffset(recordOffset));
+            mem.putLong(varAppendOffset);
+            recordOffset += 8;
+            mem.jumpTo(varAppendOffset);
+            mem.putStr(value);
+            varAppendOffset = mem.getAppendOffset();
+            mem.jumpTo(offset);
+        }
     }
 
     @Override
@@ -128,10 +142,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     }
 
     @Override
-    public Record next() {
-        long offset = nextRecordOffset;
-        nextRecordOffset = mem.getLong(nextRecordOffset);
-        return record.of(offset + 8);
+    public Record recordAt(long row) {
+        return record.of(rowToDataOffset(row));
     }
 
     public void putBool(boolean value) {
@@ -148,22 +160,13 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         return offset;
     }
 
-    public void putStr(CharSequence value) {
-        long offset = mem.getAppendOffset();
-        if (value == null) {
-            mem.jumpTo(recordOffset + 8);
-            mem.putLong(-1);
-            recordOffset += 8;
-            mem.jumpTo(offset);
-        } else {
-            mem.jumpTo(recordOffset + 8);
-            mem.putLong(varAppendOffset);
-            recordOffset += 8;
-            mem.jumpTo(varAppendOffset);
-            mem.putStr(value);
-            varAppendOffset = mem.getAppendOffset();
-            mem.jumpTo(offset);
-        }
+    @Override
+    public void recordAt(Record record, long row) {
+        ((RecordChainRecord) record).of(rowToDataOffset(row));
+    }
+
+    private static long rowToDataOffset(long row) {
+        return row + 8;
     }
 
     private void putByte(byte value) {
@@ -302,7 +305,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
 
         @Override
         public long getRowId() {
-            return baseOffset;
+            return baseOffset - 8;
         }
 
         @Override

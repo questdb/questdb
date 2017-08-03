@@ -5,6 +5,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.std.DirectInputStream;
+import com.questdb.std.LongList;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -13,6 +14,7 @@ import org.junit.Test;
 import java.io.OutputStream;
 
 public class RecordChainTest {
+    public static final long SIZE_4M = 4 * 1024 * 1024L;
     private static CollectionRecordMetadata metadata;
 
     @Test
@@ -20,7 +22,7 @@ public class RecordChainTest {
         TestUtils.assertMemoryLeak(() -> {
             Record record = new R();
             final int N = 10000;
-            try (RecordChain chain = new RecordChain(metadata, 4 * 1024 * 1024L)) {
+            try (RecordChain chain = new RecordChain(metadata, SIZE_4M)) {
 
                 Assert.assertFalse(chain.hasNext());
                 populateChain(chain, record, N);
@@ -29,6 +31,53 @@ public class RecordChainTest {
                 chain.clear();
                 chain.toTop();
                 Assert.assertFalse(chain.hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testPseudoRandomAccess() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            try (RecordChain chain = new RecordChain(metadata, SIZE_4M)) {
+                Record record = new R();
+                LongList rows = new LongList();
+                long o = -1L;
+                for (int i = 0; i < N; i++) {
+                    o = chain.putRecord(record, o);
+                    rows.add(o);
+                }
+
+                Assert.assertEquals(N, rows.size());
+
+                Record expected = new R();
+
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    long row = rows.getQuick(i);
+                    Record actual = chain.recordAt(row);
+                    Assert.assertEquals(row, actual.getRowId());
+                    assertSame(expected, actual);
+                }
+
+                Record expected2 = new R();
+                Record rec2 = chain.newRecord();
+
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    long row = rows.getQuick(i);
+                    chain.recordAt(rec2, row);
+                    Assert.assertEquals(row, rec2.getRowId());
+                    assertSame(expected2, rec2);
+                }
+
+                Record expected3 = new R();
+                Record rec3 = chain.getRecord();
+
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    long row = rows.getQuick(i);
+                    chain.recordAt(rec3, row);
+                    Assert.assertEquals(row, rec3.getRowId());
+                    assertSame(expected3, rec3);
+                }
             }
         });
     }
@@ -98,6 +147,7 @@ public class RecordChainTest {
             assertSame(r2, chain.next());
             count++;
         }
+        //G182.60-P-063903
         Assert.assertEquals(expectedCount, count);
 
     }
