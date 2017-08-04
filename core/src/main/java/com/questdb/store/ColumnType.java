@@ -71,7 +71,8 @@ public final class ColumnType {
     }
 
     public static String nameOf(int columnType) {
-        return typeNameMap.get(columnType);
+        String name = typeNameMap.get(columnType);
+        return name != null ? name : "unknown";
     }
 
     public static int sizeOf(int columnType) {

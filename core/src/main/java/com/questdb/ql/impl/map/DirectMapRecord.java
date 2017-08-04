@@ -25,9 +25,6 @@ package com.questdb.ql.impl.map;
 
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
-import com.questdb.std.DirectInputStream;
-
-import java.io.OutputStream;
 
 public class DirectMapRecord implements Record {
     private final StorageFacade storageFacade;
@@ -40,21 +37,6 @@ public class DirectMapRecord implements Record {
     @Override
     public byte get(int col) {
         return entry.get(col);
-    }
-
-    @Override
-    public void getBin(int col, OutputStream s) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public DirectInputStream getBin(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getBinLen(int col) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

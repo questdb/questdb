@@ -25,30 +25,12 @@ package com.questdb.ql.impl.join.asof;
 
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.std.DirectInputStream;
 import com.questdb.store.SymbolTable;
-
-import java.io.OutputStream;
 
 abstract class AbstractMemRecord implements Record {
     @Override
     public byte get(int col) {
         return Unsafe.getUnsafe().getByte(address(col));
-    }
-
-    @Override
-    public void getBin(int col, OutputStream s) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public DirectInputStream getBin(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getBinLen(int col) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -72,16 +54,6 @@ abstract class AbstractMemRecord implements Record {
     }
 
     @Override
-    public CharSequence getFlyweightStr(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public CharSequence getFlyweightStrB(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getInt(int col) {
         return Unsafe.getUnsafe().getInt(address(col));
     }
@@ -99,11 +71,6 @@ abstract class AbstractMemRecord implements Record {
     @Override
     public short getShort(int col) {
         return Unsafe.getUnsafe().getShort(address(col));
-    }
-
-    @Override
-    public int getStrLen(int col) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

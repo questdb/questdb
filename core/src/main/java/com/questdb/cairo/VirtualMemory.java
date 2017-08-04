@@ -335,7 +335,7 @@ public class VirtualMemory implements Closeable {
      * @param bytes number of bytes to skip
      */
     public void skip(long bytes) {
-        assert bytes > 0;
+        assert bytes >= 0;
         if (pageHi - appendPointer > bytes) {
             appendPointer += bytes;
         } else {

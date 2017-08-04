@@ -7,12 +7,9 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.time.DateLocaleFactory;
-
-import java.io.OutputStream;
 
 public class $LocalesRecordSource extends AbstractCombinedRecordSource {
     private final ObjList<CharSequence> locales;
@@ -107,46 +104,6 @@ public class $LocalesRecordSource extends AbstractCombinedRecordSource {
         }
 
         @Override
-        public byte get(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getBin(int col, OutputStream s) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public DirectInputStream getBin(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getBinLen(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean getBool(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDate(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public double getDouble(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public float getFloat(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public CharSequence getFlyweightStr(int col) {
             return locales.getQuick(index);
         }
@@ -157,33 +114,13 @@ public class $LocalesRecordSource extends AbstractCombinedRecordSource {
         }
 
         @Override
-        public int getInt(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getLong(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public long getRowId() {
             return index;
         }
 
         @Override
-        public short getShort(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public int getStrLen(int col) {
             return locales.getQuick(index).length();
-        }
-
-        @Override
-        public CharSequence getSym(int col) {
-            throw new UnsupportedOperationException();
         }
 
         private Record of(int index) {

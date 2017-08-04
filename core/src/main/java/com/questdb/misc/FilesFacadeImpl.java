@@ -13,8 +13,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int close(long fd) {
-        return Files.close(fd);
+    public void close(long fd) {
+        Files.close(fd);
     }
 
     @Override

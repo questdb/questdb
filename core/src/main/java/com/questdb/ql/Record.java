@@ -23,6 +23,7 @@
 
 package com.questdb.ql;
 
+import com.questdb.std.BinarySequence;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
 
@@ -30,39 +31,75 @@ import java.io.OutputStream;
 
 public interface Record {
 
-    byte get(int col);
+    default byte get(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    void getBin(int col, OutputStream s);
+    default void getBin(int col, OutputStream s) {
+        throw new UnsupportedOperationException();
+    }
 
-    DirectInputStream getBin(int col);
+    default DirectInputStream getBin(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    long getBinLen(int col);
+    default BinarySequence getBin2(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    boolean getBool(int col);
+    default long getBinLen(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    long getDate(int col);
+    default boolean getBool(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    double getDouble(int col);
+    default long getDate(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    float getFloat(int col);
+    default double getDouble(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    CharSequence getFlyweightStr(int col);
+    default float getFloat(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    CharSequence getFlyweightStrB(int col);
+    default CharSequence getFlyweightStr(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    int getInt(int col);
+    default CharSequence getFlyweightStrB(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    long getLong(int col);
+    default int getInt(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    long getRowId();
+    default long getLong(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    short getShort(int col);
+    default long getRowId() {
+        throw new UnsupportedOperationException();
+    }
+
+    default short getShort(int col) {
+        throw new UnsupportedOperationException();
+    }
 
     default void getStr(int col, CharSink sink) {
         sink.put(getFlyweightStr(col));
     }
 
-    int getStrLen(int col);
+    default int getStrLen(int col) {
+        throw new UnsupportedOperationException();
+    }
 
-    CharSequence getSym(int col);
+    default CharSequence getSym(int col) {
+        throw new UnsupportedOperationException();
+    }
 }

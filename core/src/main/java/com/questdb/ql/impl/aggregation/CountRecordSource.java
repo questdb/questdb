@@ -29,11 +29,8 @@ import com.questdb.ql.*;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
-
-import java.io.OutputStream;
 
 public class CountRecordSource extends AbstractCombinedRecordSource {
     private final CountRecord record;
@@ -131,83 +128,8 @@ public class CountRecordSource extends AbstractCombinedRecordSource {
         private long count;
 
         @Override
-        public byte get(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getBin(int col, OutputStream s) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public DirectInputStream getBin(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getBinLen(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean getBool(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDate(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public double getDouble(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public float getFloat(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public CharSequence getFlyweightStr(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public CharSequence getFlyweightStrB(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public int getInt(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public long getLong(int col) {
             return count;
-        }
-
-        @Override
-        public long getRowId() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public short getShort(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public CharSequence getSym(int col) {
-            throw new UnsupportedOperationException();
         }
     }
 }

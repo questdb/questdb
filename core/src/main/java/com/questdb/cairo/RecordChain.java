@@ -5,12 +5,11 @@ import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
-import com.questdb.std.DirectInputStream;
+import com.questdb.std.BinarySequence;
 import com.questdb.std.Mutable;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
-import java.io.OutputStream;
 
 public class RecordChain implements Closeable, RecordCursor, Mutable {
 
@@ -20,8 +19,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     private final RecordMetadata metadata;
     private final RecordChainRecord record = new RecordChainRecord();
     private long recordOffset;
-    private long varOffset;
-    private long fixOffset;
+    private final long varOffset;
+    private final long fixOffset;
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
 
@@ -104,19 +103,16 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         return record.of(rowToDataOffset(offset));
     }
 
-    public void putStr(CharSequence value) {
+    public void putBin(BinarySequence value) {
         long offset = mem.getAppendOffset();
         if (value == null) {
-            mem.jumpTo(rowToDataOffset(recordOffset));
-            mem.putLong(-1);
-            recordOffset += 8;
-            mem.jumpTo(offset);
+            putNull(offset);
         } else {
             mem.jumpTo(rowToDataOffset(recordOffset));
             mem.putLong(varAppendOffset);
             recordOffset += 8;
             mem.jumpTo(varAppendOffset);
-            mem.putStr(value);
+            mem.putBin(value);
             varAppendOffset = mem.getAppendOffset();
             mem.jumpTo(offset);
         }
@@ -139,6 +135,21 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     @Override
     public boolean hasNext() {
         return nextRecordOffset != -1;
+    }
+
+    public void putStr(CharSequence value) {
+        long offset = mem.getAppendOffset();
+        if (value == null) {
+            putNull(offset);
+        } else {
+            mem.jumpTo(rowToDataOffset(recordOffset));
+            mem.putLong(varAppendOffset);
+            recordOffset += 8;
+            mem.jumpTo(varAppendOffset);
+            mem.putStr(value);
+            varAppendOffset = mem.getAppendOffset();
+            mem.jumpTo(offset);
+        }
     }
 
     @Override
@@ -189,6 +200,13 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         mem.putLong(value);
     }
 
+    private void putNull(long offset) {
+        mem.jumpTo(rowToDataOffset(recordOffset));
+        mem.putLong(-1);
+        recordOffset += 8;
+        mem.jumpTo(offset);
+    }
+
     private void putRecord0(Record record) {
         for (int i = 0; i < columnCount; i++) {
             switch (metadata.getColumnQuick(i).getType()) {
@@ -223,10 +241,10 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
                     putStr(record.getFlyweightStr(i));
                     break;
                 case ColumnType.BINARY:
-                    // todo
+                    putBin(record.getBin2(i));
                     break;
                 default:
-                    throw CairoException.instance(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnQuick(i).getType()));
+                    throw CairoException.instance(0).put("Unsupported type: ").put(ColumnType.nameOf(metadata.getColumnQuick(i).getType())).put(" [").put(metadata.getColumnQuick(i).getType()).put(']');
             }
         }
     }
@@ -245,20 +263,15 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         }
 
         @Override
-        public void getBin(int col, OutputStream s) {
-            // todo
-        }
-
-        @Override
-        public DirectInputStream getBin(int col) {
-            // todo
-            return null;
+        public BinarySequence getBin2(int col) {
+            long offset = varWidthColumnOffset(col);
+            return offset == -1 ? null : mem.getBin(offset);
         }
 
         @Override
         public long getBinLen(int col) {
-            // todo
-            return 0;
+            long offset = varWidthColumnOffset(col);
+            return offset == -1 ? 0 : mem.getLong(offset);
         }
 
         @Override

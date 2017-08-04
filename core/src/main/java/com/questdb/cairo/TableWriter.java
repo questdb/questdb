@@ -67,7 +67,7 @@ public class TableWriter implements Closeable {
     private static final DateFormat fmtDay;
     private static final DateFormat fmtMonth;
     private static final DateFormat fmtYear;
-    private static CharSequenceHashSet ignoredFiles = new CharSequenceHashSet();
+    private static final CharSequenceHashSet ignoredFiles = new CharSequenceHashSet();
     final ObjList<AppendMemory> columns;
     private final CompositePath path;
     private final CompositePath other;

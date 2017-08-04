@@ -418,9 +418,9 @@ public final class Numbers {
         long thisBits = Double.doubleToLongBits(1);
         long anotherBits = Double.doubleToLongBits(b);
 
-        return (thisBits == anotherBits ? 0 : // Values are equal
-                (thisBits < anotherBits ? 1 : // (-0.0, 0.0) or (!NaN, NaN)
-                        -1));                          // (0.0, -0.0) or (NaN, !NaN)
+        // Values are equal
+        // (-0.0, 0.0) or (!NaN, NaN)
+        return Long.compare(anotherBits, thisBits);
     }
 
     public static int compare(float a, float b) {
@@ -435,9 +435,9 @@ public final class Numbers {
         int thisBits = Float.floatToIntBits(a);
         int anotherBits = Float.floatToIntBits(b);
 
-        return (thisBits == anotherBits ? 0 : // Values are equal
-                (thisBits < anotherBits ? 1 : // (-0.0, 0.0) or (!NaN, NaN)
-                        -1));                          // (0.0, -0.0) or (NaN, !NaN)
+        // Values are equal
+        // (-0.0, 0.0) or (!NaN, NaN)
+        return Integer.compare(anotherBits, thisBits);                          // (0.0, -0.0) or (NaN, !NaN)
     }
 
     public static int decodeInt(long val) {
@@ -468,15 +468,237 @@ public final class Numbers {
     }
 
     public static double parseDouble(CharSequence sequence) throws NumericException {
-        return parseDouble(sequence, 0, sequence.length());
+        int lim = sequence.length();
+
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+        int i = 0;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+
+        switch (sequence.charAt(i)) {
+            case 'N':
+                return parseConst(sequence, i, lim, NaN, Double.NaN);
+            case 'I':
+                return parseConst(sequence, i, lim, INFINITY, negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY);
+            default:
+                break;
+        }
+
+        long val = 0;
+        int dp = -1;
+        int dpe = lim;
+        int exp = 0;
+        out:
+        for (; i < lim; i++) {
+            int c = sequence.charAt(i);
+            switch (c) {
+                case '.':
+                    dp = i;
+                    continue;
+                case 'E':
+                case 'e':
+                    exp = parseInt(sequence, i + 1, lim);
+                    if (dpe == lim) {
+                        dpe = i;
+                    }
+                    break out;
+                case 'D':
+                case 'd':
+                    if (i + 1 < lim || i == 0) {
+                        throw NumericException.INSTANCE;
+                    }
+                    if (dpe == lim) {
+                        dpe = i;
+                    }
+                    break out;
+                default:
+                    if (c < '0' || c > '9') {
+                        throw NumericException.INSTANCE;
+                    }
+
+                    if (val <= LONG_OVERFLOW_MAX) {
+                        // val * 10 + (c - '0')
+                        val = (val << 3) + (val << 1) + (c - '0');
+                    } else if (dpe == lim) {
+                        dpe = i;
+                    }
+                    break;
+            }
+        }
+
+        exp = dp == -1 ? exp : exp - (dpe - dp - 1);
+
+        if (exp > 308) {
+            exp = 308;
+        } else if (exp < -308) {
+            exp = -308;
+        }
+
+        if (exp > 0) {
+            return (negative ? -val : val) * pow10d[exp];
+        } else {
+            return (negative ? -val : val) / pow10d[-exp];
+        }
     }
 
     public static float parseFloat(CharSequence sequence) throws NumericException {
-        return parseFloat(sequence, 0, sequence.length());
+        int lim = sequence.length();
+
+        int p = 0;
+        if (lim == p) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        if (negative) {
+            p++;
+        }
+
+        if (p >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+
+        switch (sequence.charAt(p)) {
+            case 'N':
+                return parseFloatConst(sequence, p, lim, NaN, Float.NaN);
+            case 'I':
+                return parseFloatConst(sequence, p, lim, INFINITY, negative ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY);
+            default:
+                break;
+        }
+
+        int val = 0;
+        int dp = -1;
+        int dpe = lim;
+        int exp = 0;
+        out:
+        for (int i = p; i < lim; i++) {
+            int c = sequence.charAt(i);
+            switch (c) {
+                case '.':
+                    dp = i;
+                    continue;
+                case 'E':
+                case 'e':
+                    exp = parseInt(sequence, i + 1, lim);
+                    if (dpe == lim) {
+                        dpe = i;
+                    }
+                    break out;
+                case 'F':
+                case 'f':
+                    if (i == 0 || i + 1 < lim) {
+                        throw NumericException.INSTANCE;
+                    }
+
+                    if (dpe == lim) {
+                        dpe = i;
+                    }
+                    break out;
+                default:
+                    if (c < '0' || c > '9') {
+                        throw NumericException.INSTANCE;
+                    }
+
+                    if (val <= INT_OVERFLOW_MAX) {
+                        // val * 10 + (c - '0')
+                        val = (val << 3) + (val << 1) + (c - '0');
+                    } else if (dpe == lim) {
+                        dpe = i;
+                    }
+                    break;
+            }
+        }
+
+        exp = dp == -1 ? exp : exp - (dpe - dp - 1);
+
+        if (exp > 38) {
+            exp = 38;
+        } else if (exp < -38) {
+            exp = -38;
+        }
+
+        if (exp > 0) {
+            return (negative ? -val : val) * pow10f[exp];
+        } else {
+            return (negative ? -val : val) / pow10f[-exp];
+        }
     }
 
     public static int parseHexInt(CharSequence sequence) throws NumericException {
-        return parseHexInt(sequence, 0, sequence.length());
+        int lim = sequence.length();
+
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        int r;
+        for (int i = 0; i < lim; i++) {
+            int c = sequence.charAt(i);
+            int n = val << 4;
+
+            switch (c) {
+                case '0':
+                case '1':
+                case '2':
+                case '3':
+                case '4':
+                case '5':
+                case '6':
+                case '7':
+                case '8':
+                case '9':
+                    r = n + (c - '0');
+                    break;
+                case 'A':
+                case 'a':
+                    r = n + 0xA;
+                    break;
+                case 'B':
+                case 'b':
+                    r = n + 0xB;
+                    break;
+                case 'C':
+                case 'c':
+                    r = n + 0xC;
+                    break;
+                case 'D':
+                case 'd':
+                    r = n + 0xD;
+                    break;
+                case 'E':
+                case 'e':
+                    r = n + 0xE;
+                    break;
+                case 'F':
+                case 'f':
+                    r = n + 0xF;
+                    break;
+                default:
+                    // malformed
+                    throw NumericException.INSTANCE;
+            }
+
+            if (r < val) {
+                // overflow
+                throw NumericException.INSTANCE;
+            }
+
+            val = r;
+        }
+        return val;
     }
 
     public static int parseInt(CharSequence sequence) throws NumericException {
@@ -546,7 +768,55 @@ public final class Numbers {
     }
 
     public static int parseIntSize(CharSequence sequence) throws NumericException {
-        return parseIntSize(sequence, 0, sequence.length());
+        int lim = sequence.length();
+
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+        int i = 0;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        EX:
+        for (; i < lim; i++) {
+            int c = sequence.charAt(i);
+            if (c < '0' || c > '9') {
+                if (i == lim - 1) {
+                    switch (c) {
+                        case 'K':
+                        case 'k':
+                            val = val * 1024;
+                            break EX;
+                        case 'M':
+                        case 'm':
+                            val = val * 1024 * 1024;
+                            break EX;
+                        default:
+                            break;
+                    }
+                }
+                throw NumericException.INSTANCE;
+            }
+            // val * 10 + (c - '0')
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        if (val == Integer.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
     }
 
     public static long parseLong(CharSequence sequence) throws NumericException {
@@ -638,11 +908,11 @@ public final class Numbers {
         return val % 100 > 50 ? roundUp0(value, scale) : roundDown0(value, scale);
     }
 
-    private static double roundDown0(double value, int scale) throws NumericException {
+    private static double roundDown0(double value, int scale) {
         return value < 0 ? -roundDown00(-value, scale) : roundDown00(value, scale);
     }
 
-    private static double roundUp0(double value, int scale) throws NumericException {
+    private static double roundUp0(double value, int scale) {
         return value < 0 ? -roundUp00(-value, scale) : roundUp00(value, scale);
     }
 
@@ -656,292 +926,8 @@ public final class Numbers {
         return ((double) (long) (value * powten + TOLERANCE)) / powten;
     }
 
-    @SuppressWarnings("Duplicates")
-    private static double parseDouble(CharSequence sequence, final int p, int lim) throws NumericException {
-
-        if (lim == p) {
-            throw NumericException.INSTANCE;
-        }
-
-        boolean negative = sequence.charAt(p) == '-';
-        int i = p;
-        if (negative) {
-            i++;
-        }
-
-        if (i >= lim) {
-            throw NumericException.INSTANCE;
-        }
-
-
-        switch (sequence.charAt(i)) {
-            case 'N':
-                return parseConst(sequence, i, lim, NaN, Double.NaN);
-            case 'I':
-                return parseConst(sequence, i, lim, INFINITY, negative ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY);
-            default:
-                break;
-        }
-
-        long val = 0;
-        int dp = -1;
-        int dpe = lim;
-        int exp = 0;
-        out:
-        for (; i < lim; i++) {
-            int c = sequence.charAt(i);
-            switch (c) {
-                case '.':
-                    dp = i;
-                    continue;
-                case 'E':
-                case 'e':
-                    exp = parseInt(sequence, i + 1, lim);
-                    if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break out;
-                case 'D':
-                case 'd':
-                    if (i + 1 < lim || i == 0) {
-                        throw NumericException.INSTANCE;
-                    }
-                    if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break out;
-                default:
-                    if (c < '0' || c > '9') {
-                        throw NumericException.INSTANCE;
-                    }
-
-                    if (val <= LONG_OVERFLOW_MAX) {
-                        // val * 10 + (c - '0')
-                        val = (val << 3) + (val << 1) + (c - '0');
-                    } else if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break;
-            }
-        }
-
-        exp = dp == -1 ? exp : exp - (dpe - dp - 1);
-
-        if (exp > 308) {
-            exp = 308;
-        } else if (exp < -308) {
-            exp = -308;
-        }
-
-        if (exp > 0) {
-            return (negative ? -val : val) * pow10d[exp];
-        } else {
-            return (negative ? -val : val) / pow10d[-exp];
-        }
-    }
-
-    @SuppressWarnings("Duplicates")
-    private static float parseFloat(CharSequence sequence, int lo, int lim) throws NumericException {
-
-        int p = lo;
-        if (lim == p) {
-            throw NumericException.INSTANCE;
-        }
-
-        boolean negative = sequence.charAt(p) == '-';
-        if (negative) {
-            p++;
-        }
-
-        if (p >= lim) {
-            throw NumericException.INSTANCE;
-        }
-
-
-        switch (sequence.charAt(p)) {
-            case 'N':
-                return parseFloatConst(sequence, p, lim, NaN, Float.NaN);
-            case 'I':
-                return parseFloatConst(sequence, p, lim, INFINITY, negative ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY);
-            default:
-                break;
-        }
-
-        int val = 0;
-        int dp = -1;
-        int dpe = lim;
-        int exp = 0;
-        out:
-        for (int i = p; i < lim; i++) {
-            int c = sequence.charAt(i);
-            switch (c) {
-                case '.':
-                    dp = i;
-                    continue;
-                case 'E':
-                case 'e':
-                    exp = parseInt(sequence, i + 1, lim);
-                    if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break out;
-                case 'F':
-                case 'f':
-                    if (i == 0 || i + 1 < lim) {
-                        throw NumericException.INSTANCE;
-                    }
-
-                    if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break out;
-                default:
-                    if (c < '0' || c > '9') {
-                        throw NumericException.INSTANCE;
-                    }
-
-                    if (val <= INT_OVERFLOW_MAX) {
-                        // val * 10 + (c - '0')
-                        val = (val << 3) + (val << 1) + (c - '0');
-                    } else if (dpe == lim) {
-                        dpe = i;
-                    }
-                    break;
-            }
-        }
-
-        exp = dp == -1 ? exp : exp - (dpe - dp - 1);
-
-        if (exp > 38) {
-            exp = 38;
-        } else if (exp < -38) {
-            exp = -38;
-        }
-
-        if (exp > 0) {
-            return (negative ? -val : val) * pow10f[exp];
-        } else {
-            return (negative ? -val : val) / pow10f[-exp];
-        }
-    }
-
 
     //////////////////////
-
-    private static int parseHexInt(CharSequence sequence, final int p, int lim) throws NumericException {
-
-        if (lim == p) {
-            throw NumericException.INSTANCE;
-        }
-
-        int val = 0;
-        int r;
-        for (int i = p; i < lim; i++) {
-            int c = sequence.charAt(i);
-            int n = val << 4;
-
-            switch (c) {
-                case '0':
-                case '1':
-                case '2':
-                case '3':
-                case '4':
-                case '5':
-                case '6':
-                case '7':
-                case '8':
-                case '9':
-                    r = n + (c - '0');
-                    break;
-                case 'A':
-                case 'a':
-                    r = n + 0xA;
-                    break;
-                case 'B':
-                case 'b':
-                    r = n + 0xB;
-                    break;
-                case 'C':
-                case 'c':
-                    r = n + 0xC;
-                    break;
-                case 'D':
-                case 'd':
-                    r = n + 0xD;
-                    break;
-                case 'E':
-                case 'e':
-                    r = n + 0xE;
-                    break;
-                case 'F':
-                case 'f':
-                    r = n + 0xF;
-                    break;
-                default:
-                    // malformed
-                    throw NumericException.INSTANCE;
-            }
-
-            if (r < val) {
-                // overflow
-                throw NumericException.INSTANCE;
-            }
-
-            val = r;
-        }
-        return val;
-    }
-
-    private static int parseIntSize(CharSequence sequence, final int p, int lim) throws NumericException {
-
-        if (lim == p) {
-            throw NumericException.INSTANCE;
-        }
-
-        boolean negative = sequence.charAt(p) == '-';
-        int i = p;
-        if (negative) {
-            i++;
-        }
-
-        if (i >= lim) {
-            throw NumericException.INSTANCE;
-        }
-
-        int val = 0;
-        EX:
-        for (; i < lim; i++) {
-            int c = sequence.charAt(i);
-            if (c < '0' || c > '9') {
-                if (i == lim - 1) {
-                    switch (c) {
-                        case 'K':
-                        case 'k':
-                            val = val * 1024;
-                            break EX;
-                        case 'M':
-                        case 'm':
-                            val = val * 1024 * 1024;
-                            break EX;
-                        default:
-                            break;
-                    }
-                }
-                throw NumericException.INSTANCE;
-            }
-            // val * 10 + (c - '0')
-            int r = (val << 3) + (val << 1) - (c - '0');
-            if (r > val) {
-                throw NumericException.INSTANCE;
-            }
-            val = r;
-        }
-
-        if (val == Integer.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
-        }
-        return negative ? val : -val;
-    }
 
     private static void appendLong10(CharSink sink, long i) {
         long c;

@@ -6,7 +6,7 @@ import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
 
 public class CairoException extends RuntimeException implements Sinkable {
-    private static ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
+    private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     private final StringSink message = new StringSink();
     private int errno;
 
@@ -29,6 +29,11 @@ public class CairoException extends RuntimeException implements Sinkable {
 
     public CairoException put(CharSequence cs) {
         message.put(cs);
+        return this;
+    }
+
+    public CairoException put(char c) {
+        message.put(c);
         return this;
     }
 

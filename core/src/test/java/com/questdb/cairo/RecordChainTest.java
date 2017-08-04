@@ -4,14 +4,12 @@ import com.questdb.misc.Rnd;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
-import com.questdb.std.DirectInputStream;
+import com.questdb.std.BinarySequence;
 import com.questdb.std.LongList;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.io.OutputStream;
 
 public class RecordChainTest {
     public static final long SIZE_4M = 4 * 1024 * 1024L;
@@ -133,6 +131,21 @@ public class RecordChainTest {
         );
     }
 
+    @Test
+    public void testWrongColumnType() throws Exception {
+        CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        metadata.add(new RecordColumnMetadataImpl("int", 199));
+        R r = new R();
+        TestUtils.assertMemoryLeak(() -> {
+            try (RecordChain chain = new RecordChain(metadata, 1024)) {
+                Assert.assertNull(chain.getStorageFacade());
+                chain.putRecord(r, -1);
+                Assert.fail();
+            } catch (CairoException ignored) {
+            }
+        });
+    }
+
     private static void populateChain(RecordChain chain, Record record, int count) {
         long o = -1L;
         for (int i = 0; i < count; i++) {
@@ -196,7 +209,17 @@ public class RecordChainTest {
                     }
                     break;
                 case ColumnType.BINARY:
-                    // todo
+                    BinarySequence bs = expected.getBin2(i);
+                    BinarySequence actBs = actual.getBin2(i);
+                    if (bs == null) {
+                        Assert.assertNull(actBs);
+                    } else {
+                        Assert.assertEquals(bs.length(), actBs.length());
+                        Assert.assertEquals(bs.length(), actual.getBinLen(i));
+                        for (long l = 0, z = bs.length(); l < z; l++) {
+                            Assert.assertTrue(bs.byteAt(l) == actBs.byteAt(l));
+                        }
+                    }
                     break;
                 default:
                     throw CairoException.instance(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnQuick(i).getType()));
@@ -230,6 +253,7 @@ public class RecordChainTest {
 
     private static class R implements Record {
         final Rnd rnd = new Rnd();
+        final ArrayBinarySequence abs = new ArrayBinarySequence().of(new byte[1024]);
 
         @Override
         public byte get(int col) {
@@ -237,17 +261,14 @@ public class RecordChainTest {
         }
 
         @Override
-        public void getBin(int col, OutputStream s) {
-        }
-
-        @Override
-        public DirectInputStream getBin(int col) {
-            return null;
-        }
-
-        @Override
-        public long getBinLen(int col) {
-            return 0;
+        public BinarySequence getBin2(int col) {
+            if (rnd.nextPositiveInt() % 32 == 0) {
+                return null;
+            }
+            for (int i = 0, n = abs.array.length; i < n; i++) {
+                abs.array[i] = rnd.nextByte();
+            }
+            return abs;
         }
 
         @Override
@@ -311,6 +332,25 @@ public class RecordChainTest {
         }
     }
 
+    public static class ArrayBinarySequence implements BinarySequence {
+        private byte[] array;
+
+        @Override
+        public byte byteAt(long index) {
+            return array[(int) index];
+        }
+
+        @Override
+        public long length() {
+            return array.length;
+        }
+
+        ArrayBinarySequence of(byte[] array) {
+            this.array = array;
+            return this;
+        }
+    }
+
     static {
         metadata = new CollectionRecordMetadata();
         metadata.add(new RecordColumnMetadataImpl("int", ColumnType.INT));
@@ -324,5 +364,6 @@ public class RecordChainTest {
         metadata.add(new RecordColumnMetadataImpl("bool", ColumnType.BOOLEAN));
         metadata.add(new RecordColumnMetadataImpl("str2", ColumnType.STRING));
         metadata.add(new RecordColumnMetadataImpl("sym", ColumnType.SYMBOL));
+        metadata.add(new RecordColumnMetadataImpl("bin", ColumnType.BINARY));
     }
 }
