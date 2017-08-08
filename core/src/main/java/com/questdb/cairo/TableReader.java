@@ -8,11 +8,10 @@ import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
-import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
+import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.std.DirectInputStream;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CompositePath;
@@ -26,14 +25,14 @@ import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
-import java.io.IOException;
-import java.io.OutputStream;
 import java.util.concurrent.locks.LockSupport;
 
 import static com.questdb.cairo.TableWriter.*;
 
-public class TableReader implements Closeable {
+public class TableReader implements Closeable, RecordCursor {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
+    private final static NextRecordFunction nextPartitionFunction = new NextPartitionFunction();
+    private final static NextRecordFunction nextPartitionRecordFunction = new NextPartitionRecordFunction();
     private final ObjList<ReadOnlyMemory> columns;
     private final FilesFacade ff;
     private final CompositePath path;
@@ -45,27 +44,27 @@ public class TableReader implements Closeable {
     private final RecordMetadata metadata;
     private final LongList partitionSizes;
     private final DateFormat partitionDirFmt;
+    private final TableRecord record = new TableRecord();
     private int columnCount;
     private int columnBlockSize;
     private long transientRowCount;
     private long size;
-    private long maxTimestamp;
     private long txn = -1;
     private int timestampIndex;
     private int partitionCount;
     private long partitionMin;
     private long columnTops[];
+    private int partitionIndex = 0;
+    private long maxRecordIndex = -1;
+    private NextRecordFunction currentRecordFunction = nextPartitionFunction;
+    private long recordIndex = 0;
 
     public TableReader(FilesFacade ff, CharSequence root, CharSequence name) {
         this.ff = ff;
         this.path = new CompositePath().of(root).concat(name);
         this.rootLen = path.length();
+        failOnPendingTodo();
         this.txMem = openTxnFile();
-
-        if (readTodoTaskCode() != -1) {
-            throw CairoException.instance(0).put("Table ").put(path.$()).put(" is pending recovery.");
-        }
-
         this.metaMem = new ReadOnlyMemory(ff);
         openMetaFile();
         this.columnCount = metaMem.getInt(META_OFFSET_COUNT);
@@ -85,7 +84,7 @@ public class TableReader implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Misc.free(path);
         Misc.free(metaMem);
         Misc.free(txMem);
@@ -97,25 +96,54 @@ public class TableReader implements Closeable {
         }
     }
 
-    public RecordCursor prepareCursor(CancellationHandler cancellationHandler) {
+    public RecordMetadata getMetadata() {
+        return metadata;
+    }
+
+    @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
+    public Record newRecord() {
         return null;
     }
 
-    // this is prototype to help visualize iteration over table data
-    public void readAll() {
-        int last = partitionCount - 1;
-        for (int i = 0; i < partitionCount; i++) {
-            int columnIndex = i * columnBlockSize * 2;
-            long partitionSize = partitionSizes.getQuick(i);
+    @Override
+    public StorageFacade getStorageFacade() {
+        return null;
+    }
 
-            if (partitionSize == -1) {
-                partitionSize = openPartition(i, columnIndex, columnTops, i == last);
-            }
+    @Override
+    public Record recordAt(long rowId) {
+        return null;
+    }
 
-            while (partitionSize-- > 0) {
+    @Override
+    public void recordAt(Record record, long atRowId) {
 
-            }
-        }
+    }
+
+    @Override
+    public void releaseCursor() {
+
+    }
+
+    @Override
+    public void toTop() {
+        partitionIndex = 0;
+        currentRecordFunction = nextPartitionFunction;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return partitionIndex < partitionCount;
+    }
+
+    @Override
+    public Record next() {
+        return currentRecordFunction.next(this);
     }
 
     public long size() {
@@ -147,8 +175,7 @@ public class TableReader implements Closeable {
                                 if (time > partitionMax) {
                                     partitionMax = time;
                                 }
-                            } catch (NumericException e) {
-                                e.printStackTrace();
+                            } catch (NumericException ignore) {
                             }
                         }
                     } while (ff.findNext(p));
@@ -177,6 +204,16 @@ public class TableReader implements Closeable {
                 break;
             default:
                 break;
+        }
+    }
+
+    private void failOnPendingTodo() {
+        try {
+            if (ff.exists(path.concat(TODO_FILE_NAME).$())) {
+                throw CairoException.instance(0).put("Table ").put(path.$()).put(" is pending recovery.");
+            }
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 
@@ -351,34 +388,6 @@ public class TableReader implements Closeable {
         }
     }
 
-    private byte readTodoTaskCode() {
-        try {
-            if (ff.exists(path.concat(TODO_FILE_NAME).$())) {
-                long todoFd = ff.openRO(path);
-                if (todoFd == -1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot open *todo*: ").put(path);
-                }
-                try {
-                    long buf = Unsafe.malloc(1);
-                    try {
-                        if (ff.read(todoFd, buf, 1, 0) != 1) {
-                            LOG.info().$("Cannot read *todo* code. File seems to be truncated. Ignoring").$();
-                            return -1;
-                        }
-                        return Unsafe.getUnsafe().getByte(buf);
-                    } finally {
-                        Unsafe.free(buf, 1);
-                    }
-                } finally {
-                    ff.close(todoFd);
-                }
-            }
-            return -1;
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     private void readTx() {
         while (true) {
             long txn = txMem.getLong(TableWriter.TX_OFFSET_TXN);
@@ -396,12 +405,15 @@ public class TableReader implements Closeable {
                 this.txn = txn;
                 this.transientRowCount = transientRowCount;
                 this.size = fixedRowCount + transientRowCount;
-                this.maxTimestamp = maxTimestamp;
                 break;
             }
-
             LockSupport.parkNanos(1);
         }
+    }
+
+    @FunctionalInterface
+    private interface NextRecordFunction {
+        Record next(TableReader reader);
     }
 
     private static class ColumnMeta implements RecordColumnMetadata {
@@ -439,69 +451,89 @@ public class TableReader implements Closeable {
         }
     }
 
-    private class TableRecord implements Record {
+    private static class NextPartitionFunction implements NextRecordFunction {
+        @Override
+        public Record next(TableReader reader) {
+            long partitionSize = reader.partitionSizes.getQuick(reader.partitionIndex);
+            int columnIndex = reader.partitionIndex * reader.columnBlockSize * 2;
 
+            if (partitionSize == -1) {
+                reader.maxRecordIndex = reader.openPartition(reader.partitionIndex, columnIndex, reader.columnTops, reader.partitionIndex == reader.partitionCount - 1) - 1;
+            } else {
+                reader.maxRecordIndex = partitionSize - 1;
+            }
+
+            reader.recordIndex = -1;
+            reader.record.baseColumnIndex = columnIndex;
+            reader.currentRecordFunction = nextPartitionRecordFunction;
+            return reader.currentRecordFunction.next(reader);
+        }
+    }
+
+    private static class NextPartitionRecordFunction implements NextRecordFunction {
+        @Override
+        public Record next(TableReader reader) {
+            if (++reader.recordIndex < reader.maxRecordIndex) {
+                return reader.record;
+            } else {
+                reader.currentRecordFunction = nextPartitionFunction;
+                reader.partitionIndex++;
+                return reader.record;
+            }
+        }
+    }
+
+    private class TableRecord implements Record {
         private int baseColumnIndex;
-        private long baseOffset;
 
         @Override
         public byte get(int col) {
-            return colA(col).getByte(baseOffset);
-        }
-
-        @Override
-        public void getBin(int col, OutputStream s) {
-
-        }
-
-        @Override
-        public DirectInputStream getBin(int col) {
-            return null;
+            return colA(col).getByte(recordIndex);
         }
 
         @Override
         public long getBinLen(int col) {
-            return colA(col).getLong(colB(col).getLong(baseOffset * 8));
+            return colA(col).getLong(colB(col).getLong(recordIndex * 8));
         }
 
         @Override
         public boolean getBool(int col) {
-            return colA(col).getBool(baseOffset);
+            return colA(col).getBool(recordIndex);
         }
 
         @Override
         public long getDate(int col) {
-            return colA(col).getLong(baseOffset * 8);
+            return colA(col).getLong(recordIndex * 8);
         }
 
         @Override
         public double getDouble(int col) {
-            return colA(col).getDouble(baseOffset * 8);
+            return colA(col).getDouble(recordIndex * 8);
         }
 
         @Override
         public float getFloat(int col) {
-            return colA(col).getFloat(baseOffset * 4);
+            return colA(col).getFloat(recordIndex * 4);
         }
 
         @Override
         public CharSequence getFlyweightStr(int col) {
-            return colA(col).getStr(colB(col).getLong(baseOffset * 8));
+            return colA(col).getStr(colB(col).getLong(recordIndex * 8));
         }
 
         @Override
         public CharSequence getFlyweightStrB(int col) {
-            return colA(col).getStr2(colB(col).getLong(baseOffset * 8));
+            return colA(col).getStr2(colB(col).getLong(recordIndex * 8));
         }
 
         @Override
         public int getInt(int col) {
-            return colA(col).getInt(baseOffset * 4);
+            return colA(col).getInt(recordIndex * 4);
         }
 
         @Override
         public long getLong(int col) {
-            return colA(col).getLong(baseOffset * 8);
+            return colA(col).getLong(recordIndex * 8);
         }
 
         @Override
@@ -511,12 +543,12 @@ public class TableReader implements Closeable {
 
         @Override
         public short getShort(int col) {
-            return colA(col).getShort(baseOffset * 2);
+            return colA(col).getShort(recordIndex * 2);
         }
 
         @Override
         public int getStrLen(int col) {
-            return colA(col).getInt(colB(col).getLong(baseOffset * 8));
+            return colA(col).getInt(colB(col).getLong(recordIndex * 8));
         }
 
         @Override

@@ -228,7 +228,7 @@ public class RecordChainTest {
         }
     }
 
-    private void testChainReuseWithClearFunction(ClearFunc clear) {
+    private void testChainReuseWithClearFunction(ClearFunc clear) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Record record = new R();
             Record expected = new R();

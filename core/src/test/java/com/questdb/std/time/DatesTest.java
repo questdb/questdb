@@ -78,6 +78,20 @@ public class DatesTest {
     }
 
     @Test
+    public void testAddYears3() throws Exception {
+        long millis = DateFormatUtils.parseDateTime("2014-01-01T00:00:00.000Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addYear(millis, 1));
+        TestUtils.assertEquals("2015-01-01T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testAddYearsNonLeapToLeap() throws Exception {
+        long millis = DateFormatUtils.parseDateTime("2015-01-01T00:00:00.000Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addYear(millis, 1));
+        TestUtils.assertEquals("2016-01-01T00:00:00.000Z", sink);
+    }
+
+    @Test
     public void testAddYearsPrevEpoch() throws Exception {
         long millis = DateFormatUtils.parseDateTime("1888-05-12T23:45:51.045Z");
         DateFormatUtils.appendDateTime(sink, Dates.addYear(millis, 10));

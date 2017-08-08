@@ -124,12 +124,14 @@ final public class Dates {
             return millis;
         }
 
-        int y, m;
-        boolean l;
+        int y = getYear(millis);
+        int m;
+        boolean leap1 = isLeapYear(y);
+        boolean leap2 = isLeapYear(y + years);
 
-        return yearMillis((y = getYear(millis)) + years, l = isLeapYear(y + years))
-                + monthOfYearMillis(m = getMonthOfYear(millis, y, l), l)
-                + (getDayOfMonth(millis, y, m, l) - 1) * DAY_MILLIS
+        return yearMillis(y + years, leap2)
+                + monthOfYearMillis(m = getMonthOfYear(millis, y, leap1), leap2)
+                + (getDayOfMonth(millis, y, m, leap1) - 1) * DAY_MILLIS
                 + getTime(millis)
                 + (millis < 0 ? 1 : 0);
 

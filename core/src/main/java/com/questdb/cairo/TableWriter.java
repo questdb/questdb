@@ -472,6 +472,7 @@ public class TableWriter implements Closeable {
      */
     static long readColumnTop(FilesFacade ff, CompositePath path, CharSequence name, int plen) {
         try {
+            path.trimTo(path.length());
             if (ff.exists(topFile(path, name))) {
                 long fd = ff.openRO(path);
                 try {
@@ -630,27 +631,28 @@ public class TableWriter implements Closeable {
     }
 
     private void commitPendingPartitions() {
-        long offset = 8;
+        long offset = 0;
         for (int i = 0; i < txPartitionCount - 1; i++) {
             try {
-                long partitionTimestamp = columnSizeMem.getLong(offset);
-                offset += 8;
+                long partitionTimestamp = columnSizeMem.getLong(offset + 8);
                 setStateForTimestamp(partitionTimestamp, false);
 
                 long fd = openAppend(path.concat(ARCHIVE_FILE_NAME).$());
                 try {
                     int len = 8;
+                    long o = offset;
                     while (len > 0) {
-                        long l = Math.min(len, columnSizeMem.pageRemaining(offset));
-                        if (ff.write(fd, columnSizeMem.addressOf(offset), l, 0) == -1) {
+                        long l = Math.min(len, columnSizeMem.pageRemaining(o));
+                        if (ff.write(fd, columnSizeMem.addressOf(o), l, 0) != l) {
                             throw CairoException.instance(ff.errno()).put("Commit failed, file=").put(path);
                         }
                         len -= l;
-                        offset += l;
+                        o += l;
                     }
                 } finally {
                     ff.close(fd);
                 }
+                offset += 16;
             } finally {
                 path.trimTo(rootLen);
             }
@@ -1236,6 +1238,7 @@ public class TableWriter implements Closeable {
                 path.put(DEFAULT_PARTITION_NAME);
                 partitionLo = Long.MIN_VALUE;
                 partitionHi = Long.MAX_VALUE;
+                break;
         }
     }
 

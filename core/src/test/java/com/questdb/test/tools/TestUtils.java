@@ -256,7 +256,7 @@ public final class TestUtils {
         }
     }
 
-    public static void assertMemoryLeak(Runnable runnable) {
+    public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         long mem = Unsafe.getMemUsed();
         long fileCount = Files.getOpenFileCount();
         runnable.run();
@@ -508,6 +508,11 @@ public final class TestUtils {
         for (T o : iterator) {
             p.out(o);
         }
+    }
+
+    @FunctionalInterface
+    public interface LeakProneCode {
+        void run() throws Exception;
     }
 
     static {
