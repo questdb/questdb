@@ -28,11 +28,17 @@ import com.questdb.misc.Hash;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
-import com.questdb.std.*;
+import com.questdb.std.DirectInputStream;
+import com.questdb.std.DirectLongList;
+import com.questdb.std.Mutable;
+import com.questdb.std.Transient;
 import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
+import org.jetbrains.annotations.NotNull;
 
-public class DirectMap extends DirectMemoryStructure implements Mutable, Iterable<DirectMapEntry> {
+import java.io.Closeable;
+
+public class DirectMap implements Mutable, Iterable<DirectMapEntry>, Closeable {
 
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final float loadFactor;
@@ -40,6 +46,8 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
     private final DirectMapValues values;
     private final DirectMapIterator iterator;
     private final DirectMapEntry entry;
+    private long address;
+    private long capacity;
     private int keyBlockOffset;
     private int keyDataOffset;
     private DirectLongList offsets;
@@ -121,7 +129,10 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
     @Override
     public void close() {
         offsets.close();
-        super.close();
+        if (address != 0) {
+            Unsafe.free(address, capacity);
+            address = 0;
+        }
     }
 
     public DirectMapEntry entryAt(long rowid) {
@@ -163,6 +174,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
     }
 
     @Override
+    @NotNull
     public DirectMapIterator iterator() {
         return iterator.init(kStart, size);
     }
@@ -276,7 +288,7 @@ public class DirectMap extends DirectMemoryStructure implements Mutable, Iterabl
             }
             pointers.set(index, offset);
         }
-        this.offsets.free();
+        this.offsets.close();
         this.offsets = pointers;
         this.free += (capacity - keyCapacity) * loadFactor;
         this.keyCapacity = capacity;

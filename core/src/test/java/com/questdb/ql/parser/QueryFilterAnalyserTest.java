@@ -520,7 +520,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     public void testIntervalSourceYear() throws Exception {
         IntrinsicModel m = modelOf("timestamp = '2015-02-23T10:00:55.000Z;1d;1y;5'");
         final String expected = "[Interval{lo=2015-02-23T10:00:55.000Z, hi=2015-02-24T10:00:55.000Z}," +
-                "Interval{lo=2016-02-24T10:00:55.000Z, hi=2016-02-25T10:00:55.000Z}," +
+                "Interval{lo=2016-02-23T10:00:55.000Z, hi=2016-02-24T10:00:55.000Z}," +
                 "Interval{lo=2017-02-23T10:00:55.000Z, hi=2017-02-24T10:00:55.000Z}," +
                 "Interval{lo=2018-02-23T10:00:55.000Z, hi=2018-02-24T10:00:55.000Z}," +
                 "Interval{lo=2019-02-23T10:00:55.000Z, hi=2019-02-24T10:00:55.000Z}]";

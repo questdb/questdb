@@ -27,7 +27,9 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CharSink;
 
-public class DirectLongList extends DirectMemoryStructure implements Mutable {
+import java.io.Closeable;
+
+public class DirectLongList implements Mutable, Closeable {
 
     public static final int CACHE_LINE_SIZE = 64;
     private final int pow2;
@@ -35,6 +37,8 @@ public class DirectLongList extends DirectMemoryStructure implements Mutable {
     long pos;
     long start;
     long limit;
+    private long address;
+    private long capacity;
 
     public DirectLongList(long capacity) {
         this.pow2 = 3;
@@ -89,6 +93,14 @@ public class DirectLongList extends DirectMemoryStructure implements Mutable {
     public void clear(long b) {
         pos = start;
         zero(b);
+    }
+
+    @Override
+    public void close() {
+        if (address != 0) {
+            Unsafe.free(address, capacity);
+            address = 0;
+        }
     }
 
     public long get(long p) {
