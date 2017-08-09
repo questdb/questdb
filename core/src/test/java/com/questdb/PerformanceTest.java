@@ -23,6 +23,7 @@
 
 package com.questdb;
 
+import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.TableWriter;
 import com.questdb.ex.JournalException;
@@ -273,12 +274,14 @@ public class PerformanceTest extends AbstractTest {
     @Test
     public void testNewAppenderPerformance() throws JournalException, ParserException, NumericException {
 
+        int count = 10;
+        long t = 0;
+        long result;
+
         CharSequence root = getFactory().getConfiguration().getJournalBase().getAbsolutePath();
         try (TableUtils tabU = new TableUtils(FilesFacadeImpl.INSTANCE)) {
             tabU.create(root, getFactory().getConfiguration().createMetadata(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE)), 509);
             try (TableWriter w = new TableWriter(FilesFacadeImpl.INSTANCE, root, "quote")) {
-                long t = 0;
-                int count = 10;
                 for (int i = -count; i < count; i++) {
                     if (i == 0) {
                         t = System.nanoTime();
@@ -302,10 +305,34 @@ public class PerformanceTest extends AbstractTest {
                     }
                     w.commit();
                 }
-                long result = System.nanoTime() - t;
-                LOG.info().$("raw append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
+                result = System.nanoTime() - t;
             }
         }
+
+        LOG.info().$("Cairo append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
+
+        try (TableReader reader = new TableReader(FilesFacadeImpl.INSTANCE, root, "quote")) {
+            for (int i = -count; i < count; i++) {
+                if (i == 0) {
+                    t = System.nanoTime();
+                }
+
+                reader.toTop();
+                while (reader.hasNext()) {
+                    Record r = reader.next();
+                    r.getDate(0);
+                    r.getFlyweightStr(1);
+                    r.getDouble(2);
+                    r.getDouble(3);
+                    r.getInt(4);
+                    r.getInt(5);
+                    r.getFlyweightStr(6);
+                    r.getFlyweightStr(7);
+                }
+            }
+            result = (System.nanoTime() - t) / count;
+        }
+        LOG.info().$("Cairo read (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result)).$("ms").$();
     }
 
     @Test
