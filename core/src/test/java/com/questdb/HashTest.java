@@ -36,12 +36,12 @@ public class HashTest {
     public void testStringHash() throws Exception {
         Rnd rnd = new Rnd();
         IntHashSet hashes = new IntHashSet(100000);
-        final int LEN = 30;
+        final int LEN = 64;
 
         long address = Unsafe.malloc(LEN);
 
         for (int i = 0; i < 100000; i++) {
-            rnd.nextChars(address, LEN);
+            rnd.nextChars(address, LEN / 2);
             hashes.add(Hash.hashMem(address, LEN));
         }
         Assert.assertTrue("Hash function distribution dropped", hashes.size() > 99990);

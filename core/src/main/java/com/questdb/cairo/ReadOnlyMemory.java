@@ -74,6 +74,10 @@ public class ReadOnlyMemory extends VirtualMemory {
         ff.munmap(address, lastPageSize);
     }
 
+    public long getFd() {
+        return fd;
+    }
+
     public void of(LPSZ name, long maxPageSize, long size) {
         of(name);
         setSize(maxPageSize, size);
@@ -91,8 +95,6 @@ public class ReadOnlyMemory extends VirtualMemory {
         }
 
         LOG.info().$("Open ").$(name).$(" [").$(fd).$(']').$();
-
-        this.lastPageSize = ff.getPageSize();
     }
 
     public void setSize(long maxPageSize, long size) {
@@ -104,6 +106,7 @@ public class ReadOnlyMemory extends VirtualMemory {
             setPageSize(Math.max(ff.getPageSize(), (size / ff.getPageSize()) * ff.getPageSize()));
         }
         pages.ensureCapacity((int) (size / this.pageSize + 1));
+        this.lastPageSize = pageSize;
     }
 
     private long mapPage(int page) {

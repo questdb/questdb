@@ -2061,7 +2061,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
                 }
 
                 if (rnd.nextBoolean()) {
-                    rnd.nextChars(blob, blobLen);
+                    rnd.nextChars(blob, blobLen / 2);
                     r.putBin(9, blob, blobLen);
                 }
 

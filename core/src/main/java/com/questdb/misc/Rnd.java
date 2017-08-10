@@ -57,11 +57,8 @@ public class Rnd {
     }
 
     public void nextChars(final long address, int len) {
-        long addr = address;
-        long limit = addr + len - 2;
-        while (addr < limit) {
-            Unsafe.getUnsafe().putChar(addr, (char) (nextPositiveInt() % 25 + 66));
-            addr += 2;
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putChar(address + i * 2, (char) (nextPositiveInt() % 25 + 66));
         }
     }
 

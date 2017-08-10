@@ -4,7 +4,10 @@ import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.*;
+import com.questdb.ql.Record;
 import com.questdb.ql.parser.AbstractOptimiserTest;
+import com.questdb.std.BinarySequence;
+import com.questdb.std.LongList;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
@@ -50,105 +53,105 @@ public class TableReaderTest extends AbstractOptimiserTest {
         createAllTable(PartitionBy.MONTH);
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
                 "73575701\t0\t0\tNaN\t0.7097\t-1675638984090602536\t\t\tfalse\t\t\n" +
-                "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tVPMIUPLYJV\t\ttrue\t\t\n" +
-                "NaN\t18857\t0\tNaN\tNaN\t-6541603390072946675\tVWKXPLTILO\t\ttrue\t\t2013-03-11T12:00:00.000Z\n" +
-                "1272362811\t0\t-90\t495.601562500000\t0.5251\tNaN\tLJOYMXFXNU\t\ttrue\t\t2013-03-14T00:00:00.000Z\n" +
+                "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tPMIUPLYJVB\t\ttrue\t\t\n" +
+                "NaN\t0\t60\tNaN\t0.6454\t-2715397729034539921\tOEYVSCKKDJ\t\tfalse\t\t2013-03-11T12:00:00.000Z\n" +
+                "NaN\t0\t113\tNaN\tNaN\t-6905112719978615298\t\t\tfalse\t\t2013-03-14T00:00:00.000Z\n" +
+                "-801004676\t0\t0\t0.000242509581\tNaN\t-7064303592482002884\t\t\tfalse\t\t2013-03-16T12:00:00.000Z\n" +
+                "NaN\t-24062\t0\t272.000000000000\t0.4387\tNaN\tTGSOOWYGSD\t\ttrue\t\t\n" +
+                "-640548855\t3093\t0\t-960.000000000000\t0.6056\t8522034740532776473\t\t\tfalse\t\t\n" +
+                "61976253\t0\t0\t0.000000000000\t0.5092\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t0\t0\t0.000041838453\t0.3185\tNaN\tZMGKVSIWRP\t\tfalse\t\t\n" +
+                "NaN\t0\t22\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-29T00:00:00.000Z\n" +
+                "777797854\t0\t0\tNaN\tNaN\t-3561042134139364009\t\t\tfalse\t\t2013-03-31T12:00:00.000Z\n" +
+                "NaN\t0\t106\tNaN\t0.4809\tNaN\t\t\ttrue\t\t\n" +
+                "1204862303\t-20282\t0\tNaN\tNaN\t8715974436393319034\t\t\ttrue\t\t2013-04-05T12:00:00.000Z\n" +
+                "NaN\t0\t53\t-222.738281250000\tNaN\tNaN\tWOWDODUFGU\t\tfalse\t\t\n" +
+                "2095297876\t21923\t0\t256.000000000000\t0.8653\t-6418805892627297273\t\t\ttrue\t\t2013-04-10T12:00:00.000Z\n" +
+                "NaN\t-19019\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-04-13T00:00:00.000Z\n" +
+                "NaN\t-25663\t0\t-92.000000000000\t0.3888\tNaN\t\t\ttrue\t\t2013-04-15T12:00:00.000Z\n" +
+                "-1601554634\t3379\t0\t1020.793212890625\tNaN\tNaN\tKSJZPZZKUM\t\tfalse\t\t\n" +
+                "NaN\t26260\t0\t46.750000000000\tNaN\tNaN\t\t\ttrue\t\t\n" +
+                "-1050143454\t0\t0\tNaN\tNaN\t-4944873630491810081\t\t\tfalse\t\t\n" +
+                "NaN\t0\t34\t0.013004892273\tNaN\tNaN\t\t\tfalse\t\t2013-04-25T12:00:00.000Z\n" +
+                "-1242020108\t-11546\t-82\t0.000000004717\t0.4724\tNaN\t\t\tfalse\t\t\n" +
+                "1512203086\t0\t0\t797.846359252930\tNaN\t6753493100272204912\t\t\tfalse\t\t\n" +
+                "77063638\t870\t-100\tNaN\tNaN\tNaN\t\t\ttrue\t\t2013-05-03T00:00:00.000Z\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "973040195\t0\t0\t-836.145385742188\t0.8502\t6229799201228951554\t\t\tfalse\t\t2013-03-19T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "308459589\t14311\t0\t0.001284251484\tNaN\t-8736036776035146161\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\t45.488159179688\t0.8366\t-8989605389992287841\t\t\tfalse\t\t\n" +
-                "NaN\t15403\t0\t0.000145471880\t0.8795\t-8930817457343668796\tBTPFUKBVTK\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.6590\t-7047591949709937141\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-105\tNaN\tNaN\t-4753799567364252473\t\t\tfalse\t\t2013-04-05T12:00:00.000Z\n" +
-                "562010564\t7262\t0\tNaN\tNaN\t-6563980004387365579\t\t\ttrue\t\t\n" +
-                "NaN\t0\t3\tNaN\t0.5520\tNaN\tZJGZUMUKYU\t\tfalse\t\t2013-04-10T12:00:00.000Z\n" +
-                "293774095\t0\t0\t0.000082347786\t0.3634\t-3190830651760796509\t\t\tfalse\t\t\n" +
-                "-1604751729\t-9938\t20\tNaN\tNaN\t-6935015060172657067\t\t\ttrue\t\t2013-04-15T12:00:00.000Z\n" +
-                "NaN\t-8125\t-57\t849.075531005859\tNaN\tNaN\tKNGEBETLTK\t\tfalse\t\t2013-04-18T00:00:00.000Z\n" +
-                "1720228024\t-23409\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.6895\t6004620688013050571\tTVVZBKUVBK\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t0.000087999168\t0.4351\tNaN\tFYGCYVIOMB\t\tfalse\t\t\n" +
-                "NaN\t0\t-80\t0.003153746715\tNaN\t9098346554960907337\tQRHFCHKEEV\t\tfalse\t\t\n" +
-                "NaN\t-32743\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-04-30T12:00:00.000Z\n" +
-                "NaN\t0\t0\t9.205261230469\t0.9173\t-4685006213170370882\t\t\tfalse\t\t2013-05-03T00:00:00.000Z\n" +
-                "598851620\t0\t0\t21.701147556305\t0.2727\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t-25550\t0\tNaN\t0.3322\tNaN\t\t\tfalse\t\t\n" +
-                "-778922608\t24861\t0\t0.000000720363\tNaN\t8259848643433335285\t\t\ttrue\t\t\n" +
-                "NaN\t0\t102\tNaN\tNaN\tNaN\tZXMGEZDCJY\t\ttrue\t\t2013-05-13T00:00:00.000Z\n" +
+                "NaN\t27339\t0\t0.000000010539\tNaN\tNaN\t\t\tfalse\t\t2013-05-08T00:00:00.000Z\n" +
+                "235357628\t0\t-120\t0.000156953447\tNaN\tNaN\tTTNGDKZVVS\t\tfalse\t\t\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\tJIVTDTVOFK\t\tfalse\t\t\n" +
+                "NaN\t0\t-122\tNaN\tNaN\tNaN\tKNSVTCFVTQ\t\tfalse\t\t2013-05-15T12:00:00.000Z\n" +
+                "NaN\t30566\t20\tNaN\t0.9818\t-5466726161969343552\t\t\tfalse\t\t2013-05-18T00:00:00.000Z\n" +
+                "NaN\t-15656\t0\tNaN\t0.6098\t-6217010216024734623\t\t\ttrue\t\t2013-05-20T12:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\t0.3901\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t2882\t0\t-105.500000000000\tNaN\tNaN\tOKIIHSWTEH\t\tfalse\t\t2013-05-25T12:00:00.000Z\n" +
+                "NaN\t0\t-104\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-05-28T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\tODHWKFENXM\t\tfalse\t\t\n" +
+                "-659184089\t-13800\t-2\t2.392256617546\t0.6519\t-7751136309261449149\tOKYULJBQTL\t\tfalse\t\t2013-06-02T00:00:00.000Z\n" +
+                "-1883104688\t0\t0\tNaN\t0.6757\t8196181258827495370\t\t\tfalse\t\t\n" +
+                "-2139859771\t0\t-79\t344.729835510254\tNaN\tNaN\tIBJCVFPFBC\t\tfalse\t\t\n" +
+                "NaN\t10225\t0\t-572.296875000000\t0.2967\t-5767634907351262282\tTBWDVSZOIX\t\tfalse\t\t\n" +
+                "NaN\t0\t-19\tNaN\t0.7135\t8969196340878943365\t\t\tfalse\t\t2013-06-12T00:00:00.000Z\n" +
+                "NaN\t0\t-38\t-86.000000000000\tNaN\tNaN\tXKELTCVZXQ\t\tfalse\t\t2013-06-14T12:00:00.000Z\n" +
+                "NaN\t29304\t0\tNaN\tNaN\t-1515294165892907204\t\t\tfalse\t\t2013-06-17T00:00:00.000Z\n" +
+                "NaN\t17701\t0\t0.916345536709\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "-2139370311\t-32277\t65\tNaN\tNaN\t-7601183786211855388\t\t\ttrue\t\t2013-06-22T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-06-24T12:00:00.000Z\n" +
+                "1198081577\t0\t0\tNaN\tNaN\t-7481237079546197800\t\t\ttrue\t\t2013-06-27T00:00:00.000Z\n" +
+                "NaN\t-17836\t0\tNaN\t0.5251\t-7316664068900365888\t\t\tfalse\t\t\n" +
+                "NaN\t0\t60\t-1024.000000000000\t0.9287\t1451757238409137883\t\t\tfalse\t\t\n" +
+                "632261185\t14561\t0\t447.342773437500\tNaN\tNaN\t\t\tfalse\t\t2013-07-04T12:00:00.000Z\n" +
+                "NaN\t0\t-96\t0.005665154895\t0.5212\tNaN\tJEQMWTHZNH\t\ttrue\t\t\n" +
+                "NaN\t4882\t0\t-721.570068359375\tNaN\tNaN\t\t\tfalse\t\t2013-07-09T12:00:00.000Z\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "-1570697358\t0\t0\t0.000000024249\tNaN\tNaN\tPOPUMZRZFP\t\tfalse\t\t2013-05-18T00:00:00.000Z\n" +
-                "1281789059\t-28328\t0\t8.375915527344\tNaN\tNaN\t\t\tfalse\t\t2013-05-20T12:00:00.000Z\n" +
-                "773205381\t2761\t-107\t-357.250000000000\t0.4628\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t-80.000000000000\t0.7919\t7815756683824312484\t\t\ttrue\t\t\n" +
-                "1263151569\t-11048\t-73\tNaN\tNaN\tNaN\tKRCFYRTLRK\t\tfalse\t\t2013-05-28T00:00:00.000Z\n" +
-                "439223132\t3987\t86\t87.750000000000\t0.4815\t-9036776975577124044\tDXKUIKUEMT\t\tfalse\t\t\n" +
-                "NaN\t-27442\t0\t0.000147545263\t0.7297\t-8297333826176735232\t\t\ttrue\t\t2013-06-02T00:00:00.000Z\n" +
-                "NaN\t9003\t0\t0.006835407345\tNaN\tNaN\t\t\tfalse\t\t2013-06-04T12:00:00.000Z\n" +
-                "NaN\t0\t16\tNaN\t0.3239\tNaN\tBSOGXJMFKP\t\tfalse\t\t\n" +
-                "-139580709\t13211\t0\tNaN\tNaN\tNaN\tUBPURNKTQH\t\ttrue\t\t2013-06-09T12:00:00.000Z\n" +
-                "NaN\t0\t-9\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t0.001820561971\t0.4415\t-6102982263510933075\tEKLWGBGEOG\t\ttrue\t\t2013-06-14T12:00:00.000Z\n" +
-                "NaN\t12750\t0\tNaN\tNaN\tNaN\tPBQQLZFHZD\t\tfalse\t\t\n" +
-                "NaN\t2196\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "386502586\t0\t122\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "439448790\t10173\t90\t0.000008843858\t0.4117\tNaN\t\t\tfalse\t\t\n" +
-                "-2039588344\t20814\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-70\t0.003472472192\t0.8169\t-4210500280316527754\tDHXLLWYISI\t\tfalse\t\t2013-06-29T12:00:00.000Z\n" +
-                "NaN\t18551\t-63\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\t0.024644770660\tNaN\tNaN\tMWPZCHTCCX\t\ttrue\t\t\n" +
-                "NaN\t-6604\t9\tNaN\tNaN\tNaN\tTLXKVTQULM\t\tfalse\t\t2013-07-07T00:00:00.000Z\n" +
-                "NaN\t0\t-79\t-256.000000000000\tNaN\t7702983503801189270\t\t\ttrue\t\t\n" +
-                "-1553509839\t0\t0\t238.259117126465\tNaN\t-1012659436286375174\t\t\tfalse\t\t2013-07-12T00:00:00.000Z\n" +
-                "NaN\t-14133\t0\t423.937385559082\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.3018\tNaN\tGQQLTSYDNF\t\tfalse\t\t2013-07-17T00:00:00.000Z\n" +
-                "1416328685\t9161\t0\t0.123783446848\t0.6768\t-5457019364697877056\tLUBDODEPXS\t\ttrue\t\t2013-07-19T12:00:00.000Z\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t19513\t-9\t0.000000038397\t0.8405\t-7740238432567045181\t\t\tfalse\t\t2013-07-24T12:00:00.000Z\n" +
-                "NaN\t-17207\t0\tNaN\tNaN\t3608850123411200285\tUJEYJNNYPK\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tKFBGJJWDPP\t\tfalse\t\t2013-07-29T12:00:00.000Z\n" +
+                "1216600919\t23298\t-117\tNaN\tNaN\tNaN\tMNWBTIVJEW\t\ttrue\t\t2013-07-17T00:00:00.000Z\n" +
+                "NaN\t0\t119\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t17913\t0\t0.020569519140\t0.5912\tNaN\t\t\tfalse\t\t2013-07-22T00:00:00.000Z\n" +
+                "1610742551\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-07-24T12:00:00.000Z\n" +
+                "-1205646285\t0\t0\tNaN\t0.9289\t8642403514325899452\t\t\tfalse\t\t2013-07-27T00:00:00.000Z\n" +
+                "NaN\t-23295\t0\tNaN\t0.8926\t-9150462926608062120\tWQLJNZCGCT\t\ttrue\t\t\n" +
+                "NaN\t0\t0\tNaN\t0.6798\t-5864575418630714346\t\t\tfalse\t\t2013-08-01T00:00:00.000Z\n" +
+                "1683275019\t-26804\t0\t4.128064155579\t0.2032\tNaN\t\t\tfalse\t\t2013-08-03T12:00:00.000Z\n" +
+                "NaN\t0\t-94\tNaN\tNaN\t-9051427420978437586\t\t\tfalse\t\t2013-08-06T00:00:00.000Z\n" +
                 "1934973454\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-5303405449347886958\t\t\tfalse\t\t2013-08-03T12:00:00.000Z\n" +
-                "NaN\t29170\t14\t-953.945312500000\t0.6473\t-6346552295544744665\t\t\ttrue\t\t2013-08-06T00:00:00.000Z\n" +
-                "-1551250112\t0\t0\tNaN\tNaN\t-9153807758920642614\t\t\tfalse\t\t\n" +
-                "352676096\t2921\t106\tNaN\tNaN\t-7166847293288140192\t\t\ttrue\t\t2013-08-11T00:00:00.000Z\n" +
-                "NaN\t0\t0\t-891.255187988281\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "2013386777\t-4913\t0\t0.096109641716\tNaN\t-9134728405009464739\t\t\ttrue\t\t2013-08-16T00:00:00.000Z\n" +
-                "1537359183\t0\t18\t50.457431793213\tNaN\tNaN\tZLXSRQKBCP\t\tfalse\t\t\n" +
-                "-1887247278\t0\t60\tNaN\t0.5281\t8892699517500908585\t\t\ttrue\t\t\n" +
-                "NaN\t0\t87\t0.000086571285\t0.5349\t8284471997786423504\t\t\tfalse\t\t2013-08-23T12:00:00.000Z\n" +
-                "NaN\t0\t0\t0.000000004778\t0.8130\t8439036057773114882\tGDLSMQPYNU\t\tfalse\t\t2013-08-26T00:00:00.000Z\n" +
-                "NaN\t0\t-77\t829.437500000000\tNaN\t8885314950764600193\tOEIGBTHYVP\t\ttrue\t\t\n" +
-                "NaN\t0\t0\t129.767963409424\t0.5434\tNaN\tWWRGGWVNTO\t\tfalse\t\t\n" +
-                "1162820296\t-13379\t42\t0.000602753847\t0.7151\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t-86\tNaN\t0.7216\t8601477333412382641\tLDCCOELJWI\t\tfalse\t\t\n" +
-                "NaN\t0\t-26\t-512.000000000000\tNaN\tNaN\tTDJOCZRMZX\t\tfalse\t\t\n" +
-                "NaN\t0\t122\t0.011416638270\t0.4929\tNaN\tXGLGFIBWXN\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-8885925444061796471\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.4037\t-6546280368212658058\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-112\tNaN\tNaN\t-1432130118181766760\t\t\tfalse\t\t2013-09-17T12:00:00.000Z\n" +
-                "NaN\t0\t54\t818.979553222656\t0.3012\t8559643124608722337\tIGBWZXSJJN\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t8.801370620728\t0.3609\tNaN\tKBEWLYZPZZ\t\tfalse\t\t2013-09-22T12:00:00.000Z\n" +
-                "NaN\t0\t0\t0.000046097467\tNaN\t-1334416388074838565\tTFWLGSFUJG\t\tfalse\t\t2013-09-25T00:00:00.000Z\n" +
-                "NaN\t7519\t-114\tNaN\t0.5528\tNaN\tTNWDLJQPKW\t\ttrue\t\t\n" +
-                "140497042\t0\t0\tNaN\t0.3144\tNaN\tOMZZKGTBCQ\t\tfalse\t\t\n" +
-                "634971665\t0\t0\t-896.000000000000\t0.5061\t8333807780608495713\t\t\tfalse\t\t\n" +
-                "1045373397\t5459\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "-1286159186\t0\t0\t0.001565168088\t0.4512\tNaN\t\t\tfalse\t\t2013-10-07T12:00:00.000Z\n" +
-                "NaN\t0\t0\t260.000000000000\tNaN\tNaN\t\t\ttrue\t\t2013-10-10T00:00:00.000Z\n" +
-                "-577895670\t0\t0\t899.281250000000\t0.5314\tNaN\tPCHFNMWRKF\t\tfalse\t\t\n" +
-                "NaN\t3608\t-70\t0.001165638154\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t18027\t-91\tNaN\tNaN\tNaN\t\t\ttrue\t\t2013-10-17T12:00:00.000Z\n" +
-                "NaN\t0\t0\t-213.468750000000\t0.4905\t-8940639164947475955\tYROHKIIIIH\t\ttrue\t\t2013-10-20T00:00:00.000Z\n" +
-                "NaN\t-32404\t0\tNaN\tNaN\t-3801609434519024772\t\t\ttrue\t\t2013-10-22T12:00:00.000Z\n" +
-                "-211958640\t0\t0\tNaN\t0.8148\t-9014192604691332491\t\t\tfalse\t\t2013-10-25T00:00:00.000Z\n" +
-                "-335922823\t-21381\t-3\t0.000000050588\t0.3811\tNaN\t\t\ttrue\t\t2013-10-27T12:00:00.000Z\n" +
-                "444826054\t0\t0\tNaN\tNaN\tNaN\tTKPWVTUTPC\t\tfalse\t\t2013-10-30T00:00:00.000Z\n" +
-                "NaN\t0\t-112\t0.000078579949\t0.4149\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.5317\tNaN\tXMWDLPWECV\t\ttrue\t\t\n" +
-                "-462127181\t-27713\t57\tNaN\t0.7427\t8433285365657224839\t\t\ttrue\t\t\n" +
-                "NaN\t23894\t0\tNaN\tNaN\t9153770087233785213\tVURUTOHPVN\t\ttrue\t\t\n";
+                "NaN\t0\t0\tNaN\tNaN\t-5303405449347886958\t\t\tfalse\t\t2013-08-11T00:00:00.000Z\n" +
+                "NaN\t29170\t14\t-953.945312500000\t0.6473\t-6346552295544744665\t\t\ttrue\t\t2013-08-13T12:00:00.000Z\n" +
+                "-1551250112\t0\t0\tNaN\tNaN\t-9153807758920642614\tUJXSVCWGHT\t\tfalse\t\t\n" +
+                "-636263795\t0\t-76\tNaN\t0.5857\tNaN\t\t\ttrue\t\t\n" +
+                "NaN\t-27755\t0\tNaN\t0.7426\t5259909879721818696\t\t\tfalse\t\t\n" +
+                "731479609\t-20511\t0\t28.810546875000\t0.7764\t-8118558905916637434\t\t\tfalse\t\t\n" +
+                "-1334703041\t-1358\t0\t0.000000017793\t0.3070\t-3883507671731232196\t\t\ttrue\t\t2013-08-26T00:00:00.000Z\n" +
+                "NaN\t25020\t-107\tNaN\t0.6154\tNaN\tUYHVBTQZNP\t\ttrue\t\t\n" +
+                "NaN\t0\t58\tNaN\tNaN\t-5516374931389294840\t\t\tfalse\t\t2013-08-31T00:00:00.000Z\n" +
+                "964528173\t0\t0\t0.003956267610\t0.8607\t-3067936391188226389\t\t\tfalse\t\t2013-09-02T12:00:00.000Z\n" +
+                "NaN\t0\t-105\t0.000000338487\tNaN\tNaN\t\t\tfalse\t\t2013-09-05T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\t7354668637892666879\t\t\tfalse\t\t\n" +
+                "-448961895\t0\t0\tNaN\tNaN\t-9161200384798064634\tGZKHINLGPK\t\tfalse\t\t\n" +
+                "NaN\t-27897\t40\tNaN\tNaN\t-7520515938192868059\t\t\ttrue\t\t2013-09-12T12:00:00.000Z\n" +
+                "371473906\t0\t0\tNaN\t0.6473\t4656851861563783983\t\t\tfalse\t\t\n" +
+                "-1346903540\t0\t0\tNaN\t0.5894\t-8299437881884939478\tNYWRPCINVX\t\tfalse\t\t2013-09-17T12:00:00.000Z\n" +
+                "-1948757473\t0\t-46\tNaN\tNaN\t-6824321255992266244\t\t\tfalse\t\t\n" +
+                "-268192526\t10310\t0\tNaN\t0.5699\t-6083767479706055886\t\t\ttrue\t\t\n" +
+                "1294560337\t0\t0\t0.000000126063\tNaN\tNaN\t\t\tfalse\t\t2013-09-25T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\t0.5528\t-6393296971707706969\t\t\tfalse\t\t2013-09-27T12:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\t-8345528960002638166\t\t\ttrue\t\t\n" +
+                "1744814812\t455\t0\t0.001713166508\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t0\t-127\t0.015959210694\t0.7250\t8725410536784858046\t\t\tfalse\t\t\n" +
+                "NaN\t0\t16\t939.765625000000\t0.7319\t-7413379514400996037\t\t\ttrue\t\t2013-10-07T12:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\t0.7553\tNaN\t\t\tfalse\t\t\n" +
+                "1168191792\t21539\t-123\tNaN\tNaN\t-7702162217093176347\t\t\ttrue\t\t2013-10-12T12:00:00.000Z\n" +
+                "NaN\t-21809\t0\tNaN\tNaN\t-3135568653781063174\t\t\tfalse\t\t2013-10-15T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-10-17T12:00:00.000Z\n" +
+                "2003366662\t0\t0\tNaN\tNaN\t-1621062241930578783\t\t\tfalse\t\t2013-10-20T00:00:00.000Z\n" +
+                "NaN\t4277\t0\tNaN\tNaN\tNaN\tMHDSESFOOY\t\ttrue\t\t2013-10-22T12:00:00.000Z\n" +
+                "1375853278\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-10-25T00:00:00.000Z\n" +
+                "NaN\t-19723\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t0\t-52\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
+                "NaN\t0\t116\tNaN\tNaN\t-4675510353991993979\t\t\ttrue\t\t2013-11-01T12:00:00.000Z\n" +
+                "NaN\t0\t72\tNaN\tNaN\t-1653512736810729151\t\t\tfalse\t\t2013-11-04T00:00:00.000Z\n" +
+                "NaN\t-22994\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\tOJZOVQGFZU\t\tfalse\t\t\n";
         TestUtils.assertMemoryLeak(() -> testTableCursor(60 * 60 * 60000, expected));
     }
 
@@ -157,105 +160,105 @@ public class TableReaderTest extends AbstractOptimiserTest {
         createAllTable(PartitionBy.YEAR);
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
                 "73575701\t0\t0\tNaN\t0.7097\t-1675638984090602536\t\t\tfalse\t\t\n" +
-                "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tVPMIUPLYJV\t\ttrue\t\t\n" +
-                "NaN\t18857\t0\tNaN\tNaN\t-6541603390072946675\tVWKXPLTILO\t\ttrue\t\t2013-08-31T00:00:00.000Z\n" +
-                "1272362811\t0\t-90\t495.601562500000\t0.5251\tNaN\tLJOYMXFXNU\t\ttrue\t\t2013-10-30T00:00:00.000Z\n" +
+                "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tPMIUPLYJVB\t\ttrue\t\t\n" +
+                "NaN\t0\t60\tNaN\t0.6454\t-2715397729034539921\tOEYVSCKKDJ\t\tfalse\t\t2013-08-31T00:00:00.000Z\n" +
+                "NaN\t0\t113\tNaN\tNaN\t-6905112719978615298\t\t\tfalse\t\t2013-10-30T00:00:00.000Z\n" +
+                "-801004676\t0\t0\t0.000242509581\tNaN\t-7064303592482002884\t\t\tfalse\t\t2013-12-29T00:00:00.000Z\n" +
+                "NaN\t-24062\t0\t272.000000000000\t0.4387\tNaN\tTGSOOWYGSD\t\ttrue\t\t\n" +
+                "-640548855\t3093\t0\t-960.000000000000\t0.6056\t8522034740532776473\t\t\tfalse\t\t\n" +
+                "61976253\t0\t0\t0.000000000000\t0.5092\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t0\t0\t0.000041838453\t0.3185\tNaN\tZMGKVSIWRP\t\tfalse\t\t\n" +
+                "NaN\t0\t22\tNaN\tNaN\tNaN\t\t\tfalse\t\t2014-10-25T00:00:00.000Z\n" +
+                "777797854\t0\t0\tNaN\tNaN\t-3561042134139364009\t\t\tfalse\t\t2014-12-24T00:00:00.000Z\n" +
+                "NaN\t0\t106\tNaN\t0.4809\tNaN\t\t\ttrue\t\t\n" +
+                "1204862303\t-20282\t0\tNaN\tNaN\t8715974436393319034\t\t\ttrue\t\t2015-04-23T00:00:00.000Z\n" +
+                "NaN\t0\t53\t-222.738281250000\tNaN\tNaN\tWOWDODUFGU\t\tfalse\t\t\n" +
+                "2095297876\t21923\t0\t256.000000000000\t0.8653\t-6418805892627297273\t\t\ttrue\t\t2015-08-21T00:00:00.000Z\n" +
+                "NaN\t-19019\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2015-10-20T00:00:00.000Z\n" +
+                "NaN\t-25663\t0\t-92.000000000000\t0.3888\tNaN\t\t\ttrue\t\t2015-12-19T00:00:00.000Z\n" +
+                "-1601554634\t3379\t0\t1020.793212890625\tNaN\tNaN\tKSJZPZZKUM\t\tfalse\t\t\n" +
+                "NaN\t26260\t0\t46.750000000000\tNaN\tNaN\t\t\ttrue\t\t\n" +
+                "-1050143454\t0\t0\tNaN\tNaN\t-4944873630491810081\t\t\tfalse\t\t\n" +
+                "NaN\t0\t34\t0.013004892273\tNaN\tNaN\t\t\tfalse\t\t2016-08-15T00:00:00.000Z\n" +
+                "-1242020108\t-11546\t-82\t0.000000004717\t0.4724\tNaN\t\t\tfalse\t\t\n" +
+                "1512203086\t0\t0\t797.846359252930\tNaN\t6753493100272204912\t\t\tfalse\t\t\n" +
+                "77063638\t870\t-100\tNaN\tNaN\tNaN\t\t\ttrue\t\t2017-02-11T00:00:00.000Z\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "973040195\t0\t0\t-836.145385742188\t0.8502\t6229799201228951554\t\t\tfalse\t\t2014-02-27T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "308459589\t14311\t0\t0.001284251484\tNaN\t-8736036776035146161\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\t45.488159179688\t0.8366\t-8989605389992287841\t\t\tfalse\t\t\n" +
-                "NaN\t15403\t0\t0.000145471880\t0.8795\t-8930817457343668796\tBTPFUKBVTK\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.6590\t-7047591949709937141\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-105\tNaN\tNaN\t-4753799567364252473\t\t\tfalse\t\t2015-04-23T00:00:00.000Z\n" +
-                "562010564\t7262\t0\tNaN\tNaN\t-6563980004387365579\t\t\ttrue\t\t\n" +
-                "NaN\t0\t3\tNaN\t0.5520\tNaN\tZJGZUMUKYU\t\tfalse\t\t2015-08-21T00:00:00.000Z\n" +
-                "293774095\t0\t0\t0.000082347786\t0.3634\t-3190830651760796509\t\t\tfalse\t\t\n" +
-                "-1604751729\t-9938\t20\tNaN\tNaN\t-6935015060172657067\t\t\ttrue\t\t2015-12-19T00:00:00.000Z\n" +
-                "NaN\t-8125\t-57\t849.075531005859\tNaN\tNaN\tKNGEBETLTK\t\tfalse\t\t2016-02-17T00:00:00.000Z\n" +
-                "1720228024\t-23409\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.6895\t6004620688013050571\tTVVZBKUVBK\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t0.000087999168\t0.4351\tNaN\tFYGCYVIOMB\t\tfalse\t\t\n" +
-                "NaN\t0\t-80\t0.003153746715\tNaN\t9098346554960907337\tQRHFCHKEEV\t\tfalse\t\t\n" +
-                "NaN\t-32743\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2016-12-13T00:00:00.000Z\n" +
-                "NaN\t0\t0\t9.205261230469\t0.9173\t-4685006213170370882\t\t\tfalse\t\t2017-02-11T00:00:00.000Z\n" +
-                "598851620\t0\t0\t21.701147556305\t0.2727\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t-25550\t0\tNaN\t0.3322\tNaN\t\t\tfalse\t\t\n" +
-                "-778922608\t24861\t0\t0.000000720363\tNaN\t8259848643433335285\t\t\ttrue\t\t\n" +
-                "NaN\t0\t102\tNaN\tNaN\tNaN\tZXMGEZDCJY\t\ttrue\t\t2017-10-09T00:00:00.000Z\n" +
+                "NaN\t27339\t0\t0.000000010539\tNaN\tNaN\t\t\tfalse\t\t2017-06-11T00:00:00.000Z\n" +
+                "235357628\t0\t-120\t0.000156953447\tNaN\tNaN\tTTNGDKZVVS\t\tfalse\t\t\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\tJIVTDTVOFK\t\tfalse\t\t\n" +
+                "NaN\t0\t-122\tNaN\tNaN\tNaN\tKNSVTCFVTQ\t\tfalse\t\t2017-12-08T00:00:00.000Z\n" +
+                "NaN\t30566\t20\tNaN\t0.9818\t-5466726161969343552\t\t\tfalse\t\t2018-02-06T00:00:00.000Z\n" +
+                "NaN\t-15656\t0\tNaN\t0.6098\t-6217010216024734623\t\t\ttrue\t\t2018-04-07T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\t0.3901\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t2882\t0\t-105.500000000000\tNaN\tNaN\tOKIIHSWTEH\t\tfalse\t\t2018-08-05T00:00:00.000Z\n" +
+                "NaN\t0\t-104\tNaN\tNaN\tNaN\t\t\tfalse\t\t2018-10-04T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\tODHWKFENXM\t\tfalse\t\t\n" +
+                "-659184089\t-13800\t-2\t2.392256617546\t0.6519\t-7751136309261449149\tOKYULJBQTL\t\tfalse\t\t2019-02-01T00:00:00.000Z\n" +
+                "-1883104688\t0\t0\tNaN\t0.6757\t8196181258827495370\t\t\tfalse\t\t\n" +
+                "-2139859771\t0\t-79\t344.729835510254\tNaN\tNaN\tIBJCVFPFBC\t\tfalse\t\t\n" +
+                "NaN\t10225\t0\t-572.296875000000\t0.2967\t-5767634907351262282\tTBWDVSZOIX\t\tfalse\t\t\n" +
+                "NaN\t0\t-19\tNaN\t0.7135\t8969196340878943365\t\t\tfalse\t\t2019-09-29T00:00:00.000Z\n" +
+                "NaN\t0\t-38\t-86.000000000000\tNaN\tNaN\tXKELTCVZXQ\t\tfalse\t\t2019-11-28T00:00:00.000Z\n" +
+                "NaN\t29304\t0\tNaN\tNaN\t-1515294165892907204\t\t\tfalse\t\t2020-01-27T00:00:00.000Z\n" +
+                "NaN\t17701\t0\t0.916345536709\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "-2139370311\t-32277\t65\tNaN\tNaN\t-7601183786211855388\t\t\ttrue\t\t2020-05-26T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2020-07-25T00:00:00.000Z\n" +
+                "1198081577\t0\t0\tNaN\tNaN\t-7481237079546197800\t\t\ttrue\t\t2020-09-23T00:00:00.000Z\n" +
+                "NaN\t-17836\t0\tNaN\t0.5251\t-7316664068900365888\t\t\tfalse\t\t\n" +
+                "NaN\t0\t60\t-1024.000000000000\t0.9287\t1451757238409137883\t\t\tfalse\t\t\n" +
+                "632261185\t14561\t0\t447.342773437500\tNaN\tNaN\t\t\tfalse\t\t2021-03-22T00:00:00.000Z\n" +
+                "NaN\t0\t-96\t0.005665154895\t0.5212\tNaN\tJEQMWTHZNH\t\ttrue\t\t\n" +
+                "NaN\t4882\t0\t-721.570068359375\tNaN\tNaN\t\t\tfalse\t\t2021-07-20T00:00:00.000Z\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "-1570697358\t0\t0\t0.000000024249\tNaN\tNaN\tPOPUMZRZFP\t\tfalse\t\t2018-02-06T00:00:00.000Z\n" +
-                "1281789059\t-28328\t0\t8.375915527344\tNaN\tNaN\t\t\tfalse\t\t2018-04-07T00:00:00.000Z\n" +
-                "773205381\t2761\t-107\t-357.250000000000\t0.4628\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t-80.000000000000\t0.7919\t7815756683824312484\t\t\ttrue\t\t\n" +
-                "1263151569\t-11048\t-73\tNaN\tNaN\tNaN\tKRCFYRTLRK\t\tfalse\t\t2018-10-04T00:00:00.000Z\n" +
-                "439223132\t3987\t86\t87.750000000000\t0.4815\t-9036776975577124044\tDXKUIKUEMT\t\tfalse\t\t\n" +
-                "NaN\t-27442\t0\t0.000147545263\t0.7297\t-8297333826176735232\t\t\ttrue\t\t2019-02-01T00:00:00.000Z\n" +
-                "NaN\t9003\t0\t0.006835407345\tNaN\tNaN\t\t\tfalse\t\t2019-04-02T00:00:00.000Z\n" +
-                "NaN\t0\t16\tNaN\t0.3239\tNaN\tBSOGXJMFKP\t\tfalse\t\t\n" +
-                "-139580709\t13211\t0\tNaN\tNaN\tNaN\tUBPURNKTQH\t\ttrue\t\t2019-07-31T00:00:00.000Z\n" +
-                "NaN\t0\t-9\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t0.001820561971\t0.4415\t-6102982263510933075\tEKLWGBGEOG\t\ttrue\t\t2019-11-28T00:00:00.000Z\n" +
-                "NaN\t12750\t0\tNaN\tNaN\tNaN\tPBQQLZFHZD\t\tfalse\t\t\n" +
-                "NaN\t2196\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "386502586\t0\t122\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "439448790\t10173\t90\t0.000008843858\t0.4117\tNaN\t\t\tfalse\t\t\n" +
-                "-2039588344\t20814\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-70\t0.003472472192\t0.8169\t-4210500280316527754\tDHXLLWYISI\t\tfalse\t\t2020-11-22T00:00:00.000Z\n" +
-                "NaN\t18551\t-63\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\t0.024644770660\tNaN\tNaN\tMWPZCHTCCX\t\ttrue\t\t\n" +
-                "NaN\t-6604\t9\tNaN\tNaN\tNaN\tTLXKVTQULM\t\tfalse\t\t2021-05-21T00:00:00.000Z\n" +
-                "NaN\t0\t-79\t-256.000000000000\tNaN\t7702983503801189270\t\t\ttrue\t\t\n" +
-                "-1553509839\t0\t0\t238.259117126465\tNaN\t-1012659436286375174\t\t\tfalse\t\t2021-09-18T00:00:00.000Z\n" +
-                "NaN\t-14133\t0\t423.937385559082\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.3018\tNaN\tGQQLTSYDNF\t\tfalse\t\t2022-01-16T00:00:00.000Z\n" +
-                "1416328685\t9161\t0\t0.123783446848\t0.6768\t-5457019364697877056\tLUBDODEPXS\t\ttrue\t\t2022-03-17T00:00:00.000Z\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t19513\t-9\t0.000000038397\t0.8405\t-7740238432567045181\t\t\tfalse\t\t2022-07-15T00:00:00.000Z\n" +
-                "NaN\t-17207\t0\tNaN\tNaN\t3608850123411200285\tUJEYJNNYPK\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tKFBGJJWDPP\t\tfalse\t\t2022-11-12T00:00:00.000Z\n" +
+                "1216600919\t23298\t-117\tNaN\tNaN\tNaN\tMNWBTIVJEW\t\ttrue\t\t2022-01-16T00:00:00.000Z\n" +
+                "NaN\t0\t119\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t17913\t0\t0.020569519140\t0.5912\tNaN\t\t\tfalse\t\t2022-05-16T00:00:00.000Z\n" +
+                "1610742551\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2022-07-15T00:00:00.000Z\n" +
+                "-1205646285\t0\t0\tNaN\t0.9289\t8642403514325899452\t\t\tfalse\t\t2022-09-13T00:00:00.000Z\n" +
+                "NaN\t-23295\t0\tNaN\t0.8926\t-9150462926608062120\tWQLJNZCGCT\t\ttrue\t\t\n" +
+                "NaN\t0\t0\tNaN\t0.6798\t-5864575418630714346\t\t\tfalse\t\t2023-01-11T00:00:00.000Z\n" +
+                "1683275019\t-26804\t0\t4.128064155579\t0.2032\tNaN\t\t\tfalse\t\t2023-03-12T00:00:00.000Z\n" +
+                "NaN\t0\t-94\tNaN\tNaN\t-9051427420978437586\t\t\tfalse\t\t2023-05-11T00:00:00.000Z\n" +
                 "1934973454\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-5303405449347886958\t\t\tfalse\t\t2023-03-12T00:00:00.000Z\n" +
-                "NaN\t29170\t14\t-953.945312500000\t0.6473\t-6346552295544744665\t\t\ttrue\t\t2023-05-11T00:00:00.000Z\n" +
-                "-1551250112\t0\t0\tNaN\tNaN\t-9153807758920642614\t\t\tfalse\t\t\n" +
-                "352676096\t2921\t106\tNaN\tNaN\t-7166847293288140192\t\t\ttrue\t\t2023-09-08T00:00:00.000Z\n" +
-                "NaN\t0\t0\t-891.255187988281\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "2013386777\t-4913\t0\t0.096109641716\tNaN\t-9134728405009464739\t\t\ttrue\t\t2024-01-06T00:00:00.000Z\n" +
-                "1537359183\t0\t18\t50.457431793213\tNaN\tNaN\tZLXSRQKBCP\t\tfalse\t\t\n" +
-                "-1887247278\t0\t60\tNaN\t0.5281\t8892699517500908585\t\t\ttrue\t\t\n" +
-                "NaN\t0\t87\t0.000086571285\t0.5349\t8284471997786423504\t\t\tfalse\t\t2024-07-04T00:00:00.000Z\n" +
-                "NaN\t0\t0\t0.000000004778\t0.8130\t8439036057773114882\tGDLSMQPYNU\t\tfalse\t\t2024-09-02T00:00:00.000Z\n" +
-                "NaN\t0\t-77\t829.437500000000\tNaN\t8885314950764600193\tOEIGBTHYVP\t\ttrue\t\t\n" +
-                "NaN\t0\t0\t129.767963409424\t0.5434\tNaN\tWWRGGWVNTO\t\tfalse\t\t\n" +
-                "1162820296\t-13379\t42\t0.000602753847\t0.7151\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t-86\tNaN\t0.7216\t8601477333412382641\tLDCCOELJWI\t\tfalse\t\t\n" +
-                "NaN\t0\t-26\t-512.000000000000\tNaN\tNaN\tTDJOCZRMZX\t\tfalse\t\t\n" +
-                "NaN\t0\t122\t0.011416638270\t0.4929\tNaN\tXGLGFIBWXN\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-8885925444061796471\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.4037\t-6546280368212658058\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-112\tNaN\tNaN\t-1432130118181766760\t\t\tfalse\t\t2026-02-24T00:00:00.000Z\n" +
-                "NaN\t0\t54\t818.979553222656\t0.3012\t8559643124608722337\tIGBWZXSJJN\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t8.801370620728\t0.3609\tNaN\tKBEWLYZPZZ\t\tfalse\t\t2026-06-24T00:00:00.000Z\n" +
-                "NaN\t0\t0\t0.000046097467\tNaN\t-1334416388074838565\tTFWLGSFUJG\t\tfalse\t\t2026-08-23T00:00:00.000Z\n" +
-                "NaN\t7519\t-114\tNaN\t0.5528\tNaN\tTNWDLJQPKW\t\ttrue\t\t\n" +
-                "140497042\t0\t0\tNaN\t0.3144\tNaN\tOMZZKGTBCQ\t\tfalse\t\t\n" +
-                "634971665\t0\t0\t-896.000000000000\t0.5061\t8333807780608495713\t\t\tfalse\t\t\n" +
-                "1045373397\t5459\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "-1286159186\t0\t0\t0.001565168088\t0.4512\tNaN\t\t\tfalse\t\t2027-06-19T00:00:00.000Z\n" +
-                "NaN\t0\t0\t260.000000000000\tNaN\tNaN\t\t\ttrue\t\t2027-08-18T00:00:00.000Z\n" +
-                "-577895670\t0\t0\t899.281250000000\t0.5314\tNaN\tPCHFNMWRKF\t\tfalse\t\t\n" +
-                "NaN\t3608\t-70\t0.001165638154\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t18027\t-91\tNaN\tNaN\tNaN\t\t\ttrue\t\t2028-02-14T00:00:00.000Z\n" +
-                "NaN\t0\t0\t-213.468750000000\t0.4905\t-8940639164947475955\tYROHKIIIIH\t\ttrue\t\t2028-04-14T00:00:00.000Z\n" +
-                "NaN\t-32404\t0\tNaN\tNaN\t-3801609434519024772\t\t\ttrue\t\t2028-06-13T00:00:00.000Z\n" +
-                "-211958640\t0\t0\tNaN\t0.8148\t-9014192604691332491\t\t\tfalse\t\t2028-08-12T00:00:00.000Z\n" +
-                "-335922823\t-21381\t-3\t0.000000050588\t0.3811\tNaN\t\t\ttrue\t\t2028-10-11T00:00:00.000Z\n" +
-                "444826054\t0\t0\tNaN\tNaN\tNaN\tTKPWVTUTPC\t\tfalse\t\t2028-12-10T00:00:00.000Z\n" +
-                "NaN\t0\t-112\t0.000078579949\t0.4149\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.5317\tNaN\tXMWDLPWECV\t\ttrue\t\t\n" +
-                "-462127181\t-27713\t57\tNaN\t0.7427\t8433285365657224839\t\t\ttrue\t\t\n" +
-                "NaN\t23894\t0\tNaN\tNaN\t9153770087233785213\tVURUTOHPVN\t\ttrue\t\t\n";
+                "NaN\t0\t0\tNaN\tNaN\t-5303405449347886958\t\t\tfalse\t\t2023-09-08T00:00:00.000Z\n" +
+                "NaN\t29170\t14\t-953.945312500000\t0.6473\t-6346552295544744665\t\t\ttrue\t\t2023-11-07T00:00:00.000Z\n" +
+                "-1551250112\t0\t0\tNaN\tNaN\t-9153807758920642614\tUJXSVCWGHT\t\tfalse\t\t\n" +
+                "-636263795\t0\t-76\tNaN\t0.5857\tNaN\t\t\ttrue\t\t\n" +
+                "NaN\t-27755\t0\tNaN\t0.7426\t5259909879721818696\t\t\tfalse\t\t\n" +
+                "731479609\t-20511\t0\t28.810546875000\t0.7764\t-8118558905916637434\t\t\tfalse\t\t\n" +
+                "-1334703041\t-1358\t0\t0.000000017793\t0.3070\t-3883507671731232196\t\t\ttrue\t\t2024-09-02T00:00:00.000Z\n" +
+                "NaN\t25020\t-107\tNaN\t0.6154\tNaN\tUYHVBTQZNP\t\ttrue\t\t\n" +
+                "NaN\t0\t58\tNaN\tNaN\t-5516374931389294840\t\t\tfalse\t\t2024-12-31T00:00:00.000Z\n" +
+                "964528173\t0\t0\t0.003956267610\t0.8607\t-3067936391188226389\t\t\tfalse\t\t2025-03-01T00:00:00.000Z\n" +
+                "NaN\t0\t-105\t0.000000338487\tNaN\tNaN\t\t\tfalse\t\t2025-04-30T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\t7354668637892666879\t\t\tfalse\t\t\n" +
+                "-448961895\t0\t0\tNaN\tNaN\t-9161200384798064634\tGZKHINLGPK\t\tfalse\t\t\n" +
+                "NaN\t-27897\t40\tNaN\tNaN\t-7520515938192868059\t\t\ttrue\t\t2025-10-27T00:00:00.000Z\n" +
+                "371473906\t0\t0\tNaN\t0.6473\t4656851861563783983\t\t\tfalse\t\t\n" +
+                "-1346903540\t0\t0\tNaN\t0.5894\t-8299437881884939478\tNYWRPCINVX\t\tfalse\t\t2026-02-24T00:00:00.000Z\n" +
+                "-1948757473\t0\t-46\tNaN\tNaN\t-6824321255992266244\t\t\tfalse\t\t\n" +
+                "-268192526\t10310\t0\tNaN\t0.5699\t-6083767479706055886\t\t\ttrue\t\t\n" +
+                "1294560337\t0\t0\t0.000000126063\tNaN\tNaN\t\t\tfalse\t\t2026-08-23T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\t0.5528\t-6393296971707706969\t\t\tfalse\t\t2026-10-22T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\t-8345528960002638166\t\t\ttrue\t\t\n" +
+                "1744814812\t455\t0\t0.001713166508\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t0\t-127\t0.015959210694\t0.7250\t8725410536784858046\t\t\tfalse\t\t\n" +
+                "NaN\t0\t16\t939.765625000000\t0.7319\t-7413379514400996037\t\t\ttrue\t\t2027-06-19T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\t0.7553\tNaN\t\t\tfalse\t\t\n" +
+                "1168191792\t21539\t-123\tNaN\tNaN\t-7702162217093176347\t\t\ttrue\t\t2027-10-17T00:00:00.000Z\n" +
+                "NaN\t-21809\t0\tNaN\tNaN\t-3135568653781063174\t\t\tfalse\t\t2027-12-16T00:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2028-02-14T00:00:00.000Z\n" +
+                "2003366662\t0\t0\tNaN\tNaN\t-1621062241930578783\t\t\tfalse\t\t2028-04-14T00:00:00.000Z\n" +
+                "NaN\t4277\t0\tNaN\tNaN\tNaN\tMHDSESFOOY\t\ttrue\t\t2028-06-13T00:00:00.000Z\n" +
+                "1375853278\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2028-08-12T00:00:00.000Z\n" +
+                "NaN\t-19723\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t0\t-52\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
+                "NaN\t0\t116\tNaN\tNaN\t-4675510353991993979\t\t\ttrue\t\t2029-02-08T00:00:00.000Z\n" +
+                "NaN\t0\t72\tNaN\tNaN\t-1653512736810729151\t\t\tfalse\t\t2029-04-09T00:00:00.000Z\n" +
+                "NaN\t-22994\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\tOJZOVQGFZU\t\tfalse\t\t\n";
         TestUtils.assertMemoryLeak(() -> testTableCursor(24 * 60 * 60 * 60000L, expected));
     }
 
@@ -325,7 +328,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
                 }
 
                 if (rnd.nextBoolean()) {
-                    rnd.nextChars(blob, blobLen);
+                    rnd.nextChars(blob, blobLen / 2);
                     r.putBin(9, blob, blobLen);
                 }
 
@@ -346,115 +349,117 @@ public class TableReaderTest extends AbstractOptimiserTest {
     private void testTableCursor() throws IOException, NumericException {
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
                 "73575701\t0\t0\tNaN\t0.7097\t-1675638984090602536\t\t\tfalse\t\t\n" +
-                "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tVPMIUPLYJV\t\ttrue\t\t\n" +
-                "NaN\t18857\t0\tNaN\tNaN\t-6541603390072946675\tVWKXPLTILO\t\ttrue\t\t2013-03-04T03:00:00.000Z\n" +
-                "1272362811\t0\t-90\t495.601562500000\t0.5251\tNaN\tLJOYMXFXNU\t\ttrue\t\t2013-03-04T04:00:00.000Z\n" +
+                "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tPMIUPLYJVB\t\ttrue\t\t\n" +
+                "NaN\t0\t60\tNaN\t0.6454\t-2715397729034539921\tOEYVSCKKDJ\t\tfalse\t\t2013-03-04T03:00:00.000Z\n" +
+                "NaN\t0\t113\tNaN\tNaN\t-6905112719978615298\t\t\tfalse\t\t2013-03-04T04:00:00.000Z\n" +
+                "-801004676\t0\t0\t0.000242509581\tNaN\t-7064303592482002884\t\t\tfalse\t\t2013-03-04T05:00:00.000Z\n" +
+                "NaN\t-24062\t0\t272.000000000000\t0.4387\tNaN\tTGSOOWYGSD\t\ttrue\t\t\n" +
+                "-640548855\t3093\t0\t-960.000000000000\t0.6056\t8522034740532776473\t\t\tfalse\t\t\n" +
+                "61976253\t0\t0\t0.000000000000\t0.5092\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t0\t0\t0.000041838453\t0.3185\tNaN\tZMGKVSIWRP\t\tfalse\t\t\n" +
+                "NaN\t0\t22\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-04T10:00:00.000Z\n" +
+                "777797854\t0\t0\tNaN\tNaN\t-3561042134139364009\t\t\tfalse\t\t2013-03-04T11:00:00.000Z\n" +
+                "NaN\t0\t106\tNaN\t0.4809\tNaN\t\t\ttrue\t\t\n" +
+                "1204862303\t-20282\t0\tNaN\tNaN\t8715974436393319034\t\t\ttrue\t\t2013-03-04T13:00:00.000Z\n" +
+                "NaN\t0\t53\t-222.738281250000\tNaN\tNaN\tWOWDODUFGU\t\tfalse\t\t\n" +
+                "2095297876\t21923\t0\t256.000000000000\t0.8653\t-6418805892627297273\t\t\ttrue\t\t2013-03-04T15:00:00.000Z\n" +
+                "NaN\t-19019\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-04T16:00:00.000Z\n" +
+                "NaN\t-25663\t0\t-92.000000000000\t0.3888\tNaN\t\t\ttrue\t\t2013-03-04T17:00:00.000Z\n" +
+                "-1601554634\t3379\t0\t1020.793212890625\tNaN\tNaN\tKSJZPZZKUM\t\tfalse\t\t\n" +
+                "NaN\t26260\t0\t46.750000000000\tNaN\tNaN\t\t\ttrue\t\t\n" +
+                "-1050143454\t0\t0\tNaN\tNaN\t-4944873630491810081\t\t\tfalse\t\t\n" +
+                "NaN\t0\t34\t0.013004892273\tNaN\tNaN\t\t\tfalse\t\t2013-03-04T21:00:00.000Z\n" +
+                "-1242020108\t-11546\t-82\t0.000000004717\t0.4724\tNaN\t\t\tfalse\t\t\n" +
+                "1512203086\t0\t0\t797.846359252930\tNaN\t6753493100272204912\t\t\tfalse\t\t\n" +
+                "77063638\t870\t-100\tNaN\tNaN\tNaN\t\t\ttrue\t\t2013-03-05T00:00:00.000Z\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "973040195\t0\t0\t-836.145385742188\t0.8502\t6229799201228951554\t\t\tfalse\t\t2013-03-04T06:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "308459589\t14311\t0\t0.001284251484\tNaN\t-8736036776035146161\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\t45.488159179688\t0.8366\t-8989605389992287841\t\t\tfalse\t\t\n" +
-                "NaN\t15403\t0\t0.000145471880\t0.8795\t-8930817457343668796\tBTPFUKBVTK\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.6590\t-7047591949709937141\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-105\tNaN\tNaN\t-4753799567364252473\t\t\tfalse\t\t2013-03-04T13:00:00.000Z\n" +
-                "562010564\t7262\t0\tNaN\tNaN\t-6563980004387365579\t\t\ttrue\t\t\n" +
-                "NaN\t0\t3\tNaN\t0.5520\tNaN\tZJGZUMUKYU\t\tfalse\t\t2013-03-04T15:00:00.000Z\n" +
-                "293774095\t0\t0\t0.000082347786\t0.3634\t-3190830651760796509\t\t\tfalse\t\t\n" +
-                "-1604751729\t-9938\t20\tNaN\tNaN\t-6935015060172657067\t\t\ttrue\t\t2013-03-04T17:00:00.000Z\n" +
-                "NaN\t-8125\t-57\t849.075531005859\tNaN\tNaN\tKNGEBETLTK\t\tfalse\t\t2013-03-04T18:00:00.000Z\n" +
-                "1720228024\t-23409\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.6895\t6004620688013050571\tTVVZBKUVBK\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t0.000087999168\t0.4351\tNaN\tFYGCYVIOMB\t\tfalse\t\t\n" +
-                "NaN\t0\t-80\t0.003153746715\tNaN\t9098346554960907337\tQRHFCHKEEV\t\tfalse\t\t\n" +
-                "NaN\t-32743\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-04T23:00:00.000Z\n" +
-                "NaN\t0\t0\t9.205261230469\t0.9173\t-4685006213170370882\t\t\tfalse\t\t2013-03-05T00:00:00.000Z\n" +
-                "598851620\t0\t0\t21.701147556305\t0.2727\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t-25550\t0\tNaN\t0.3322\tNaN\t\t\tfalse\t\t\n" +
-                "-778922608\t24861\t0\t0.000000720363\tNaN\t8259848643433335285\t\t\ttrue\t\t\n" +
-                "NaN\t0\t102\tNaN\tNaN\tNaN\tZXMGEZDCJY\t\ttrue\t\t2013-03-05T04:00:00.000Z\n" +
+                "NaN\t27339\t0\t0.000000010539\tNaN\tNaN\t\t\tfalse\t\t2013-03-05T02:00:00.000Z\n" +
+                "235357628\t0\t-120\t0.000156953447\tNaN\tNaN\tTTNGDKZVVS\t\tfalse\t\t\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\tJIVTDTVOFK\t\tfalse\t\t\n" +
+                "NaN\t0\t-122\tNaN\tNaN\tNaN\tKNSVTCFVTQ\t\tfalse\t\t2013-03-05T05:00:00.000Z\n" +
+                "NaN\t30566\t20\tNaN\t0.9818\t-5466726161969343552\t\t\tfalse\t\t2013-03-05T06:00:00.000Z\n" +
+                "NaN\t-15656\t0\tNaN\t0.6098\t-6217010216024734623\t\t\ttrue\t\t2013-03-05T07:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\t0.3901\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t2882\t0\t-105.500000000000\tNaN\tNaN\tOKIIHSWTEH\t\tfalse\t\t2013-03-05T09:00:00.000Z\n" +
+                "NaN\t0\t-104\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-05T10:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\tODHWKFENXM\t\tfalse\t\t\n" +
+                "-659184089\t-13800\t-2\t2.392256617546\t0.6519\t-7751136309261449149\tOKYULJBQTL\t\tfalse\t\t2013-03-05T12:00:00.000Z\n" +
+                "-1883104688\t0\t0\tNaN\t0.6757\t8196181258827495370\t\t\tfalse\t\t\n" +
+                "-2139859771\t0\t-79\t344.729835510254\tNaN\tNaN\tIBJCVFPFBC\t\tfalse\t\t\n" +
+                "NaN\t10225\t0\t-572.296875000000\t0.2967\t-5767634907351262282\tTBWDVSZOIX\t\tfalse\t\t\n" +
+                "NaN\t0\t-19\tNaN\t0.7135\t8969196340878943365\t\t\tfalse\t\t2013-03-05T16:00:00.000Z\n" +
+                "NaN\t0\t-38\t-86.000000000000\tNaN\tNaN\tXKELTCVZXQ\t\tfalse\t\t2013-03-05T17:00:00.000Z\n" +
+                "NaN\t29304\t0\tNaN\tNaN\t-1515294165892907204\t\t\tfalse\t\t2013-03-05T18:00:00.000Z\n" +
+                "NaN\t17701\t0\t0.916345536709\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "-2139370311\t-32277\t65\tNaN\tNaN\t-7601183786211855388\t\t\ttrue\t\t2013-03-05T20:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-05T21:00:00.000Z\n" +
+                "1198081577\t0\t0\tNaN\tNaN\t-7481237079546197800\t\t\ttrue\t\t2013-03-05T22:00:00.000Z\n" +
+                "NaN\t-17836\t0\tNaN\t0.5251\t-7316664068900365888\t\t\tfalse\t\t\n" +
+                "NaN\t0\t60\t-1024.000000000000\t0.9287\t1451757238409137883\t\t\tfalse\t\t\n" +
+                "632261185\t14561\t0\t447.342773437500\tNaN\tNaN\t\t\tfalse\t\t2013-03-06T01:00:00.000Z\n" +
+                "NaN\t0\t-96\t0.005665154895\t0.5212\tNaN\tJEQMWTHZNH\t\ttrue\t\t\n" +
+                "NaN\t4882\t0\t-721.570068359375\tNaN\tNaN\t\t\tfalse\t\t2013-03-06T03:00:00.000Z\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "-1570697358\t0\t0\t0.000000024249\tNaN\tNaN\tPOPUMZRZFP\t\tfalse\t\t2013-03-05T06:00:00.000Z\n" +
-                "1281789059\t-28328\t0\t8.375915527344\tNaN\tNaN\t\t\tfalse\t\t2013-03-05T07:00:00.000Z\n" +
-                "773205381\t2761\t-107\t-357.250000000000\t0.4628\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t-80.000000000000\t0.7919\t7815756683824312484\t\t\ttrue\t\t\n" +
-                "1263151569\t-11048\t-73\tNaN\tNaN\tNaN\tKRCFYRTLRK\t\tfalse\t\t2013-03-05T10:00:00.000Z\n" +
-                "439223132\t3987\t86\t87.750000000000\t0.4815\t-9036776975577124044\tDXKUIKUEMT\t\tfalse\t\t\n" +
-                "NaN\t-27442\t0\t0.000147545263\t0.7297\t-8297333826176735232\t\t\ttrue\t\t2013-03-05T12:00:00.000Z\n" +
-                "NaN\t9003\t0\t0.006835407345\tNaN\tNaN\t\t\tfalse\t\t2013-03-05T13:00:00.000Z\n" +
-                "NaN\t0\t16\tNaN\t0.3239\tNaN\tBSOGXJMFKP\t\tfalse\t\t\n" +
-                "-139580709\t13211\t0\tNaN\tNaN\tNaN\tUBPURNKTQH\t\ttrue\t\t2013-03-05T15:00:00.000Z\n" +
-                "NaN\t0\t-9\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t0.001820561971\t0.4415\t-6102982263510933075\tEKLWGBGEOG\t\ttrue\t\t2013-03-05T17:00:00.000Z\n" +
-                "NaN\t12750\t0\tNaN\tNaN\tNaN\tPBQQLZFHZD\t\tfalse\t\t\n" +
-                "NaN\t2196\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "386502586\t0\t122\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "439448790\t10173\t90\t0.000008843858\t0.4117\tNaN\t\t\tfalse\t\t\n" +
-                "-2039588344\t20814\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-70\t0.003472472192\t0.8169\t-4210500280316527754\tDHXLLWYISI\t\tfalse\t\t2013-03-05T23:00:00.000Z\n" +
-                "NaN\t18551\t-63\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\t0.024644770660\tNaN\tNaN\tMWPZCHTCCX\t\ttrue\t\t\n" +
-                "NaN\t-6604\t9\tNaN\tNaN\tNaN\tTLXKVTQULM\t\tfalse\t\t2013-03-06T02:00:00.000Z\n" +
-                "NaN\t0\t-79\t-256.000000000000\tNaN\t7702983503801189270\t\t\ttrue\t\t\n" +
-                "-1553509839\t0\t0\t238.259117126465\tNaN\t-1012659436286375174\t\t\tfalse\t\t2013-03-06T04:00:00.000Z\n" +
-                "NaN\t-14133\t0\t423.937385559082\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.3018\tNaN\tGQQLTSYDNF\t\tfalse\t\t2013-03-06T06:00:00.000Z\n" +
-                "1416328685\t9161\t0\t0.123783446848\t0.6768\t-5457019364697877056\tLUBDODEPXS\t\ttrue\t\t2013-03-06T07:00:00.000Z\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t19513\t-9\t0.000000038397\t0.8405\t-7740238432567045181\t\t\tfalse\t\t2013-03-06T09:00:00.000Z\n" +
-                "NaN\t-17207\t0\tNaN\tNaN\t3608850123411200285\tUJEYJNNYPK\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tKFBGJJWDPP\t\tfalse\t\t2013-03-06T11:00:00.000Z\n" +
+                "1216600919\t23298\t-117\tNaN\tNaN\tNaN\tMNWBTIVJEW\t\ttrue\t\t2013-03-06T06:00:00.000Z\n" +
+                "NaN\t0\t119\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t17913\t0\t0.020569519140\t0.5912\tNaN\t\t\tfalse\t\t2013-03-06T08:00:00.000Z\n" +
+                "1610742551\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-06T09:00:00.000Z\n" +
+                "-1205646285\t0\t0\tNaN\t0.9289\t8642403514325899452\t\t\tfalse\t\t2013-03-06T10:00:00.000Z\n" +
+                "NaN\t-23295\t0\tNaN\t0.8926\t-9150462926608062120\tWQLJNZCGCT\t\ttrue\t\t\n" +
+                "NaN\t0\t0\tNaN\t0.6798\t-5864575418630714346\t\t\tfalse\t\t2013-03-06T12:00:00.000Z\n" +
+                "1683275019\t-26804\t0\t4.128064155579\t0.2032\tNaN\t\t\tfalse\t\t2013-03-06T13:00:00.000Z\n" +
+                "NaN\t0\t-94\tNaN\tNaN\t-9051427420978437586\t\t\tfalse\t\t2013-03-06T14:00:00.000Z\n" +
                 "1934973454\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-5303405449347886958\t\t\tfalse\t\t2013-03-06T13:00:00.000Z\n" +
-                "NaN\t29170\t14\t-953.945312500000\t0.6473\t-6346552295544744665\t\t\ttrue\t\t2013-03-06T14:00:00.000Z\n" +
-                "-1551250112\t0\t0\tNaN\tNaN\t-9153807758920642614\t\t\tfalse\t\t\n" +
-                "352676096\t2921\t106\tNaN\tNaN\t-7166847293288140192\t\t\ttrue\t\t2013-03-06T16:00:00.000Z\n" +
-                "NaN\t0\t0\t-891.255187988281\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "2013386777\t-4913\t0\t0.096109641716\tNaN\t-9134728405009464739\t\t\ttrue\t\t2013-03-06T18:00:00.000Z\n" +
-                "1537359183\t0\t18\t50.457431793213\tNaN\tNaN\tZLXSRQKBCP\t\tfalse\t\t\n" +
-                "-1887247278\t0\t60\tNaN\t0.5281\t8892699517500908585\t\t\ttrue\t\t\n" +
-                "NaN\t0\t87\t0.000086571285\t0.5349\t8284471997786423504\t\t\tfalse\t\t2013-03-06T21:00:00.000Z\n" +
-                "NaN\t0\t0\t0.000000004778\t0.8130\t8439036057773114882\tGDLSMQPYNU\t\tfalse\t\t2013-03-06T22:00:00.000Z\n" +
-                "NaN\t0\t-77\t829.437500000000\tNaN\t8885314950764600193\tOEIGBTHYVP\t\ttrue\t\t\n" +
-                "NaN\t0\t0\t129.767963409424\t0.5434\tNaN\tWWRGGWVNTO\t\tfalse\t\t\n" +
-                "1162820296\t-13379\t42\t0.000602753847\t0.7151\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t-86\tNaN\t0.7216\t8601477333412382641\tLDCCOELJWI\t\tfalse\t\t\n" +
-                "NaN\t0\t-26\t-512.000000000000\tNaN\tNaN\tTDJOCZRMZX\t\tfalse\t\t\n" +
-                "NaN\t0\t122\t0.011416638270\t0.4929\tNaN\tXGLGFIBWXN\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-8885925444061796471\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.4037\t-6546280368212658058\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-112\tNaN\tNaN\t-1432130118181766760\t\t\tfalse\t\t2013-03-07T07:00:00.000Z\n" +
-                "NaN\t0\t54\t818.979553222656\t0.3012\t8559643124608722337\tIGBWZXSJJN\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t8.801370620728\t0.3609\tNaN\tKBEWLYZPZZ\t\tfalse\t\t2013-03-07T09:00:00.000Z\n" +
-                "NaN\t0\t0\t0.000046097467\tNaN\t-1334416388074838565\tTFWLGSFUJG\t\tfalse\t\t2013-03-07T10:00:00.000Z\n" +
-                "NaN\t7519\t-114\tNaN\t0.5528\tNaN\tTNWDLJQPKW\t\ttrue\t\t\n" +
-                "140497042\t0\t0\tNaN\t0.3144\tNaN\tOMZZKGTBCQ\t\tfalse\t\t\n" +
-                "634971665\t0\t0\t-896.000000000000\t0.5061\t8333807780608495713\t\t\tfalse\t\t\n" +
-                "1045373397\t5459\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "-1286159186\t0\t0\t0.001565168088\t0.4512\tNaN\t\t\tfalse\t\t2013-03-07T15:00:00.000Z\n" +
-                "NaN\t0\t0\t260.000000000000\tNaN\tNaN\t\t\ttrue\t\t2013-03-07T16:00:00.000Z\n" +
-                "-577895670\t0\t0\t899.281250000000\t0.5314\tNaN\tPCHFNMWRKF\t\tfalse\t\t\n" +
-                "NaN\t3608\t-70\t0.001165638154\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t18027\t-91\tNaN\tNaN\tNaN\t\t\ttrue\t\t2013-03-07T19:00:00.000Z\n" +
-                "NaN\t0\t0\t-213.468750000000\t0.4905\t-8940639164947475955\tYROHKIIIIH\t\ttrue\t\t2013-03-07T20:00:00.000Z\n" +
-                "NaN\t-32404\t0\tNaN\tNaN\t-3801609434519024772\t\t\ttrue\t\t2013-03-07T21:00:00.000Z\n" +
-                "-211958640\t0\t0\tNaN\t0.8148\t-9014192604691332491\t\t\tfalse\t\t2013-03-07T22:00:00.000Z\n" +
-                "-335922823\t-21381\t-3\t0.000000050588\t0.3811\tNaN\t\t\ttrue\t\t2013-03-07T23:00:00.000Z\n" +
-                "444826054\t0\t0\tNaN\tNaN\tNaN\tTKPWVTUTPC\t\tfalse\t\t2013-03-08T00:00:00.000Z\n" +
-                "NaN\t0\t-112\t0.000078579949\t0.4149\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.5317\tNaN\tXMWDLPWECV\t\ttrue\t\t\n" +
-                "-462127181\t-27713\t57\tNaN\t0.7427\t8433285365657224839\t\t\ttrue\t\t\n" +
-                "NaN\t23894\t0\tNaN\tNaN\t9153770087233785213\tVURUTOHPVN\t\ttrue\t\t\n";
+                "NaN\t0\t0\tNaN\tNaN\t-5303405449347886958\t\t\tfalse\t\t2013-03-06T16:00:00.000Z\n" +
+                "NaN\t29170\t14\t-953.945312500000\t0.6473\t-6346552295544744665\t\t\ttrue\t\t2013-03-06T17:00:00.000Z\n" +
+                "-1551250112\t0\t0\tNaN\tNaN\t-9153807758920642614\tUJXSVCWGHT\t\tfalse\t\t\n" +
+                "-636263795\t0\t-76\tNaN\t0.5857\tNaN\t\t\ttrue\t\t\n" +
+                "NaN\t-27755\t0\tNaN\t0.7426\t5259909879721818696\t\t\tfalse\t\t\n" +
+                "731479609\t-20511\t0\t28.810546875000\t0.7764\t-8118558905916637434\t\t\tfalse\t\t\n" +
+                "-1334703041\t-1358\t0\t0.000000017793\t0.3070\t-3883507671731232196\t\t\ttrue\t\t2013-03-06T22:00:00.000Z\n" +
+                "NaN\t25020\t-107\tNaN\t0.6154\tNaN\tUYHVBTQZNP\t\ttrue\t\t\n" +
+                "NaN\t0\t58\tNaN\tNaN\t-5516374931389294840\t\t\tfalse\t\t2013-03-07T00:00:00.000Z\n" +
+                "964528173\t0\t0\t0.003956267610\t0.8607\t-3067936391188226389\t\t\tfalse\t\t2013-03-07T01:00:00.000Z\n" +
+                "NaN\t0\t-105\t0.000000338487\tNaN\tNaN\t\t\tfalse\t\t2013-03-07T02:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\t7354668637892666879\t\t\tfalse\t\t\n" +
+                "-448961895\t0\t0\tNaN\tNaN\t-9161200384798064634\tGZKHINLGPK\t\tfalse\t\t\n" +
+                "NaN\t-27897\t40\tNaN\tNaN\t-7520515938192868059\t\t\ttrue\t\t2013-03-07T05:00:00.000Z\n" +
+                "371473906\t0\t0\tNaN\t0.6473\t4656851861563783983\t\t\tfalse\t\t\n" +
+                "-1346903540\t0\t0\tNaN\t0.5894\t-8299437881884939478\tNYWRPCINVX\t\tfalse\t\t2013-03-07T07:00:00.000Z\n" +
+                "-1948757473\t0\t-46\tNaN\tNaN\t-6824321255992266244\t\t\tfalse\t\t\n" +
+                "-268192526\t10310\t0\tNaN\t0.5699\t-6083767479706055886\t\t\ttrue\t\t\n" +
+                "1294560337\t0\t0\t0.000000126063\tNaN\tNaN\t\t\tfalse\t\t2013-03-07T10:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\t0.5528\t-6393296971707706969\t\t\tfalse\t\t2013-03-07T11:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\t-8345528960002638166\t\t\ttrue\t\t\n" +
+                "1744814812\t455\t0\t0.001713166508\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t0\t-127\t0.015959210694\t0.7250\t8725410536784858046\t\t\tfalse\t\t\n" +
+                "NaN\t0\t16\t939.765625000000\t0.7319\t-7413379514400996037\t\t\ttrue\t\t2013-03-07T15:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\t0.7553\tNaN\t\t\tfalse\t\t\n" +
+                "1168191792\t21539\t-123\tNaN\tNaN\t-7702162217093176347\t\t\ttrue\t\t2013-03-07T17:00:00.000Z\n" +
+                "NaN\t-21809\t0\tNaN\tNaN\t-3135568653781063174\t\t\tfalse\t\t2013-03-07T18:00:00.000Z\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-07T19:00:00.000Z\n" +
+                "2003366662\t0\t0\tNaN\tNaN\t-1621062241930578783\t\t\tfalse\t\t2013-03-07T20:00:00.000Z\n" +
+                "NaN\t4277\t0\tNaN\tNaN\tNaN\tMHDSESFOOY\t\ttrue\t\t2013-03-07T21:00:00.000Z\n" +
+                "1375853278\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-07T22:00:00.000Z\n" +
+                "NaN\t-19723\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
+                "NaN\t0\t-52\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
+                "NaN\t0\t116\tNaN\tNaN\t-4675510353991993979\t\t\ttrue\t\t2013-03-08T01:00:00.000Z\n" +
+                "NaN\t0\t72\tNaN\tNaN\t-1653512736810729151\t\t\tfalse\t\t2013-03-08T02:00:00.000Z\n" +
+                "NaN\t-22994\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\tOJZOVQGFZU\t\tfalse\t\t\n";
         testTableCursor(60 * 60000, expected);
     }
 
     private void testTableCursor(long increment, String expected) throws IOException, NumericException {
         Rnd rnd = new Rnd();
         int N = 100;
-        testAppendNulls(rnd, FF, DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z"), N, increment);
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        testAppendNulls(rnd, FF, ts, N, increment);
 
         final StringSink sink = new StringSink();
         final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+        final LongList rows = new LongList();
         try (TableReader reader = new TableReader(FF, root, "all")) {
             Assert.assertEquals(N, reader.size());
             printer.print(reader, true, reader.getMetadata());
@@ -465,6 +470,90 @@ public class TableReaderTest extends AbstractOptimiserTest {
 
             printer.print(reader, true, reader.getMetadata());
             TestUtils.assertEquals(expected, sink);
+
+            reader.toTop();
+            while (reader.hasNext()) {
+                rows.add(reader.next().getRowId());
+            }
+
+            final int blobLen = 64 * 1024;
+            long blob = Unsafe.malloc(blobLen);
+            try {
+                Rnd exp = new Rnd();
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    Record r = reader.recordAt(rows.getQuick(i));
+
+                    ts += increment;
+
+                    if (exp.nextBoolean()) {
+                        Assert.assertEquals(exp.nextByte(), r.get(2));
+                    }
+
+                    if (exp.nextBoolean()) {
+                        Assert.assertEquals(exp.nextBoolean(), r.getBool(8));
+                    }
+
+                    if (exp.nextBoolean()) {
+                        Assert.assertEquals(exp.nextShort(), r.getShort(1));
+                    }
+
+                    if (exp.nextBoolean()) {
+                        Assert.assertEquals(exp.nextInt(), r.getInt(0));
+                    } else {
+                        Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
+                    }
+
+                    if (exp.nextBoolean()) {
+                        Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
+                    } else {
+                        Assert.assertTrue(Double.isNaN(r.getDouble(3)));
+                    }
+
+                    if (exp.nextBoolean()) {
+                        Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
+                    } else {
+                        Assert.assertTrue(Float.isNaN(r.getFloat(4)));
+                    }
+
+                    if (exp.nextBoolean()) {
+                        Assert.assertEquals(exp.nextLong(), r.getLong(5));
+                    } else {
+                        Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
+                    }
+
+                    if (exp.nextBoolean()) {
+                        Assert.assertEquals(ts, r.getDate(10));
+                    } else {
+                        Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
+                    }
+
+                    if (exp.nextBoolean()) {
+                        exp.nextChars(blob, blobLen / 2);
+                        Assert.assertEquals(blobLen, r.getBinLen(9));
+                        BinarySequence sq = r.getBin2(9);
+                        for (int l = 0; l < blobLen; l++) {
+                            byte b = sq.byteAt(l);
+                            boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
+                            if (result) {
+                                sq.byteAt(l);
+                                Assert.fail("Error at [" + i + "," + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
+                            }
+                        }
+                    } else {
+                        Assert.assertEquals(-1, r.getBinLen(9));
+
+                    }
+
+                    if (exp.nextBoolean()) {
+                        CharSequence expCs = exp.nextChars(10);
+                        TestUtils.assertEquals(expCs, r.getFlyweightStr(6));
+                        TestUtils.assertEquals(expCs, r.getFlyweightStrB(6));
+                        Assert.assertFalse(r.getFlyweightStr(6) == r.getFlyweightStrB(6));
+                    }
+                }
+            } finally {
+                Unsafe.free(blob, blobLen);
+            }
         }
     }
 }

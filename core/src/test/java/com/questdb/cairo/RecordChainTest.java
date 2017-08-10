@@ -1,6 +1,5 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.Rnd;
 import com.questdb.ql.Record;
 import com.questdb.ql.impl.CollectionRecordMetadata;
 import com.questdb.ql.impl.RecordColumnMetadataImpl;
@@ -18,7 +17,7 @@ public class RecordChainTest {
     @Test
     public void testClear() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Record record = new R();
+            Record record = new TestRecord();
             final int N = 10000;
             try (RecordChain chain = new RecordChain(metadata, SIZE_4M)) {
 
@@ -38,7 +37,7 @@ public class RecordChainTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;
             try (RecordChain chain = new RecordChain(metadata, SIZE_4M)) {
-                Record record = new R();
+                Record record = new TestRecord();
                 LongList rows = new LongList();
                 long o = -1L;
                 for (int i = 0; i < N; i++) {
@@ -48,7 +47,7 @@ public class RecordChainTest {
 
                 Assert.assertEquals(N, rows.size());
 
-                Record expected = new R();
+                Record expected = new TestRecord();
 
                 for (int i = 0, n = rows.size(); i < n; i++) {
                     long row = rows.getQuick(i);
@@ -57,7 +56,7 @@ public class RecordChainTest {
                     assertSame(expected, actual);
                 }
 
-                Record expected2 = new R();
+                Record expected2 = new TestRecord();
                 Record rec2 = chain.newRecord();
 
                 for (int i = 0, n = rows.size(); i < n; i++) {
@@ -67,7 +66,7 @@ public class RecordChainTest {
                     assertSame(expected2, rec2);
                 }
 
-                Record expected3 = new R();
+                Record expected3 = new TestRecord();
                 Record rec3 = chain.getRecord();
 
                 for (int i = 0, n = rows.size(); i < n; i++) {
@@ -100,7 +99,7 @@ public class RecordChainTest {
         TestUtils.assertMemoryLeak(
                 () -> {
                     final int N = 100000;
-                    Record record = new R();
+                    Record record = new TestRecord();
 
 //        try (RecordList records = new RecordList(metadata, 1024 * 1024 * 1024)) {
 //            long o = -1L;
@@ -124,8 +123,8 @@ public class RecordChainTest {
                             o = chain.putRecord(record, o);
                         }
                         System.out.println("RecordChain append time: " + (System.nanoTime() - t));
-                        assertChain(chain, new R(), N * 2);
-                        assertChain(chain, new R(), N * 2);
+                        assertChain(chain, new TestRecord(), N * 2);
+                        assertChain(chain, new TestRecord(), N * 2);
                     }
                 }
         );
@@ -135,7 +134,7 @@ public class RecordChainTest {
     public void testWrongColumnType() throws Exception {
         CollectionRecordMetadata metadata = new CollectionRecordMetadata();
         metadata.add(new RecordColumnMetadataImpl("int", 199));
-        R r = new R();
+        TestRecord r = new TestRecord();
         TestUtils.assertMemoryLeak(() -> {
             try (RecordChain chain = new RecordChain(metadata, 1024)) {
                 Assert.assertNull(chain.getStorageFacade());
@@ -230,8 +229,8 @@ public class RecordChainTest {
 
     private void testChainReuseWithClearFunction(ClearFunc clear) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Record record = new R();
-            Record expected = new R();
+            Record record = new TestRecord();
+            Record expected = new TestRecord();
             final int N = 10000;
             try (RecordChain chain = new RecordChain(metadata, 4 * 1024 * 1024L)) {
 
@@ -249,106 +248,6 @@ public class RecordChainTest {
     @FunctionalInterface
     private interface ClearFunc {
         void clear(RecordChain chain);
-    }
-
-    private static class R implements Record {
-        final Rnd rnd = new Rnd();
-        final ArrayBinarySequence abs = new ArrayBinarySequence().of(new byte[1024]);
-
-        @Override
-        public byte get(int col) {
-            return rnd.nextByte();
-        }
-
-        @Override
-        public BinarySequence getBin2(int col) {
-            if (rnd.nextPositiveInt() % 32 == 0) {
-                return null;
-            }
-            for (int i = 0, n = abs.array.length; i < n; i++) {
-                abs.array[i] = rnd.nextByte();
-            }
-            return abs;
-        }
-
-        @Override
-        public boolean getBool(int col) {
-            return rnd.nextBoolean();
-        }
-
-        @Override
-        public long getDate(int col) {
-            return rnd.nextPositiveLong();
-        }
-
-        @Override
-        public double getDouble(int col) {
-            return rnd.nextDouble();
-        }
-
-        @Override
-        public float getFloat(int col) {
-            return rnd.nextFloat();
-        }
-
-        @Override
-        public CharSequence getFlyweightStr(int col) {
-            return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
-        }
-
-        @Override
-        public CharSequence getFlyweightStrB(int col) {
-            return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
-        }
-
-        @Override
-        public int getInt(int col) {
-            return rnd.nextInt();
-        }
-
-        @Override
-        public long getLong(int col) {
-            return rnd.nextLong();
-        }
-
-        @Override
-        public long getRowId() {
-            return -1;
-        }
-
-        @Override
-        public short getShort(int col) {
-            return rnd.nextShort();
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            return 15;
-        }
-
-        @Override
-        public CharSequence getSym(int col) {
-            return rnd.nextChars(10);
-        }
-    }
-
-    public static class ArrayBinarySequence implements BinarySequence {
-        private byte[] array;
-
-        @Override
-        public byte byteAt(long index) {
-            return array[(int) index];
-        }
-
-        @Override
-        public long length() {
-            return array.length;
-        }
-
-        ArrayBinarySequence of(byte[] array) {
-            this.array = array;
-            return this;
-        }
     }
 
     static {
