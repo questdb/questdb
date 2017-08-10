@@ -26,6 +26,7 @@ package com.questdb.cairo;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Rnd;
+import com.questdb.misc.Unsafe;
 import com.questdb.std.BinarySequence;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -64,21 +65,27 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testNullBin() throws Exception {
-        try (VirtualMemory mem = new VirtualMemory(1024)) {
-            ByteBuffer buf = ByteBuffer.allocate(1024);
-            mem.putBin((ByteBuffer) null);
-            mem.putBin(0, 0);
-            buf.flip();
-            mem.putBin(buf);
-            long o1 = mem.putNullBin();
+    public void testBulkCopy() throws Exception {
+        int N = 1000;
+        try (VirtualMemory mem = new VirtualMemory(128)) {
+            for (int i = 0; i < N; i++) {
+                mem.putShort((short) i);
+            }
 
-            Assert.assertNull(mem.getBin(0));
-            Assert.assertNull(mem.getBin(8));
-            BinarySequence bsview = mem.getBin(16);
-            Assert.assertNotNull(bsview);
-            Assert.assertEquals(0, bsview.length());
-            Assert.assertNull(mem.getBin(o1));
+            long target = N * 2;
+            long offset = 0;
+            short i = 0;
+            while (target > 0) {
+                long len = mem.pageRemaining(offset);
+                target -= len;
+                long address = mem.addressOf(offset);
+                offset += len;
+                while (len > 0 & i < N) {
+                    Assert.assertEquals(i++, Unsafe.getUnsafe().getShort(address));
+                    address += 2;
+                    len -= 2;
+                }
+            }
         }
     }
 
@@ -333,38 +340,22 @@ public class VirtualMemoryTest {
         }
     }
 
-    private void assertBuf(ByteBuffer buf, int pageSize) {
-        Rnd rnd = new Rnd();
-        int n = 99;
+    @Test
+    public void testNullBin() throws Exception {
+        try (VirtualMemory mem = new VirtualMemory(1024)) {
+            ByteBuffer buf = ByteBuffer.allocate(1024);
+            mem.putBin((ByteBuffer) null);
+            mem.putBin(0, 0);
+            buf.flip();
+            mem.putBin(buf);
+            long o1 = mem.putNullBin();
 
-        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
-            for (int i = 0; i < n; i++) {
-                int sz = rnd.nextPositiveInt() % buf.capacity();
-                for (int j = 0; j < sz; j++) {
-                    buf.put(rnd.nextByte());
-                }
-                buf.flip();
-
-                mem.putBin(buf);
-                Assert.assertEquals(0, buf.remaining());
-                buf.clear();
-            }
-
-            rnd = new Rnd();
-
-            long o = 0;
-            for (int i = 0; i < n; i++) {
-                long sz = rnd.nextPositiveInt() % buf.capacity();
-                BinarySequence bsview = mem.getBin(o);
-                Assert.assertNotNull(bsview);
-                Assert.assertEquals(sz, bsview.length());
-
-                o += sz + 8;
-
-                for (long j = 0; j < sz; j++) {
-                    Assert.assertEquals(rnd.nextByte(), bsview.byteAt(j));
-                }
-            }
+            Assert.assertNull(mem.getBin(0));
+            Assert.assertNull(mem.getBin(8));
+            BinarySequence bsview = mem.getBin(16);
+            Assert.assertNotNull(bsview);
+            Assert.assertEquals(0, bsview.length());
+            Assert.assertNull(mem.getBin(o1));
         }
     }
 
@@ -453,6 +444,72 @@ public class VirtualMemoryTest {
         Assert.assertEquals(4, VirtualMemory.getStorageLength(null));
     }
 
+    private void assertBuf(ByteBuffer buf, int pageSize) {
+        Rnd rnd = new Rnd();
+        int n = 99;
+
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
+            for (int i = 0; i < n; i++) {
+                int sz = rnd.nextPositiveInt() % buf.capacity();
+                for (int j = 0; j < sz; j++) {
+                    buf.put(rnd.nextByte());
+                }
+                buf.flip();
+
+                mem.putBin(buf);
+                Assert.assertEquals(0, buf.remaining());
+                buf.clear();
+            }
+
+            rnd = new Rnd();
+
+            long o = 0;
+            for (int i = 0; i < n; i++) {
+                long sz = rnd.nextPositiveInt() % buf.capacity();
+                BinarySequence bsview = mem.getBin(o);
+                Assert.assertNotNull(bsview);
+                Assert.assertEquals(sz, bsview.length());
+
+                o += sz + 8;
+
+                for (long j = 0; j < sz; j++) {
+                    Assert.assertEquals(rnd.nextByte(), bsview.byteAt(j));
+                }
+            }
+        }
+    }
+
+    private void assertStrings(VirtualMemory mem, boolean b) {
+        if (b) {
+            mem.putByte((byte) 1);
+        }
+
+        long o1 = mem.putStr("123");
+        long o2 = mem.putStr("0987654321abcd");
+        long o3 = mem.putStr(null);
+        long o4 = mem.putStr("xyz123");
+        long o5 = mem.putNullStr();
+
+        if (b) {
+            assertEquals(1, mem.getByte(0));
+        }
+
+        TestUtils.assertEquals("123", mem.getStr(o1));
+        TestUtils.assertEquals("123", mem.getStr2(o1));
+        TestUtils.assertEquals("0987654321abcd", mem.getStr(o2));
+        TestUtils.assertEquals("0987654321abcd", mem.getStr2(o2));
+        assertNull(mem.getStr(o3));
+        assertNull(mem.getStr2(o3));
+        TestUtils.assertEquals("xyz123", mem.getStr(o4));
+        TestUtils.assertEquals("xyz123", mem.getStr2(o4));
+        assertNull(mem.getStr(o5));
+        assertNull(mem.getStr2(o5));
+
+        CharSequence s1 = mem.getStr(o1);
+        CharSequence s2 = mem.getStr2(o2);
+        Assert.assertFalse(Chars.equals(s1, s2));
+    }
+
     private void testBinSequence0(long mem1Size, long mem2Size) {
         Rnd rnd = new Rnd();
         int n = 999;
@@ -512,36 +569,5 @@ public class VirtualMemoryTest {
                 }
             }
         }
-    }
-
-    private void assertStrings(VirtualMemory mem, boolean b) {
-        if (b) {
-            mem.putByte((byte) 1);
-        }
-
-        long o1 = mem.putStr("123");
-        long o2 = mem.putStr("0987654321abcd");
-        long o3 = mem.putStr(null);
-        long o4 = mem.putStr("xyz123");
-        long o5 = mem.putNullStr();
-
-        if (b) {
-            assertEquals(1, mem.getByte(0));
-        }
-
-        TestUtils.assertEquals("123", mem.getStr(o1));
-        TestUtils.assertEquals("123", mem.getStr2(o1));
-        TestUtils.assertEquals("0987654321abcd", mem.getStr(o2));
-        TestUtils.assertEquals("0987654321abcd", mem.getStr2(o2));
-        assertNull(mem.getStr(o3));
-        assertNull(mem.getStr2(o3));
-        TestUtils.assertEquals("xyz123", mem.getStr(o4));
-        TestUtils.assertEquals("xyz123", mem.getStr2(o4));
-        assertNull(mem.getStr(o5));
-        assertNull(mem.getStr2(o5));
-
-        CharSequence s1 = mem.getStr(o1);
-        CharSequence s2 = mem.getStr2(o2);
-        Assert.assertFalse(Chars.equals(s1, s2));
     }
 }

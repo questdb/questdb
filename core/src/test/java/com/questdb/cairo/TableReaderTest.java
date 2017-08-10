@@ -549,6 +549,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
                         TestUtils.assertEquals(expCs, r.getFlyweightStr(6));
                         TestUtils.assertEquals(expCs, r.getFlyweightStrB(6));
                         Assert.assertFalse(r.getFlyweightStr(6) == r.getFlyweightStrB(6));
+                        Assert.assertEquals(expCs.length(), r.getStrLen(6));
                     }
                 }
             } finally {
