@@ -35,7 +35,10 @@ import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
-import com.questdb.std.time.*;
+import com.questdb.std.time.DateFormat;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.DateLocaleFactory;
+import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
 import org.jetbrains.annotations.NotNull;
 
@@ -46,27 +49,8 @@ public class TableWriter implements Closeable {
 
     public static final int TODO_TRUNCATE = 1;
     public static final int TODO_RESTORE_META = 2;
-    static final String TXN_FILE_NAME = "_txn";
-    static final String META_FILE_NAME = "_meta";
-    static final String META_SWAP_FILE_NAME = "_meta.swp";
-    static final String META_PREV_FILE_NAME = "_meta.prev";
-    static final String TODO_FILE_NAME = "_todo";
-    static final String ARCHIVE_FILE_NAME = "_archive";
-    static final String DEFAULT_PARTITION_NAME = "default";
-    static final long META_OFFSET_COUNT = 0;
-    static final long META_OFFSET_PARTITION_BY = 4;
-    static final long TX_OFFSET_TXN = 0;
-    static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
-    static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
-    static final long TX_OFFSET_MAX_TIMESTAMP = 24;
-    static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-    static final long META_OFFSET_COLUMN_TYPES = 12;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
-    private static final int _16M = 16 * 1024 * 1024;
     private static final long TX_EOF = 32;
-    private static final DateFormat fmtDay;
-    private static final DateFormat fmtMonth;
-    private static final DateFormat fmtYear;
     private static final CharSequenceHashSet ignoredFiles = new CharSequenceHashSet();
     final ObjList<AppendMemory> columns;
     private final CompositePath path;
@@ -134,14 +118,14 @@ public class TableWriter implements Closeable {
             this.ddlMem = new AppendMemory(ff);
             this.metaMem = new ReadOnlyMemory(ff);
             openMetaFile();
-            this.columnCount = metaMem.getInt(META_OFFSET_COUNT);
-            this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
+            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
             this.columnSizeMem = new VirtualMemory(ff.getPageSize());
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount);
             this.nullers = new ObjList<>(columnCount);
             this.columnTops = new LongList(columnCount);
-            this.partitionDirFmt = selectPartitionDirFmt(partitionBy);
+            this.partitionDirFmt = TableUtils.selectPartitionDirFmt(partitionBy);
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
             configureAppendPosition();
@@ -150,10 +134,6 @@ public class TableWriter implements Closeable {
             close0();
             throw e;
         }
-    }
-
-    public static long getColumnNameOffset(int columnCount) {
-        return META_OFFSET_COLUMN_TYPES + columnCount * 4;
     }
 
     /**
@@ -197,7 +177,7 @@ public class TableWriter implements Closeable {
         metaMem.close();
 
         // rename _meta to _meta.prev
-        renameOrElse(META_FILE_NAME, META_PREV_FILE_NAME, this::openMetaFile);
+        renameOrElse(TableUtils.META_FILE_NAME, TableUtils.META_PREV_FILE_NAME, this::openMetaFile);
 
         // rename _meta.swp to _meta
         rollbackMeta();
@@ -220,7 +200,7 @@ public class TableWriter implements Closeable {
                 try {
                     removeMetaFile();
                     removeLastColumn();
-                    rename(META_PREV_FILE_NAME, META_FILE_NAME);
+                    rename(TableUtils.META_PREV_FILE_NAME, TableUtils.META_FILE_NAME);
                     openMetaFile();
                     removeTodoFile();
                 } catch (CairoException err) {
@@ -255,7 +235,7 @@ public class TableWriter implements Closeable {
         }
 
         if (inTransaction()) {
-            txMem.jumpTo(TX_OFFSET_TRANSIENT_ROW_COUNT);
+            txMem.jumpTo(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
             txMem.putLong(transientRowCount);
 
             if (txPartitionCount > 1) {
@@ -270,7 +250,7 @@ public class TableWriter implements Closeable {
             txMem.putLong(maxTimestamp);
 
             Unsafe.getUnsafe().storeFence();
-            txMem.jumpTo(TX_OFFSET_TXN);
+            txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
             txMem.putLong(++txn);
             Unsafe.getUnsafe().storeFence();
             txMem.jumpTo(TX_EOF);
@@ -299,7 +279,7 @@ public class TableWriter implements Closeable {
         LOG.info().$("Removing column '").$(name).$("' from ").$(path).$();
 
         // check if we are moving timestamp from a partitioned table
-        boolean timestamp = index == metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+        boolean timestamp = index == metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
 
         if (timestamp && partitionBy != PartitionBy.NONE) {
             throw CairoException.instance(0).put("Cannot remove timestamp from partitioned table");
@@ -317,7 +297,7 @@ public class TableWriter implements Closeable {
         metaMem.close();
 
         // rename _meta to _meta.prev
-        renameOrElse(META_FILE_NAME, META_PREV_FILE_NAME, this::openMetaFile);
+        renameOrElse(TableUtils.META_FILE_NAME, TableUtils.META_PREV_FILE_NAME, this::openMetaFile);
 
         // rename _meta.swp to _meta
         rollbackMeta();
@@ -400,7 +380,7 @@ public class TableWriter implements Closeable {
         txn = 0;
         txPartitionCount = 1;
 
-        txMem.jumpTo(TX_OFFSET_TXN);
+        txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
         TableUtils.resetTxn(txMem);
         try {
             removeTodoFile();
@@ -428,77 +408,10 @@ public class TableWriter implements Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
-    static DateFormat selectPartitionDirFmt(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return fmtDay;
-            case PartitionBy.MONTH:
-                return fmtMonth;
-            case PartitionBy.YEAR:
-                return fmtYear;
-            default:
-                return null;
-        }
-    }
-
-    static LPSZ dFile(CompositePath path, CharSequence columnName) {
-        return path.concat(columnName).put(".d").$();
-    }
-
-    static LPSZ iFile(CompositePath path, CharSequence columnName) {
-        return path.concat(columnName).put(".i").$();
-    }
-
-    static LPSZ topFile(CompositePath path, CharSequence columnName) {
-        return path.concat(columnName).put(".top").$();
-    }
-
-    static long getMapPageSize(FilesFacade ff) {
-        long pageSize = ff.getPageSize() * ff.getPageSize();
-        if (pageSize < ff.getPageSize() || pageSize > _16M) {
-            if (_16M % ff.getPageSize() == 0) {
-                return _16M;
-            }
-            return ff.getPageSize();
-        } else {
-            return pageSize;
-        }
-    }
-
-    /**
-     * path member variable has to be set to location of "top" file.
-     *
-     * @return number of rows column doesn't have when column was added to table that already had data.
-     */
-    static long readColumnTop(FilesFacade ff, CompositePath path, CharSequence name, int plen) {
-        try {
-            path.trimTo(path.length());
-            if (ff.exists(topFile(path, name))) {
-                long fd = ff.openRO(path);
-                try {
-                    long buf = Unsafe.malloc(8);
-                    try {
-                        if (ff.read(fd, buf, 8, 0) != 8) {
-                            throw CairoException.instance(Os.errno()).put("Cannot read top of column ").put(path);
-                        }
-                        return Unsafe.getUnsafe().getLong(buf);
-                    } finally {
-                        Unsafe.free(buf, 8);
-                    }
-                } finally {
-                    ff.close(fd);
-                }
-            }
-            return 0L;
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
     private void addColumnToMeta(CharSequence name, int type) {
         try {
             // delete stale _meta.swp
-            path.concat(TableWriter.META_SWAP_FILE_NAME).$();
+            path.concat(TableUtils.META_SWAP_FILE_NAME).$();
 
             if (ff.exists(path) && !ff.remove(path)) {
                 throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
@@ -508,13 +421,13 @@ public class TableWriter implements Closeable {
                 ddlMem.of(path, ff.getPageSize(), 0);
                 ddlMem.putInt(columnCount + 1);
                 ddlMem.putInt(partitionBy);
-                ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+                ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
                 for (int i = 0; i < columnCount; i++) {
                     ddlMem.putInt(getColumnType(i));
                 }
                 ddlMem.putInt(type);
 
-                long nameOffset = getColumnNameOffset(columnCount);
+                long nameOffset = TableUtils.getColumnNameOffset(columnCount);
                 for (int i = 0; i < columnCount; i++) {
                     CharSequence columnName = metaMem.getStr(nameOffset);
                     ddlMem.putStr(columnName);
@@ -637,7 +550,7 @@ public class TableWriter implements Closeable {
                 long partitionTimestamp = columnSizeMem.getLong(offset + 8);
                 setStateForTimestamp(partitionTimestamp, false);
 
-                long fd = openAppend(path.concat(ARCHIVE_FILE_NAME).$());
+                long fd = openAppend(path.concat(TableUtils.ARCHIVE_FILE_NAME).$());
                 try {
                     int len = 8;
                     long o = offset;
@@ -660,11 +573,11 @@ public class TableWriter implements Closeable {
     }
 
     private void configureAppendPosition() {
-        this.txn = txMem.getLong(TX_OFFSET_TXN);
-        this.transientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+        this.txn = txMem.getLong(TableUtils.TX_OFFSET_TXN);
+        this.transientRowCount = txMem.getLong(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
         this.prevTransientRowCount = this.transientRowCount;
-        this.fixedRowCount = txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-        this.maxTimestamp = txMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        this.fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
+        this.maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
         this.prevTimestamp = this.maxTimestamp;
         if (this.maxTimestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
             openFirstPartition(this.maxTimestamp);
@@ -740,7 +653,7 @@ public class TableWriter implements Closeable {
     }
 
     private LongConsumer configureTimestampSetter() {
-        int index = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+        int index = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         if (index == -1) {
             return value -> {
             };
@@ -762,7 +675,7 @@ public class TableWriter implements Closeable {
      * @return 0 based column index.
      */
     private int getColumnIndexQuiet(CharSequence name) {
-        long nameOffset = getColumnNameOffset(columnCount);
+        long nameOffset = TableUtils.getColumnNameOffset(columnCount);
         for (int i = 0; i < columnCount; i++) {
             CharSequence col = metaMem.getStr(nameOffset);
             if (Chars.equals(col, name)) {
@@ -774,7 +687,7 @@ public class TableWriter implements Closeable {
     }
 
     private int getColumnType(int columnIndex) {
-        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * 4);
+        return metaMem.getInt(TableUtils.META_OFFSET_COLUMN_TYPES + columnIndex * 4);
     }
 
     private AppendMemory getPrimaryColumn(int column) {
@@ -797,10 +710,10 @@ public class TableWriter implements Closeable {
         AppendMemory mem1 = getPrimaryColumn(i);
         AppendMemory mem2 = getSecondaryColumn(i);
 
-        mem1.of(dFile(path.trimTo(plen), name), getMapPageSize(ff));
+        mem1.of(TableUtils.dFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff));
 
         if (mem2 != null) {
-            mem2.of(iFile(path.trimTo(plen), name), getMapPageSize(ff));
+            mem2.of(TableUtils.iFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff));
         }
 
         path.trimTo(plen);
@@ -814,7 +727,7 @@ public class TableWriter implements Closeable {
 
     private void openMetaFile() {
         try {
-            metaMem.of(path.concat(META_FILE_NAME).$(), ff.getPageSize(), ff.length(path));
+            metaMem.of(path.concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize(), ff.length(path));
         } finally {
             path.trimTo(rootLen);
         }
@@ -844,11 +757,11 @@ public class TableWriter implements Closeable {
             }
             assert columnCount > 0;
 
-            long nameOffset = getColumnNameOffset(columnCount);
+            long nameOffset = TableUtils.getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(nameOffset);
                 openColumnFiles(name, i, plen);
-                columnTops.extendAndSet(i, readColumnTop(ff, path, name, plen));
+                columnTops.extendAndSet(i, TableUtils.readColumnTop(ff, path, name, plen));
                 nameOffset += VirtualMemory.getStorageLength(name);
             }
         } finally {
@@ -858,7 +771,7 @@ public class TableWriter implements Closeable {
 
     private ReadWriteMemory openTxnFile() {
         try {
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+            if (ff.exists(path.concat(TableUtils.TXN_FILE_NAME).$())) {
                 return new ReadWriteMemory(ff, path, ff.getPageSize(), 0, ff.getPageSize());
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
@@ -876,7 +789,7 @@ public class TableWriter implements Closeable {
 
     private byte readTodoTaskCode() {
         try {
-            if (ff.exists(path.concat(TODO_FILE_NAME).$())) {
+            if (ff.exists(path.concat(TableUtils.TODO_FILE_NAME).$())) {
                 long todoFd = ff.openRO(path);
                 if (todoFd == -1) {
                     throw CairoException.instance(Os.errno()).put("Cannot open *todo*: ").put(path);
@@ -918,9 +831,9 @@ public class TableWriter implements Closeable {
                     path.trimTo(rootLen);
                     path.concat(nativeLPSZ);
                     int plen = path.length();
-                    removeFileAndOrLog(dFile(path, name));
-                    removeFileAndOrLog(iFile(path.trimTo(plen), name));
-                    removeFileAndOrLog(topFile(path.trimTo(plen), name));
+                    removeFileAndOrLog(TableUtils.dFile(path, name));
+                    removeFileAndOrLog(TableUtils.iFile(path.trimTo(plen), name));
+                    removeFileAndOrLog(TableUtils.topFile(path.trimTo(plen), name));
                 }
             });
         } finally {
@@ -931,14 +844,14 @@ public class TableWriter implements Closeable {
     private void removeColumnFromMeta(int index) {
         try {
             // delete stale _meta.swp
-            path.concat(TableWriter.META_SWAP_FILE_NAME).$();
+            path.concat(TableUtils.META_SWAP_FILE_NAME).$();
 
             if (ff.exists(path) && !ff.remove(path)) {
                 throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
             }
 
             try {
-                int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+                int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
                 ddlMem.of(path, ff.getPageSize(), 0);
                 ddlMem.putInt(columnCount - 1);
                 ddlMem.putInt(partitionBy);
@@ -957,7 +870,7 @@ public class TableWriter implements Closeable {
                     }
                 }
 
-                long nameOffset = getColumnNameOffset(columnCount);
+                long nameOffset = TableUtils.getColumnNameOffset(columnCount);
                 for (int i = 0; i < columnCount; i++) {
                     CharSequence columnName = metaMem.getStr(nameOffset);
                     if (i != index) {
@@ -989,7 +902,7 @@ public class TableWriter implements Closeable {
 
     private void removeMetaFile() {
         try {
-            path.concat(META_FILE_NAME).$();
+            path.concat(TableUtils.META_FILE_NAME).$();
             if (ff.exists(path)) {
                 if (!ff.remove(path)) {
                     throw CairoException.instance(Os.errno()).put("Recovery failed. Cannot remove: ").put(path);
@@ -1049,7 +962,7 @@ public class TableWriter implements Closeable {
 
     private void removeTodoFile() {
         try {
-            if (!ff.remove(path.concat(TODO_FILE_NAME).$())) {
+            if (!ff.remove(path.concat(TableUtils.TODO_FILE_NAME).$())) {
                 throw CairoException.instance(Os.errno()).put("Recovery operation completed successfully but I cannot remove todo file: ").put(path).put(". Please remove manually before opening table again,");
             }
         } finally {
@@ -1083,9 +996,9 @@ public class TableWriter implements Closeable {
 
     private void repairMetaRename() {
         try {
-            if (ff.exists(path.concat(META_PREV_FILE_NAME).$())) {
+            if (ff.exists(path.concat(TableUtils.META_PREV_FILE_NAME).$())) {
                 LOG.info().$("Repairing metadata from: ").$(path).$();
-                if (ff.exists(other.concat(META_FILE_NAME).$()) && !ff.remove(other)) {
+                if (ff.exists(other.concat(TableUtils.META_FILE_NAME).$()) && !ff.remove(other)) {
                     throw CairoException.instance(Os.errno()).put("Repair failed. Cannot replace ").put(other);
                 }
 
@@ -1105,15 +1018,15 @@ public class TableWriter implements Closeable {
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirectories();
         }
-        txMem.jumpTo(TX_OFFSET_TXN);
+        txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
         TableUtils.resetTxn(txMem);
         removeTodoFile();
     }
 
     private void rollbackMeta() {
         // rename _meta.swp to _meta
-        renameOrElse(META_SWAP_FILE_NAME, META_FILE_NAME, () -> {
-            rename(META_PREV_FILE_NAME, META_FILE_NAME);
+        renameOrElse(TableUtils.META_SWAP_FILE_NAME, TableUtils.META_FILE_NAME, () -> {
+            rename(TableUtils.META_PREV_FILE_NAME, TableUtils.META_FILE_NAME);
             openMetaFile();
             removeTodoFile();
         });
@@ -1191,7 +1104,7 @@ public class TableWriter implements Closeable {
                 }
                 break;
             default:
-                path.put(DEFAULT_PARTITION_NAME);
+                path.put(TableUtils.DEFAULT_PARTITION_NAME);
                 partitionLo = Long.MIN_VALUE;
                 partitionHi = Long.MAX_VALUE;
                 break;
@@ -1243,7 +1156,7 @@ public class TableWriter implements Closeable {
 
     private void writeTodo(int code) {
         try {
-            long fd = openAppend(path.concat(TODO_FILE_NAME).$());
+            long fd = openAppend(path.concat(TableUtils.TODO_FILE_NAME).$());
             try {
                 long buf = Unsafe.malloc(1);
                 try {
@@ -1386,15 +1299,8 @@ public class TableWriter implements Closeable {
     static {
         ignoredFiles.add("..");
         ignoredFiles.add(".");
-        ignoredFiles.add(META_FILE_NAME);
-        ignoredFiles.add(TXN_FILE_NAME);
-        ignoredFiles.add(TODO_FILE_NAME);
-    }
-
-    static {
-        DateFormatCompiler compiler = new DateFormatCompiler();
-        fmtDay = compiler.compile("yyyy-MM-dd");
-        fmtMonth = compiler.compile("yyyy-MM");
-        fmtYear = compiler.compile("yyyy");
+        ignoredFiles.add(TableUtils.META_FILE_NAME);
+        ignoredFiles.add(TableUtils.TXN_FILE_NAME);
+        ignoredFiles.add(TableUtils.TODO_FILE_NAME);
     }
 }

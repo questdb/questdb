@@ -27,8 +27,6 @@ import com.questdb.store.SymbolTable;
 import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
 
-import static com.questdb.cairo.TableWriter.*;
-
 public class TableReader implements Closeable, RecordCursor {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
     private final static NextRecordFunction nextPartitionFunction = new NextPartitionFunction();
@@ -67,12 +65,12 @@ public class TableReader implements Closeable, RecordCursor {
         this.txMem = openTxnFile();
         this.metaMem = new ReadOnlyMemory(ff);
         openMetaFile();
-        this.columnCount = metaMem.getInt(META_OFFSET_COUNT);
+        this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnCountBits = Numbers.msb(Numbers.ceilPow2(this.columnCount) * 2);
-        this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
-        this.timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+        this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+        this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.metadata = new Meta(columnCount);
-        this.partitionDirFmt = TableWriter.selectPartitionDirFmt(partitionBy);
+        this.partitionDirFmt = TableUtils.selectPartitionDirFmt(partitionBy);
         countPartitions();
         int columnListCapacity = (this.partitionCount == 1 ? columnCount * 2 : partitionCount << columnCountBits);
         this.columns = new ObjList<>(columnListCapacity);
@@ -173,7 +171,7 @@ public class TableReader implements Closeable, RecordCursor {
     private static long readPartitionSize(FilesFacade ff, CompositePath path) {
         int plen = path.length();
         try {
-            if (ff.exists(path.concat(TableWriter.ARCHIVE_FILE_NAME).$())) {
+            if (ff.exists(path.concat(TableUtils.ARCHIVE_FILE_NAME).$())) {
                 long fd = ff.openRO(path);
                 if (fd == -1) {
                     throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
@@ -259,7 +257,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     private void failOnPendingTodo() {
         try {
-            if (ff.exists(path.concat(TODO_FILE_NAME).$())) {
+            if (ff.exists(path.concat(TableUtils.TODO_FILE_NAME).$())) {
                 throw CairoException.instance(0).put("Table ").put(path.$()).put(" is pending recovery.");
             }
         } finally {
@@ -269,7 +267,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     private long loadDefaultPartition(int columnIndex, long[] columnOffsets) {
         try {
-            path.concat(TableWriter.DEFAULT_PARTITION_NAME).$();
+            path.concat(TableUtils.DEFAULT_PARTITION_NAME).$();
             if (ff.exists(path)) {
                 openPartitionColumns(columnIndex, transientRowCount, columnOffsets);
             }
@@ -281,7 +279,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     private void openMetaFile() {
         try {
-            metaMem.of(path.concat(META_FILE_NAME).$(), ff.getPageSize(), ff.length(path));
+            metaMem.of(path.concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize(), ff.length(path));
         } finally {
             path.trimTo(rootLen);
         }
@@ -343,67 +341,29 @@ public class TableReader implements Closeable, RecordCursor {
             for (int i = 0; i < columnCount; i++) {
                 if (columns.getQuick(getPrimaryColumnIndex(columnBase, i)) == null) {
                     String name = metadata.getColumnName(i);
-                    if (ff.exists(TableWriter.dFile(path.trimTo(plen), name))) {
-
+                    if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
                         // we defer setting size
-                        ReadOnlyMemory mem1 = new ReadOnlyMemory(ff);
-                        ReadOnlyMemory mem2;
+                        final ReadOnlyMemory mem1 = new ReadOnlyMemory(ff);
+                        final ReadOnlyMemory mem2;
 
-                        long offset;
-                        long len;
-                        mem1.of(path, TableWriter.getMapPageSize(ff));
+                        mem1.of(path, TableUtils.getMapPageSize(ff));
                         columns.setQuick(getPrimaryColumnIndex(columnBase, i), mem1);
 
-                        switch (metadata.getColumnQuick(i).getType()) {
+                        int type = metadata.getColumnQuick(i).getType();
+                        switch (type) {
+                            case ColumnType.BINARY:
                             case ColumnType.STRING:
                             case ColumnType.SYMBOL:
-                                mem2 = new ReadOnlyMemory(ff, TableWriter.iFile(path.trimTo(plen), name), TableWriter.getMapPageSize(ff), partitionSize * 8);
-                                offset = mem2.getLong((partitionSize - 1) * 8);
-                                if (ff.read(mem1.getFd(), tempMem8b, 4, offset) != 4) {
-                                    throw CairoException.instance(ff.errno()).put("Cannot read string column length, fd=").put(mem2.getFd()).put(", offset=").put(offset);
-                                }
-                                len = Unsafe.getUnsafe().getInt(tempMem8b);
-                                if (len == -1) {
-                                    mem1.setSize(offset + 4);
-                                } else {
-                                    mem1.setSize(offset + len + 4);
-                                }
-                                columns.setQuick(getSecondaryColumnIndex(columnBase, i), mem2);
-                                break;
-                            case ColumnType.BINARY:
-                                mem2 = new ReadOnlyMemory(ff, TableWriter.iFile(path.trimTo(plen), name), TableWriter.getMapPageSize(ff), partitionSize * 8);
-                                offset = mem2.getLong((partitionSize - 1) * 8);
-                                if (ff.read(mem1.getFd(), tempMem8b, 8, offset) != 8) {
-                                    throw CairoException.instance(ff.errno()).put("Cannot read bin column length, fd=").put(mem2.getFd()).put(", offset=").put(offset);
-                                }
-                                len = Unsafe.getUnsafe().getLong(tempMem8b);
-                                if (len == -1) {
-                                    mem1.setSize(offset + 8);
-                                } else {
-                                    mem1.setSize(offset + len + 8);
-                                }
-                                columns.setQuick(getSecondaryColumnIndex(columnBase, i), mem2);
-                                break;
-                            case ColumnType.LONG:
-                            case ColumnType.DOUBLE:
-                            case ColumnType.DATE:
-                                mem1.setSize(partitionSize * 8);
-                                break;
-                            case ColumnType.INT:
-                            case ColumnType.FLOAT:
-                                mem1.setSize(partitionSize * 4);
-                                break;
-                            case ColumnType.SHORT:
-                                mem1.setSize(partitionSize * 2);
-                                break;
-                            case ColumnType.BOOLEAN:
-                            case ColumnType.BYTE:
-                                mem1.setSize(partitionSize);
+                                columns.setQuick(getSecondaryColumnIndex(columnBase, i), mem2 = new ReadOnlyMemory(ff));
+                                mem2.of(TableUtils.iFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff));
                                 break;
                             default:
-                                throw CairoException.instance(0).put("Unsupported type: ").put(ColumnType.nameOf(metadata.getColumnQuick(i).getType()));
+                                mem2 = null;
+                                break;
                         }
-                        columnTops[i] = readColumnTop(ff, path, name, plen);
+                        long top = TableUtils.readColumnTop(ff, path, name, plen);
+                        TableUtils.setColumnSize(ff, mem1, mem2, type, partitionSize - top, tempMem8b);
+                        columnTops[i] = top;
                     }
                 }
             }
@@ -414,7 +374,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     private ReadOnlyMemory openTxnFile() {
         try {
-            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+            if (ff.exists(path.concat(TableUtils.TXN_FILE_NAME).$())) {
                 return new ReadOnlyMemory(ff, path, ff.getPageSize(), ff.length(path));
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
@@ -426,18 +386,18 @@ public class TableReader implements Closeable, RecordCursor {
 
     private boolean readTxn() {
         while (true) {
-            long txn = txMem.getLong(TableWriter.TX_OFFSET_TXN);
+            long txn = txMem.getLong(TableUtils.TX_OFFSET_TXN);
 
             if (txn == this.txn) {
                 return false;
             }
 
             Unsafe.getUnsafe().loadFence();
-            long transientRowCount = txMem.getLong(TableWriter.TX_OFFSET_TRANSIENT_ROW_COUNT);
-            long fixedRowCount = txMem.getLong(TableWriter.TX_OFFSET_FIXED_ROW_COUNT);
-            long maxTimestamp = txMem.getLong(TableWriter.TX_OFFSET_MAX_TIMESTAMP);
+            long transientRowCount = txMem.getLong(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
+            long fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
+            long maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
             Unsafe.getUnsafe().loadFence();
-            if (txn == txMem.getLong(TableWriter.TX_OFFSET_TXN)) {
+            if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN)) {
                 this.txn = txn;
                 this.transientRowCount = transientRowCount;
                 this.size = fixedRowCount + transientRowCount;
@@ -619,9 +579,9 @@ public class TableReader implements Closeable, RecordCursor {
             this.columnMetadata = new ObjList<>(columnCount);
             this.columnNameHashTable = new CharSequenceIntHashMap(columnCount);
 
-            long offset = TableWriter.getColumnNameOffset(columnCount);
+            long offset = TableUtils.getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
-                int type = metaMem.getInt(TableWriter.META_OFFSET_COLUMN_TYPES + i * 4);
+                int type = metaMem.getInt(TableUtils.META_OFFSET_COLUMN_TYPES + i * 4);
                 CharSequence name = metaMem.getStr(offset);
                 assert name != null;
                 String s = name.toString();

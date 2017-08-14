@@ -148,7 +148,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableWriter.META_FILE_NAME) && super.remove(name);
+                return !Chars.endsWith(name, TableUtils.META_FILE_NAME) && super.remove(name);
             }
         }
         testUnrecoverableAddColumn(new X());
@@ -255,7 +255,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
-                return !(Chars.endsWith(from, TableWriter.META_PREV_FILE_NAME) && --count == 0) && super.rename(from, to);
+                return !(Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME) && --count == 0) && super.rename(from, to);
             }
         });
     }
@@ -267,7 +267,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.META_FILE_NAME) && --counter == 0) {
+                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1L;
                 }
                 return super.openRO(name);
@@ -282,12 +282,12 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
-                return !Chars.endsWith(from, TableWriter.META_SWAP_FILE_NAME) && super.rename(from, to);
+                return !Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME) && super.rename(from, to);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                return !(Chars.endsWith(name, TableWriter.TODO_FILE_NAME) && --count == 0) && super.remove(name);
+                return !(Chars.endsWith(name, TableUtils.TODO_FILE_NAME) && --count == 0) && super.remove(name);
             }
         });
     }
@@ -311,7 +311,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.META_FILE_NAME) && --counter == 0) {
+                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1L;
                 }
                 return super.openRO(name);
@@ -319,7 +319,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableWriter.META_FILE_NAME) && super.remove(name);
+                return !Chars.endsWith(name, TableUtils.META_FILE_NAME) && super.remove(name);
             }
         }
         testAddColumnErrorFollowedByRepairFail(new X());
@@ -332,7 +332,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.META_FILE_NAME) && --counter == 0) {
+                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1L;
                 }
                 return super.openRO(name);
@@ -340,7 +340,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
-                return !Chars.endsWith(from, TableWriter.META_PREV_FILE_NAME) && super.rename(from, to);
+                return !Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME) && super.rename(from, to);
             }
         }
         testAddColumnErrorFollowedByRepairFail(new X());
@@ -357,12 +357,12 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableWriter.META_SWAP_FILE_NAME) || super.exists(path);
+                return Chars.endsWith(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.META_SWAP_FILE_NAME)) {
+                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
                     return deleteAttempted = true;
                 }
                 return super.remove(name);
@@ -390,12 +390,12 @@ public class TableWriterTest extends AbstractOptimiserTest {
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableWriter.META_SWAP_FILE_NAME) || super.exists(path);
+                return Chars.endsWith(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableWriter.META_SWAP_FILE_NAME) && super.remove(name);
+                return !Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME) && super.remove(name);
             }
         });
     }
@@ -407,7 +407,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.META_SWAP_FILE_NAME)) {
+                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
                     return fd = super.openRW(name);
                 }
                 return super.openRW(name);
@@ -947,7 +947,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.TXN_FILE_NAME) && --count == 0) {
+                if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return fd = super.openRW(name);
                 }
                 return super.openRW(name);
@@ -983,7 +983,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         testConstructor(new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableWriter.TODO_FILE_NAME) || super.exists(path);
+                return Chars.endsWith(path, TableUtils.TODO_FILE_NAME) || super.exists(path);
             }
         });
     }
@@ -995,7 +995,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.TXN_FILE_NAME) && --count == 0) {
+                if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return -1;
                 }
                 return super.openRW(name);
@@ -1062,12 +1062,12 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableWriter.TODO_FILE_NAME) || super.exists(path);
+                return Chars.endsWith(path, TableUtils.TODO_FILE_NAME) || super.exists(path);
             }
 
             @Override
             public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.TODO_FILE_NAME)) {
+                if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
                     return this.fd;
                 }
                 return super.openRO(name);
@@ -1235,7 +1235,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         testConstructor(new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.META_FILE_NAME)) {
+                if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -1330,7 +1330,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.META_SWAP_FILE_NAME)) {
+                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
                     return fd = super.openRW(name);
                 }
                 return super.openRW(name);
@@ -1354,7 +1354,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, TableWriter.META_SWAP_FILE_NAME)) {
+                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRW(name);
@@ -1432,12 +1432,12 @@ public class TableWriterTest extends AbstractOptimiserTest {
         class X extends FilesFacadeImpl {
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableWriter.META_SWAP_FILE_NAME) || super.exists(path);
+                return Chars.endsWith(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableWriter.META_SWAP_FILE_NAME) && super.remove(name);
+                return !Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME) && super.remove(name);
             }
         }
         testRemoveColumn(new X());
@@ -1460,7 +1460,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public boolean remove(LPSZ name) {
-                return (!Chars.endsWith(name, TableWriter.TODO_FILE_NAME) || --count != 0) && super.remove(name);
+                return (!Chars.endsWith(name, TableUtils.TODO_FILE_NAME) || --count != 0) && super.remove(name);
             }
         }
         testUnrecoverableRemoveColumn(new X());
@@ -1473,7 +1473,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
-                return !Chars.endsWith(to, TableWriter.META_FILE_NAME) || --count < 0 && super.rename(from, to);
+                return !Chars.endsWith(to, TableUtils.META_FILE_NAME) || --count < 0 && super.rename(from, to);
             }
         }
         testUnrecoverableRemoveColumn(new X());
@@ -1670,7 +1670,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         class X extends FilesFacadeImpl {
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableWriter.TODO_FILE_NAME) && super.remove(name);
+                return !Chars.endsWith(name, TableUtils.TODO_FILE_NAME) && super.remove(name);
             }
         }
 
@@ -1731,7 +1731,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         testConstructor(new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return !Chars.endsWith(path, TableWriter.TXN_FILE_NAME) && super.exists(path);
+                return !Chars.endsWith(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
             }
         });
     }
@@ -2482,14 +2482,14 @@ public class TableWriterTest extends AbstractOptimiserTest {
     private static class SwapMetaRenameDenyingFacade extends FilesFacadeImpl {
         @Override
         public boolean rename(LPSZ from, LPSZ to) {
-            return !Chars.endsWith(from, TableWriter.META_SWAP_FILE_NAME) && super.rename(from, to);
+            return !Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME) && super.rename(from, to);
         }
     }
 
     private static class MetaRenameDenyingFacade extends FilesFacadeImpl {
         @Override
         public boolean rename(LPSZ from, LPSZ to) {
-            return !Chars.endsWith(to, TableWriter.META_PREV_FILE_NAME) && super.rename(from, to);
+            return !Chars.endsWith(to, TableUtils.META_PREV_FILE_NAME) && super.rename(from, to);
         }
     }
 
@@ -2497,7 +2497,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
         @Override
         public long openAppend(LPSZ name) {
-            if (Chars.endsWith(name, TableWriter.TODO_FILE_NAME)) {
+            if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
                 return -1;
             }
             return super.openAppend(name);
@@ -2518,7 +2518,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
         @Override
         public long openAppend(LPSZ name) {
-            if (Chars.endsWith(name, TableWriter.TODO_FILE_NAME)) {
+            if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
                 return fd = super.openAppend(name);
             }
             return super.openAppend(name);
