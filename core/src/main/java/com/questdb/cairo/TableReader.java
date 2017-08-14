@@ -79,7 +79,7 @@ public class TableReader implements Closeable, RecordCursor {
         columns.extendAndSet(columnListCapacity - 1, null);
         this.partitionSizes = new LongList(partitionCount);
         this.partitionSizes.seed(partitionCount, -1);
-        readTx();
+        readTxn();
         this.columnTops = new long[columnCount];
     }
 
@@ -154,6 +154,10 @@ public class TableReader implements Closeable, RecordCursor {
         return currentRecordFunction.next(this);
     }
 
+    public boolean refresh() {
+        return readTxn();
+    }
+
     public long size() {
         return size;
     }
@@ -164,6 +168,36 @@ public class TableReader implements Closeable, RecordCursor {
 
     private static int getSecondaryColumnIndex(int base, int index) {
         return getPrimaryColumnIndex(base, index) + 1;
+    }
+
+    private static long readPartitionSize(FilesFacade ff, CompositePath path) {
+        int plen = path.length();
+        try {
+            if (ff.exists(path.concat(TableWriter.ARCHIVE_FILE_NAME).$())) {
+                long fd = ff.openRO(path);
+                if (fd == -1) {
+                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
+                }
+
+                try {
+                    long mem = Unsafe.malloc(8);
+                    try {
+                        if (ff.read(fd, mem, 8, 0) != 8) {
+                            throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
+                        }
+                        return Unsafe.getUnsafe().getLong(mem);
+                    } finally {
+                        Unsafe.free(mem, 8);
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            } else {
+                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
+            }
+        } finally {
+            path.trimTo(plen);
+        }
     }
 
     private void countPartitions() {
@@ -285,7 +319,7 @@ public class TableReader implements Closeable, RecordCursor {
                 if (last) {
                     partitionSize = transientRowCount;
                 } else {
-                    partitionSize = readPartitionSize();
+                    partitionSize = readPartitionSize(ff, path);
                 }
 
                 LOG.info().$("Open partition: ").$(path.$()).$(" [size=").$(partitionSize).$(']').$();
@@ -314,9 +348,10 @@ public class TableReader implements Closeable, RecordCursor {
                         // we defer setting size
                         ReadOnlyMemory mem1 = new ReadOnlyMemory(ff);
                         ReadOnlyMemory mem2;
+
                         long offset;
                         long len;
-                        mem1.of(path);
+                        mem1.of(path, TableWriter.getMapPageSize(ff));
                         columns.setQuick(getPrimaryColumnIndex(columnBase, i), mem1);
 
                         switch (metadata.getColumnQuick(i).getType()) {
@@ -329,9 +364,9 @@ public class TableReader implements Closeable, RecordCursor {
                                 }
                                 len = Unsafe.getUnsafe().getInt(tempMem8b);
                                 if (len == -1) {
-                                    mem1.setSize(TableWriter.getMapPageSize(ff), offset + 4);
+                                    mem1.setSize(offset + 4);
                                 } else {
-                                    mem1.setSize(TableWriter.getMapPageSize(ff), offset + len + 4);
+                                    mem1.setSize(offset + len + 4);
                                 }
                                 columns.setQuick(getSecondaryColumnIndex(columnBase, i), mem2);
                                 break;
@@ -343,27 +378,27 @@ public class TableReader implements Closeable, RecordCursor {
                                 }
                                 len = Unsafe.getUnsafe().getLong(tempMem8b);
                                 if (len == -1) {
-                                    mem1.setSize(TableWriter.getMapPageSize(ff), offset + 8);
+                                    mem1.setSize(offset + 8);
                                 } else {
-                                    mem1.setSize(TableWriter.getMapPageSize(ff), offset + len + 8);
+                                    mem1.setSize(offset + len + 8);
                                 }
                                 columns.setQuick(getSecondaryColumnIndex(columnBase, i), mem2);
                                 break;
                             case ColumnType.LONG:
                             case ColumnType.DOUBLE:
                             case ColumnType.DATE:
-                                mem1.setSize(TableWriter.getMapPageSize(ff), partitionSize * 8);
+                                mem1.setSize(partitionSize * 8);
                                 break;
                             case ColumnType.INT:
                             case ColumnType.FLOAT:
-                                mem1.setSize(TableWriter.getMapPageSize(ff), partitionSize * 4);
+                                mem1.setSize(partitionSize * 4);
                                 break;
                             case ColumnType.SHORT:
-                                mem1.setSize(TableWriter.getMapPageSize(ff), partitionSize * 2);
+                                mem1.setSize(partitionSize * 2);
                                 break;
                             case ColumnType.BOOLEAN:
                             case ColumnType.BYTE:
-                                mem1.setSize(TableWriter.getMapPageSize(ff), partitionSize);
+                                mem1.setSize(partitionSize);
                                 break;
                             default:
                                 throw CairoException.instance(0).put("Unsupported type: ").put(ColumnType.nameOf(metadata.getColumnQuick(i).getType()));
@@ -389,48 +424,18 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private long readPartitionSize() {
-        int plen = path.length();
-        try {
-            if (ff.exists(path.concat(TableWriter.ARCHIVE_FILE_NAME).$())) {
-                long fd = ff.openRO(path);
-                if (fd == -1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
-                }
-
-                try {
-                    long mem = Unsafe.malloc(8);
-                    try {
-                        if (ff.read(fd, mem, 8, 0) != 8) {
-                            throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
-                        }
-                        return Unsafe.getUnsafe().getLong(mem);
-                    } finally {
-                        Unsafe.free(mem, 8);
-                    }
-                } finally {
-                    ff.close(fd);
-                }
-            } else {
-                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
-            }
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
-    private void readTx() {
+    private boolean readTxn() {
         while (true) {
             long txn = txMem.getLong(TableWriter.TX_OFFSET_TXN);
 
             if (txn == this.txn) {
-                break;
+                return false;
             }
 
             Unsafe.getUnsafe().loadFence();
             long transientRowCount = txMem.getLong(TableWriter.TX_OFFSET_TRANSIENT_ROW_COUNT);
             long fixedRowCount = txMem.getLong(TableWriter.TX_OFFSET_FIXED_ROW_COUNT);
-//            long maxTimestamp = txMem.getLong(TableWriter.TX_OFFSET_MAX_TIMESTAMP);
+            long maxTimestamp = txMem.getLong(TableWriter.TX_OFFSET_MAX_TIMESTAMP);
             Unsafe.getUnsafe().loadFence();
             if (txn == txMem.getLong(TableWriter.TX_OFFSET_TXN)) {
                 this.txn = txn;
@@ -440,6 +445,7 @@ public class TableReader implements Closeable, RecordCursor {
             }
             LockSupport.parkNanos(1);
         }
+        return true;
     }
 
     @FunctionalInterface

@@ -7,6 +7,7 @@ import com.questdb.std.ObjectFactory;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.Path;
+import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 
@@ -91,5 +92,58 @@ public class TableUtils implements Closeable {
         txMem.putLong(0);
         Unsafe.getUnsafe().storeFence();
         txMem.jumpTo(32);
+    }
+
+    static void setColumnSize(FilesFacade ff, TableColumn mem1, TableColumn mem2, int type, long actualPosition, long buf) {
+        long offset;
+        long len;
+        if (actualPosition > 0) {
+            // subtract column top
+            switch (type) {
+                case ColumnType.BINARY:
+                    assert mem2 != null;
+                    if (ff.read(mem2.getFd(), buf, 8, (actualPosition - 1) * 8) != 8) {
+                        throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((actualPosition - 1) * 8);
+                    }
+                    offset = Unsafe.getUnsafe().getLong(buf);
+                    if (ff.read(mem1.getFd(), buf, 8, offset) != 8) {
+                        throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
+                    }
+                    len = Unsafe.getUnsafe().getLong(buf);
+                    if (len == -1) {
+                        mem1.setSize(offset + 8);
+                    } else {
+                        mem1.setSize(offset + len + 8);
+                    }
+                    mem2.setSize(actualPosition * 8);
+                    break;
+                case ColumnType.STRING:
+                case ColumnType.SYMBOL:
+                    assert mem2 != null;
+                    if (ff.read(mem2.getFd(), buf, 8, (actualPosition - 1) * 8) != 8) {
+                        throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((actualPosition - 1) * 8);
+                    }
+                    offset = Unsafe.getUnsafe().getLong(buf);
+                    if (ff.read(mem1.getFd(), buf, 4, offset) != 4) {
+                        throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
+                    }
+                    len = Unsafe.getUnsafe().getInt(buf);
+                    if (len == -1) {
+                        mem1.setSize(offset + 4);
+                    } else {
+                        mem1.setSize(offset + len + 4);
+                    }
+                    mem2.setSize(actualPosition * 8);
+                    break;
+                default:
+                    mem1.setSize(actualPosition * ColumnType.sizeOf(type));
+                    break;
+            }
+        } else {
+            mem1.setSize(0);
+            if (mem2 != null) {
+                mem2.setSize(0);
+            }
+        }
     }
 }

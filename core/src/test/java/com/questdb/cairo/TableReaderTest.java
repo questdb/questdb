@@ -22,6 +22,7 @@ import java.io.IOException;
 
 public class TableReaderTest extends AbstractOptimiserTest {
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
+    private static final int blobLen = 64 * 1024;
     private static CharSequence root;
 
     @BeforeClass
@@ -262,6 +263,144 @@ public class TableReaderTest extends AbstractOptimiserTest {
         TestUtils.assertMemoryLeak(() -> testTableCursor(24 * 60 * 60 * 60000L, expected));
     }
 
+    @Test
+    public void testRefreshNonPartitioned() throws Exception {
+        createAllTable(PartitionBy.NONE);
+
+        Rnd rnd = new Rnd();
+
+        int N = 10;
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        long increment = 60 * 60000;
+
+        long blob = allocBlob();
+        try {
+
+            // create table before we open reader
+            long nextTs = testAppendNulls(rnd, FF, ts, N, increment, blob);
+
+            try (TableReader reader = new TableReader(FF, root, "all")) {
+
+                // reader can see all the rows ?
+                assertCursor(reader, new Rnd(), ts, increment, blob, N);
+
+                // try refresh when table hasn't changed
+                Assert.assertFalse(reader.refresh());
+
+                // add more rows to the table while reader is open
+                testAppendNulls(rnd, FF, nextTs, N, increment, blob);
+
+                // if we don't refresh reader it should still see old data set
+                // reader can see all the rows ?
+                assertCursor(reader, new Rnd(), ts, increment, blob, N);
+
+                // refresh should be successful because we have new data in the table
+                Assert.assertTrue(reader.refresh());
+                // todo: this should pass (doesn't right now - refresh is a complex algo, not yet implemented)
+//                assertCursor(reader, new Rnd(), ts, increment, blob, 2 * N);
+            }
+
+
+        } finally {
+            freeBlob(blob);
+        }
+    }
+
+    private static long allocBlob() {
+        return Unsafe.malloc(blobLen);
+    }
+
+    private static void freeBlob(long blob) {
+        Unsafe.free(blob, blobLen);
+    }
+
+    private void assertCursor(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize) {
+        Assert.assertEquals(expectedSize, reader.size());
+        int count = 0;
+        reader.toTop();
+        while (reader.hasNext()) {
+            count++;
+            assertRecord(reader.next(), rnd, ts += increment, blob);
+        }
+        // did our loop run?
+        Assert.assertEquals(expectedSize, count);
+    }
+
+    private void assertRecord(Record r, Rnd exp, long ts, long blob) {
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextByte(), r.get(2));
+        } else {
+            Assert.assertEquals(0, r.get(2));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextBoolean(), r.getBool(8));
+        } else {
+            Assert.assertFalse(r.getBool(8));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextShort(), r.getShort(1));
+        } else {
+            Assert.assertEquals(0, r.getShort(1));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextInt(), r.getInt(0));
+        } else {
+            Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(3)));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(4)));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextLong(), r.getLong(5));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(ts, r.getDate(10));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
+        }
+
+        if (exp.nextBoolean()) {
+            exp.nextChars(blob, blobLen / 2);
+            Assert.assertEquals(blobLen, r.getBinLen(9));
+            BinarySequence sq = r.getBin2(9);
+            for (int l = 0; l < blobLen; l++) {
+                byte b = sq.byteAt(l);
+                boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
+                if (result) {
+                    sq.byteAt(l);
+                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
+                }
+            }
+        } else {
+            Assert.assertEquals(-1, r.getBinLen(9));
+
+        }
+
+        if (exp.nextBoolean()) {
+            CharSequence expCs = exp.nextChars(10);
+            TestUtils.assertEquals(expCs, r.getFlyweightStr(6));
+            TestUtils.assertEquals(expCs, r.getFlyweightStrB(6));
+            Assert.assertFalse(r.getFlyweightStr(6) == r.getFlyweightStrB(6));
+            Assert.assertEquals(expCs.length(), r.getStrLen(6));
+        }
+    }
+
     private void createAllTable(int partitionBy) {
         createTable(FF, new JournalStructure("all").
                 $int("int").
@@ -288,9 +427,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
         }
     }
 
-    private void testAppendNulls(Rnd rnd, FilesFacade ff, long ts, int count, long inc) throws NumericException {
-        final int blobLen = 64 * 1024;
-        long blob = Unsafe.malloc(blobLen);
+    private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts, int count, long inc, long blob) throws NumericException {
         try (TableWriter writer = new TableWriter(ff, root, "all")) {
             long size = writer.size();
             for (int i = 0; i < count; i++) {
@@ -341,8 +478,44 @@ public class TableReaderTest extends AbstractOptimiserTest {
             writer.commit();
 
             Assert.assertEquals(size + count, writer.size());
+        }
+        return ts;
+    }
+
+    private void testTableCursor(long increment, String expected) throws IOException, NumericException {
+        Rnd rnd = new Rnd();
+        int N = 100;
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        long blob = allocBlob();
+        try {
+            testAppendNulls(rnd, FF, ts, N, increment, blob);
+
+            final StringSink sink = new StringSink();
+            final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+            final LongList rows = new LongList();
+            try (TableReader reader = new TableReader(FF, root, "all")) {
+                Assert.assertEquals(N, reader.size());
+                printer.print(reader, true, reader.getMetadata());
+                TestUtils.assertEquals(expected, sink);
+
+                sink.clear();
+                reader.toTop();
+
+                printer.print(reader, true, reader.getMetadata());
+                TestUtils.assertEquals(expected, sink);
+
+                reader.toTop();
+                while (reader.hasNext()) {
+                    rows.add(reader.next().getRowId());
+                }
+
+                Rnd exp = new Rnd();
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    assertRecord(reader.recordAt(rows.getQuick(i)), exp, ts += increment, blob);
+                }
+            }
         } finally {
-            Unsafe.free(blob, blobLen);
+            freeBlob(blob);
         }
     }
 
@@ -449,112 +622,5 @@ public class TableReaderTest extends AbstractOptimiserTest {
                 "NaN\t-22994\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\tOJZOVQGFZU\t\tfalse\t\t\n";
         testTableCursor(60 * 60000, expected);
-    }
-
-    private void testTableCursor(long increment, String expected) throws IOException, NumericException {
-        Rnd rnd = new Rnd();
-        int N = 100;
-        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-        testAppendNulls(rnd, FF, ts, N, increment);
-
-        final StringSink sink = new StringSink();
-        final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
-        final LongList rows = new LongList();
-        try (TableReader reader = new TableReader(FF, root, "all")) {
-            Assert.assertEquals(N, reader.size());
-            printer.print(reader, true, reader.getMetadata());
-            TestUtils.assertEquals(expected, sink);
-
-            sink.clear();
-            reader.toTop();
-
-            printer.print(reader, true, reader.getMetadata());
-            TestUtils.assertEquals(expected, sink);
-
-            reader.toTop();
-            while (reader.hasNext()) {
-                rows.add(reader.next().getRowId());
-            }
-
-            final int blobLen = 64 * 1024;
-            long blob = Unsafe.malloc(blobLen);
-            try {
-                Rnd exp = new Rnd();
-                for (int i = 0, n = rows.size(); i < n; i++) {
-                    Record r = reader.recordAt(rows.getQuick(i));
-
-                    ts += increment;
-
-                    if (exp.nextBoolean()) {
-                        Assert.assertEquals(exp.nextByte(), r.get(2));
-                    }
-
-                    if (exp.nextBoolean()) {
-                        Assert.assertEquals(exp.nextBoolean(), r.getBool(8));
-                    }
-
-                    if (exp.nextBoolean()) {
-                        Assert.assertEquals(exp.nextShort(), r.getShort(1));
-                    }
-
-                    if (exp.nextBoolean()) {
-                        Assert.assertEquals(exp.nextInt(), r.getInt(0));
-                    } else {
-                        Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
-                    }
-
-                    if (exp.nextBoolean()) {
-                        Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
-                    } else {
-                        Assert.assertTrue(Double.isNaN(r.getDouble(3)));
-                    }
-
-                    if (exp.nextBoolean()) {
-                        Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
-                    } else {
-                        Assert.assertTrue(Float.isNaN(r.getFloat(4)));
-                    }
-
-                    if (exp.nextBoolean()) {
-                        Assert.assertEquals(exp.nextLong(), r.getLong(5));
-                    } else {
-                        Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
-                    }
-
-                    if (exp.nextBoolean()) {
-                        Assert.assertEquals(ts, r.getDate(10));
-                    } else {
-                        Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
-                    }
-
-                    if (exp.nextBoolean()) {
-                        exp.nextChars(blob, blobLen / 2);
-                        Assert.assertEquals(blobLen, r.getBinLen(9));
-                        BinarySequence sq = r.getBin2(9);
-                        for (int l = 0; l < blobLen; l++) {
-                            byte b = sq.byteAt(l);
-                            boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
-                            if (result) {
-                                sq.byteAt(l);
-                                Assert.fail("Error at [" + i + "," + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
-                            }
-                        }
-                    } else {
-                        Assert.assertEquals(-1, r.getBinLen(9));
-
-                    }
-
-                    if (exp.nextBoolean()) {
-                        CharSequence expCs = exp.nextChars(10);
-                        TestUtils.assertEquals(expCs, r.getFlyweightStr(6));
-                        TestUtils.assertEquals(expCs, r.getFlyweightStrB(6));
-                        Assert.assertFalse(r.getFlyweightStr(6) == r.getFlyweightStrB(6));
-                        Assert.assertEquals(expCs.length(), r.getStrLen(6));
-                    }
-                }
-            } finally {
-                Unsafe.free(blob, blobLen);
-            }
-        }
     }
 }

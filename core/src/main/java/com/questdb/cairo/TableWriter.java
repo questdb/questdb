@@ -271,7 +271,7 @@ public class TableWriter implements Closeable {
 
             Unsafe.getUnsafe().storeFence();
             txMem.jumpTo(TX_OFFSET_TXN);
-            txMem.putLong(txn++);
+            txMem.putLong(++txn);
             Unsafe.getUnsafe().storeFence();
             txMem.jumpTo(TX_EOF);
         }
@@ -1123,51 +1123,7 @@ public class TableWriter implements Closeable {
         long pSz = Unsafe.malloc(8);
         try {
             for (int i = 0; i < columnCount; i++) {
-                AppendMemory mem1 = getPrimaryColumn(i);
-                AppendMemory mem2 = getSecondaryColumn(i);
-
-                int type = getColumnType(i);
-                long offset;
-                long actualPosition = position - columnTops.getQuick(i);
-
-                if (actualPosition > 0) {
-                    // subtract column top
-                    switch (type) {
-                        case ColumnType.BINARY:
-                            assert mem2 != null;
-                            if (ff.read(mem2.getFd(), pSz, 8, (actualPosition - 1) * 8) != 8) {
-                                throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((actualPosition - 1) * 8);
-                            }
-                            offset = Unsafe.getUnsafe().getLong(pSz);
-                            if (ff.read(mem1.getFd(), pSz, 8, offset) != 8) {
-                                throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
-                            }
-                            mem1.setSize(offset + Unsafe.getUnsafe().getLong(pSz));
-                            mem2.setSize(actualPosition * 8);
-                            break;
-                        case ColumnType.STRING:
-                        case ColumnType.SYMBOL:
-                            assert mem2 != null;
-                            if (ff.read(mem2.getFd(), pSz, 8, (actualPosition - 1) * 8) != 8) {
-                                throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((actualPosition - 1) * 8);
-                            }
-                            offset = Unsafe.getUnsafe().getLong(pSz);
-                            if (ff.read(mem1.getFd(), pSz, 4, offset) != 4) {
-                                throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
-                            }
-                            mem1.setSize(offset + Unsafe.getUnsafe().getInt(pSz));
-                            mem2.setSize(actualPosition * 8);
-                            break;
-                        default:
-                            mem1.setSize(actualPosition * ColumnType.sizeOf(type));
-                            break;
-                    }
-                } else {
-                    mem1.setSize(0);
-                    if (mem2 != null) {
-                        mem2.setSize(0);
-                    }
-                }
+                TableUtils.setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), getColumnType(i), position - columnTops.getQuick(i), pSz);
             }
         } finally {
             Unsafe.free(pSz, 8);

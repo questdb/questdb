@@ -29,12 +29,13 @@ import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacade;
 import com.questdb.std.str.LPSZ;
 
-public class ReadOnlyMemory extends VirtualMemory {
+public class ReadOnlyMemory extends VirtualMemory implements TableColumn {
     private static final Log LOG = LogFactory.getLog(ReadOnlyMemory.class);
     private final FilesFacade ff;
     private long fd = -1;
     private long size = 0;
     private long lastPageSize;
+    private long maxPageSize;
 
     public ReadOnlyMemory(FilesFacade ff, LPSZ name, long maxPageSize, long size) {
         this(ff);
@@ -74,16 +75,30 @@ public class ReadOnlyMemory extends VirtualMemory {
         ff.munmap(address, lastPageSize);
     }
 
+    @Override
     public long getFd() {
         return fd;
     }
 
-    public void of(LPSZ name, long maxPageSize, long size) {
-        of(name);
-        setSize(maxPageSize, size);
+    @Override
+    public void setSize(long size) {
+        assert size > 0;
+        this.size = size;
+        if (size > maxPageSize) {
+            setPageSize(maxPageSize);
+        } else {
+            setPageSize(Math.max(ff.getPageSize(), (size / ff.getPageSize()) * ff.getPageSize()));
+        }
+        pages.ensureCapacity((int) (size / this.pageSize + 1));
+        this.lastPageSize = pageSize;
     }
 
-    public void of(LPSZ name) {
+    public void of(LPSZ name, long maxPageSize, long size) {
+        of(name, maxPageSize);
+        setSize(size);
+    }
+
+    public void of(LPSZ name, long maxPageSize) {
         close();
         boolean exists = ff.exists(name);
         if (!exists) {
@@ -94,19 +109,9 @@ public class ReadOnlyMemory extends VirtualMemory {
             throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
         }
 
-        LOG.info().$("Open ").$(name).$(" [").$(fd).$(']').$();
-    }
+        this.maxPageSize = maxPageSize;
 
-    public void setSize(long maxPageSize, long size) {
-        assert size > 0;
-        this.size = size;
-        if (size > maxPageSize) {
-            setPageSize(maxPageSize);
-        } else {
-            setPageSize(Math.max(ff.getPageSize(), (size / ff.getPageSize()) * ff.getPageSize()));
-        }
-        pages.ensureCapacity((int) (size / this.pageSize + 1));
-        this.lastPageSize = pageSize;
+        LOG.info().$("Open ").$(name).$(" [").$(fd).$(']').$();
     }
 
     private long mapPage(int page) {
