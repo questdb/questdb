@@ -31,6 +31,38 @@ public class TableReader implements Closeable, RecordCursor {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
     private final static NextRecordFunction nextPartitionFunction = new NextPartitionFunction();
     private final static NextRecordFunction nextPartitionRecordFunction = new NextPartitionRecordFunction();
+    private static final PartitionPathGenerator YEAR_GEN = (reader, partitionIndex) -> {
+        TableUtils.fmtYear.format(
+                Dates.addYear(reader.partitionMin, partitionIndex),
+                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
+                null,
+                reader.path.put(Path.SEPARATOR)
+        );
+        return reader.path.$();
+
+    };
+
+    private static final PartitionPathGenerator MONTH_GEN = (reader, partitionIndex) -> {
+        TableUtils.fmtMonth.format(
+                Dates.addMonths(reader.partitionMin, partitionIndex),
+                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
+                null,
+                reader.path.put(Path.SEPARATOR)
+        );
+        return reader.path.$();
+    };
+
+    private static final PartitionPathGenerator DAY_GEN = (reader, partitionIndex) -> {
+        TableUtils.fmtDay.format(
+                Dates.addDays(reader.partitionMin, partitionIndex),
+                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
+                null,
+                reader.path.put(Path.SEPARATOR)
+        );
+        return reader.path.$();
+    };
+    private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.path.concat(TableUtils.DEFAULT_PARTITION_NAME).$();
+
     private final ObjList<ReadOnlyMemory> columns;
     private final FilesFacade ff;
     private final CompositePath path;
@@ -43,18 +75,19 @@ public class TableReader implements Closeable, RecordCursor {
     private final LongList partitionSizes;
     private final DateFormat partitionDirFmt;
     private final TableRecord record = new TableRecord();
+    private final PartitionPathGenerator partitionPathGenerator;
     private int columnCount;
     private int columnCountBits;
     private long transientRowCount;
     private long size;
     private long txn = -1;
     private int timestampIndex;
+    private long maxTimestamp;
     private int partitionCount;
     private long partitionMin;
     private long columnTops[];
     private long tempMem8b = Unsafe.malloc(8);
     private int partitionIndex = 0;
-
     private NextRecordFunction currentRecordFunction = nextPartitionFunction;
 
     public TableReader(FilesFacade ff, CharSequence root, CharSequence name) {
@@ -70,14 +103,40 @@ public class TableReader implements Closeable, RecordCursor {
         this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.metadata = new Meta(columnCount);
+        readTxn();
+
         this.partitionDirFmt = TableUtils.selectPartitionDirFmt(partitionBy);
-        countPartitions();
-        int columnListCapacity = (this.partitionCount == 1 ? columnCount * 2 : partitionCount << columnCountBits);
+        if (partitionDirFmt == null) {
+            this.partitionCount = 1;
+        } else {
+            this.partitionMin = countPartitions(partitionDirFmt);
+            if (partitionMin == Long.MAX_VALUE) {
+                partitionCount = 1;
+            } else {
+                partitionCount = getIntervalLength(partitionBy, partitionMin, getPartitionFloor(partitionBy, maxTimestamp));
+            }
+        }
+
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                partitionPathGenerator = DAY_GEN;
+                break;
+            case PartitionBy.MONTH:
+                partitionPathGenerator = MONTH_GEN;
+                break;
+            case PartitionBy.YEAR:
+                partitionPathGenerator = YEAR_GEN;
+                break;
+            default:
+                partitionPathGenerator = DEFAULT_GEN;
+                break;
+        }
+
+        int columnListCapacity = getColumnCapacity(partitionCount, columnCount);
         this.columns = new ObjList<>(columnListCapacity);
-        columns.extendAndSet(columnListCapacity - 1, null);
+        columns.setPos(columnListCapacity);
         this.partitionSizes = new LongList(partitionCount);
         this.partitionSizes.seed(partitionCount, -1);
-        readTxn();
         this.columnTops = new long[columnCount];
     }
 
@@ -119,7 +178,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     @Override
     public Record recordAt(long rowId) {
-        record.columnBase = Rows.toPartitionIndex(rowId) << columnCountBits;
+        record.columnBase = getColumnBase(Rows.toPartitionIndex(rowId));
         record.recordIndex = Rows.toLocalRowID(rowId);
         return record;
     }
@@ -127,7 +186,7 @@ public class TableReader implements Closeable, RecordCursor {
     @Override
     public void recordAt(Record record, long rowId) {
         TableRecord rec = (TableRecord) record;
-        rec.columnBase = Rows.toPartitionIndex(rowId) << columnCountBits;
+        rec.columnBase = getColumnBase(Rows.toPartitionIndex(rowId));
         rec.recordIndex = Rows.toLocalRowID(rowId);
     }
 
@@ -152,8 +211,50 @@ public class TableReader implements Closeable, RecordCursor {
         return currentRecordFunction.next(this);
     }
 
-    public boolean refresh() {
-        return readTxn();
+    public boolean refreshPx() {
+        long currentPartitionTimestamp = getPartitionFloor(partitionBy, this.maxTimestamp);
+        boolean b = readTxn();
+        if (b) {
+            int delta = getIntervalLength(partitionBy, currentPartitionTimestamp, getPartitionFloor(partitionBy, this.maxTimestamp));
+            int partitionIndex = partitionCount - 1;
+            if (delta > 0) {
+                partitionCount += delta;
+                partitionSizes.setPos(partitionCount);
+                partitionSizes.seed(partitionIndex, partitionCount);
+                columns.setPos(getColumnCapacity(partitionCount, columnCount));
+            }
+
+            long size = partitionSizes.getQuick(partitionIndex);
+            if (size > -1) {
+            }
+            return b;
+        }
+        return false;
+
+    }
+
+    public boolean reload() {
+
+        boolean b = readTxn();
+        if (b) {
+            long partitionSize = partitionSizes.getQuick(0);
+            if (partitionSize > -1) {
+                for (int i = 0; i < columnCount; i++) {
+                    TableUtils.setColumnSize(
+                            ff,
+                            columns.getQuick(getPrimaryColumnIndex(0, i)),
+                            columns.getQuick(getSecondaryColumnIndex(0, i)),
+                            metadata.getColumnQuick(i).getType(),
+                            size,
+                            tempMem8b
+                    );
+                }
+
+                partitionSizes.setQuick(0, size);
+            }
+            return true;
+        }
+        return false;
     }
 
     public long size() {
@@ -198,15 +299,34 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private void countPartitions() {
-        if (partitionDirFmt == null) {
-            partitionCount = 1;
-            return;
+    private static long getPartitionFloor(int partitionBy, long timestamp) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return Dates.floorDD(timestamp);
+            case PartitionBy.MONTH:
+                return Dates.floorMM(timestamp);
+            case PartitionBy.YEAR:
+                return Dates.floorYYYY(timestamp);
+            default:
+                throw CairoException.instance(0).put("Cannot get partition floor for [").put(partitionBy).put(']');
         }
+    }
 
-        partitionMin = Long.MAX_VALUE;
-        long partitionMax = Long.MIN_VALUE;
+    private static int getIntervalLength(int partitionBy, long min, long max) {
+        switch (partitionBy) {
+            case PartitionBy.YEAR:
+                return (int) Dates.getYearsBetween(min, max) + 1;
+            case PartitionBy.MONTH:
+                return (int) Dates.getMonthsBetween(min, max) + 1;
+            case PartitionBy.DAY:
+                return (int) Dates.getDaysBetween(min, max) + 1;
+            default:
+                return 0;
+        }
+    }
 
+    private long countPartitions(DateFormat partitionDirFmt) {
+        long partitionMin = Long.MAX_VALUE;
         try {
             long p = ff.findFirst(path.$());
             if (p > 0) {
@@ -218,10 +338,6 @@ public class TableReader implements Closeable, RecordCursor {
                                 long time = partitionDirFmt.parse(nativeLPSZ.of(ff.findName(p)), DateLocaleFactory.INSTANCE.getDefaultDateLocale());
                                 if (time < partitionMin) {
                                     partitionMin = time;
-                                }
-
-                                if (time > partitionMax) {
-                                    partitionMax = time;
                                 }
                             } catch (NumericException ignore) {
                             }
@@ -235,24 +351,7 @@ public class TableReader implements Closeable, RecordCursor {
             path.trimTo(rootLen);
         }
 
-        if (partitionMin == Long.MAX_VALUE) {
-            partitionCount = 1;
-            return;
-        }
-
-        switch (partitionBy) {
-            case PartitionBy.YEAR:
-                partitionCount = (int) Dates.getYearsBetween(partitionMin, partitionMax) + 1;
-                break;
-            case PartitionBy.MONTH:
-                partitionCount = (int) Dates.getMonthsBetween(partitionMin, partitionMax) + 1;
-                break;
-            case PartitionBy.DAY:
-                partitionCount = (int) Dates.getDaysBetween(partitionMin, partitionMax) + 1;
-                break;
-            default:
-                break;
-        }
+        return partitionMin;
     }
 
     private void failOnPendingTodo() {
@@ -265,16 +364,12 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private long loadDefaultPartition(int columnIndex, long[] columnOffsets) {
-        try {
-            path.concat(TableUtils.DEFAULT_PARTITION_NAME).$();
-            if (ff.exists(path)) {
-                openPartitionColumns(columnIndex, transientRowCount, columnOffsets);
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-        return transientRowCount;
+    private int getColumnBase(int partitionIndex) {
+        return partitionIndex << columnCountBits;
+    }
+
+    private int getColumnCapacity(int partitionCount, int columnCount) {
+        return partitionCount == 1 ? columnCount * 2 : getColumnBase(partitionCount);
     }
 
     private void openMetaFile() {
@@ -286,32 +381,10 @@ public class TableReader implements Closeable, RecordCursor {
     }
 
     private long openPartition(int partitionIndex, int columnBase, long columnTops[], boolean last) {
-        long size;
-
-        switch (partitionBy) {
-            case PartitionBy.YEAR:
-                size = openPartition(columnBase, Dates.addYear(partitionMin, partitionIndex), last, columnTops);
-                break;
-            case PartitionBy.MONTH:
-                size = openPartition(columnBase, Dates.addMonths(partitionMin, partitionIndex), last, columnTops);
-                break;
-            case PartitionBy.DAY:
-                size = openPartition(columnBase, Dates.addDays(partitionMin, partitionIndex), last, columnTops);
-                break;
-            default:
-                size = loadDefaultPartition(columnBase, columnTops);
-                break;
-        }
-        partitionSizes.setQuick(partitionIndex, size);
-        return size;
-    }
-
-    private long openPartition(int columnBase, long partitionTimestamp, boolean last, long[] columnTops) {
         try {
-            partitionDirFmt.format(partitionTimestamp, DateLocaleFactory.INSTANCE.getDefaultDateLocale(), null, path.put(Path.SEPARATOR));
+            CompositePath path = partitionPathGenerator.generate(this, partitionIndex);
             final long partitionSize;
-            if (ff.exists(path.$())) {
-
+            if (ff.exists(path)) {
                 path.trimTo(path.length());
 
                 if (last) {
@@ -328,11 +401,11 @@ public class TableReader implements Closeable, RecordCursor {
             } else {
                 partitionSize = 0;
             }
+            partitionSizes.setQuick(partitionIndex, partitionSize);
             return partitionSize;
         } finally {
             path.trimTo(rootLen);
         }
-
     }
 
     private void openPartitionColumns(int columnBase, long partitionSize, long[] columnTops) {
@@ -395,7 +468,7 @@ public class TableReader implements Closeable, RecordCursor {
             Unsafe.getUnsafe().loadFence();
             long transientRowCount = txMem.getLong(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
             long fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
-            long maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
+            this.maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
             Unsafe.getUnsafe().loadFence();
             if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN)) {
                 this.txn = txn;
@@ -406,6 +479,11 @@ public class TableReader implements Closeable, RecordCursor {
             LockSupport.parkNanos(1);
         }
         return true;
+    }
+
+    @FunctionalInterface
+    private interface PartitionPathGenerator {
+        CompositePath generate(TableReader reader, int partitionIndex);
     }
 
     @FunctionalInterface
@@ -452,7 +530,7 @@ public class TableReader implements Closeable, RecordCursor {
         @Override
         public Record next(TableReader reader) {
             long partitionSize = reader.partitionSizes.getQuick(reader.partitionIndex);
-            int columnBase = reader.partitionIndex << reader.columnCountBits;
+            int columnBase = reader.getColumnBase(reader.partitionIndex);
 
             TableReader.TableRecord rec = reader.record;
             if (partitionSize == -1) {

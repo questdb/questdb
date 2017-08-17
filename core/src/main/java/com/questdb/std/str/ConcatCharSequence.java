@@ -86,12 +86,12 @@ public class ConcatCharSequence extends AbstractCharSequence {
         // assume we have only one delegate
         if (delegates.size() > 0) {
             CharSequence delegate = delegates.get(0);
-            delegates.ensureCapacity(3);
+            delegates.setPos(3);
             delegates.extendAndSet(0, left);
             delegates.extendAndSet(1, delegate);
             delegates.extendAndSet(2, right);
         } else {
-            delegates.ensureCapacity(2);
+            delegates.setPos(2);
             delegates.extendAndSet(0, left);
             delegates.extendAndSet(1, right);
         }

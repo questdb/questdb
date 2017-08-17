@@ -83,14 +83,7 @@ public class VirtualMemory implements Closeable {
 
     @Override
     public void close() {
-        int n = pages.size() - 1;
-        if (n > -1) {
-            for (int i = 0; i < n; i++) {
-                release(pages.getQuick(i));
-            }
-            releaseLast(pages.getQuick(n));
-        }
-        pages.clear();
+        clearPages();
         appendPointer = -1;
         pageHi = -1;
         baseOffset = 1;
@@ -360,6 +353,17 @@ public class VirtualMemory implements Closeable {
 
     protected void cachePageAddress(int index, long address) {
         pages.extendAndSet(index, address);
+    }
+
+    private void clearPages() {
+        int n = pages.size() - 1;
+        if (n > -1) {
+            for (int i = 0; i < n; i++) {
+                release(pages.getQuick(i));
+            }
+            releaseLast(pages.getQuick(n));
+        }
+        pages.clear();
     }
 
     /**
@@ -714,9 +718,11 @@ public class VirtualMemory implements Closeable {
     }
 
     protected final void setPageSize(long pageSize) {
+        clearPages();
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mod = this.pageSize - 1;
+        clearHotPage();
     }
 
     private void skip0(long bytes) {

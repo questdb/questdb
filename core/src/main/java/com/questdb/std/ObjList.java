@@ -71,7 +71,7 @@ public class ObjList<T> implements Mutable, Sinkable {
         Arrays.fill(buffer, null);
     }
 
-    public void ensureCapacity(int capacity) {
+    public void setPos(int capacity) {
         ensureCapacity0(capacity);
         pos = capacity;
     }

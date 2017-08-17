@@ -284,23 +284,20 @@ public class TableReaderTest extends AbstractOptimiserTest {
                 // reader can see all the rows ?
                 assertCursor(reader, new Rnd(), ts, increment, blob, N);
 
-                // try refresh when table hasn't changed
-                Assert.assertFalse(reader.refresh());
+                // try reload when table hasn't changed
+                Assert.assertFalse(reader.reload());
 
                 // add more rows to the table while reader is open
                 testAppendNulls(rnd, FF, nextTs, N, increment, blob);
 
-                // if we don't refresh reader it should still see old data set
+                // if we don't reload reader it should still see old data set
                 // reader can see all the rows ?
                 assertCursor(reader, new Rnd(), ts, increment, blob, N);
 
-                // refresh should be successful because we have new data in the table
-                Assert.assertTrue(reader.refresh());
-                // todo: this should pass (doesn't right now - refresh is a complex algo, not yet implemented)
-//                assertCursor(reader, new Rnd(), ts, increment, blob, 2 * N);
+                // reload should be successful because we have new data in the table
+                Assert.assertTrue(reader.reload());
+                assertCursor(reader, new Rnd(), ts, increment, blob, 2 * N);
             }
-
-
         } finally {
             freeBlob(blob);
         }
@@ -383,13 +380,11 @@ public class TableReaderTest extends AbstractOptimiserTest {
                 byte b = sq.byteAt(l);
                 boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
                 if (result) {
-                    sq.byteAt(l);
                     Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
                 }
             }
         } else {
             Assert.assertEquals(-1, r.getBinLen(9));
-
         }
 
         if (exp.nextBoolean()) {

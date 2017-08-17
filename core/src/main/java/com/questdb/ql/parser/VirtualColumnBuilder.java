@@ -83,7 +83,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
         } else {
             mutableSig.clear();
             mutableArgs.clear();
-            mutableArgs.ensureCapacity(argCount);
+            mutableArgs.setPos(argCount);
             mutableSig.setName(node.token).setParamCount(argCount);
             for (int n = 0; n < argCount; n++) {
                 VirtualColumn c = stack.poll();
