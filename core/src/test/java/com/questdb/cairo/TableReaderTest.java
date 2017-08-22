@@ -317,6 +317,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
         reader.toTop();
         while (reader.hasNext()) {
             count++;
+            System.out.println(count);
             assertRecord(reader.next(), rnd, ts += increment, blob);
         }
         // did our loop run?

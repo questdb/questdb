@@ -35,7 +35,7 @@ public class TableUtilsTest {
 
                 path.of(root).concat(metadata.getName()).concat("_meta").$();
 
-                try (ReadOnlyMemory mem = new ReadOnlyMemory(FF, path, Files.PAGE_SIZE, Files.length(path))) {
+                try (ReadOnlyMemory mem = new ReadOnlyMemory(FF, path, Files.PAGE_SIZE)) {
                     long p = 0;
                     Assert.assertEquals(metadata.getColumnCount(), mem.getInt(p));
                     p += 4;

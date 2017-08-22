@@ -418,7 +418,7 @@ public class TableWriter implements Closeable {
             }
 
             try {
-                ddlMem.of(path, ff.getPageSize(), 0);
+                ddlMem.of(path, ff.getPageSize());
                 ddlMem.putInt(columnCount + 1);
                 ddlMem.putInt(partitionBy);
                 ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
@@ -727,7 +727,7 @@ public class TableWriter implements Closeable {
 
     private void openMetaFile() {
         try {
-            metaMem.of(path.concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize(), ff.length(path));
+            metaMem.of(path.concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
         } finally {
             path.trimTo(rootLen);
         }
@@ -852,7 +852,7 @@ public class TableWriter implements Closeable {
 
             try {
                 int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-                ddlMem.of(path, ff.getPageSize(), 0);
+                ddlMem.of(path, ff.getPageSize());
                 ddlMem.putInt(columnCount - 1);
                 ddlMem.putInt(partitionBy);
 

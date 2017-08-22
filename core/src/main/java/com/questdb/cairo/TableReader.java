@@ -96,8 +96,7 @@ public class TableReader implements Closeable, RecordCursor {
         this.rootLen = path.length();
         failOnPendingTodo();
         this.txMem = openTxnFile();
-        this.metaMem = new ReadOnlyMemory(ff);
-        openMetaFile();
+        this.metaMem = openMetaFile();
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnCountBits = Numbers.msb(Numbers.ceilPow2(this.columnCount) * 2);
         this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
@@ -240,16 +239,12 @@ public class TableReader implements Closeable, RecordCursor {
             long partitionSize = partitionSizes.getQuick(0);
             if (partitionSize > -1) {
                 for (int i = 0; i < columnCount; i++) {
-                    TableUtils.setColumnSize(
-                            ff,
-                            columns.getQuick(getPrimaryColumnIndex(0, i)),
-                            columns.getQuick(getSecondaryColumnIndex(0, i)),
-                            metadata.getColumnQuick(i).getType(),
-                            size,
-                            tempMem8b
-                    );
+                    columns.getQuick(getPrimaryColumnIndex(0, i)).trackFileSize();
+                    ReadOnlyMemory mem2 = columns.getQuick(getSecondaryColumnIndex(0, i));
+                    if (mem2 != null) {
+                        mem2.trackFileSize();
+                    }
                 }
-
                 partitionSizes.setQuick(0, size);
             }
             return true;
@@ -372,9 +367,9 @@ public class TableReader implements Closeable, RecordCursor {
         return partitionCount == 1 ? columnCount * 2 : getColumnBase(partitionCount);
     }
 
-    private void openMetaFile() {
+    private ReadOnlyMemory openMetaFile() {
         try {
-            metaMem.of(path.concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize(), ff.length(path));
+            return new ReadOnlyMemory(ff, path.concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
         } finally {
             path.trimTo(rootLen);
         }
@@ -396,7 +391,7 @@ public class TableReader implements Closeable, RecordCursor {
                 LOG.info().$("Open partition: ").$(path.$()).$(" [size=").$(partitionSize).$(']').$();
 
                 if (partitionSize > 0) {
-                    openPartitionColumns(columnBase, partitionSize, columnTops);
+                    openPartitionColumns(columnBase, columnTops);
                 }
             } else {
                 partitionSize = 0;
@@ -408,7 +403,7 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private void openPartitionColumns(int columnBase, long partitionSize, long[] columnTops) {
+    private void openPartitionColumns(int columnBase, long[] columnTops) {
         int plen = path.length();
         try {
             for (int i = 0; i < columnCount; i++) {
@@ -416,27 +411,21 @@ public class TableReader implements Closeable, RecordCursor {
                     String name = metadata.getColumnName(i);
                     if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
                         // we defer setting size
-                        final ReadOnlyMemory mem1 = new ReadOnlyMemory(ff);
-                        final ReadOnlyMemory mem2;
+                        final ReadOnlyMemory mem1 = new ReadOnlyMemory(ff, path, TableUtils.getMapPageSize(ff));
 
-                        mem1.of(path, TableUtils.getMapPageSize(ff));
                         columns.setQuick(getPrimaryColumnIndex(columnBase, i), mem1);
 
-                        int type = metadata.getColumnQuick(i).getType();
-                        switch (type) {
+                        switch (metadata.getColumnQuick(i).getType()) {
                             case ColumnType.BINARY:
                             case ColumnType.STRING:
                             case ColumnType.SYMBOL:
-                                columns.setQuick(getSecondaryColumnIndex(columnBase, i), mem2 = new ReadOnlyMemory(ff));
-                                mem2.of(TableUtils.iFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff));
+                                columns.setQuick(getSecondaryColumnIndex(columnBase, i),
+                                        new ReadOnlyMemory(ff, TableUtils.iFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff)));
                                 break;
                             default:
-                                mem2 = null;
                                 break;
                         }
-                        long top = TableUtils.readColumnTop(ff, path, name, plen);
-                        TableUtils.setColumnSize(ff, mem1, mem2, type, partitionSize - top, tempMem8b);
-                        columnTops[i] = top;
+                        columnTops[i] = TableUtils.readColumnTop(ff, path, name, plen);
                     }
                 }
             }
@@ -448,7 +437,7 @@ public class TableReader implements Closeable, RecordCursor {
     private ReadOnlyMemory openTxnFile() {
         try {
             if (ff.exists(path.concat(TableUtils.TXN_FILE_NAME).$())) {
-                return new ReadOnlyMemory(ff, path, ff.getPageSize(), ff.length(path));
+                return new ReadOnlyMemory(ff, path, ff.getPageSize());
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
 

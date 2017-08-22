@@ -30,16 +30,16 @@ import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Os;
 import com.questdb.std.str.LPSZ;
 
-public class AppendMemory extends VirtualMemory implements TableColumn {
+public class AppendMemory extends VirtualMemory {
     private static final Log LOG = LogFactory.getLog(AppendMemory.class);
     private final FilesFacade ff;
     private long fd = -1;
     private long pageAddress = 0;
     private long size;
 
-    public AppendMemory(FilesFacade ff, LPSZ name, long pageSize, long size) {
+    public AppendMemory(FilesFacade ff, LPSZ name, long pageSize) {
         this.ff = ff;
-        of(name, pageSize, size);
+        of(name, pageSize);
     }
 
     public AppendMemory(FilesFacade ff) {
@@ -86,20 +86,8 @@ public class AppendMemory extends VirtualMemory implements TableColumn {
 
     }
 
-    @Override
     public long getFd() {
         return fd;
-    }
-
-    @Override
-    public final void setSize(long size) {
-        this.size = size;
-        jumpTo(size);
-    }
-
-    public final void of(LPSZ name, long pageSize, long size) {
-        of(name, pageSize);
-        setSize(size);
     }
 
     public final void of(LPSZ name, long pageSize) {
@@ -110,6 +98,11 @@ public class AppendMemory extends VirtualMemory implements TableColumn {
             throw CairoException.instance(ff.errno()).put("Cannot open ").put(name);
         }
         LOG.info().$("Open ").$(name).$(" [").$(fd).$(']').$();
+    }
+
+    public final void setSize(long size) {
+        this.size = size;
+        jumpTo(size);
     }
 
     public long size() {

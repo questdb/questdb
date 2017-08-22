@@ -29,7 +29,7 @@ import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacade;
 import com.questdb.std.str.LPSZ;
 
-public class ReadOnlyMemory extends VirtualMemory implements TableColumn {
+public class ReadOnlyMemory extends VirtualMemory {
     private static final Log LOG = LogFactory.getLog(ReadOnlyMemory.class);
     private final FilesFacade ff;
     private long fd = -1;
@@ -37,9 +37,9 @@ public class ReadOnlyMemory extends VirtualMemory implements TableColumn {
     private long lastPageSize;
     private long maxPageSize;
 
-    public ReadOnlyMemory(FilesFacade ff, LPSZ name, long maxPageSize, long size) {
+    public ReadOnlyMemory(FilesFacade ff, LPSZ name, long maxPageSize) {
         this(ff);
-        of(name, maxPageSize, size);
+        of(name, maxPageSize);
     }
 
     public ReadOnlyMemory(FilesFacade ff) {
@@ -70,34 +70,6 @@ public class ReadOnlyMemory extends VirtualMemory implements TableColumn {
         ff.munmap(address, pageSize);
     }
 
-    @Override
-    protected void releaseLast(long address) {
-        ff.munmap(address, lastPageSize);
-    }
-
-    @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
-    public void setSize(long size) {
-        assert size > 0;
-        this.size = size;
-        if (size > maxPageSize) {
-            setPageSize(maxPageSize);
-        } else {
-            setPageSize(Math.max(ff.getPageSize(), (size / ff.getPageSize()) * ff.getPageSize()));
-        }
-        pages.ensureCapacity((int) (size / this.pageSize + 1));
-        this.lastPageSize = pageSize;
-    }
-
-    public void of(LPSZ name, long maxPageSize, long size) {
-        of(name, maxPageSize);
-        setSize(size);
-    }
-
     public void of(LPSZ name, long maxPageSize) {
         close();
         boolean exists = ff.exists(name);
@@ -110,8 +82,34 @@ public class ReadOnlyMemory extends VirtualMemory implements TableColumn {
         }
 
         this.maxPageSize = maxPageSize;
-
+        setInitialSize(ff.length(fd));
         LOG.info().$("Open ").$(name).$(" [").$(fd).$(']').$();
+    }
+
+    public void trackFileSize() {
+        long size = ff.length(fd);
+        if (size < this.size) {
+            setInitialSize(size);
+        } else if (size > this.size && lastPageSize < pageSize) {
+            pages.ensureCapacity((int) (size / this.pageSize + 1));
+            int lastIndex = pages.size() - 1;
+            if (lastIndex > -1) {
+                long address = pages.getQuick(lastIndex);
+                if (address != 0) {
+                    releaseLast(address);
+                    pages.setQuick(lastIndex, 0);
+                }
+                clearHotPage();
+            }
+            this.size = size;
+        }
+    }
+
+    @Override
+    protected void releaseLast(long address) {
+        if (address != 0) {
+            ff.munmap(address, lastPageSize);
+        }
     }
 
     private long mapPage(int page) {
@@ -130,5 +128,22 @@ public class ReadOnlyMemory extends VirtualMemory implements TableColumn {
         }
         cachePageAddress(page, address);
         return address;
+    }
+
+    private void setInitialSize(long size) {
+        long targetPageSize;
+        if (size > maxPageSize) {
+            targetPageSize = maxPageSize;
+        } else {
+            targetPageSize = Math.max(ff.getPageSize(), (size / ff.getPageSize()) * ff.getPageSize());
+        }
+
+        if (targetPageSize != pageSize) {
+            setPageSize(targetPageSize);
+            pages.ensureCapacity((int) (size / this.pageSize + 1));
+            this.lastPageSize = targetPageSize;
+        }
+
+        this.size = size;
     }
 }

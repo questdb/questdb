@@ -72,7 +72,7 @@ public class TableUtils implements Closeable {
         final int rootLen = path.length();
         try (AppendMemory mem = tlMem.get()) {
 
-            mem.of(path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize(), 0);
+            mem.of(path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
 
             int count = metadata.getColumnCount();
             mem.putInt(count);
@@ -85,7 +85,7 @@ public class TableUtils implements Closeable {
                 mem.putStr(metadata.getColumnQuick(i).name);
             }
 
-            mem.of(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize(), 0);
+            mem.of(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
             resetTxn(mem);
         }
     }
@@ -122,7 +122,7 @@ public class TableUtils implements Closeable {
         txMem.jumpTo(32);
     }
 
-    static void setColumnSize(FilesFacade ff, TableColumn mem1, TableColumn mem2, int type, long actualPosition, long buf) {
+    static void setColumnSize(FilesFacade ff, AppendMemory mem1, AppendMemory mem2, int type, long actualPosition, long buf) {
         long offset;
         long len;
         if (actualPosition > 0) {

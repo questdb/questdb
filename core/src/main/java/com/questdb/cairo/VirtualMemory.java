@@ -348,7 +348,7 @@ public class VirtualMemory implements Closeable {
     }
 
     protected long allocateNextPage(int page) {
-        return Unsafe.getUnsafe().allocateMemory(pageSize);
+        return Unsafe.malloc(pageSize);
     }
 
     protected void cachePageAddress(int index, long address) {
@@ -709,7 +709,7 @@ public class VirtualMemory implements Closeable {
 
     protected void release(long address) {
         if (address != 0) {
-            Unsafe.getUnsafe().freeMemory(address);
+            Unsafe.free(address, pageSize);
         }
     }
 
