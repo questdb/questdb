@@ -61,7 +61,47 @@ public class TableReader implements Closeable, RecordCursor {
         );
         return reader.path.$();
     };
+
     private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.path.concat(TableUtils.DEFAULT_PARTITION_NAME).$();
+
+    private static final ReloadMethod PARTITIONED_RELOAD_METHOD = reader -> {
+        long currentPartitionTimestamp = reader.timestampFloorMethod.floor(reader.maxTimestamp);
+        boolean b = reader.readTxn();
+        if (b) {
+            int delta = getIntervalLength(reader.partitionBy, currentPartitionTimestamp, reader.timestampFloorMethod.floor(reader.maxTimestamp));
+            int partitionIndex = reader.partitionCount - 1;
+            if (delta > 0) {
+                reader.partitionCount += delta;
+                reader.partitionSizes.seed(partitionIndex + 1, delta, -1);
+                reader.columns.setPos(reader.getColumnCapacity(reader.partitionCount, reader.columnCount));
+
+                CompositePath path = reader.partitionPathGenerator.generate(reader, partitionIndex);
+                try {
+                    path.trimTo(path.length());
+                    reader.reloadPartition(partitionIndex, readPartitionSize(reader.ff, path, reader.tempMem8b));
+                } finally {
+                    path.trimTo(reader.rootLen);
+                }
+            } else {
+                reader.reloadPartition(partitionIndex, reader.transientRowCount);
+            }
+            return true;
+        }
+        return false;
+    };
+
+    private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = reader -> {
+        // calling readTxn will set "size" member variable
+        if (reader.readTxn()) {
+            reader.reloadPartition(0, reader.size);
+            return true;
+        }
+        return false;
+    };
+
+    private static final TimestampFloorMethod INAPROPRIATE_FLOOR_METHOD = timestamp -> {
+        throw CairoException.instance(0).put("Cannot get partition floor for non-partitioned table");
+    };
 
     private final ObjList<ReadOnlyMemory> columns;
     private final FilesFacade ff;
@@ -73,9 +113,11 @@ public class TableReader implements Closeable, RecordCursor {
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final RecordMetadata metadata;
     private final LongList partitionSizes;
-    private final DateFormat partitionDirFmt;
     private final TableRecord record = new TableRecord();
     private final PartitionPathGenerator partitionPathGenerator;
+    private final ReloadMethod reloadMethod;
+    private final TimestampFloorMethod timestampFloorMethod;
+    private final IntervalLengthMethod intervalLengthMethod;
     private int columnCount;
     private int columnCountBits;
     private long transientRowCount;
@@ -104,33 +146,38 @@ public class TableReader implements Closeable, RecordCursor {
         this.metadata = new Meta(columnCount);
         readTxn();
 
-        this.partitionDirFmt = TableUtils.selectPartitionDirFmt(partitionBy);
-        if (partitionDirFmt == null) {
-            this.partitionCount = 1;
-        } else {
-            this.partitionMin = countPartitions(partitionDirFmt);
-            if (partitionMin == Long.MAX_VALUE) {
-                partitionCount = 1;
-            } else {
-                partitionCount = getIntervalLength(partitionBy, partitionMin, getPartitionFloor(partitionBy, maxTimestamp));
-            }
-        }
-
         switch (partitionBy) {
             case PartitionBy.DAY:
                 partitionPathGenerator = DAY_GEN;
+                reloadMethod = PARTITIONED_RELOAD_METHOD;
+                timestampFloorMethod = Dates::floorDD;
+                intervalLengthMethod = Dates::getDaysBetween;
+                partitionMin = findPartitionMinimum(TableUtils.fmtDay);
                 break;
             case PartitionBy.MONTH:
                 partitionPathGenerator = MONTH_GEN;
+                reloadMethod = PARTITIONED_RELOAD_METHOD;
+                timestampFloorMethod = Dates::floorMM;
+                intervalLengthMethod = Dates::getMonthsBetween;
+                partitionMin = findPartitionMinimum(TableUtils.fmtMonth);
                 break;
             case PartitionBy.YEAR:
                 partitionPathGenerator = YEAR_GEN;
+                reloadMethod = PARTITIONED_RELOAD_METHOD;
+                timestampFloorMethod = Dates::floorYYYY;
+                intervalLengthMethod = Dates::getYearsBetween;
+                partitionMin = findPartitionMinimum(TableUtils.fmtYear);
                 break;
             default:
                 partitionPathGenerator = DEFAULT_GEN;
+                reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
+                timestampFloorMethod = INAPROPRIATE_FLOOR_METHOD;
+                intervalLengthMethod = (min, max) -> 0;
+                partitionMin = Long.MAX_VALUE;
                 break;
         }
 
+        partitionCount = getPartitionCount();
         int columnListCapacity = getColumnCapacity(partitionCount, columnCount);
         this.columns = new ObjList<>(columnListCapacity);
         columns.setPos(columnListCapacity);
@@ -210,46 +257,8 @@ public class TableReader implements Closeable, RecordCursor {
         return currentRecordFunction.next(this);
     }
 
-    public boolean refreshPx() {
-        long currentPartitionTimestamp = getPartitionFloor(partitionBy, this.maxTimestamp);
-        boolean b = readTxn();
-        if (b) {
-            int delta = getIntervalLength(partitionBy, currentPartitionTimestamp, getPartitionFloor(partitionBy, this.maxTimestamp));
-            int partitionIndex = partitionCount - 1;
-            if (delta > 0) {
-                partitionCount += delta;
-                partitionSizes.setPos(partitionCount);
-                partitionSizes.seed(partitionIndex, partitionCount);
-                columns.setPos(getColumnCapacity(partitionCount, columnCount));
-            }
-
-            long size = partitionSizes.getQuick(partitionIndex);
-            if (size > -1) {
-            }
-            return b;
-        }
-        return false;
-
-    }
-
     public boolean reload() {
-
-        boolean b = readTxn();
-        if (b) {
-            long partitionSize = partitionSizes.getQuick(0);
-            if (partitionSize > -1) {
-                for (int i = 0; i < columnCount; i++) {
-                    columns.getQuick(getPrimaryColumnIndex(0, i)).trackFileSize();
-                    ReadOnlyMemory mem2 = columns.getQuick(getSecondaryColumnIndex(0, i));
-                    if (mem2 != null) {
-                        mem2.trackFileSize();
-                    }
-                }
-                partitionSizes.setQuick(0, size);
-            }
-            return true;
-        }
-        return false;
+        return reloadMethod.reload(this);
     }
 
     public long size() {
@@ -264,7 +273,7 @@ public class TableReader implements Closeable, RecordCursor {
         return getPrimaryColumnIndex(base, index) + 1;
     }
 
-    private static long readPartitionSize(FilesFacade ff, CompositePath path) {
+    private static long readPartitionSize(FilesFacade ff, CompositePath path, long tempMem) {
         int plen = path.length();
         try {
             if (ff.exists(path.concat(TableUtils.ARCHIVE_FILE_NAME).$())) {
@@ -274,15 +283,10 @@ public class TableReader implements Closeable, RecordCursor {
                 }
 
                 try {
-                    long mem = Unsafe.malloc(8);
-                    try {
-                        if (ff.read(fd, mem, 8, 0) != 8) {
-                            throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
-                        }
-                        return Unsafe.getUnsafe().getLong(mem);
-                    } finally {
-                        Unsafe.free(mem, 8);
+                    if (ff.read(fd, tempMem, 8, 0) != 8) {
+                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
                     }
+                    return Unsafe.getUnsafe().getLong(tempMem);
                 } finally {
                     ff.close(fd);
                 }
@@ -294,33 +298,30 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private static long getPartitionFloor(int partitionBy, long timestamp) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return Dates.floorDD(timestamp);
-            case PartitionBy.MONTH:
-                return Dates.floorMM(timestamp);
-            case PartitionBy.YEAR:
-                return Dates.floorYYYY(timestamp);
-            default:
-                throw CairoException.instance(0).put("Cannot get partition floor for [").put(partitionBy).put(']');
-        }
-    }
-
     private static int getIntervalLength(int partitionBy, long min, long max) {
         switch (partitionBy) {
             case PartitionBy.YEAR:
-                return (int) Dates.getYearsBetween(min, max) + 1;
+                return (int) Dates.getYearsBetween(min, max);
             case PartitionBy.MONTH:
-                return (int) Dates.getMonthsBetween(min, max) + 1;
+                return (int) Dates.getMonthsBetween(min, max);
             case PartitionBy.DAY:
-                return (int) Dates.getDaysBetween(min, max) + 1;
+                return (int) Dates.getDaysBetween(min, max);
             default:
                 return 0;
         }
     }
 
-    private long countPartitions(DateFormat partitionDirFmt) {
+    private void failOnPendingTodo() {
+        try {
+            if (ff.exists(path.concat(TableUtils.TODO_FILE_NAME).$())) {
+                throw CairoException.instance(0).put("Table ").put(path.$()).put(" is pending recovery.");
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private long findPartitionMinimum(DateFormat partitionDirFmt) {
         long partitionMin = Long.MAX_VALUE;
         try {
             long p = ff.findFirst(path.$());
@@ -349,22 +350,20 @@ public class TableReader implements Closeable, RecordCursor {
         return partitionMin;
     }
 
-    private void failOnPendingTodo() {
-        try {
-            if (ff.exists(path.concat(TableUtils.TODO_FILE_NAME).$())) {
-                throw CairoException.instance(0).put("Table ").put(path.$()).put(" is pending recovery.");
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     private int getColumnBase(int partitionIndex) {
         return partitionIndex << columnCountBits;
     }
 
     private int getColumnCapacity(int partitionCount, int columnCount) {
         return partitionCount == 1 ? columnCount * 2 : getColumnBase(partitionCount);
+    }
+
+    private int getPartitionCount() {
+        if (partitionMin == Long.MAX_VALUE) {
+            return 1;
+        } else {
+            return (int) (intervalLengthMethod.calculate(partitionMin, timestampFloorMethod.floor(maxTimestamp)) + 1);
+        }
     }
 
     private ReadOnlyMemory openMetaFile() {
@@ -385,7 +384,7 @@ public class TableReader implements Closeable, RecordCursor {
                 if (last) {
                     partitionSize = transientRowCount;
                 } else {
-                    partitionSize = readPartitionSize(ff, path);
+                    partitionSize = readPartitionSize(ff, path, tempMem8b);
                 }
 
                 LOG.info().$("Open partition: ").$(path.$()).$(" [size=").$(partitionSize).$(']').$();
@@ -468,6 +467,35 @@ public class TableReader implements Closeable, RecordCursor {
             LockSupport.parkNanos(1);
         }
         return true;
+    }
+
+    private void reloadPartition(int partitionIndex, long size) {
+        if (partitionSizes.getQuick(partitionIndex) > -1) {
+            int columnBase = getColumnBase(partitionIndex);
+            for (int i = 0; i < columnCount; i++) {
+                columns.getQuick(getPrimaryColumnIndex(columnBase, i)).trackFileSize();
+                ReadOnlyMemory mem2 = columns.getQuick(getSecondaryColumnIndex(columnBase, i));
+                if (mem2 != null) {
+                    mem2.trackFileSize();
+                }
+            }
+            partitionSizes.setQuick(partitionIndex, size);
+        }
+    }
+
+    @FunctionalInterface
+    private interface IntervalLengthMethod {
+        long calculate(long minTimestamp, long maxTimestamp);
+    }
+
+    @FunctionalInterface
+    private interface TimestampFloorMethod {
+        long floor(long timestamp);
+    }
+
+    @FunctionalInterface
+    private interface ReloadMethod {
+        boolean reload(TableReader reader);
     }
 
     @FunctionalInterface

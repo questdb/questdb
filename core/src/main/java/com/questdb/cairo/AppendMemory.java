@@ -114,7 +114,7 @@ public class AppendMemory extends VirtualMemory {
 
     public void truncate() {
         if (fd == -1) {
-            // we are closed ?
+            // are we closed ?
             return;
         }
 

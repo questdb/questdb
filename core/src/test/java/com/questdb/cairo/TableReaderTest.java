@@ -264,43 +264,18 @@ public class TableReaderTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testRefreshNonPartitioned() throws Exception {
-        createAllTable(PartitionBy.NONE);
+    public void testRefreshDaySamePartition() throws Exception {
+        testReload(PartitionBy.DAY, 15, 60L * 60000);
+    }
 
-        Rnd rnd = new Rnd();
+    @Test
+    public void testReloadByDaySwitch() throws Exception {
+        testReload(PartitionBy.DAY, 10, 60 * 60000 * 8);
+    }
 
-        int N = 10;
-        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-        long increment = 60 * 60000;
-
-        long blob = allocBlob();
-        try {
-
-            // create table before we open reader
-            long nextTs = testAppendNulls(rnd, FF, ts, N, increment, blob);
-
-            try (TableReader reader = new TableReader(FF, root, "all")) {
-
-                // reader can see all the rows ?
-                assertCursor(reader, new Rnd(), ts, increment, blob, N);
-
-                // try reload when table hasn't changed
-                Assert.assertFalse(reader.reload());
-
-                // add more rows to the table while reader is open
-                testAppendNulls(rnd, FF, nextTs, N, increment, blob);
-
-                // if we don't reload reader it should still see old data set
-                // reader can see all the rows ?
-                assertCursor(reader, new Rnd(), ts, increment, blob, N);
-
-                // reload should be successful because we have new data in the table
-                Assert.assertTrue(reader.reload());
-                assertCursor(reader, new Rnd(), ts, increment, blob, 2 * N);
-            }
-        } finally {
-            freeBlob(blob);
-        }
+    @Test
+    public void testReloadNonPartitioned() throws Exception {
+        testReload(PartitionBy.NONE, 10, 60L * 60000);
     }
 
     private static long allocBlob() {
@@ -317,7 +292,6 @@ public class TableReaderTest extends AbstractOptimiserTest {
         reader.toTop();
         while (reader.hasNext()) {
             count++;
-            System.out.println(count);
             assertRecord(reader.next(), rnd, ts += increment, blob);
         }
         // did our loop run?
@@ -476,6 +450,43 @@ public class TableReaderTest extends AbstractOptimiserTest {
             Assert.assertEquals(size + count, writer.size());
         }
         return ts;
+    }
+
+    private void testReload(int partitionBy, int count, long increment) throws NumericException {
+        createAllTable(partitionBy);
+
+        Rnd rnd = new Rnd();
+
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+        long blob = allocBlob();
+        try {
+
+            // create table before we open reader
+            long nextTs = testAppendNulls(rnd, FF, ts, count, increment, blob);
+
+            try (TableReader reader = new TableReader(FF, root, "all")) {
+
+                // reader can see all the rows ?
+                assertCursor(reader, new Rnd(), ts, increment, blob, count);
+
+                // try reload when table hasn't changed
+                Assert.assertFalse(reader.reload());
+
+                // add more rows to the table while reader is open
+                testAppendNulls(rnd, FF, nextTs, count, increment, blob);
+
+                // if we don't reload reader it should still see old data set
+                // reader can see all the rows ?
+                assertCursor(reader, new Rnd(), ts, increment, blob, count);
+
+                // reload should be successful because we have new data in the table
+                Assert.assertTrue(reader.reload());
+                assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count);
+            }
+        } finally {
+            freeBlob(blob);
+        }
     }
 
     private void testTableCursor(long increment, String expected) throws IOException, NumericException {

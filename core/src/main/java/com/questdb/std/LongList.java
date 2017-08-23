@@ -126,7 +126,7 @@ public class LongList implements Mutable {
 
     public void ensureCapacity(int capacity) {
         if (capacity < 0) {
-            throw new IllegalArgumentException("Negative capacity");
+            throw new IllegalArgumentException("Negative capacity. Integer overflow may be?");
         }
 
         int l = buffer.length;
@@ -245,6 +245,13 @@ public class LongList implements Mutable {
         ensureCapacity(capacity);
         pos = capacity;
         Arrays.fill(buffer, value);
+    }
+
+    public void seed(int fromIndex, int count, long value) {
+        int capacity = fromIndex + count;
+        ensureCapacity(capacity);
+        pos = capacity;
+        Arrays.fill(buffer, fromIndex, capacity, value);
     }
 
     public void set(int index, long element) {
