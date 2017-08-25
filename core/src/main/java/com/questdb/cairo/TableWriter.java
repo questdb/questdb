@@ -86,6 +86,7 @@ public class TableWriter implements Closeable {
     private long transientRowCount = 0;
     private long masterRef = 0;
     private boolean removeDirOnCancelRow = true;
+    private long tempMem8b = Unsafe.malloc(8);
 
     public TableWriter(FilesFacade ff, CharSequence root, CharSequence name) {
         this.ff = ff;
@@ -265,6 +266,14 @@ public class TableWriter implements Closeable {
         return index;
     }
 
+    public long getMaxTimestamp() {
+        return maxTimestamp;
+    }
+
+    public int getPartitionBy() {
+        return partitionBy;
+    }
+
     public boolean inTransaction() {
         return txPartitionCount > 1 || transientRowCount != prevTransientRowCount;
     }
@@ -408,6 +417,59 @@ public class TableWriter implements Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
+    private static void setColumnSize(FilesFacade ff, AppendMemory mem1, AppendMemory mem2, int type, long actualPosition, long buf) {
+        long offset;
+        long len;
+        if (actualPosition > 0) {
+            // subtract column top
+            switch (type) {
+                case ColumnType.BINARY:
+                    assert mem2 != null;
+                    if (ff.read(mem2.getFd(), buf, 8, (actualPosition - 1) * 8) != 8) {
+                        throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((actualPosition - 1) * 8);
+                    }
+                    offset = Unsafe.getUnsafe().getLong(buf);
+                    if (ff.read(mem1.getFd(), buf, 8, offset) != 8) {
+                        throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
+                    }
+                    len = Unsafe.getUnsafe().getLong(buf);
+                    if (len == -1) {
+                        mem1.setSize(offset + 8);
+                    } else {
+                        mem1.setSize(offset + len + 8);
+                    }
+                    mem2.setSize(actualPosition * 8);
+                    break;
+                case ColumnType.STRING:
+                case ColumnType.SYMBOL:
+                    assert mem2 != null;
+                    if (ff.read(mem2.getFd(), buf, 8, (actualPosition - 1) * 8) != 8) {
+                        throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((actualPosition - 1) * 8);
+                    }
+                    offset = Unsafe.getUnsafe().getLong(buf);
+                    if (ff.read(mem1.getFd(), buf, 4, offset) != 4) {
+                        throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
+                    }
+                    len = Unsafe.getUnsafe().getInt(buf);
+                    if (len == -1) {
+                        mem1.setSize(offset + 4);
+                    } else {
+                        mem1.setSize(offset + len * 2 + 4);
+                    }
+                    mem2.setSize(actualPosition * 8);
+                    break;
+                default:
+                    mem1.setSize(actualPosition * ColumnType.sizeOf(type));
+                    break;
+            }
+        } else {
+            mem1.setSize(0);
+            if (mem2 != null) {
+                mem2.setSize(0);
+            }
+        }
+    }
+
     private void addColumnToMeta(CharSequence name, int type) {
         try {
             // delete stale _meta.swp
@@ -530,6 +592,10 @@ public class TableWriter implements Closeable {
         Misc.free(ddlMem);
         Misc.free(path);
         Misc.free(other);
+        if (tempMem8b != 0) {
+            Unsafe.free(tempMem8b, 8);
+            tempMem8b = 0;
+        }
     }
 
     private void closeColumns(boolean truncate) {
@@ -795,16 +861,11 @@ public class TableWriter implements Closeable {
                     throw CairoException.instance(Os.errno()).put("Cannot open *todo*: ").put(path);
                 }
                 try {
-                    long buf = Unsafe.malloc(1);
-                    try {
-                        if (ff.read(todoFd, buf, 1, 0) != 1) {
-                            LOG.info().$("Cannot read *todo* code. File seems to be truncated. Ignoring").$();
-                            return -1;
-                        }
-                        return Unsafe.getUnsafe().getByte(buf);
-                    } finally {
-                        Unsafe.free(buf, 1);
+                    if (ff.read(todoFd, tempMem8b, 1, 0) != 1) {
+                        LOG.info().$("Cannot read *todo* code. File seems to be truncated. Ignoring").$();
+                        return -1;
                     }
+                    return Unsafe.getUnsafe().getByte(tempMem8b);
                 } finally {
                     ff.close(todoFd);
                 }
@@ -929,7 +990,7 @@ public class TableWriter implements Closeable {
     }
 
     private void removePartitionDirsNewerThan(long timestamp) {
-        LOG.info().$("Removing partitions newer than '").$ts(timestamp).$("' from ").$(path.$()).$();
+        LOG.info().$("Looking to remove partitions newer than '").$ts(timestamp).$("' from ").$(path.$()).$();
         try {
             ff.iterateDir(path.$(), (pName, type) -> {
                 path.trimTo(rootLen);
@@ -1033,13 +1094,8 @@ public class TableWriter implements Closeable {
     }
 
     private void setAppendPosition(final long position) {
-        long pSz = Unsafe.malloc(8);
-        try {
-            for (int i = 0; i < columnCount; i++) {
-                TableUtils.setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), getColumnType(i), position - columnTops.getQuick(i), pSz);
-            }
-        } finally {
-            Unsafe.free(pSz, 8);
+        for (int i = 0; i < columnCount; i++) {
+            setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), getColumnType(i), position - columnTops.getQuick(i), tempMem8b);
         }
     }
 
@@ -1137,14 +1193,9 @@ public class TableWriter implements Closeable {
         try {
             long fd = openAppend(path.concat(name).put(".top").$());
             try {
-                long buf = Unsafe.malloc(8);
-                try {
-                    Unsafe.getUnsafe().putLong(buf, transientRowCount);
-                    if (ff.append(fd, buf, 8) != 8) {
-                        throw CairoException.instance(Os.errno()).put("Cannot append ").put(path);
-                    }
-                } finally {
-                    Unsafe.free(buf, 8);
+                Unsafe.getUnsafe().putLong(tempMem8b, transientRowCount);
+                if (ff.append(fd, tempMem8b, 8) != 8) {
+                    throw CairoException.instance(Os.errno()).put("Cannot append ").put(path);
                 }
             } finally {
                 ff.close(fd);
@@ -1158,14 +1209,9 @@ public class TableWriter implements Closeable {
         try {
             long fd = openAppend(path.concat(TableUtils.TODO_FILE_NAME).$());
             try {
-                long buf = Unsafe.malloc(1);
-                try {
-                    Unsafe.getUnsafe().putByte(buf, (byte) code);
-                    if (ff.append(fd, buf, 1) != 1) {
-                        throw CairoException.instance(Os.errno()).put("Cannot write ").put(getTodoText(code)).put(" *todo*: ").put(path);
-                    }
-                } finally {
-                    Unsafe.free(buf, 1);
+                Unsafe.getUnsafe().putByte(tempMem8b, (byte) code);
+                if (ff.append(fd, tempMem8b, 1) != 1) {
+                    throw CairoException.instance(Os.errno()).put("Cannot write ").put(getTodoText(code)).put(" *todo*: ").put(path);
                 }
             } finally {
                 ff.close(fd);

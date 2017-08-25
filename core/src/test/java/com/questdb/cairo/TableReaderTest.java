@@ -21,6 +21,9 @@ import org.junit.Test;
 import java.io.IOException;
 
 public class TableReaderTest extends AbstractOptimiserTest {
+    public static final int MUST_SWITCH = 1;
+    public static final int MUST_NOT_SWITCH = 2;
+    public static final int DONT_CARE = 0;
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final int blobLen = 64 * 1024;
     private static CharSequence root;
@@ -265,17 +268,37 @@ public class TableReaderTest extends AbstractOptimiserTest {
 
     @Test
     public void testReloadByDaySwitch() throws Exception {
-        testReload(PartitionBy.DAY, 10, 60 * 60000 * 8);
+        testReload(PartitionBy.DAY, 150, 6 * 60000L, MUST_SWITCH);
+    }
+
+    @Test
+    public void testReloadByMonthSamePartition() throws Exception {
+        testReload(PartitionBy.MONTH, 15, 60L * 60000, MUST_NOT_SWITCH);
+    }
+
+    @Test
+    public void testReloadByMonthSwitch() throws Exception {
+        testReload(PartitionBy.MONTH, 15, 24 * 60L * 60000, MUST_SWITCH);
+    }
+
+    @Test
+    public void testReloadByYearSamePartition() throws Exception {
+        testReload(PartitionBy.YEAR, 100, 60 * 60000 * 24L, MUST_NOT_SWITCH);
+    }
+
+    @Test
+    public void testReloadByYearSwitch() throws Exception {
+        testReload(PartitionBy.YEAR, 200, 60 * 60000 * 24L, MUST_SWITCH);
     }
 
     @Test
     public void testReloadDaySamePartition() throws Exception {
-        testReload(PartitionBy.DAY, 15, 60L * 60000);
+        testReload(PartitionBy.DAY, 10, 60L * 60000, MUST_NOT_SWITCH);
     }
 
     @Test
     public void testReloadNonPartitioned() throws Exception {
-        testReload(PartitionBy.NONE, 10, 60L * 60000);
+        testReload(PartitionBy.NONE, 10, 60L * 60000, DONT_CARE);
     }
 
     private static long allocBlob() {
@@ -397,14 +420,17 @@ public class TableReaderTest extends AbstractOptimiserTest {
         }
     }
 
-    private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts, int count, long inc, long blob) throws NumericException {
+    private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts, int count, long inc, long blob, int testPartitionSwitch) throws NumericException {
         try (TableWriter writer = new TableWriter(ff, root, "all")) {
-            return testAppendNulls(writer, rnd, ts, count, inc, blob);
+            return testAppendNulls(writer, rnd, ts, count, inc, blob, testPartitionSwitch);
         }
     }
 
-    private long testAppendNulls(TableWriter writer, Rnd rnd, long ts, int count, long inc, long blob) {
+    private long testAppendNulls(TableWriter writer, Rnd rnd, long ts, int count, long inc, long blob, int testPartitionSwitch) {
         long size = writer.size();
+
+        long timestamp = writer.getMaxTimestamp();
+
         for (int i = 0; i < count; i++) {
             TableWriter.Row r = writer.newRow(ts += inc);
             if (rnd.nextBoolean()) {
@@ -452,11 +478,17 @@ public class TableReaderTest extends AbstractOptimiserTest {
         }
         writer.commit();
 
+        if (testPartitionSwitch == MUST_SWITCH) {
+            Assert.assertFalse(TableUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+        } else if (testPartitionSwitch == MUST_NOT_SWITCH) {
+            Assert.assertTrue(TableUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+        }
+
         Assert.assertEquals(size + count, writer.size());
         return ts;
     }
 
-    private void testReload(int partitionBy, int count, long increment) throws Exception {
+    private void testReload(int partitionBy, int count, long increment, final int testPartitionSwitch) throws Exception {
         createAllTable(partitionBy);
 
         TestUtils.assertMemoryLeak(() -> {
@@ -475,7 +507,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
                 }
 
                 // create table before we open reader
-                long nextTs = testAppendNulls(rnd, FF, ts, count, increment, blob);
+                long nextTs = testAppendNulls(rnd, FF, ts, count, increment, blob, 0);
 
                 try (TableReader reader = new TableReader(FF, root, "all")) {
 
@@ -486,7 +518,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
                     Assert.assertFalse(reader.reload());
 
                     // add more rows to the table while reader is open
-                    nextTs = testAppendNulls(rnd, FF, nextTs, count, increment, blob);
+                    nextTs = testAppendNulls(rnd, FF, nextTs, count, increment, blob, testPartitionSwitch);
 
                     // if we don't reload reader it should still see old data set
                     // reader can see all the rows ?
@@ -503,7 +535,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
                         Assert.assertFalse(reader.reload());
                         assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count);
 
-                        testAppendNulls(writer, rnd, nextTs, count, increment, blob);
+                        testAppendNulls(writer, rnd, nextTs, count, increment, blob, 0);
                         Assert.assertTrue(reader.reload());
 
                         assertCursor(reader, new Rnd(), ts, increment, blob, 3 * count);
@@ -521,7 +553,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
         long blob = allocBlob();
         try {
-            testAppendNulls(rnd, FF, ts, N, increment, blob);
+            testAppendNulls(rnd, FF, ts, N, increment, blob, 0);
 
             final StringSink sink = new StringSink();
             final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
