@@ -29,8 +29,6 @@ import java.util.concurrent.locks.LockSupport;
 
 public class TableReader implements Closeable, RecordCursor {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
-    private final static NextRecordFunction nextPartitionFunction = new NextPartitionFunction();
-    private final static NextRecordFunction nextPartitionRecordFunction = new NextPartitionRecordFunction();
     private static final PartitionPathGenerator YEAR_GEN = (reader, partitionIndex) -> {
         TableUtils.fmtYear.format(
                 Dates.addYear(reader.partitionMin, partitionIndex),
@@ -130,7 +128,6 @@ public class TableReader implements Closeable, RecordCursor {
     private long columnTops[];
     private long tempMem8b = Unsafe.malloc(8);
     private int partitionIndex = 0;
-    private NextRecordFunction currentRecordFunction = nextPartitionFunction;
 
     public TableReader(FilesFacade ff, CharSequence root, CharSequence name) {
         this.ff = ff;
@@ -153,6 +150,7 @@ public class TableReader implements Closeable, RecordCursor {
                 timestampFloorMethod = Dates::floorDD;
                 intervalLengthMethod = Dates::getDaysBetween;
                 partitionMin = findPartitionMinimum(TableUtils.fmtDay);
+                partitionCount = getPartitionCount();
                 break;
             case PartitionBy.MONTH:
                 partitionPathGenerator = MONTH_GEN;
@@ -160,6 +158,7 @@ public class TableReader implements Closeable, RecordCursor {
                 timestampFloorMethod = Dates::floorMM;
                 intervalLengthMethod = Dates::getMonthsBetween;
                 partitionMin = findPartitionMinimum(TableUtils.fmtMonth);
+                partitionCount = getPartitionCount();
                 break;
             case PartitionBy.YEAR:
                 partitionPathGenerator = YEAR_GEN;
@@ -167,17 +166,17 @@ public class TableReader implements Closeable, RecordCursor {
                 timestampFloorMethod = Dates::floorYYYY;
                 intervalLengthMethod = Dates::getYearsBetween;
                 partitionMin = findPartitionMinimum(TableUtils.fmtYear);
+                partitionCount = getPartitionCount();
                 break;
             default:
                 partitionPathGenerator = DEFAULT_GEN;
                 reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
                 timestampFloorMethod = INAPROPRIATE_FLOOR_METHOD;
                 intervalLengthMethod = (min, max) -> 0;
-                partitionMin = Long.MAX_VALUE;
+                partitionCount = 1;
                 break;
         }
 
-        partitionCount = getPartitionCount();
         int columnListCapacity = getColumnCapacity(partitionCount, columnCount);
         this.columns = new ObjList<>(columnListCapacity);
         columns.setPos(columnListCapacity);
@@ -242,19 +241,20 @@ public class TableReader implements Closeable, RecordCursor {
     }
 
     @Override
-    public void toTop() {
-        partitionIndex = 0;
-        currentRecordFunction = nextPartitionFunction;
-    }
-
-    @Override
     public boolean hasNext() {
-        return partitionIndex < partitionCount;
+        return record.recordIndex < record.maxRecordIndex || switchPartition();
     }
 
     @Override
     public Record next() {
-        return currentRecordFunction.next(this);
+        record.recordIndex++;
+        return record;
+    }
+
+    @Override
+    public void toTop() {
+        partitionIndex = 0;
+        record.recordIndex = record.maxRecordIndex = -1;
     }
 
     public boolean reload() {
@@ -360,7 +360,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     private int getPartitionCount() {
         if (partitionMin == Long.MAX_VALUE) {
-            return 1;
+            return 0;
         } else {
             return (int) (intervalLengthMethod.calculate(partitionMin, timestampFloorMethod.floor(maxTimestamp)) + 1);
         }
@@ -483,6 +483,29 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
+    private boolean switchPartition() {
+        while (partitionIndex < partitionCount) {
+            final int columnBase = getColumnBase(partitionIndex);
+
+            long partitionSize = partitionSizes.getQuick(partitionIndex);
+            if (partitionSize == -1) {
+                partitionSize = openPartition(partitionIndex++, columnBase, columnTops, partitionIndex == partitionCount);
+            } else {
+                partitionIndex++;
+            }
+
+            if (partitionSize == 0) {
+                continue;
+            }
+
+            record.maxRecordIndex = partitionSize - 1;
+            record.recordIndex = -1;
+            record.columnBase = columnBase;
+            return true;
+        }
+        return false;
+    }
+
     @FunctionalInterface
     private interface IntervalLengthMethod {
         long calculate(long minTimestamp, long maxTimestamp);
@@ -501,11 +524,6 @@ public class TableReader implements Closeable, RecordCursor {
     @FunctionalInterface
     private interface PartitionPathGenerator {
         CompositePath generate(TableReader reader, int partitionIndex);
-    }
-
-    @FunctionalInterface
-    private interface NextRecordFunction {
-        Record next(TableReader reader);
     }
 
     private static class ColumnMeta implements RecordColumnMetadata {
@@ -540,40 +558,6 @@ public class TableReader implements Closeable, RecordCursor {
         @Override
         public boolean isIndexed() {
             return false;
-        }
-    }
-
-    private static class NextPartitionFunction implements NextRecordFunction {
-        @Override
-        public Record next(TableReader reader) {
-            long partitionSize = reader.partitionSizes.getQuick(reader.partitionIndex);
-            int columnBase = reader.getColumnBase(reader.partitionIndex);
-
-            TableReader.TableRecord rec = reader.record;
-            if (partitionSize == -1) {
-                rec.maxRecordIndex = reader.openPartition(reader.partitionIndex, columnBase, reader.columnTops, reader.partitionIndex == reader.partitionCount - 1) - 1;
-            } else {
-                rec.maxRecordIndex = partitionSize - 1;
-            }
-
-            rec.recordIndex = -1;
-            rec.columnBase = columnBase;
-            reader.currentRecordFunction = nextPartitionRecordFunction;
-            return reader.currentRecordFunction.next(reader);
-        }
-    }
-
-    private static class NextPartitionRecordFunction implements NextRecordFunction {
-        @Override
-        public Record next(TableReader reader) {
-            TableReader.TableRecord rec = reader.record;
-            if (++rec.recordIndex < rec.maxRecordIndex) {
-                return rec;
-            } else {
-                reader.currentRecordFunction = nextPartitionFunction;
-                reader.partitionIndex++;
-                return rec;
-            }
         }
     }
 

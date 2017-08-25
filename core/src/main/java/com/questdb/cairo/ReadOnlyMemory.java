@@ -109,6 +109,7 @@ public class ReadOnlyMemory extends VirtualMemory {
     protected void releaseLast(long address) {
         if (address != 0) {
             ff.munmap(address, lastPageSize);
+            lastPageSize = pageSize;
         }
     }
 

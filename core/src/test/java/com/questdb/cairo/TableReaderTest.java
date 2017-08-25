@@ -38,12 +38,6 @@ public class TableReaderTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testNonPartitionedRead() throws Exception {
-        createAllTable(PartitionBy.NONE);
-        TestUtils.assertMemoryLeak(this::testTableCursor);
-    }
-
-    @Test
     public void testReadByDay() throws Exception {
         createAllTable(PartitionBy.DAY);
         TestUtils.assertMemoryLeak(this::testTableCursor);
@@ -264,13 +258,19 @@ public class TableReaderTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testRefreshDaySamePartition() throws Exception {
-        testReload(PartitionBy.DAY, 15, 60L * 60000);
+    public void testReadNonPartitioned() throws Exception {
+        createAllTable(PartitionBy.NONE);
+        TestUtils.assertMemoryLeak(this::testTableCursor);
     }
 
     @Test
     public void testReloadByDaySwitch() throws Exception {
         testReload(PartitionBy.DAY, 10, 60 * 60000 * 8);
+    }
+
+    @Test
+    public void testReloadDaySamePartition() throws Exception {
+        testReload(PartitionBy.DAY, 15, 60L * 60000);
     }
 
     @Test
@@ -399,94 +399,120 @@ public class TableReaderTest extends AbstractOptimiserTest {
 
     private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts, int count, long inc, long blob) throws NumericException {
         try (TableWriter writer = new TableWriter(ff, root, "all")) {
-            long size = writer.size();
-            for (int i = 0; i < count; i++) {
-                TableWriter.Row r = writer.newRow(ts += inc);
-                if (rnd.nextBoolean()) {
-                    r.putByte(2, rnd.nextByte());
-                }
-
-                if (rnd.nextBoolean()) {
-                    r.putBool(8, rnd.nextBoolean());
-                }
-
-                if (rnd.nextBoolean()) {
-                    r.putShort(1, rnd.nextShort());
-                }
-
-                if (rnd.nextBoolean()) {
-                    r.putInt(0, rnd.nextInt());
-                }
-
-                if (rnd.nextBoolean()) {
-                    r.putDouble(3, rnd.nextDouble());
-                }
-
-                if (rnd.nextBoolean()) {
-                    r.putFloat(4, rnd.nextFloat());
-                }
-
-                if (rnd.nextBoolean()) {
-                    r.putLong(5, rnd.nextLong());
-                }
-
-                if (rnd.nextBoolean()) {
-                    r.putDate(10, ts);
-                }
-
-                if (rnd.nextBoolean()) {
-                    rnd.nextChars(blob, blobLen / 2);
-                    r.putBin(9, blob, blobLen);
-                }
-
-                if (rnd.nextBoolean()) {
-                    r.putStr(6, rnd.nextChars(10));
-                }
-
-                r.append();
-            }
-            writer.commit();
-
-            Assert.assertEquals(size + count, writer.size());
+            return testAppendNulls(writer, rnd, ts, count, inc, blob);
         }
+    }
+
+    private long testAppendNulls(TableWriter writer, Rnd rnd, long ts, int count, long inc, long blob) {
+        long size = writer.size();
+        for (int i = 0; i < count; i++) {
+            TableWriter.Row r = writer.newRow(ts += inc);
+            if (rnd.nextBoolean()) {
+                r.putByte(2, rnd.nextByte());
+            }
+
+            if (rnd.nextBoolean()) {
+                r.putBool(8, rnd.nextBoolean());
+            }
+
+            if (rnd.nextBoolean()) {
+                r.putShort(1, rnd.nextShort());
+            }
+
+            if (rnd.nextBoolean()) {
+                r.putInt(0, rnd.nextInt());
+            }
+
+            if (rnd.nextBoolean()) {
+                r.putDouble(3, rnd.nextDouble());
+            }
+
+            if (rnd.nextBoolean()) {
+                r.putFloat(4, rnd.nextFloat());
+            }
+
+            if (rnd.nextBoolean()) {
+                r.putLong(5, rnd.nextLong());
+            }
+
+            if (rnd.nextBoolean()) {
+                r.putDate(10, ts);
+            }
+
+            if (rnd.nextBoolean()) {
+                rnd.nextChars(blob, blobLen / 2);
+                r.putBin(9, blob, blobLen);
+            }
+
+            if (rnd.nextBoolean()) {
+                r.putStr(6, rnd.nextChars(10));
+            }
+
+            r.append();
+        }
+        writer.commit();
+
+        Assert.assertEquals(size + count, writer.size());
         return ts;
     }
 
-    private void testReload(int partitionBy, int count, long increment) throws NumericException {
+    private void testReload(int partitionBy, int count, long increment) throws Exception {
         createAllTable(partitionBy);
 
-        Rnd rnd = new Rnd();
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
 
-        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-        long blob = allocBlob();
-        try {
+            long blob = allocBlob();
+            try {
 
-            // create table before we open reader
-            long nextTs = testAppendNulls(rnd, FF, ts, count, increment, blob);
+                // test if reader behaves correctly when table is empty
 
-            try (TableReader reader = new TableReader(FF, root, "all")) {
+                try (TableReader reader = new TableReader(FF, root, "all")) {
+                    // reader can see all the rows ?
+                    assertCursor(reader, new Rnd(), ts, increment, blob, 0);
+                }
 
-                // reader can see all the rows ?
-                assertCursor(reader, new Rnd(), ts, increment, blob, count);
+                // create table before we open reader
+                long nextTs = testAppendNulls(rnd, FF, ts, count, increment, blob);
 
-                // try reload when table hasn't changed
-                Assert.assertFalse(reader.reload());
+                try (TableReader reader = new TableReader(FF, root, "all")) {
 
-                // add more rows to the table while reader is open
-                testAppendNulls(rnd, FF, nextTs, count, increment, blob);
+                    // reader can see all the rows ?
+                    assertCursor(reader, new Rnd(), ts, increment, blob, count);
 
-                // if we don't reload reader it should still see old data set
-                // reader can see all the rows ?
-                assertCursor(reader, new Rnd(), ts, increment, blob, count);
+                    // try reload when table hasn't changed
+                    Assert.assertFalse(reader.reload());
 
-                // reload should be successful because we have new data in the table
-                Assert.assertTrue(reader.reload());
-                assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count);
+                    // add more rows to the table while reader is open
+                    nextTs = testAppendNulls(rnd, FF, nextTs, count, increment, blob);
+
+                    // if we don't reload reader it should still see old data set
+                    // reader can see all the rows ?
+                    assertCursor(reader, new Rnd(), ts, increment, blob, count);
+
+                    // reload should be successful because we have new data in the table
+                    Assert.assertTrue(reader.reload());
+                    assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count);
+
+                    // writer will inflate last partition in order to optimise appends
+                    // reader must be able to cope with that
+                    try (TableWriter writer = new TableWriter(FF, root, "all")) {
+                        assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count);
+                        Assert.assertFalse(reader.reload());
+                        assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count);
+
+                        testAppendNulls(writer, rnd, nextTs, count, increment, blob);
+                        Assert.assertTrue(reader.reload());
+
+                        assertCursor(reader, new Rnd(), ts, increment, blob, 3 * count);
+                    }
+                }
+            } finally {
+                freeBlob(blob);
             }
-        } finally {
-            freeBlob(blob);
-        }
+        });
     }
 
     private void testTableCursor(long increment, String expected) throws IOException, NumericException {
