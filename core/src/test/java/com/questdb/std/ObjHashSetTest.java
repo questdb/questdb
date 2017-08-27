@@ -39,6 +39,15 @@ public class ObjHashSetTest {
         Assert.assertNull(set.get(1));
         Assert.assertEquals("Y", set.get(2));
 
-        Assert.assertTrue(set.contains(null));
+        int n = set.size();
+        Assert.assertEquals(3, n);
+        int nullCount = 0;
+        for (int i = 0; i < n; i++) {
+            if (set.get(i) == null) {
+                nullCount++;
+            }
+        }
+
+        Assert.assertEquals(1, nullCount);
     }
 }

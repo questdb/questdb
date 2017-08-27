@@ -84,7 +84,7 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     @Override
     @NotNull
     public Iterator<T> iterator() {
-        return list.iterator();
+        throw new UnsupportedOperationException();
     }
 
     public int size() {

@@ -11,6 +11,7 @@ import com.questdb.std.LongList;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
 import org.junit.After;
@@ -311,17 +312,22 @@ public class TableReaderTest extends AbstractOptimiserTest {
 
     private void assertCursor(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize) {
         Assert.assertEquals(expectedSize, reader.size());
-        int count = 0;
         reader.toTop();
-        while (reader.hasNext()) {
+        assertCursor2(reader, rnd, ts, increment, blob, expectedSize, false);
+    }
+
+    private long assertCursor2(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize, boolean assertNewColumn) {
+        int count = 0;
+        while (reader.hasNext() && count < expectedSize) {
             count++;
-            assertRecord(reader.next(), rnd, ts += increment, blob);
+            assertRecord(reader.next(), rnd, ts += increment, blob, assertNewColumn);
         }
         // did our loop run?
         Assert.assertEquals(expectedSize, count);
+        return ts;
     }
 
-    private void assertRecord(Record r, Rnd exp, long ts, long blob) {
+    private void assertRecord(Record r, Rnd exp, long ts, long blob, boolean assertNewColumn) {
         if (exp.nextBoolean()) {
             Assert.assertEquals(exp.nextByte(), r.get(2));
         } else {
@@ -386,12 +392,19 @@ public class TableReaderTest extends AbstractOptimiserTest {
         }
 
         if (exp.nextBoolean()) {
-            CharSequence expCs = exp.nextChars(10);
-            TestUtils.assertEquals(expCs, r.getFlyweightStr(6));
-            TestUtils.assertEquals(expCs, r.getFlyweightStrB(6));
-            Assert.assertFalse(r.getFlyweightStr(6) == r.getFlyweightStrB(6));
-            Assert.assertEquals(expCs.length(), r.getStrLen(6));
+            assertStrColumn(exp.nextChars(10), r, 6);
         }
+
+        if (assertNewColumn && (exp.nextPositiveInt() & 3) == 0) {
+            assertStrColumn(exp.nextChars(15), r, 11);
+        }
+    }
+
+    private void assertStrColumn(CharSequence expected, Record r, int index) {
+        TestUtils.assertEquals(expected, r.getFlyweightStr(index));
+        TestUtils.assertEquals(expected, r.getFlyweightStrB(index));
+        Assert.assertFalse(r.getFlyweightStr(index) == r.getFlyweightStrB(6));
+        Assert.assertEquals(expected.length(), r.getStrLen(index));
     }
 
     private void createAllTable(int partitionBy) {
@@ -422,11 +435,11 @@ public class TableReaderTest extends AbstractOptimiserTest {
 
     private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts, int count, long inc, long blob, int testPartitionSwitch) throws NumericException {
         try (TableWriter writer = new TableWriter(ff, root, "all")) {
-            return testAppendNulls(writer, rnd, ts, count, inc, blob, testPartitionSwitch);
+            return testAppendNulls(writer, rnd, ts, count, inc, blob, testPartitionSwitch, false);
         }
     }
 
-    private long testAppendNulls(TableWriter writer, Rnd rnd, long ts, int count, long inc, long blob, int testPartitionSwitch) {
+    private long testAppendNulls(TableWriter writer, Rnd rnd, long ts, int count, long inc, long blob, int testPartitionSwitch, boolean populateNewColumn) {
         long size = writer.size();
 
         long timestamp = writer.getMaxTimestamp();
@@ -472,6 +485,10 @@ public class TableReaderTest extends AbstractOptimiserTest {
 
             if (rnd.nextBoolean()) {
                 r.putStr(6, rnd.nextChars(10));
+            }
+
+            if (populateNewColumn && (rnd.nextPositiveInt() & 3) == 0) {
+                r.putStr(11, rnd.nextChars(15));
             }
 
             r.append();
@@ -535,10 +552,29 @@ public class TableReaderTest extends AbstractOptimiserTest {
                         Assert.assertFalse(reader.reload());
                         assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count);
 
-                        testAppendNulls(writer, rnd, nextTs, count, increment, blob, 0);
+                        nextTs = testAppendNulls(writer, rnd, nextTs, count, increment, blob, 0, false);
                         Assert.assertTrue(reader.reload());
 
                         assertCursor(reader, new Rnd(), ts, increment, blob, 3 * count);
+
+                        // add column
+                        writer.addColumn("x", ColumnType.STRING);
+
+                        // populate table again, this type also populate new column
+                        testAppendNulls(writer, rnd, nextTs, count, increment, blob, 0, true);
+
+                        // make sure reload works
+                        Assert.assertTrue(reader.reload());
+
+                        // two-step assert checks 3/4 rows ignoring new column
+                        // todo: here check that new column is null
+                        // the last 1/3 is checked including new column
+                        // this is why we need to use same random state and timestamp
+                        reader.toTop();
+                        Rnd exp = new Rnd();
+                        long ts2 = assertCursor2(reader, exp, ts, increment, blob, 3 * count, false);
+                        // todo: the commented out line below must pass when metadata refresh is implemented
+//                        assertCursor2(reader, exp, ts2, increment, blob, count, true);
                     }
                 }
             } finally {
@@ -576,7 +612,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
 
                 Rnd exp = new Rnd();
                 for (int i = 0, n = rows.size(); i < n; i++) {
-                    assertRecord(reader.recordAt(rows.getQuick(i)), exp, ts += increment, blob);
+                    assertRecord(reader.recordAt(rows.getQuick(i)), exp, ts += increment, blob, false);
                 }
             }
         } finally {

@@ -25,15 +25,12 @@ package com.questdb.std;
 
 import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CharSink;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.Iterator;
 
 public class ObjList<T> implements Mutable, Sinkable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private final Iter iterator = new Iter();
     private T[] buffer;
     private int pos = 0;
 
@@ -69,11 +66,6 @@ public class ObjList<T> implements Mutable, Sinkable {
     public void clear() {
         pos = 0;
         Arrays.fill(buffer, null);
-    }
-
-    public void setPos(int capacity) {
-        ensureCapacity0(capacity);
-        pos = capacity;
     }
 
     public void extendAndSet(int index, T value) {
@@ -199,15 +191,6 @@ public class ObjList<T> implements Mutable, Sinkable {
     /**
      * {@inheritDoc}
      */
-    @NotNull
-    public Iterator<T> iterator() {
-        iterator.n = 0;
-        return iterator;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
     public void remove(int index) {
         if (pos < 1 || index >= pos) {
             return;
@@ -231,6 +214,12 @@ public class ObjList<T> implements Mutable, Sinkable {
         return -1;
     }
 
+    public void setAll(int capacity, T value) {
+        ensureCapacity0(capacity);
+        pos = capacity;
+        Arrays.fill(buffer, value);
+    }
+
 // --Commented out by Inspection START (15/05/2016, 01:08):
 //    public void seed(int capacity, ObjectFactory<T> factory) {
 //        ensureCapacity0(capacity);
@@ -246,10 +235,9 @@ public class ObjList<T> implements Mutable, Sinkable {
 //    }
 // --Commented out by Inspection STOP (15/05/2016, 01:08)
 
-    public void setAll(int capacity, T value) {
+    public void setPos(int capacity) {
         ensureCapacity0(capacity);
         pos = capacity;
-        Arrays.fill(buffer, value);
     }
 
     public void setQuick(int index, T value) {
@@ -319,25 +307,4 @@ public class ObjList<T> implements Mutable, Sinkable {
         }
         return -1;
     }
-
-
-    private class Iter implements Iterator<T> {
-        private int n;
-
-        @Override
-        public boolean hasNext() {
-            return n < pos;
-        }
-
-        @Override
-        public T next() {
-            return getQuick(n++);
-        }
-
-        @Override
-        public void remove() {
-
-        }
-    }
-
 }
