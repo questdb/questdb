@@ -66,7 +66,7 @@ public class TableReader implements Closeable, RecordCursor {
         long currentPartitionTimestamp = reader.timestampFloorMethod.floor(reader.maxTimestamp);
         boolean b = reader.readTxn();
         if (b) {
-            int delta = getIntervalLength(reader.partitionBy, currentPartitionTimestamp, reader.timestampFloorMethod.floor(reader.maxTimestamp));
+            int delta = (int) reader.intervalLengthMethod.calculate(currentPartitionTimestamp, reader.timestampFloorMethod.floor(reader.maxTimestamp));
             int partitionIndex = reader.partitionCount - 1;
             if (delta > 0) {
                 reader.partitionCount += delta;
@@ -97,7 +97,7 @@ public class TableReader implements Closeable, RecordCursor {
         return false;
     };
 
-    private static final TimestampFloorMethod INAPROPRIATE_FLOOR_METHOD = timestamp -> {
+    private static final TimestampFloorMethod INAPPROPRIATE_FLOOR_METHOD = timestamp -> {
         throw CairoException.instance(0).put("Cannot get partition floor for non-partitioned table");
     };
 
@@ -107,7 +107,6 @@ public class TableReader implements Closeable, RecordCursor {
     private final int rootLen;
     private final ReadOnlyMemory txMem;
     private final ReadOnlyMemory metaMem;
-    private final int partitionBy;
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final RecordMetadata metadata;
     private final LongList partitionSizes;
@@ -121,7 +120,6 @@ public class TableReader implements Closeable, RecordCursor {
     private long transientRowCount;
     private long size;
     private long txn = -1;
-    private int timestampIndex;
     private long maxTimestamp;
     private int partitionCount;
     private long partitionMin;
@@ -138,12 +136,10 @@ public class TableReader implements Closeable, RecordCursor {
         this.metaMem = openMetaFile();
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnCountBits = Numbers.msb(Numbers.ceilPow2(this.columnCount) * 2);
-        this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
-        this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.metadata = new Meta(columnCount);
         readTxn();
 
-        switch (partitionBy) {
+        switch (metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY)) {
             case PartitionBy.DAY:
                 partitionPathGenerator = DAY_GEN;
                 reloadMethod = PARTITIONED_RELOAD_METHOD;
@@ -171,7 +167,7 @@ public class TableReader implements Closeable, RecordCursor {
             default:
                 partitionPathGenerator = DEFAULT_GEN;
                 reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
-                timestampFloorMethod = INAPROPRIATE_FLOOR_METHOD;
+                timestampFloorMethod = INAPPROPRIATE_FLOOR_METHOD;
                 intervalLengthMethod = (min, max) -> 0;
                 partitionCount = 1;
                 break;
@@ -241,6 +237,12 @@ public class TableReader implements Closeable, RecordCursor {
     }
 
     @Override
+    public void toTop() {
+        partitionIndex = 0;
+        record.recordIndex = record.maxRecordIndex = -1;
+    }
+
+    @Override
     public boolean hasNext() {
         return record.recordIndex < record.maxRecordIndex || switchPartition();
     }
@@ -249,12 +251,6 @@ public class TableReader implements Closeable, RecordCursor {
     public Record next() {
         record.recordIndex++;
         return record;
-    }
-
-    @Override
-    public void toTop() {
-        partitionIndex = 0;
-        record.recordIndex = record.maxRecordIndex = -1;
     }
 
     public boolean reload() {
@@ -295,19 +291,6 @@ public class TableReader implements Closeable, RecordCursor {
             }
         } finally {
             path.trimTo(plen);
-        }
-    }
-
-    private static int getIntervalLength(int partitionBy, long min, long max) {
-        switch (partitionBy) {
-            case PartitionBy.YEAR:
-                return (int) Dates.getYearsBetween(min, max);
-            case PartitionBy.MONTH:
-                return (int) Dates.getMonthsBetween(min, max);
-            case PartitionBy.DAY:
-                return (int) Dates.getDaysBetween(min, max);
-            default:
-                return 0;
         }
     }
 
@@ -653,10 +636,12 @@ public class TableReader implements Closeable, RecordCursor {
     private class Meta extends AbstractRecordMetadata {
         private final ObjList<ColumnMeta> columnMetadata;
         private final CharSequenceIntHashMap columnNameHashTable;
+        private final int timestampIndex;
 
         public Meta(int columnCount) {
             this.columnMetadata = new ObjList<>(columnCount);
             this.columnNameHashTable = new CharSequenceIntHashMap(columnCount);
+            this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
 
             long offset = TableUtils.getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
