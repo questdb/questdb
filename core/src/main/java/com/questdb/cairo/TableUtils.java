@@ -127,21 +127,16 @@ public class TableUtils implements Closeable {
      *
      * @return number of rows column doesn't have when column was added to table that already had data.
      */
-    static long readColumnTop(FilesFacade ff, CompositePath path, CharSequence name, int plen) {
+    static long readColumnTop(FilesFacade ff, CompositePath path, CharSequence name, int plen, long buf) {
         try {
             path.trimTo(path.length());
             if (ff.exists(topFile(path, name))) {
                 long fd = ff.openRO(path);
                 try {
-                    long buf = Unsafe.malloc(8);
-                    try {
-                        if (ff.read(fd, buf, 8, 0) != 8) {
-                            throw CairoException.instance(Os.errno()).put("Cannot read top of column ").put(path);
-                        }
-                        return Unsafe.getUnsafe().getLong(buf);
-                    } finally {
-                        Unsafe.free(buf, 8);
+                    if (ff.read(fd, buf, 8, 0) != 8) {
+                        throw CairoException.instance(Os.errno()).put("Cannot read top of column ").put(path);
                     }
+                    return Unsafe.getUnsafe().getLong(buf);
                 } finally {
                     ff.close(fd);
                 }
@@ -202,6 +197,10 @@ public class TableUtils implements Closeable {
             default:
                 return null;
         }
+    }
+
+    static int getColumnType(ReadOnlyMemory metaMem, int columnIndex) {
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * 4);
     }
 
     static {

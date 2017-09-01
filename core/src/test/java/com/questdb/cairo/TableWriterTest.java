@@ -1378,7 +1378,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
                 $double("price").
                 $ts();
 
-        String name = createTable(FF, struct.partitionBy(PartitionBy.DAY));
+        String name = CairoTestUtils.createTable(FF, root, struct.partitionBy(PartitionBy.DAY));
 
         class X extends FilesFacadeImpl {
             int count = 0;
@@ -1489,7 +1489,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
                 $ts().
                 $sym("supplier").$();
 
-        String name = createTable(FF, struct.partitionBy(PartitionBy.NONE));
+        String name = CairoTestUtils.createTable(FF, root, struct.partitionBy(PartitionBy.NONE));
 
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
@@ -1525,7 +1525,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
                 $sym("supplier").
                 $();
 
-        String name = createTable(FF, struct.partitionBy(PartitionBy.DAY));
+        String name = CairoTestUtils.createTable(FF, root, struct.partitionBy(PartitionBy.DAY));
 
         try (TableWriter writer = new TableWriter(FF, root, name)) {
             try {
@@ -1829,11 +1829,11 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     private void create(FilesFacade ff, int partitionBy) {
-        createTable(ff, getTestStructure().partitionBy(partitionBy));
+        CairoTestUtils.createTable(ff, root, getTestStructure().partitionBy(partitionBy));
     }
 
     private void createAllTable() {
-        createTable(FF, new JournalStructure("all").
+        CairoTestUtils.createTable(FF, root, new JournalStructure("all").
                 $int("int").
                 $short("short").
                 $byte("byte").
@@ -1845,18 +1845,6 @@ public class TableWriterTest extends AbstractOptimiserTest {
                 $bool("bool").
                 $bin("bin").
                 $date("date"));
-    }
-
-    private String createTable(FilesFacade ff, JournalStructure struct) {
-        String name = struct.getName();
-        try (TableUtils tabU = new TableUtils(ff)) {
-            if (tabU.exists(root, name) == 1) {
-                tabU.create(root, struct.build(), 509);
-            } else {
-                throw CairoException.instance(0).put("Table ").put(name).put(" already exists");
-            }
-        }
-        return name;
     }
 
     private int getDirCount() {
@@ -2216,7 +2204,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     private void testRemoveColumn(JournalStructure struct) throws NumericException {
-        String name = createTable(FF, struct.partitionBy(PartitionBy.DAY));
+        String name = CairoTestUtils.createTable(FF, root, struct.partitionBy(PartitionBy.DAY));
 
         long mem = Unsafe.getMemUsed();
 

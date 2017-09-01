@@ -2,8 +2,6 @@ package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.configuration.AbstractRecordMetadata;
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -12,7 +10,6 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.StorageFacade;
 import com.questdb.std.BinarySequence;
-import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CompositePath;
@@ -22,7 +19,6 @@ import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
@@ -106,9 +102,8 @@ public class TableReader implements Closeable, RecordCursor {
     private final CompositePath path;
     private final int rootLen;
     private final ReadOnlyMemory txMem;
-    private final ReadOnlyMemory metaMem;
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
-    private final RecordMetadata metadata;
+    private final TableMetadata metadata;
     private final LongList partitionSizes;
     private final TableRecord record = new TableRecord();
     private final PartitionPathGenerator partitionPathGenerator;
@@ -133,13 +128,12 @@ public class TableReader implements Closeable, RecordCursor {
         this.rootLen = path.length();
         failOnPendingTodo();
         this.txMem = openTxnFile();
-        this.metaMem = openMetaFile();
-        this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        this.metadata = openMetaFile();
+        this.columnCount = this.metadata.getColumnCount();
         this.columnCountBits = Numbers.msb(Numbers.ceilPow2(this.columnCount) * 2);
-        this.metadata = new Meta(columnCount);
         readTxn();
 
-        switch (metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY)) {
+        switch (this.metadata.getPartitionBy()) {
             case PartitionBy.DAY:
                 partitionPathGenerator = DAY_GEN;
                 reloadMethod = PARTITIONED_RELOAD_METHOD;
@@ -184,7 +178,7 @@ public class TableReader implements Closeable, RecordCursor {
     @Override
     public void close() {
         Misc.free(path);
-        Misc.free(metaMem);
+        Misc.free(metadata);
         Misc.free(txMem);
         for (int i = 0, n = columns.size(); i < n; i++) {
             VirtualMemory mem = columns.getQuick(i);
@@ -349,9 +343,9 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private ReadOnlyMemory openMetaFile() {
+    private TableMetadata openMetaFile() {
         try {
-            return new ReadOnlyMemory(ff, path.concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
+            return new TableMetadata(ff, path.concat(TableUtils.META_FILE_NAME).$());
         } finally {
             path.trimTo(rootLen);
         }
@@ -407,7 +401,7 @@ public class TableReader implements Closeable, RecordCursor {
                             default:
                                 break;
                         }
-                        columnTops[i] = TableUtils.readColumnTop(ff, path, name, plen);
+                        columnTops[i] = TableUtils.readColumnTop(ff, path, name, plen, tempMem8b);
                     }
                 }
             }
@@ -509,41 +503,6 @@ public class TableReader implements Closeable, RecordCursor {
         CompositePath generate(TableReader reader, int partitionIndex);
     }
 
-    private static class ColumnMeta implements RecordColumnMetadata {
-        private final int type;
-        private String name;
-
-        public ColumnMeta(String name, int type) {
-            this.name = name;
-            this.type = type;
-        }
-
-        @Override
-        public int getBucketCount() {
-            return 0;
-        }
-
-        @Override
-        public String getName() {
-            return name;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable() {
-            return null;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public boolean isIndexed() {
-            return false;
-        }
-    }
-
     private class TableRecord implements Record {
         private int columnBase;
         private long recordIndex = 0;
@@ -630,49 +589,6 @@ public class TableReader implements Closeable, RecordCursor {
 
         private ReadOnlyMemory colB(int col) {
             return columns.getQuick(columnBase + col * 2 + 1);
-        }
-    }
-
-    private class Meta extends AbstractRecordMetadata {
-        private final ObjList<ColumnMeta> columnMetadata;
-        private final CharSequenceIntHashMap columnNameHashTable;
-        private final int timestampIndex;
-
-        public Meta(int columnCount) {
-            this.columnMetadata = new ObjList<>(columnCount);
-            this.columnNameHashTable = new CharSequenceIntHashMap(columnCount);
-            this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-
-            long offset = TableUtils.getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                int type = metaMem.getInt(TableUtils.META_OFFSET_COLUMN_TYPES + i * 4);
-                CharSequence name = metaMem.getStr(offset);
-                assert name != null;
-                String s = name.toString();
-                columnMetadata.add(new ColumnMeta(s, type));
-                columnNameHashTable.put(s, i);
-                offset += ReadOnlyMemory.getStorageLength(name);
-            }
-        }
-
-        @Override
-        public int getColumnCount() {
-            return columnCount;
-        }
-
-        @Override
-        public int getColumnIndexQuiet(CharSequence name) {
-            return columnNameHashTable.get(name);
-        }
-
-        @Override
-        public RecordColumnMetadata getColumnQuick(int index) {
-            return columnMetadata.getQuick(index);
-        }
-
-        @Override
-        public int getTimestampIndex() {
-            return timestampIndex;
         }
     }
 }

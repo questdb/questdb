@@ -23,6 +23,7 @@
 
 package com.questdb.std;
 
+@FunctionalInterface
 public interface ObjectFactory<T> {
     T newInstance();
 }

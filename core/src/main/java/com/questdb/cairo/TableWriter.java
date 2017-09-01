@@ -159,7 +159,7 @@ public class TableWriter implements Closeable {
      */
     public void addColumn(CharSequence name, int type) {
 
-        if (getColumnIndexQuiet(name) != -1) {
+        if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
         }
 
@@ -168,10 +168,10 @@ public class TableWriter implements Closeable {
         commit();
 
         // create new _meta.swp
-        addColumnToMeta(name, type);
+        addColumnToMeta(ff, metaMem, name, type, path, rootLen, ddlMem);
 
         // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wront
+        // we have to have _todo to restore _meta should anything go wrong
         writeTodo(TODO_RESTORE_META);
 
         // close _meta so we can rename it
@@ -259,7 +259,7 @@ public class TableWriter implements Closeable {
     }
 
     public int getColumnIndex(CharSequence name) {
-        int index = getColumnIndexQuiet(name);
+        int index = getColumnIndexQuiet(metaMem, name, columnCount);
         if (index == -1) {
             throw CairoException.instance(0).put("Invalid column name: ").put(name);
         }
@@ -470,7 +470,14 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void addColumnToMeta(CharSequence name, int type) {
+    private static void addColumnToMeta(
+            FilesFacade ff,
+            ReadOnlyMemory metaMem,
+            CharSequence name,
+            int type,
+            CompositePath path,
+            int rootLen,
+            AppendMemory ddlMem) {
         try {
             // delete stale _meta.swp
             path.concat(TableUtils.META_SWAP_FILE_NAME).$();
@@ -480,12 +487,13 @@ public class TableWriter implements Closeable {
             }
 
             try {
+                int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
                 ddlMem.of(path, ff.getPageSize());
                 ddlMem.putInt(columnCount + 1);
-                ddlMem.putInt(partitionBy);
+                ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
                 ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
                 for (int i = 0; i < columnCount; i++) {
-                    ddlMem.putInt(getColumnType(i));
+                    ddlMem.putInt(TableUtils.getColumnType(metaMem, i));
                 }
                 ddlMem.putInt(type);
 
@@ -502,6 +510,26 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    /**
+     * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
+     * is that we don't keep column name strings on heap. We only use this method when adding new column, where
+     * high performance of name check does not matter much.
+     *
+     * @param name to check
+     * @return 0 based column index.
+     */
+    private static int getColumnIndexQuiet(ReadOnlyMemory metaMem, CharSequence name, int columnCount) {
+        long nameOffset = TableUtils.getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            CharSequence col = metaMem.getStr(nameOffset);
+            if (Chars.equals(col, name)) {
+                return i;
+            }
+            nameOffset += VirtualMemory.getStorageLength(col);
+        }
+        return -1;
     }
 
     private void bumpMasterRef() {
@@ -677,7 +705,7 @@ public class TableWriter implements Closeable {
 
     private void configureColumnMemory() {
         for (int i = 0; i < columnCount; i++) {
-            configureColumn(getColumnType(i));
+            configureColumn(TableUtils.getColumnType(metaMem, i));
         }
     }
 
@@ -725,35 +753,11 @@ public class TableWriter implements Closeable {
             };
         } else {
             // validate type
-            if (getColumnType(index) != ColumnType.DATE) {
-                throw CairoException.instance(0).put("Column ").put(index).put(" is ").put(ColumnType.nameOf(getColumnType(index))).put(". Expected DATE.");
+            if (TableUtils.getColumnType(metaMem, index) != ColumnType.DATE) {
+                throw CairoException.instance(0).put("Column ").put(index).put(" is ").put(ColumnType.nameOf(TableUtils.getColumnType(metaMem, index))).put(". Expected DATE.");
             }
             return getPrimaryColumn(index)::putLong;
         }
-    }
-
-    /**
-     * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
-     * is that we don't keep column name strings on heap. We only use this method when adding new column, where
-     * high performance of name check does not matter much.
-     *
-     * @param name to check
-     * @return 0 based column index.
-     */
-    private int getColumnIndexQuiet(CharSequence name) {
-        long nameOffset = TableUtils.getColumnNameOffset(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            CharSequence col = metaMem.getStr(nameOffset);
-            if (Chars.equals(col, name)) {
-                return i;
-            }
-            nameOffset += VirtualMemory.getStorageLength(col);
-        }
-        return -1;
-    }
-
-    private int getColumnType(int columnIndex) {
-        return metaMem.getInt(TableUtils.META_OFFSET_COLUMN_TYPES + columnIndex * 4);
     }
 
     private AppendMemory getPrimaryColumn(int column) {
@@ -827,7 +831,7 @@ public class TableWriter implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(nameOffset);
                 openColumnFiles(name, i, plen);
-                columnTops.extendAndSet(i, TableUtils.readColumnTop(ff, path, name, plen));
+                columnTops.extendAndSet(i, TableUtils.readColumnTop(ff, path, name, plen, tempMem8b));
                 nameOffset += VirtualMemory.getStorageLength(name);
             }
         } finally {
@@ -927,7 +931,7 @@ public class TableWriter implements Closeable {
 
                 for (int i = 0; i < columnCount; i++) {
                     if (i != index) {
-                        ddlMem.putInt(getColumnType(i));
+                        ddlMem.putInt(TableUtils.getColumnType(metaMem, i));
                     }
                 }
 
@@ -1095,7 +1099,7 @@ public class TableWriter implements Closeable {
 
     private void setAppendPosition(final long position) {
         for (int i = 0; i < columnCount; i++) {
-            setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), getColumnType(i), position - columnTops.getQuick(i), tempMem8b);
+            setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), TableUtils.getColumnType(metaMem, i), position - columnTops.getQuick(i), tempMem8b);
         }
     }
 

@@ -70,6 +70,18 @@ public class ReadOnlyMemory extends VirtualMemory {
         ff.munmap(address, pageSize);
     }
 
+    public long getFd() {
+        return fd;
+    }
+
+    @Override
+    protected void releaseLast(long address) {
+        if (address != 0) {
+            ff.munmap(address, lastPageSize);
+            lastPageSize = pageSize;
+        }
+    }
+
     public void of(LPSZ name, long maxPageSize) {
         close();
         boolean exists = ff.exists(name);
@@ -102,14 +114,6 @@ public class ReadOnlyMemory extends VirtualMemory {
                 clearHotPage();
             }
             this.size = size;
-        }
-    }
-
-    @Override
-    protected void releaseLast(long address) {
-        if (address != 0) {
-            ff.munmap(address, lastPageSize);
-            lastPageSize = pageSize;
         }
     }
 

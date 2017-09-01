@@ -2,7 +2,6 @@ package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.*;
 import com.questdb.ql.Record;
 import com.questdb.ql.parser.AbstractOptimiserTest;
@@ -43,13 +42,13 @@ public class TableReaderTest extends AbstractOptimiserTest {
 
     @Test
     public void testReadByDay() throws Exception {
-        createAllTable(PartitionBy.DAY);
+        CairoTestUtils.createAllTable(root, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(this::testTableCursor);
     }
 
     @Test
     public void testReadByMonth() throws Exception {
-        createAllTable(PartitionBy.MONTH);
+        CairoTestUtils.createAllTable(root, PartitionBy.MONTH);
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
                 "73575701\t0\t0\tNaN\t0.7097\t-1675638984090602536\t\t\tfalse\t\t\n" +
                 "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tPMIUPLYJVB\t\ttrue\t\t\n" +
@@ -156,7 +155,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
 
     @Test
     public void testReadByYear() throws Exception {
-        createAllTable(PartitionBy.YEAR);
+        CairoTestUtils.createAllTable(root, PartitionBy.YEAR);
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
                 "73575701\t0\t0\tNaN\t0.7097\t-1675638984090602536\t\t\tfalse\t\t\n" +
                 "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tPMIUPLYJVB\t\ttrue\t\t\n" +
@@ -263,7 +262,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
 
     @Test
     public void testReadNonPartitioned() throws Exception {
-        createAllTable(PartitionBy.NONE);
+        CairoTestUtils.createAllTable(root, PartitionBy.NONE);
         TestUtils.assertMemoryLeak(this::testTableCursor);
     }
 
@@ -407,32 +406,6 @@ public class TableReaderTest extends AbstractOptimiserTest {
         Assert.assertEquals(expected.length(), r.getStrLen(index));
     }
 
-    private void createAllTable(int partitionBy) {
-        createTable(FF, new JournalStructure("all").
-                $int("int").
-                $short("short").
-                $byte("byte").
-                $double("double").
-                $float("float").
-                $long("long").
-                $str("str").
-                $sym("sym").
-                $bool("bool").
-                $bin("bin").
-                $date("date").partitionBy(partitionBy));
-    }
-
-    private void createTable(FilesFacade ff, JournalStructure struct) {
-        String name = struct.getName();
-        try (TableUtils tabU = new TableUtils(ff)) {
-            if (tabU.exists(root, name) == 1) {
-                tabU.create(root, struct.build(), 509);
-            } else {
-                throw CairoException.instance(0).put("Table ").put(name).put(" already exists");
-            }
-        }
-    }
-
     private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts, int count, long inc, long blob, int testPartitionSwitch) throws NumericException {
         try (TableWriter writer = new TableWriter(ff, root, "all")) {
             return testAppendNulls(writer, rnd, ts, count, inc, blob, testPartitionSwitch, false);
@@ -506,7 +479,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
     }
 
     private void testReload(int partitionBy, int count, long increment, final int testPartitionSwitch) throws Exception {
-        createAllTable(partitionBy);
+        CairoTestUtils.createAllTable(root, partitionBy);
 
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
