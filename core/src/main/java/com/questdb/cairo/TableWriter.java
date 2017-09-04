@@ -31,6 +31,7 @@ import com.questdb.misc.*;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
+import com.questdb.std.Sinkable;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.NativeLPSZ;
@@ -116,8 +117,8 @@ public class TableWriter implements Closeable {
                     LOG.error().$("Ignoring unknown *todo* code: ").$(todo).$();
                     break;
             }
-            this.ddlMem = new AppendMemory(ff);
-            this.metaMem = new ReadOnlyMemory(ff);
+            this.ddlMem = new AppendMemory();
+            this.metaMem = new ReadOnlyMemory();
             openMetaFile();
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
@@ -159,16 +160,16 @@ public class TableWriter implements Closeable {
      */
     public void addColumn(CharSequence name, int type) {
 
-        if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
+        if (TableUtils.getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
         }
 
-        LOG.info().$("Adding column '").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
+        LOG.info().$("Adding column [writer]' ").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
 
         commit();
 
         // create new _meta.swp
-        addColumnToMeta(ff, metaMem, name, type, path, rootLen, ddlMem);
+        TableUtils.addColumnToMeta(ff, metaMem, name, type, path, rootLen, ddlMem);
 
         // after we moved _meta to _meta.prev
         // we have to have _todo to restore _meta should anything go wrong
@@ -259,7 +260,7 @@ public class TableWriter implements Closeable {
     }
 
     public int getColumnIndex(CharSequence name) {
-        int index = getColumnIndexQuiet(metaMem, name, columnCount);
+        int index = TableUtils.getColumnIndexQuiet(metaMem, name, columnCount);
         if (index == -1) {
             throw CairoException.instance(0).put("Invalid column name: ").put(name);
         }
@@ -470,68 +471,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private static void addColumnToMeta(
-            FilesFacade ff,
-            ReadOnlyMemory metaMem,
-            CharSequence name,
-            int type,
-            CompositePath path,
-            int rootLen,
-            AppendMemory ddlMem) {
-        try {
-            // delete stale _meta.swp
-            path.concat(TableUtils.META_SWAP_FILE_NAME).$();
-
-            if (ff.exists(path) && !ff.remove(path)) {
-                throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
-            }
-
-            try {
-                int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-                ddlMem.of(path, ff.getPageSize());
-                ddlMem.putInt(columnCount + 1);
-                ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
-                ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
-                for (int i = 0; i < columnCount; i++) {
-                    ddlMem.putInt(TableUtils.getColumnType(metaMem, i));
-                }
-                ddlMem.putInt(type);
-
-                long nameOffset = TableUtils.getColumnNameOffset(columnCount);
-                for (int i = 0; i < columnCount; i++) {
-                    CharSequence columnName = metaMem.getStr(nameOffset);
-                    ddlMem.putStr(columnName);
-                    nameOffset += VirtualMemory.getStorageLength(columnName);
-                }
-                ddlMem.putStr(name);
-            } finally {
-                ddlMem.close();
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
-    /**
-     * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
-     * is that we don't keep column name strings on heap. We only use this method when adding new column, where
-     * high performance of name check does not matter much.
-     *
-     * @param name to check
-     * @return 0 based column index.
-     */
-    private static int getColumnIndexQuiet(ReadOnlyMemory metaMem, CharSequence name, int columnCount) {
-        long nameOffset = TableUtils.getColumnNameOffset(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            CharSequence col = metaMem.getStr(nameOffset);
-            if (Chars.equals(col, name)) {
-                return i;
-            }
-            nameOffset += VirtualMemory.getStorageLength(col);
-        }
-        return -1;
-    }
-
     private void bumpMasterRef() {
         if ((masterRef & 1) != 0) {
             cancelRow();
@@ -686,13 +625,13 @@ public class TableWriter implements Closeable {
     }
 
     private void configureColumn(int type) {
-        final AppendMemory primary = new AppendMemory(ff);
+        final AppendMemory primary = new AppendMemory();
         final AppendMemory secondary;
         switch (type) {
             case ColumnType.BINARY:
             case ColumnType.SYMBOL:
             case ColumnType.STRING:
-                secondary = new AppendMemory(ff);
+                secondary = new AppendMemory();
                 break;
             default:
                 secondary = null;
@@ -780,10 +719,10 @@ public class TableWriter implements Closeable {
         AppendMemory mem1 = getPrimaryColumn(i);
         AppendMemory mem2 = getSecondaryColumn(i);
 
-        mem1.of(TableUtils.dFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff));
+        mem1.of(ff, TableUtils.dFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff));
 
         if (mem2 != null) {
-            mem2.of(TableUtils.iFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff));
+            mem2.of(ff, TableUtils.iFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff));
         }
 
         path.trimTo(plen);
@@ -797,7 +736,7 @@ public class TableWriter implements Closeable {
 
     private void openMetaFile() {
         try {
-            metaMem.of(path.concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
+            metaMem.of(ff, path.concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
         } finally {
             path.trimTo(rootLen);
         }
@@ -811,7 +750,7 @@ public class TableWriter implements Closeable {
             openColumnFiles(name, columnCount - 1, plen);
             if (transientRowCount > 0) {
                 // write .top file
-                writeColumnTop(name, plen);
+                TableUtils.writeColumnTop(ff, name, transientRowCount, path, plen, tempMem8b);
             }
         } finally {
             path.trimTo(rootLen);
@@ -917,7 +856,7 @@ public class TableWriter implements Closeable {
 
             try {
                 int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-                ddlMem.of(path, ff.getPageSize());
+                ddlMem.of(ff, path, ff.getPageSize());
                 ddlMem.putInt(columnCount - 1);
                 ddlMem.putInt(partitionBy);
 
@@ -1053,6 +992,7 @@ public class TableWriter implements Closeable {
             try {
                 fail.run();
             } catch (CairoException err) {
+                LOG.error().$("DOUBLE ERROR: 1st: '").$((Sinkable) e).$('\'').$();
                 throw new CairoError(err);
             }
             throw e;
@@ -1191,22 +1131,6 @@ public class TableWriter implements Closeable {
         this.prevTimestamp = maxTimestamp;
         this.maxTimestamp = timestamp;
         this.timestampSetter.accept(timestamp);
-    }
-
-    private void writeColumnTop(CharSequence name, int plen) {
-        try {
-            long fd = openAppend(path.concat(name).put(".top").$());
-            try {
-                Unsafe.getUnsafe().putLong(tempMem8b, transientRowCount);
-                if (ff.append(fd, tempMem8b, 8) != 8) {
-                    throw CairoException.instance(Os.errno()).put("Cannot append ").put(path);
-                }
-            } finally {
-                ff.close(fd);
-            }
-        } finally {
-            path.trimTo(plen);
-        }
     }
 
     private void writeTodo(int code) {

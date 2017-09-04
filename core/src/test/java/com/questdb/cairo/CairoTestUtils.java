@@ -22,12 +22,14 @@ public class CairoTestUtils {
 
     public static String createTable(FilesFacade ff, CharSequence root, JournalStructure struct) {
         String name = struct.getName();
-        try (TableUtils tabU = new TableUtils(ff)) {
-            if (tabU.exists(root, name) == 1) {
-                tabU.create(root, struct.build(), 509);
+        try {
+            if (TableUtils.exists(ff, root, name) == 1) {
+                TableUtils.create(ff, root, struct.build(), 509);
             } else {
                 throw CairoException.instance(0).put("Table ").put(name).put(" already exists");
             }
+        } finally {
+            TableUtils.freeThreadLocals();
         }
         return name;
     }

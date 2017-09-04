@@ -73,8 +73,8 @@ public class CairoMemoryTest {
         int failureCount = 0;
         try (CompositePath path = new CompositePath()) {
             path.of(temp.newFile().getAbsolutePath());
-            try (AppendMemory mem = new AppendMemory(ff)) {
-                mem.of(path.$(), ff.getPageSize() * 2);
+            try (AppendMemory mem = new AppendMemory()) {
+                mem.of(ff, path.$(), ff.getPageSize() * 2);
                 int i = 0;
                 while (i < N) {
                     try {
@@ -118,8 +118,8 @@ public class CairoMemoryTest {
             }
 
             int failureCount = 0;
-            try (ReadOnlyMemory mem = new ReadOnlyMemory(ff)) {
-                mem.of(path, ff.getPageSize());
+            try (ReadOnlyMemory mem = new ReadOnlyMemory()) {
+                mem.of(ff, path, ff.getPageSize());
                 int i = 0;
                 while (i < N) {
                     try {
@@ -158,16 +158,16 @@ public class CairoMemoryTest {
                 Assert.assertEquals(8L * N, mem.size());
             }
 
-            try (ReadOnlyMemory mem = new ReadOnlyMemory(ff)) {
+            try (ReadOnlyMemory mem = new ReadOnlyMemory()) {
 
                 // open non-existing
                 try {
-                    mem.of(path, ff.getPageSize());
+                    mem.of(ff, path, ff.getPageSize());
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
 
-                mem.of(path, ff.getPageSize());
+                mem.of(ff, path, ff.getPageSize());
 
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
@@ -188,16 +188,16 @@ public class CairoMemoryTest {
                 Assert.assertEquals(8L * N, mem.size());
             }
 
-            try (ReadOnlyMemory mem = new ReadOnlyMemory(FF)) {
+            try (ReadOnlyMemory mem = new ReadOnlyMemory()) {
 
                 // open non-existing
                 try {
-                    mem.of(null, FF.getPageSize());
+                    mem.of(FF, null, FF.getPageSize());
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
 
-                mem.of(path, FF.getPageSize());
+                mem.of(FF, path, FF.getPageSize());
 
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
@@ -232,7 +232,7 @@ public class CairoMemoryTest {
         try (CompositePath path = new CompositePath()) {
             path.of(temp.getRoot().getAbsolutePath());
             int prefixLen = path.length();
-            try (AppendMemory mem = new AppendMemory(ff)) {
+            try (AppendMemory mem = new AppendMemory()) {
                 Rnd rnd = new Rnd();
                 for (int k = 0; k < 10; k++) {
                     path.trimTo(prefixLen).concat(rnd.nextString(10));
@@ -248,12 +248,12 @@ public class CairoMemoryTest {
 
                     if (fail) {
                         try {
-                            mem.of(path, 2 * ff.getPageSize());
+                            mem.of(ff, path, 2 * ff.getPageSize());
                             Assert.fail();
                         } catch (CairoException ignored) {
                         }
                     } else {
-                        mem.of(path, 2 * ff.getPageSize());
+                        mem.of(ff, path, 2 * ff.getPageSize());
                         for (int i = 0; i < N; i++) {
                             mem.putLong(i);
                         }
@@ -287,10 +287,10 @@ public class CairoMemoryTest {
     @Test
     public void testAppendMemoryReuse() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (AppendMemory mem = new AppendMemory(FF)) {
+        try (AppendMemory mem = new AppendMemory()) {
             for (int j = 0; j < 10; j++) {
                 try (Path path = new Path(temp.newFile().getAbsolutePath())) {
-                    mem.of(path, 2 * FF.getPageSize());
+                    mem.of(FF, path, 2 * FF.getPageSize());
                     for (int i = 0; i < N; i++) {
                         mem.putLong(i);
                     }

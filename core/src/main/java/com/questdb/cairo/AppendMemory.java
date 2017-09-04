@@ -32,18 +32,16 @@ import com.questdb.std.str.LPSZ;
 
 public class AppendMemory extends VirtualMemory {
     private static final Log LOG = LogFactory.getLog(AppendMemory.class);
-    private final FilesFacade ff;
+    private FilesFacade ff;
     private long fd = -1;
     private long pageAddress = 0;
     private long size;
 
     public AppendMemory(FilesFacade ff, LPSZ name, long pageSize) {
-        this.ff = ff;
-        of(name, pageSize);
+        of(ff, name, pageSize);
     }
 
-    public AppendMemory(FilesFacade ff) {
-        this.ff = ff;
+    public AppendMemory() {
         size = 0;
     }
 
@@ -90,8 +88,9 @@ public class AppendMemory extends VirtualMemory {
         return fd;
     }
 
-    public final void of(LPSZ name, long pageSize) {
+    public final void of(FilesFacade ff, LPSZ name, long pageSize) {
         close();
+        this.ff = ff;
         setPageSize(pageSize);
         fd = ff.openRW(name);
         if (fd == -1) {

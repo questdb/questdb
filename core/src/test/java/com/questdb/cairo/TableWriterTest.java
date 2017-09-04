@@ -37,6 +37,7 @@ import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.*;
 import com.questdb.store.ColumnType;
+import com.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -128,6 +129,26 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
         Assert.assertEquals(mem, Unsafe.getMemUsed());
         Assert.assertEquals(0, Files.getOpenFileCount());
+    }
+
+    @Test
+    public void testAddColumnAndOpenWriterByDay() throws Exception {
+        testAddColumnAndOpenWriter(PartitionBy.DAY, 1000);
+    }
+
+    @Test
+    public void testAddColumnAndOpenWriterByMonth() throws Exception {
+        testAddColumnAndOpenWriter(PartitionBy.MONTH, 1000);
+    }
+
+    @Test
+    public void testAddColumnAndOpenWriterByYear() throws Exception {
+        testAddColumnAndOpenWriter(PartitionBy.YEAR, 1000);
+    }
+
+    @Test
+    public void testAddColumnAndOpenWriterNonPartitioned() throws Exception {
+        testAddColumnAndOpenWriter(PartitionBy.NONE, 100000);
     }
 
     @Test
@@ -1938,6 +1959,44 @@ public class TableWriterTest extends AbstractOptimiserTest {
             r.append();
         }
         return ts;
+    }
+
+    private void testAddColumnAndOpenWriter(int partitionBy, int N) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+
+            try {
+
+                create(FF, partitionBy);
+                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                    for (int i = 0; i < N; i++) {
+                        ts = populateRow(writer, ts, rnd, 60L * 60000);
+                    }
+                    writer.commit();
+                    Assert.assertEquals(N, writer.size());
+                }
+
+                TableUtils.addColumn(FF, root, PRODUCT, "xyz", ColumnType.STRING);
+
+                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row r = writer.newRow(ts += 60L * 60000);
+                        r.putInt(0, rnd.nextPositiveInt());
+                        r.putStr(1, rnd.nextString(7));
+                        r.putStr(2, rnd.nextString(4));
+                        r.putStr(3, rnd.nextString(11));
+                        r.putDouble(4, rnd.nextDouble());
+                        r.putStr(6, rnd.nextString(10));
+                        r.append();
+                    }
+                    writer.commit();
+                    Assert.assertEquals(N * 2, writer.size());
+                }
+            } finally {
+                TableUtils.freeThreadLocals();
+            }
+        });
     }
 
     private void testAddColumnErrorFollowedByRepairFail(FilesFacade ff) throws NumericException {

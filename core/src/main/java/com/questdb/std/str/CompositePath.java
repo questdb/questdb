@@ -26,14 +26,12 @@ package com.questdb.std.str;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.IOException;
 
 public final class CompositePath extends AbstractCharSink implements Closeable, LPSZ {
-    public static final ObjectFactory<CompositePath> FACTORY = CompositePath::new;
     private static final int OVERHEAD = 4;
     private long ptr = 0;
     private long wptr;

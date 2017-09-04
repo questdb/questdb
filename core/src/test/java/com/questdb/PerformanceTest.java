@@ -279,8 +279,8 @@ public class PerformanceTest extends AbstractTest {
         long result;
 
         CharSequence root = getFactory().getConfiguration().getJournalBase().getAbsolutePath();
-        try (TableUtils tabU = new TableUtils(FilesFacadeImpl.INSTANCE)) {
-            tabU.create(root, getFactory().getConfiguration().createMetadata(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE)), 509);
+        try {
+            TableUtils.create(FilesFacadeImpl.INSTANCE, root, getFactory().getConfiguration().createMetadata(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE)), 509);
             try (TableWriter w = new TableWriter(FilesFacadeImpl.INSTANCE, root, "quote")) {
                 for (int i = -count; i < count; i++) {
                     if (i == 0) {
@@ -307,6 +307,8 @@ public class PerformanceTest extends AbstractTest {
                 }
                 result = System.nanoTime() - t;
             }
+        } finally {
+            TableUtils.freeThreadLocals();
         }
 
         LOG.info().$("Cairo append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();

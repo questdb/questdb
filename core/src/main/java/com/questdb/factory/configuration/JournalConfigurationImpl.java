@@ -43,7 +43,7 @@ class JournalConfigurationImpl implements JournalConfiguration {
 
     private static final Log LOG = LogFactory.getLog(JournalConfigurationImpl.class);
 
-    private final static ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath.FACTORY);
+    private final static ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath::new);
     private final ObjObjHashMap<String, JournalMetadata> journalMetadata;
     private final File journalBase;
 

@@ -27,11 +27,11 @@ public class TableUtilsTest {
         final CharSequence root = temp.getRoot().getAbsolutePath();
         final JournalMetadata metadata = getJournalStructure().build();
 
-        try (TableUtils tabU = new TableUtils(FF)) {
-            tabU.create(root, metadata, 509);
+        try {
+            TableUtils.create(FF, root, metadata, 509);
 
             try (CompositePath path = new CompositePath()) {
-                Assert.assertEquals(0, tabU.exists(root, metadata.getName()));
+                Assert.assertEquals(0, TableUtils.exists(FF, root, metadata.getName()));
 
                 path.of(root).concat(metadata.getName()).concat("_meta").$();
 
@@ -80,6 +80,8 @@ public class TableUtilsTest {
                     assertCol(mem, p, "timestamp");
                 }
             }
+        } finally {
+            TableUtils.freeThreadLocals();
         }
     }
 
@@ -96,13 +98,15 @@ public class TableUtilsTest {
         JournalMetadata metadata = getJournalStructure().build();
 
         long mem = Unsafe.getMemUsed();
-        try (TableUtils tu = new TableUtils(ff)) {
+        try {
             try {
-                tu.create(temp.getRoot().getAbsolutePath(), metadata, 509);
+                TableUtils.create(ff, temp.getRoot().getAbsolutePath(), metadata, 509);
                 Assert.fail();
             } catch (CairoException e) {
                 Assert.assertNotNull(e.getMessage());
             }
+        } finally {
+            TableUtils.freeThreadLocals();
         }
         Assert.assertEquals(mem, Unsafe.getMemUsed());
         Assert.assertEquals(0, ff.getOpenFileCount());
@@ -110,8 +114,10 @@ public class TableUtilsTest {
 
     @Test
     public void testForeignDirectory() throws Exception {
-        try (TableUtils tabU = new TableUtils(FF)) {
-            Assert.assertEquals(2, tabU.exists(temp.getRoot().getAbsolutePath(), ""));
+        try {
+            Assert.assertEquals(2, TableUtils.exists(FF, temp.getRoot().getAbsolutePath(), ""));
+        } finally {
+            TableUtils.freeThreadLocals();
         }
     }
 

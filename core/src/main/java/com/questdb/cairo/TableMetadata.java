@@ -17,9 +17,14 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
     private final CharSequenceIntHashMap columnNameHashTable;
     private final int timestampIndex;
     private final ReadOnlyMemory metaMem;
-    private final int columnCount;
+    private final CompositePath path;
+    private final FilesFacade ff;
+    private int columnCount;
+    private ReadOnlyMemory transitionMeta;
 
     public TableMetadata(FilesFacade ff, CompositePath path) {
+        this.ff = ff;
+        this.path = new CompositePath().of(path).$();
         this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize());
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
@@ -41,7 +46,6 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         if (address == 0) {
             return;
         }
-
         Unsafe.free(address, Unsafe.getUnsafe().getInt(address) * 16);
     }
 
@@ -90,88 +94,59 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
     }
 
     public void applyTransitionIndex(long index) {
+        // re-open _meta file
+        this.metaMem.of(ff, path, ff.getPageSize());
+        this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         shuffle(index, this::moveMetadata, this::newInstance);
     }
 
     @Override
     public void close() {
         metaMem.close();
+        path.close();
     }
 
     public long createTransitionIndex() {
-        int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-        int n = Math.max(this.columnCount, columnCount);
-        final long address;
-        long index = address = Unsafe.malloc(n * 16);
-        Unsafe.getUnsafe().putInt(index, n);
-        Unsafe.getUnsafe().putInt(index + 4, columnCount);
-        index += 8;
-
-        // index structure is
-        // [copy from, copy to] int tuples, each of which is index into original column metadata
-        // the number of these tuples is DOUBLE of maximum of old and new column count.
-        // Tuples are separated into two areas, one is immutable, which drives how metadata should be moved,
-        // the other is the state of moving algo. Moving algo will start with copy of immutable area and will
-        // continue to zero out tuple values in mutable area when metadata is moved. Mutable area is
-
-        // "copy from" == 0 indicates that column is newly added, similarly
-        // "copy to" == 0 indicates that old column has been deleted
-        //
-
-        long offset = TableUtils.getColumnNameOffset(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            CharSequence name = metaMem.getStr(offset);
-            offset += ReadOnlyMemory.getStorageLength(name);
-            int oldPosition = columnNameHashTable.get(name);
-            // write primary (immutable) index
-            if (oldPosition > -1) {
-                Unsafe.getUnsafe().putInt(index + i * 8, oldPosition + 1);
-                Unsafe.getUnsafe().putInt(index + oldPosition * 8 + 4, i + 1);
-            }
+        if (transitionMeta == null) {
+            transitionMeta = new ReadOnlyMemory();
         }
 
-        /*
-        Unsafe.getUnsafe().setMemory(index + columnCount * 8, columnCount, (byte) 0);
+        transitionMeta.of(ff, path, ff.getPageSize());
+        try (ReadOnlyMemory metaMem = transitionMeta) {
+            int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            int n = Math.max(this.columnCount, columnCount);
+            final long address;
+            long index = address = Unsafe.malloc(n * 16);
+            Unsafe.getUnsafe().putInt(index, n);
+            Unsafe.getUnsafe().putInt(index + 4, columnCount);
+            index += 8;
 
-        // this is a silly exercise in walking the index
-        for (int i = 0; i < n; i++) {
+            // index structure is
+            // [copy from, copy to] int tuples, each of which is index into original column metadata
+            // the number of these tuples is DOUBLE of maximum of old and new column count.
+            // Tuples are separated into two areas, one is immutable, which drives how metadata should be moved,
+            // the other is the state of moving algo. Moving algo will start with copy of immutable area and will
+            // continue to zero out tuple values in mutable area when metadata is moved. Mutable area is
 
-            if (Unsafe.getUnsafe().getByte(index + columnCount * 8 + i) == -1) {
-                continue;
-            }
+            // "copy from" == 0 indicates that column is newly added, similarly
+            // "copy to" == 0 indicates that old column has been deleted
+            //
 
-            Unsafe.getUnsafe().putByte(index + columnCount * 8 + i, (byte) -1);
-
-            int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8);
-            int copyTo = Unsafe.getUnsafe().getInt(index + i * 8 + 4);
-
-            if (copyFrom == i + 1) {
-                continue;
-            }
-
-            TableColumnMetadata tmp = columnMetadata.getQuick(i);
-            if (copyFrom > 0) {
-                columnMetadata.setQuick(i, columnMetadata.getAndSetQuick(copyFrom - 1, null));
-            } else {
-                System.out.println("new metadata");
-            }
-
-            while (copyTo > 0) {
-                if (Unsafe.getUnsafe().getByte(index + columnCount * 8 + copyTo - 1) == -1) {
-                    break;
+            long offset = TableUtils.getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence name = metaMem.getStr(offset);
+                offset += ReadOnlyMemory.getStorageLength(name);
+                int oldPosition = columnNameHashTable.get(name);
+                // write primary (immutable) index
+                if (oldPosition > -1) {
+                    Unsafe.getUnsafe().putInt(index + i * 8, oldPosition + 1);
+                    Unsafe.getUnsafe().putInt(index + oldPosition * 8 + 4, i + 1);
+                } else {
+                    Unsafe.getUnsafe().putLong(index + i * 8, 0);
                 }
-                Unsafe.getUnsafe().putByte(index + columnCount * 8 + copyTo - 1, (byte) -1);
-                tmp = columnMetadata.getAndSetQuick(copyTo - 1, tmp);
-                copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8 + 4);
             }
-
-            if (tmp != null) {
-                System.out.println("Release: " + tmp);
-            }
-            // 01932373421
+            return address;
         }
-        */
-        return address;
     }
 
     @Override
@@ -203,7 +178,6 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
     }
 
     private TableColumnMetadata newInstance(int index) {
-        int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         if (index < columnCount) {
             long offset = TableUtils.getColumnNameOffset(columnCount);
             CharSequence name = null;
