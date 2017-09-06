@@ -48,8 +48,6 @@ import java.util.function.LongConsumer;
 
 public class TableWriter implements Closeable {
 
-    public static final int TODO_TRUNCATE = 1;
-    public static final int TODO_RESTORE_META = 2;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final long TX_EOF = 32;
     private static final CharSequenceHashSet ignoredFiles = new CharSequenceHashSet();
@@ -107,10 +105,10 @@ public class TableWriter implements Closeable {
                 case -1:
                     // nothing to do
                     break;
-                case 1:
+                case TableUtils.TODO_TRUNCATE:
                     repairTruncate();
                     break;
-                case 2:
+                case TableUtils.TODO_RESTORE_META:
                     repairMetaRename();
                     break;
                 default:
@@ -133,6 +131,7 @@ public class TableWriter implements Closeable {
             configureAppendPosition();
             purgeUnusedPartitions();
         } catch (CairoException e) {
+            LOG.error().$("Cannot open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
             close0();
             throw e;
         }
@@ -173,7 +172,7 @@ public class TableWriter implements Closeable {
 
         // after we moved _meta to _meta.prev
         // we have to have _todo to restore _meta should anything go wrong
-        writeTodo(TODO_RESTORE_META);
+        writeTodo(TableUtils.TODO_RESTORE_META);
 
         // close _meta so we can rename it
         metaMem.close();
@@ -301,7 +300,7 @@ public class TableWriter implements Closeable {
 
         // after we moved _meta to _meta.prev
         // we have to have _todo to restore _meta should anything go wront
-        writeTodo(TODO_RESTORE_META);
+        writeTodo(TableUtils.TODO_RESTORE_META);
 
         // close _meta so we can rename it
         metaMem.close();
@@ -366,7 +365,7 @@ public class TableWriter implements Closeable {
             return;
         }
 
-        writeTodo(TODO_TRUNCATE);
+        writeTodo(TableUtils.TODO_TRUNCATE);
         for (int i = 0; i < columnCount; i++) {
             getPrimaryColumn(i).truncate();
             AppendMemory mem = getSecondaryColumn(i);
@@ -396,17 +395,6 @@ public class TableWriter implements Closeable {
             removeTodoFile();
         } catch (CairoException err) {
             throw new CairoError(err);
-        }
-    }
-
-    private static String getTodoText(int code) {
-        switch (code) {
-            case 1:
-                return "truncate";
-            case 2:
-                return "restore meta";
-            default:
-                return "unknown";
         }
     }
 
@@ -583,7 +571,7 @@ public class TableWriter implements Closeable {
                 long partitionTimestamp = columnSizeMem.getLong(offset + 8);
                 setStateForTimestamp(partitionTimestamp, false);
 
-                long fd = openAppend(path.concat(TableUtils.ARCHIVE_FILE_NAME).$());
+                long fd = TableUtils.openAppend(ff, path.concat(TableUtils.ARCHIVE_FILE_NAME).$());
                 try {
                     int len = 8;
                     long o = offset;
@@ -707,14 +695,6 @@ public class TableWriter implements Closeable {
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
-    private long openAppend(LPSZ name) {
-        long fd = ff.openAppend(name);
-        if (fd == -1) {
-            throw CairoException.instance(Os.errno()).put("Cannot open for append: ").put(path);
-        }
-        return fd;
-    }
-
     private void openColumnFiles(CharSequence name, int i, int plen) {
         AppendMemory mem1 = getPrimaryColumn(i);
         AppendMemory mem2 = getSecondaryColumn(i);
@@ -735,11 +715,7 @@ public class TableWriter implements Closeable {
     }
 
     private void openMetaFile() {
-        try {
-            metaMem.of(ff, path.concat(TableUtils.META_FILE_NAME).$(), ff.getPageSize());
-        } finally {
-            path.trimTo(rootLen);
-        }
+        TableUtils.openViaSharedPath(ff, metaMem, path.concat(TableUtils.META_FILE_NAME).$(), rootLen);
     }
 
     private void openNewColumnFiles(CharSequence name) {
@@ -797,26 +773,7 @@ public class TableWriter implements Closeable {
     }
 
     private byte readTodoTaskCode() {
-        try {
-            if (ff.exists(path.concat(TableUtils.TODO_FILE_NAME).$())) {
-                long todoFd = ff.openRO(path);
-                if (todoFd == -1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot open *todo*: ").put(path);
-                }
-                try {
-                    if (ff.read(todoFd, tempMem8b, 1, 0) != 1) {
-                        LOG.info().$("Cannot read *todo* code. File seems to be truncated. Ignoring").$();
-                        return -1;
-                    }
-                    return Unsafe.getUnsafe().getByte(tempMem8b);
-                } finally {
-                    ff.close(todoFd);
-                }
-            }
-            return -1;
-        } finally {
-            path.trimTo(rootLen);
-        }
+        return TableUtils.readTodo(ff, path, rootLen, tempMem8b);
     }
 
     private void removeColumn(int index) {
@@ -923,8 +880,12 @@ public class TableWriter implements Closeable {
                 path.trimTo(rootLen);
                 path.concat(name).$();
                 nativeLPSZ.of(name);
-                if (!ignoredFiles.contains(nativeLPSZ) && !ff.rmdir(path)) {
-                    throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
+                if (!ignoredFiles.contains(nativeLPSZ)) {
+                    if (type == Files.DT_DIR && !ff.rmdir(path)) {
+                        throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
+                    } else if (type != Files.DT_DIR && !ff.remove(path)) {
+                        throw CairoException.instance(ff.errno()).put("Cannot remove file: ").put(path);
+                    }
                 }
             });
         } finally {
@@ -965,57 +926,19 @@ public class TableWriter implements Closeable {
     }
 
     private void removeTodoFile() {
-        try {
-            if (!ff.remove(path.concat(TableUtils.TODO_FILE_NAME).$())) {
-                throw CairoException.instance(Os.errno()).put("Recovery operation completed successfully but I cannot remove todo file: ").put(path).put(". Please remove manually before opening table again,");
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
+        TableUtils.removeTodoFile(ff, path, rootLen);
     }
 
     private void rename(CharSequence from, CharSequence to) {
-        try {
-            if (!ff.rename(path.concat(from).$(), other.concat(to).$())) {
-                throw CairoException.instance(Os.errno()).put("Cannot rename ").put(path).put(" -> ").put(other);
-            }
-        } finally {
-            path.trimTo(rootLen);
-            other.trimTo(rootLen);
-        }
+        TableUtils.rename(ff, path, from, other, to, rootLen);
     }
 
     private void renameOrElse(CharSequence from, CharSequence to, Runnable fail) {
-        try {
-            rename(from, to);
-        } catch (CairoException e) {
-            try {
-                fail.run();
-            } catch (CairoException err) {
-                LOG.error().$("DOUBLE ERROR: 1st: '").$((Sinkable) e).$('\'').$();
-                throw new CairoError(err);
-            }
-            throw e;
-        }
+        TableUtils.renameOrElse(ff, path, from, other, to, rootLen, fail);
     }
 
     private void repairMetaRename() {
-        try {
-            if (ff.exists(path.concat(TableUtils.META_PREV_FILE_NAME).$())) {
-                LOG.info().$("Repairing metadata from: ").$(path).$();
-                if (ff.exists(other.concat(TableUtils.META_FILE_NAME).$()) && !ff.remove(other)) {
-                    throw CairoException.instance(Os.errno()).put("Repair failed. Cannot replace ").put(other);
-                }
-
-                if (!ff.rename(path, other)) {
-                    throw CairoException.instance(Os.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);
-                }
-            }
-        } finally {
-            path.trimTo(rootLen);
-            other.trimTo(rootLen);
-        }
-        removeTodoFile();
+        TableUtils.repairMetaRename(ff, path, other, rootLen);
     }
 
     private void repairTruncate() {
@@ -1133,20 +1056,8 @@ public class TableWriter implements Closeable {
         this.timestampSetter.accept(timestamp);
     }
 
-    private void writeTodo(int code) {
-        try {
-            long fd = openAppend(path.concat(TableUtils.TODO_FILE_NAME).$());
-            try {
-                Unsafe.getUnsafe().putByte(tempMem8b, (byte) code);
-                if (ff.append(fd, tempMem8b, 1) != 1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot write ").put(getTodoText(code)).put(" *todo*: ").put(path);
-                }
-            } finally {
-                ff.close(fd);
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
+    private void writeTodo(byte code) {
+        TableUtils.writeTodo(ff, path, code, rootLen, tempMem8b);
     }
 
     private class OpenPartitionRowFunction implements RowFunction {

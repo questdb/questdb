@@ -8,6 +8,7 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.Sinkable;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
@@ -19,6 +20,8 @@ import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
 
 public class TableUtils {
+    static final byte TODO_RESTORE_META = 2;
+    static final byte TODO_TRUNCATE = 1;
     static final long META_OFFSET_COLUMN_TYPES = 12;
     static final DateFormat fmtDay;
     static final DateFormat fmtMonth;
@@ -45,103 +48,94 @@ public class TableUtils {
     private final static ThreadLocal<ReadOnlyMemory> tlMetaReadOnlyMem = new ThreadLocal<>(ReadOnlyMemory::new);
     private static Log LOG = LogFactory.getLog(TableUtils.class);
 
-    private TableUtils() {
-    }
-
     public static void addColumn(FilesFacade ff, CharSequence root, CharSequence tableName, CharSequence columnName, int columnType) {
-        final CompositePath path = tlPath.get();
-        path.of(root).concat(tableName);
+        final CompositePath path = tlPath.get().of(root).concat(tableName);
+        final CompositePath other = tlRenamePath.get().of(root).concat(tableName);
+
         int rootLen = path.length();
 
-        try (ReadOnlyMemory mem = tlMetaReadOnlyMem.get()) {
-            try {
-                mem.of(ff, path.concat(META_FILE_NAME).$(), ff.getPageSize());
-            } finally {
-                path.trimTo(rootLen);
+        long buf = Unsafe.malloc(8);
+        try {
+
+            byte code = readTodo(ff, path, rootLen, buf);
+            if (code == TODO_RESTORE_META) {
+                repairMetaRename(ff, path, other, rootLen);
             }
 
-            int columnCount = mem.getInt(META_OFFSET_COUNT);
-            int partitioBy = mem.getInt(META_OFFSET_PARTITION_BY);
+            try (ReadOnlyMemory mem = tlMetaReadOnlyMem.get()) {
 
-            if (TableUtils.getColumnIndexQuiet(mem, tableName, columnCount) != -1) {
-                throw CairoException.instance(0).put("Column ").put(columnName).put(" already exists in ").put(path);
-            }
+                openViaSharedPath(ff, mem, path.concat(META_FILE_NAME).$(), rootLen);
 
-            LOG.info().$("Adding column '").$(columnName).$('[').$(ColumnType.nameOf(columnType)).$("]' to ").$(path).$();
+                int columnCount = mem.getInt(META_OFFSET_COUNT);
+                int partitioBy = mem.getInt(META_OFFSET_PARTITION_BY);
 
-            // create new _meta.swp
-            try (AppendMemory ddlMem = tlMetaAppendMem.get()) {
-                TableUtils.addColumnToMeta(ff, mem, columnName, columnType, path, rootLen, ddlMem);
-            }
+                if (TableUtils.getColumnIndexQuiet(mem, columnName, columnCount) != -1) {
+                    throw CairoException.instance(0).put("Column ").put(columnName).put(" already exists in ").put(path);
+                }
 
-            // close _meta so we can rename it
+                LOG.info().$("Adding column '").$(columnName).$('[').$(ColumnType.nameOf(columnType)).$("]' to ").$(path).$();
 
-            // re-purpose memory object
+                // create new _meta.swp
+                try (AppendMemory ddlMem = tlMetaAppendMem.get()) {
+                    TableUtils.addColumnToMeta(ff, mem, columnName, columnType, path, rootLen, ddlMem);
+                }
 
-            path.concat(TXN_FILE_NAME).$();
-            if (ff.exists(path)) {
-                try {
-                    mem.of(ff, path, ff.getPageSize());
-                } finally {
+                // re-purpose memory object
+                path.concat(TXN_FILE_NAME).$();
+                if (ff.exists(path)) {
+
+                    openViaSharedPath(ff, mem, path, rootLen);
+
+                    long transientRowCount = mem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+                    if (transientRowCount > 0) {
+                        long timestamp = mem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+
+                        path.put(Path.SEPARATOR);
+                        switch (partitioBy) {
+                            case PartitionBy.DAY:
+                                fmtDay.format(Dates.floorDD(timestamp), DateLocaleFactory.INSTANCE.getDefaultDateLocale(), null, path);
+                                break;
+                            case PartitionBy.MONTH:
+                                fmtMonth.format(Dates.floorMM(timestamp), DateLocaleFactory.INSTANCE.getDefaultDateLocale(), null, path);
+                                break;
+                            case PartitionBy.YEAR:
+                                fmtYear.format(Dates.floorYYYY(timestamp), DateLocaleFactory.INSTANCE.getDefaultDateLocale(), null, path);
+                                break;
+                            case PartitionBy.NONE:
+                                path.put(DEFAULT_PARTITION_NAME);
+                                break;
+                            default:
+                                break;
+                        }
+
+                        writeColumnTop(ff, columnName, transientRowCount, path, rootLen, buf);
+                    }
+                } else {
+                    LOG.error().$("No transaction file in ").$(path).$();
                     path.trimTo(rootLen);
                 }
 
-                long transientRowCount = mem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
-                if (transientRowCount > 0) {
-                    long timestamp = mem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+                writeTodo(ff, path, TODO_RESTORE_META, rootLen, buf);
 
-                    path.put(Path.SEPARATOR);
-                    switch (partitioBy) {
-                        case PartitionBy.DAY:
-                            fmtDay.format(Dates.floorDD(timestamp), DateLocaleFactory.INSTANCE.getDefaultDateLocale(), null, path);
-                            break;
-                        case PartitionBy.MONTH:
-                            fmtMonth.format(Dates.floorMM(timestamp), DateLocaleFactory.INSTANCE.getDefaultDateLocale(), null, path);
-                            break;
-                        case PartitionBy.YEAR:
-                            fmtYear.format(Dates.floorYYYY(timestamp), DateLocaleFactory.INSTANCE.getDefaultDateLocale(), null, path);
-                            break;
-                        case PartitionBy.NONE:
-                            path.put(DEFAULT_PARTITION_NAME);
-                            break;
-                        default:
-                            break;
-                    }
+                // rename _meta to _meta.prev
+                rename(ff, path, META_FILE_NAME, other, META_PREV_FILE_NAME, rootLen);
 
-                    long buf = Unsafe.malloc(8);
-                    try {
-                        writeColumnTop(ff, columnName, transientRowCount, path, rootLen, buf);
-                    } finally {
-                        Unsafe.free(buf, 8);
+                // rename _meta.swp to _meta
+                rename(ff, path, META_SWAP_FILE_NAME, other, META_FILE_NAME, rootLen);
+
+                try {
+                    if (!ff.remove(path.concat(TODO_FILE_NAME).$())) {
+                        throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
                     }
+                } finally {
+                    path.trimTo(rootLen);
                 }
-            } else {
-                LOG.error().$("No transaction file in ").$(path).$();
-            }
-        }
-
-        CompositePath other = tlRenamePath.get();
-
-        other.of(root).concat(tableName);
-
-        // rename _meta to _meta.prev
-        try {
-            if (!ff.rename(path.concat(META_FILE_NAME).$(), other.concat(META_PREV_FILE_NAME).$())) {
-                throw CairoException.instance(Os.errno()).put("Cannot rename ").put(path).put(" -> ").put(other);
+            } catch (CairoException e) {
+                LOG.error().$("Cannot add column '").$(columnName).$("' to '").$(tableName).$("' and this is why {").$((Sinkable) e).$('}').$();
+                throw e;
             }
         } finally {
-            path.trimTo(rootLen);
-            other.trimTo(rootLen);
-        }
-
-        // rename _meta.swp to _meta
-        try {
-            if (!ff.rename(path.concat(META_SWAP_FILE_NAME).$(), other.concat(META_FILE_NAME).$())) {
-                throw CairoException.instance(Os.errno()).put("Cannot rename ").put(path).put(" -> ").put(other);
-            }
-        } finally {
-            path.trimTo(rootLen);
-            other.trimTo(rootLen);
+            Unsafe.free(buf, 8);
         }
     }
 
@@ -206,6 +200,92 @@ public class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * 4;
     }
 
+    static void repairMetaRename(FilesFacade ff, CompositePath path, CompositePath newPath, int rootLen) {
+        try {
+            if (ff.exists(path.concat(TableUtils.META_PREV_FILE_NAME).$())) {
+                LOG.info().$("Repairing metadata from: ").$(path).$();
+                if (ff.exists(newPath.concat(TableUtils.META_FILE_NAME).$()) && !ff.remove(newPath)) {
+                    throw CairoException.instance(Os.errno()).put("Repair failed. Cannot replace ").put(newPath);
+                }
+
+                if (!ff.rename(path, newPath)) {
+                    throw CairoException.instance(Os.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(newPath);
+                }
+            }
+        } finally {
+            path.trimTo(rootLen);
+            newPath.trimTo(rootLen);
+        }
+        removeTodoFile(ff, path, rootLen);
+    }
+
+    static void removeTodoFile(FilesFacade ff, CompositePath path, int rootLen) {
+        try {
+            if (!ff.remove(path.concat(TableUtils.TODO_FILE_NAME).$())) {
+                throw CairoException.instance(Os.errno()).put("Recovery operation completed successfully but I cannot remove todo file: ").put(path).put(". Please remove manually before opening table again,");
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    static byte readTodo(FilesFacade ff, CompositePath path, int rootLen, long buf) {
+        try {
+            if (ff.exists(path.concat(TableUtils.TODO_FILE_NAME).$())) {
+                long todoFd = ff.openRO(path);
+                if (todoFd == -1) {
+                    throw CairoException.instance(Os.errno()).put("Cannot open *todo*: ").put(path);
+                }
+                try {
+                    if (ff.read(todoFd, buf, 1, 0) != 1) {
+                        LOG.info().$("Cannot read *todo* code. File seems to be truncated. Ignoring").$();
+                        return -1;
+                    }
+                    return Unsafe.getUnsafe().getByte(buf);
+                } finally {
+                    ff.close(todoFd);
+                }
+            }
+            return -1;
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    static void openViaSharedPath(FilesFacade ff, ReadOnlyMemory mem, CompositePath path, int rootLen) {
+        try {
+            mem.of(ff, path, ff.getPageSize());
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    static void rename(FilesFacade ff, CompositePath path, CharSequence name, CompositePath newPath, CharSequence newName, int rootLen) {
+        try {
+            if (!ff.rename(path.concat(name).$(), newPath.concat(newName).$())) {
+                throw CairoException.instance(Os.errno()).put("Cannot rename ").put(path).put(" -> ").put(newPath);
+            }
+        } finally {
+            path.trimTo(rootLen);
+            newPath.trimTo(rootLen);
+        }
+    }
+
+    static void renameOrElse(FilesFacade ff, CompositePath path, CharSequence name, CompositePath newPath, CharSequence newName, int rootLen, Runnable fail) {
+        try {
+            rename(ff, path, name, newPath, newName, rootLen);
+        } catch (CairoException e) {
+            try {
+                fail.run();
+            } catch (CairoException err) {
+                LOG.error().$("DOUBLE ERROR: 1st: '").$((Sinkable) e).$('\'').$();
+                throw new CairoError(err);
+            }
+            throw e;
+        }
+    }
+
+
     static void resetTxn(VirtualMemory txMem) {
         // txn to let readers know table is being reset
         txMem.putLong(-1);
@@ -250,7 +330,7 @@ public class TableUtils {
 
     static void writeColumnTop(FilesFacade ff, CharSequence name, long count, CompositePath path, int plen, long buf) {
         try {
-            long fd = ff.openAppend(path.concat(name).put(".top").$());
+            long fd = openAppend(ff, path.concat(name).put(".top").$());
             try {
                 Unsafe.getUnsafe().putLong(buf, count);
                 if (ff.append(fd, buf, 8) != 8) {
@@ -263,6 +343,15 @@ public class TableUtils {
             path.trimTo(plen);
         }
     }
+
+    static long openAppend(FilesFacade ff, LPSZ name) {
+        long fd = ff.openAppend(name);
+        if (fd == -1) {
+            throw CairoException.instance(Os.errno()).put("Cannot open for append: ").put(name);
+        }
+        return fd;
+    }
+
 
     static LPSZ dFile(CompositePath path, CharSequence columnName) {
         return path.concat(columnName).put(".d").$();
@@ -379,6 +468,33 @@ public class TableUtils {
             }
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    static void writeTodo(FilesFacade ff, CompositePath path, byte code, int rootLen, long buf) {
+        try {
+            long fd = TableUtils.openAppend(ff, path.concat(TableUtils.TODO_FILE_NAME).$());
+            try {
+                Unsafe.getUnsafe().putByte(buf, code);
+                if (ff.append(fd, buf, 1) != 1) {
+                    throw CairoException.instance(Os.errno()).put("Cannot write ").put(getTodoText(code)).put(" *todo*: ").put(path);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    static String getTodoText(int code) {
+        switch (code) {
+            case TODO_TRUNCATE:
+                return "truncate";
+            case TODO_RESTORE_META:
+                return "restore meta";
+            default:
+                return "unknown";
         }
     }
 

@@ -39,6 +39,6 @@ public class CairoException extends RuntimeException implements Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put(errno).put(": ").put(message);
+        sink.put('[').put(errno).put("]: ").put(message);
     }
 }

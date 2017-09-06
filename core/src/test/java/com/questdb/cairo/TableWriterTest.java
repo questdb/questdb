@@ -92,9 +92,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
             int N = 10000;
             Rnd rnd = new Rnd();
-            for (int i = 0; i < N; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, rnd, ts, N, 60 * 60000);
             writer.addColumn("xyz", ColumnType.STRING);
             Assert.assertEquals(N, writer.size());
         }
@@ -191,18 +189,12 @@ public class TableWriterTest extends AbstractOptimiserTest {
         Rnd rnd = new Rnd();
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
-
+            ts = populateProducts(writer, rnd, ts, 10000, 60 * 60000);
             Assert.assertEquals(10000, writer.size());
-
             writer.addColumn("abc", ColumnType.STRING);
-
             // add more data including updating new column
             ts = populateTable2(rnd, writer, ts, 10000);
             Assert.assertEquals(2 * 10000, writer.size());
-
             writer.rollback();
         }
 
@@ -223,10 +215,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
                 Assert.fail();
             } catch (CairoException ignore) {
             }
-            Rnd rnd = new Rnd();
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60000);
-            }
+            populateProducts(writer, new Rnd(), ts, 10000, 60000);
             writer.commit();
             Assert.assertEquals(20000, writer.size());
         }
@@ -368,6 +357,200 @@ public class TableWriterTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testAddColumnStaticAndFailSwapRemoveByDay() throws Exception {
+        testAddColumnStaticFailSwapRemove(PartitionBy.DAY, 200);
+    }
+
+    @Test
+    public void testAddColumnStaticAndFailSwapRemoveNonPartitioned() throws Exception {
+        testAddColumnStaticFailSwapRemove(PartitionBy.NONE, 10000);
+    }
+
+    @Test
+    public void testAddColumnStaticAndFailSwapRenameByDay() throws Exception {
+        testAddColumnStaticFailSwapRename(PartitionBy.DAY, 200);
+    }
+
+    @Test
+    public void testAddColumnStaticAndFailSwapRenameNonPartitioned() throws Exception {
+        testAddColumnStaticFailSwapRename(PartitionBy.NONE, 10000);
+    }
+
+    @Test
+    public void testAddColumnStaticAndFailToRemoveTodo() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+            int N = 10000;
+
+            try {
+                create(FF, PartitionBy.NONE);
+                // populate before adding column
+                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                    ts = populateProducts(writer, rnd, ts, N, 60L * 60000);
+                    writer.commit();
+                    Assert.assertEquals(N, writer.size());
+                }
+
+                FilesFacade ff2 = new FilesFacadeImpl() {
+                    @Override
+                    public boolean remove(LPSZ name) {
+                        return !Chars.endsWith(name, TableUtils.TODO_FILE_NAME) && super.remove(name);
+                    }
+                };
+
+                // attempt to add column, make sure it is unsuccessful
+                try {
+                    TableUtils.addColumn(ff2, root, PRODUCT, "xyz", ColumnType.STRING);
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
+
+                // ensure that table can be appended to after failed attempt to add column
+                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                    populateProducts(writer, rnd, ts, N, 60L * 60000);
+                    writer.commit();
+                    Assert.assertEquals(N * 2, writer.size());
+                }
+
+            } finally {
+                TableUtils.freeThreadLocals();
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnStaticAndMetaOpenFailByDay() throws Exception {
+        testAddColumnStaticFailMetaOpen(PartitionBy.DAY, 200);
+    }
+
+    @Test
+    public void testAddColumnStaticAndMetaOpenFailNonPartitioned() throws Exception {
+        testAddColumnStaticFailMetaOpen(PartitionBy.NONE, 10000);
+    }
+
+    @Test
+    public void testAddColumnStaticDuplicateName() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                create(FF, PartitionBy.NONE);
+                try {
+                    TableUtils.addColumn(FF, root, "product", "productName", ColumnType.FLOAT);
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
+            } finally {
+                TableUtils.freeThreadLocals();
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnStaticFailSwapRenameAndRecover() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            int count = 1;
+
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME)) {
+                    if (count-- > 0) {
+                        return false;
+                    }
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        TestUtils.assertMemoryLeak(() -> {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+
+            try {
+                int count = 10000;
+                create(ff, PartitionBy.NONE);
+                // populate before adding column
+                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                    ts = populateProducts(writer, rnd, ts, count, 60 * 60000);
+                    writer.commit();
+                    Assert.assertEquals(count, writer.size());
+                }
+
+                // attempt to add column, make sure it is unsuccessful
+                try {
+                    TableUtils.addColumn(ff, root, PRODUCT, "xyz", ColumnType.STRING);
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
+
+                TableUtils.addColumn(FF, root, PRODUCT, "xyz", ColumnType.STRING);
+
+                // append table including new column
+                // the catch here is .top file would have been needed when column wasn't empty
+                // and it isn't needed when table is blank.
+                // if .top file is left behind it may interfere with append operation
+                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                    for (int i = 0; i < count; i++) {
+                        TableWriter.Row r = writer.newRow(ts += 60L * 60000);
+                        r.putInt(0, rnd.nextPositiveInt());
+                        r.putStr(1, rnd.nextString(7));
+                        r.putStr(2, rnd.nextString(4));
+                        r.putStr(3, rnd.nextString(11));
+                        r.putDouble(4, rnd.nextDouble());
+                        r.putStr(6, rnd.nextString(10));
+                        r.append();
+                    }
+                    writer.commit();
+                    Assert.assertEquals(count * 2, writer.size());
+                }
+
+
+            } finally {
+                TableUtils.freeThreadLocals();
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnStaticFailTopByDay() throws Exception {
+        testAddColumnStaticFailTopFile(PartitionBy.DAY, 1000);
+    }
+
+    @Test
+    public void testAddColumnStaticFailTopByMonth() throws Exception {
+        testAddColumnStaticFailTopFile(PartitionBy.MONTH, 10000);
+    }
+
+    @Test
+    public void testAddColumnStaticFailTopByYear() throws Exception {
+        testAddColumnStaticFailTopFile(PartitionBy.YEAR, 10000);
+    }
+
+    @Test
+    public void testAddColumnStaticFailTopFileNonPartitioned() throws Exception {
+        testAddColumnStaticFailTopFile(PartitionBy.NONE, 10000);
+    }
+
+    @Test
+    public void testAddColumnStaticMissingTxFile() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                createAllTable();
+                try (CompositePath path = new CompositePath()) {
+                    Assert.assertTrue(FF.remove(path.of(root).concat("all").concat(TableUtils.TXN_FILE_NAME).$()));
+                    TableUtils.addColumn(FF, root, "all", "z", ColumnType.STRING);
+                    try {
+                        new TableWriter(FF, root, "all");
+                        Assert.fail();
+                    } catch (CairoException ignore) {
+                    }
+                }
+            } finally {
+                TableUtils.freeThreadLocals();
+            }
+        });
+    }
+
+    @Test
     public void testAddColumnSwpFileDelete() throws Exception {
 
         populateTable(FF);
@@ -503,15 +686,9 @@ public class TableWriterTest extends AbstractOptimiserTest {
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-
-
             TableWriter.Row r = writer.newRow(ts);
             r.putInt(0, 1234);
-
-            Rnd rnd = new Rnd();
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, new Rnd(), ts, 10000, 60 * 60000);
             Assert.assertEquals(10000, writer.size());
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
@@ -549,9 +726,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            for (int i = 0; i < N; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
             writer.commit();
             Assert.assertEquals(N, writer.size());
 
@@ -593,10 +768,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
             // add 48 hours
-            for (int i = 0; i < 47; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
-
+            ts = populateProducts(writer, rnd, ts, 47, 60 * 60000);
             TableWriter.Row r = writer.newRow(ts += 60 * 60000);
             r.putInt(0, rnd.nextPositiveInt());
             r.putStr(1, rnd.nextString(7));
@@ -613,9 +785,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             ff.fail = false;
             r.cancel();
 
-            for (int i = 0; i < 47; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, rnd, ts, 47, 60 * 60000);
 
             writer.commit();
             Assert.assertEquals(94, writer.size());
@@ -638,10 +808,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             r.putInt(0, 1234);
             r.cancel();
 
-            Rnd rnd = new Rnd();
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, new Rnd(), ts, 10000, 60 * 60000);
             Assert.assertEquals(10000, writer.size());
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
@@ -672,9 +839,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
             // add 48 hours
-            for (int i = 0; i < 47; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            ts = populateProducts(writer, rnd, ts, 47, 60 * 60000);
 
             TableWriter.Row r = writer.newRow(ts += 60 * 60000);
             r.putInt(0, rnd.nextPositiveInt());
@@ -687,9 +852,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
                 r.cancel();
             }
 
-            for (int i = 0; i < 47; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, rnd, ts, 47, 60 * 60000);
 
             writer.commit();
             Assert.assertEquals(94, writer.size());
@@ -784,9 +947,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         Rnd rnd = new Rnd();
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            ts = populateProducts(writer, rnd, ts, 10000, 60 * 60000);
 
             Assert.assertEquals(10000, writer.size());
 
@@ -1114,13 +1275,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         int N = 100000;
 
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-
-            Rnd rnd = new Rnd();
-            for (int i = 0; i < N; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, new Rnd(), DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z"), N, 60 * 60000);
             writer.commit();
             Assert.assertEquals(N, writer.size());
         }
@@ -1152,9 +1307,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
             for (int k = 0; k < 3; k++) {
-                for (int i = 0; i < 100000; i++) {
-                    ts = populateRow(writer, ts, rnd, 60 * 60000);
-                }
+                ts = populateProducts(writer, rnd, ts, 100000, 60 * 60000);
                 writer.commit();
                 Assert.assertEquals(100000, writer.size());
                 writer.truncate();
@@ -1164,9 +1317,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
             long ts = DateFormatUtils.parseDateTime("2014-03-04T00:00:00.000Z");
             Assert.assertEquals(0, writer.size());
-            for (int i = 0; i < 100000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, rnd, ts, 100000, 60 * 60000);
             writer.commit();
             Assert.assertEquals(100000, writer.size());
         }
@@ -1294,6 +1445,25 @@ public class TableWriterTest extends AbstractOptimiserTest {
         testAppendNulls(rnd, FF, ts);
         Assert.assertEquals(mem, Unsafe.getMemUsed());
         Assert.assertEquals(0, FF.getOpenFileCount());
+    }
+
+    @Test
+    public void testOpenWriterMissingTxFile() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                createAllTable();
+                try (CompositePath path = new CompositePath()) {
+                    Assert.assertTrue(FF.remove(path.of(root).concat("all").concat(TableUtils.TXN_FILE_NAME).$()));
+                    try {
+                        new TableWriter(FF, root, "all");
+                        Assert.fail();
+                    } catch (CairoException ignore) {
+                    }
+                }
+            } finally {
+                TableUtils.freeThreadLocals();
+            }
+        });
     }
 
     @Test
@@ -1494,7 +1664,12 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
-                return !Chars.endsWith(to, TableUtils.META_FILE_NAME) || --count < 0 && super.rename(from, to);
+                if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
+                    if (count-- > 0) {
+                        return false;
+                    }
+                }
+                return super.rename(from, to);
             }
         }
         testUnrecoverableRemoveColumn(new X());
@@ -1586,16 +1761,12 @@ public class TableWriterTest extends AbstractOptimiserTest {
         Rnd rnd = new Rnd();
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
 
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            ts = populateProducts(writer, rnd, ts, 10000, 60 * 60000);
             writer.commit();
 
             long timestampAfterCommit = ts;
 
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, rnd, ts, 10000, 60 * 60000);
 
             Assert.assertEquals(20000, writer.size());
             writer.rollback();
@@ -1608,9 +1779,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             writer.newRow(ts).cancel();
 
             // we should be able to repeat timestamps
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, rnd, ts, 10000, 60 * 60000);
             writer.commit();
 
             Assert.assertEquals(20000, writer.size());
@@ -1701,9 +1870,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         Rnd rnd = new Rnd();
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            for (int i = 0; i < 1000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 6000);
-            }
+            ts = populateProducts(writer, rnd, ts, 1000, 60 * 60000);
             writer.commit();
 
             try {
@@ -1715,9 +1882,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         }
 
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            for (int i = 0; i < 1000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 6000);
-            }
+            populateProducts(writer, rnd, ts, 1000, 60 * 60000);
             writer.commit();
             Assert.assertEquals(1000, writer.size());
         }
@@ -1774,9 +1939,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
             int N = 100000;
             Rnd rnd = new Rnd();
-            for (int i = 0; i < N; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, rnd, ts, N, 60 * 60000);
             writer.commit();
             Assert.assertEquals(N, writer.size());
         }
@@ -1840,10 +2003,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
     private void appendAndAssert10K(long ts, Rnd rnd) {
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
             Assert.assertEquals(12, writer.columns.size());
-
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60000);
-            }
+            populateProducts(writer, rnd, ts, 10000, 60000);
             writer.commit();
             Assert.assertEquals(30000, writer.size());
         }
@@ -1884,9 +2044,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         Rnd rnd = new Rnd();
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            for (int i = 0; i < n; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            ts = populateProducts(writer, rnd, ts, n, 60 * 60000);
             writer.commit();
 
             Assert.assertEquals(n, writer.size());
@@ -1908,6 +2066,13 @@ public class TableWriterTest extends AbstractOptimiserTest {
             writer.commit();
             Assert.assertEquals(3 * n, writer.size());
         }
+    }
+
+    private long populateProducts(TableWriter writer, Rnd rnd, long ts, int count, long interval) {
+        for (int i = 0; i < count; i++) {
+            ts = populateRow(writer, ts, rnd, interval);
+        }
+        return ts;
     }
 
     private long populateRow(TableWriter writer, long ts, Rnd rnd, long increment) {
@@ -1937,10 +2102,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
     private long populateTable0(FilesFacade ff) throws NumericException {
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            Rnd rnd = new Rnd();
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60000);
-            }
+            ts = populateProducts(writer, new Rnd(), ts, 10000, 60000);
             writer.commit();
             Assert.assertEquals(10000, writer.size());
             return ts;
@@ -1970,9 +2132,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
 
                 create(FF, partitionBy);
                 try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                    for (int i = 0; i < N; i++) {
-                        ts = populateRow(writer, ts, rnd, 60L * 60000);
-                    }
+                    ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
                     writer.commit();
                     Assert.assertEquals(N, writer.size());
                 }
@@ -2004,9 +2164,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         long mem = Unsafe.getMemUsed();
         Rnd rnd = new Rnd();
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60000);
-            }
+            ts = populateProducts(writer, rnd, ts, 10000, 60000);
             writer.commit();
             Assert.assertEquals(20000, writer.size());
 
@@ -2031,15 +2189,75 @@ public class TableWriterTest extends AbstractOptimiserTest {
         Assert.assertEquals(0, Files.getOpenFileCount());
     }
 
+    private void testAddColumnFailAndOpenWriter(FilesFacade ff, int partitionBy, int N) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+
+            try {
+                create(ff, partitionBy);
+                // populate before adding column
+                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                    ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
+                    writer.commit();
+                    Assert.assertEquals(N, writer.size());
+                }
+
+                // attempt to add column, make sure it is unsuccessful
+                try {
+                    TableUtils.addColumn(ff, root, PRODUCT, "xyz", ColumnType.STRING);
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
+
+                // ensure that table can be appended to after failed attempt to add column
+                try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                    ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
+                    writer.commit();
+                    Assert.assertEquals(N * 2, writer.size());
+                }
+
+                // truncate table and attempt to add column to now empty table
+                try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                    writer.truncate();
+                    Assert.assertEquals(0, writer.size());
+                }
+
+                TableUtils.addColumn(ff, root, PRODUCT, "xyz", ColumnType.STRING);
+
+                // append table including new column
+                // the catch here is .top file would have been needed when column wasn't empty
+                // and it isn't needed when table is blank.
+                // if .top file is left behind it may interfere with append operation
+                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row r = writer.newRow(ts += 60L * 60000);
+                        r.putInt(0, rnd.nextPositiveInt());
+                        r.putStr(1, rnd.nextString(7));
+                        r.putStr(2, rnd.nextString(4));
+                        r.putStr(3, rnd.nextString(11));
+                        r.putDouble(4, rnd.nextDouble());
+                        r.putStr(6, rnd.nextString(10));
+                        r.append();
+                    }
+                    writer.commit();
+                    Assert.assertEquals(N, writer.size());
+                }
+
+
+            } finally {
+                TableUtils.freeThreadLocals();
+            }
+        });
+    }
+
     private void testAddColumnRecoverableFault(FilesFacade ff) throws NumericException {
         long ts = populateTable(FF);
         long mem = Unsafe.getMemUsed();
         Rnd rnd = new Rnd();
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
             Assert.assertEquals(12, writer.columns.size());
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60000);
-            }
+            ts = populateProducts(writer, rnd, ts, 10000, 60000);
             writer.commit();
             try {
                 writer.addColumn("abc", ColumnType.STRING);
@@ -2048,24 +2266,90 @@ public class TableWriterTest extends AbstractOptimiserTest {
             }
 
             // ignore error and add more rows
-
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60000);
-            }
+            ts = populateProducts(writer, rnd, ts, 10000, 60000);
             writer.commit();
             Assert.assertEquals(30000, writer.size());
         }
 
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60000);
-            }
+            populateProducts(writer, rnd, ts, 10000, 60000);
             writer.commit();
             Assert.assertEquals(40000, writer.size());
         }
 
         Assert.assertEquals(mem, Unsafe.getMemUsed());
         Assert.assertEquals(0, Files.getOpenFileCount());
+    }
+
+    private void testAddColumnStaticFailMetaOpen(int partitionBy, int count) throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+
+            int count = 1;
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --count == 0) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        testAddColumnFailAndOpenWriter(ff, partitionBy, count);
+    }
+
+    private void testAddColumnStaticFailSwapRemove(int partitionBy, int count) throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            int count = 1;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                return Chars.endsWith(path, TableUtils.META_SWAP_FILE_NAME) && --count == 0 || super.exists(path);
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                return !Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME) || count != 0 && super.remove(name);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --count == 0) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        testAddColumnFailAndOpenWriter(ff, partitionBy, count);
+    }
+
+    private void testAddColumnStaticFailSwapRename(int partitionBy, int count) throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            int count = 1;
+
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME)) {
+                    if (count-- > 0) {
+                        return false;
+                    }
+                }
+                return super.rename(from, to);
+            }
+        };
+        testAddColumnFailAndOpenWriter(ff, partitionBy, count);
+    }
+
+    private void testAddColumnStaticFailTopFile(int partitionBy, int count) throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long openAppend(LPSZ name) {
+                if (Chars.endsWith(name, ".top")) {
+                    return -1;
+                }
+                return super.openAppend(name);
+            }
+        };
+        testAddColumnFailAndOpenWriter(ff, partitionBy, count);
     }
 
     private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts) throws NumericException {
@@ -2311,16 +2595,12 @@ public class TableWriterTest extends AbstractOptimiserTest {
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
         Rnd rnd = new Rnd();
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            ts = populateProducts(writer, rnd, ts, 10000, 60 * 60000);
             writer.commit();
 
             long timestampAfterCommit = ts;
 
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, rnd, ts, 10000, 60 * 60000);
 
             Assert.assertEquals(20000, writer.size());
             writer.rollback();
@@ -2334,9 +2614,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
             writer.newRow(ts).cancel();
 
             // we should be able to repeat timestamps
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-            }
+            populateProducts(writer, rnd, ts, 10000, 60 * 60000);
             writer.commit();
 
             Assert.assertEquals(20000, writer.size());
@@ -2378,58 +2656,52 @@ public class TableWriterTest extends AbstractOptimiserTest {
         Assert.assertEquals(0, ff.getOpenFileCount());
     }
 
-    private void testTruncate(CountingFilesFacade ff, boolean retry) throws NumericException {
-        long used = Unsafe.getMemUsed();
-        create(ff, PartitionBy.DAY);
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+    private void testTruncate(CountingFilesFacade ff, boolean retry) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(ff, PartitionBy.DAY);
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
 
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-            for (int k = 0; k < 3; k++) {
-                for (int i = 0; i < 2000; i++) {
-                    ts = populateRow(writer, ts, rnd, 60 * 60000);
+                for (int k = 0; k < 3; k++) {
+                    ts = populateProducts(writer, rnd, ts, 200, 60 * 60000);
+                    writer.commit();
+                    Assert.assertEquals(200, writer.size());
+
+                    // this truncate will fail quite early and will leave
+                    // table in inconsistent state to recover from which
+                    // truncate has to be repeated
+                    try {
+                        ff.count = 3;
+                        writer.truncate();
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        LOG.info().$((Sinkable) e).$();
+                    }
+
+                    if (retry) {
+                        // retry
+                        writer.truncate();
+                    } else {
+                        break;
+                    }
                 }
+            }
+
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2014-03-04T00:00:00.000Z");
+                Assert.assertEquals(0, writer.size());
+                populateProducts(writer, rnd, ts, 1000, 60 * 60000);
                 writer.commit();
-                Assert.assertEquals(2000, writer.size());
-
-                // this truncate will fail quite early and will leave
-                // table in inconsistent state to recover from which
-                // truncate has to be repeated
-                try {
-                    ff.count = 3;
-                    writer.truncate();
-                    Assert.fail();
-                } catch (CairoException e) {
-                    LOG.info().$((Sinkable) e).$();
-                }
-
-                if (retry) {
-                    // retry
-                    writer.truncate();
-                } else {
-                    break;
-                }
+                Assert.assertEquals(1000, writer.size());
             }
-        }
 
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            long ts = DateFormatUtils.parseDateTime("2014-03-04T00:00:00.000Z");
-            Assert.assertEquals(0, writer.size());
-            for (int i = 0; i < 1000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
+            // open writer one more time and just assert the size
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                Assert.assertEquals(1000, writer.size());
             }
-            writer.commit();
-            Assert.assertEquals(1000, writer.size());
-        }
-
-        // open writer one more time and just assert the size
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            Assert.assertEquals(1000, writer.size());
-        }
-
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, ff.getOpenFileCount());
+        });
     }
 
     private void testTruncateRecoverableFailure(FilesFacade ff) throws NumericException {
@@ -2437,9 +2709,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         Rnd rnd = new Rnd();
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            for (int i = 0; i < 1000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 6000);
-            }
+            ts = populateProducts(writer, rnd, ts, 1000, 60 * 60000);
             writer.commit();
 
             try {
@@ -2451,9 +2721,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         }
 
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            for (int i = 0; i < 1000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 6000);
-            }
+            populateProducts(writer, rnd, ts, 1000, 60 * 60000);
             writer.commit();
             Assert.assertEquals(2000, writer.size());
         }
@@ -2464,9 +2732,7 @@ public class TableWriterTest extends AbstractOptimiserTest {
         long mem = Unsafe.getMemUsed();
         Rnd rnd = new Rnd();
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            for (int i = 0; i < 10000; i++) {
-                ts = populateRow(writer, ts, rnd, 60000);
-            }
+            ts = populateProducts(writer, rnd, ts, 10000, 60000);
             writer.commit();
 
             Assert.assertEquals(12, writer.columns.size());
