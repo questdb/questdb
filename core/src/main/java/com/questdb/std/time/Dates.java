@@ -518,6 +518,8 @@ final public class Dates {
                         p += 2;
                         state = STATE_END;
                         break OUT;
+                    default:
+                        throw new IllegalStateException("Unexpected state");
                 }
             }
         } catch (NumericException e) {

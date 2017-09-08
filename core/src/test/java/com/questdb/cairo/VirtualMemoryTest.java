@@ -81,7 +81,7 @@ public class VirtualMemoryTest {
                 long address = mem.addressOf(offset);
                 offset += len;
                 while (len > 0 & i < N) {
-                    Assert.assertEquals(i++, Unsafe.getUnsafe().getShort(address));
+                    assertEquals(i++, Unsafe.getUnsafe().getShort(address));
                     address += 2;
                     len -= 2;
                 }
@@ -101,7 +101,7 @@ public class VirtualMemoryTest {
 
             long o = 0;
             for (int i = 0; i < n; i++) {
-                Assert.assertEquals(i, mem.getByte(o++));
+                assertEquals(i, mem.getByte(o++));
             }
         }
     }
@@ -118,13 +118,13 @@ public class VirtualMemoryTest {
                 mem.putDouble(rnd.nextDouble());
             }
 
-            Assert.assertEquals(7993, mem.getAppendOffset());
+            assertEquals(7993, mem.getAppendOffset());
 
             rnd = new Rnd();
             long o = 1;
-            Assert.assertEquals(1, mem.getByte(0));
+            assertEquals(1, mem.getByte(0));
             for (int i = 0; i < n; i++) {
-                Assert.assertEquals(rnd.nextDouble(), mem.getDouble(o), 0.00001);
+                assertEquals(rnd.nextDouble(), mem.getDouble(o), 0.00001);
                 o += 8;
             }
         }
@@ -135,8 +135,8 @@ public class VirtualMemoryTest {
         try (VirtualMemory mem = new VirtualMemory(64)) {
             mem.putDouble(8980980284.22234);
             mem.putDoubleBytes(8979283749.72983477);
-            Assert.assertEquals(8980980284.22234, mem.getDoubleBytes(0, 0), 0.00001);
-            Assert.assertEquals(8979283749.72983477, mem.getDouble(8), 0.00001);
+            assertEquals(8980980284.22234, mem.getDoubleBytes(0, 0), 0.00001);
+            assertEquals(8979283749.72983477, mem.getDouble(8), 0.00001);
         }
     }
 
@@ -161,9 +161,9 @@ public class VirtualMemoryTest {
 
             rnd = new Rnd();
             long o = 1;
-            Assert.assertEquals(1, mem.getByte(0));
+            assertEquals(1, mem.getByte(0));
             for (int i = 0; i < n; i++) {
-                Assert.assertEquals(rnd.nextFloat(), mem.getFloat(o), 0.00001f);
+                assertEquals(rnd.nextFloat(), mem.getFloat(o), 0.00001f);
                 o += 4;
             }
         }
@@ -174,8 +174,8 @@ public class VirtualMemoryTest {
         try (VirtualMemory mem = new VirtualMemory(64)) {
             mem.putFloat(1024f);
             mem.putFloatBytes(2048f);
-            Assert.assertEquals(1024f, mem.getFloatBytes(0, 0), 0.00001f);
-            Assert.assertEquals(2048f, mem.getFloat(4), 0.0001f);
+            assertEquals(1024f, mem.getFloatBytes(0, 0), 0.00001f);
+            assertEquals(2048f, mem.getFloat(4), 0.0001f);
         }
     }
 
@@ -203,8 +203,8 @@ public class VirtualMemoryTest {
         try (VirtualMemory mem = new VirtualMemory(64)) {
             mem.putInt(1024);
             mem.putIntBytes(2048);
-            Assert.assertEquals(1024, mem.getIntBytes(0, 0));
-            Assert.assertEquals(2048, mem.getInt(4));
+            assertEquals(1024, mem.getIntBytes(0, 0));
+            assertEquals(2048, mem.getInt(4));
         }
     }
 
@@ -300,8 +300,8 @@ public class VirtualMemoryTest {
         try (VirtualMemory mem = new VirtualMemory(64)) {
             mem.putLong(8980980284302834L);
             mem.putLongBytes(897928374972983477L);
-            Assert.assertEquals(8980980284302834L, mem.getLongBytes(0, 0));
-            Assert.assertEquals(897928374972983477L, mem.getLong(8));
+            assertEquals(8980980284302834L, mem.getLongBytes(0, 0));
+            assertEquals(897928374972983477L, mem.getLong(8));
         }
     }
 
@@ -354,7 +354,7 @@ public class VirtualMemoryTest {
             Assert.assertNull(mem.getBin(8));
             BinarySequence bsview = mem.getBin(16);
             Assert.assertNotNull(bsview);
-            Assert.assertEquals(0, bsview.length());
+            assertEquals(0, bsview.length());
             Assert.assertNull(mem.getBin(o1));
         }
     }
@@ -397,8 +397,8 @@ public class VirtualMemoryTest {
         try (VirtualMemory mem = new VirtualMemory(64)) {
             mem.putShort((short) 1024);
             mem.putShortBytes((short) 2048);
-            Assert.assertEquals(1024, mem.getShortBytes(0, 0));
-            Assert.assertEquals(2048, mem.getShort(2));
+            assertEquals(1024, mem.getShortBytes(0, 0));
+            assertEquals(2048, mem.getShort(2));
         }
     }
 
@@ -419,7 +419,7 @@ public class VirtualMemoryTest {
                 assertEquals(i, mem.getLong(o));
                 o += 11;
             }
-            Assert.assertEquals(10990, mem.getAppendOffset());
+            assertEquals(10990, mem.getAppendOffset());
         }
     }
 
@@ -439,9 +439,9 @@ public class VirtualMemoryTest {
 
     @Test
     public void testStringStorageDimensions() throws Exception {
-        Assert.assertEquals(10, VirtualMemory.getStorageLength("xyz"));
-        Assert.assertEquals(4, VirtualMemory.getStorageLength(""));
-        Assert.assertEquals(4, VirtualMemory.getStorageLength(null));
+        assertEquals(10, VirtualMemory.getStorageLength("xyz"));
+        assertEquals(4, VirtualMemory.getStorageLength(""));
+        assertEquals(4, VirtualMemory.getStorageLength(null));
     }
 
     private void assertBuf(ByteBuffer buf, int pageSize) {
@@ -457,7 +457,7 @@ public class VirtualMemoryTest {
                 buf.flip();
 
                 mem.putBin(buf);
-                Assert.assertEquals(0, buf.remaining());
+                assertEquals(0, buf.remaining());
                 buf.clear();
             }
 
@@ -468,12 +468,12 @@ public class VirtualMemoryTest {
                 long sz = rnd.nextPositiveInt() % buf.capacity();
                 BinarySequence bsview = mem.getBin(o);
                 Assert.assertNotNull(bsview);
-                Assert.assertEquals(sz, bsview.length());
+                assertEquals(sz, bsview.length());
 
                 o += sz + 8;
 
                 for (long j = 0; j < sz; j++) {
-                    Assert.assertEquals(rnd.nextByte(), bsview.byteAt(j));
+                    assertEquals(rnd.nextByte(), bsview.byteAt(j));
                 }
             }
         }
@@ -530,7 +530,7 @@ public class VirtualMemoryTest {
                 buf.flip();
 
                 mem.putBin(buf);
-                Assert.assertEquals(0, buf.remaining());
+                assertEquals(0, buf.remaining());
                 buf.clear();
             }
 
@@ -559,7 +559,7 @@ public class VirtualMemoryTest {
                         o += 8;
                     } else {
                         Assert.assertNotNull(sequence2);
-                        Assert.assertEquals(sequence1.length(), sequence2.length());
+                        assertEquals(sequence1.length(), sequence2.length());
                         for (long l = 0, len = sequence1.length(); l < len; l++) {
                             Assert.assertTrue(sequence1.byteAt(l) == sequence2.byteAt(l));
                         }

@@ -58,16 +58,7 @@ public final class Chars {
                 return k;
             }
         }
-
-        if (ll < rl) {
-            return -1;
-        }
-
-        if (ll > rl) {
-            return 1;
-        }
-
-        return 0;
+        return Integer.compare(ll, rl);
     }
 
     public static boolean contains(CharSequence _this, CharSequence that) {
@@ -325,6 +316,8 @@ public final class Chars {
                         lastIndex = i;
                     }
                     lastLen++;
+                    break;
+
             }
         }
 

@@ -864,10 +864,8 @@ public class TableWriter implements Closeable {
     private void removeMetaFile() {
         try {
             path.concat(TableUtils.META_FILE_NAME).$();
-            if (ff.exists(path)) {
-                if (!ff.remove(path)) {
-                    throw CairoException.instance(Os.errno()).put("Recovery failed. Cannot remove: ").put(path);
-                }
+            if (ff.exists(path) && !ff.remove(path)) {
+                throw CairoException.instance(Os.errno()).put("Recovery failed. Cannot remove: ").put(path);
             }
         } finally {
             path.trimTo(rootLen);

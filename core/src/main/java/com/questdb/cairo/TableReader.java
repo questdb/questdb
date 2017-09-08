@@ -471,14 +471,12 @@ public class TableReader implements Closeable, RecordCursor {
                 partitionIndex++;
             }
 
-            if (partitionSize == 0) {
-                continue;
+            if (partitionSize != 0) {
+                record.maxRecordIndex = partitionSize - 1;
+                record.recordIndex = -1;
+                record.columnBase = columnBase;
+                return true;
             }
-
-            record.maxRecordIndex = partitionSize - 1;
-            record.recordIndex = -1;
-            record.columnBase = columnBase;
-            return true;
         }
         return false;
     }

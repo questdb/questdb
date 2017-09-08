@@ -1057,6 +1057,7 @@ public class DateFormatCompiler {
                         asm.invokeStatic(assertStringIndex);
                         asm.istore(LOCAL_POS);
                     }
+                    break;
             }
         }
 

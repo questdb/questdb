@@ -215,10 +215,8 @@ public class CairoMemoryTest {
             @Override
             public long openRW(LPSZ name) {
                 int n = name.length();
-                if (n > 5) {
-                    if (Chars.equals(".fail", name, n - 5, n)) {
-                        return -1;
-                    }
+                if (n > 5 && Chars.equals(".fail", name, n - 5, n)) {
+                    return -1;
                 }
                 return super.openRW(name);
             }
@@ -477,7 +475,6 @@ public class CairoMemoryTest {
         }
 
         int writeFailureCount = 0;
-        int readFailureCount = 0;
 
         final X ff = new X();
 
