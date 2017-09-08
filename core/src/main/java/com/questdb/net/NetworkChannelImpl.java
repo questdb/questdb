@@ -72,6 +72,18 @@ public class NetworkChannelImpl implements NetworkChannel {
         if (read > 0) {
             dst.position(p + read);
         }
+
+        if (read == 0) {
+            // When running server and client on the same host without correct CPU pinning
+            // it appears server is interacting with network socket to aggressively and
+            // could starve client from CPU resource. This can result in silly situation
+            // where epoll releases file descriptor with nothing to read from it and
+            // EWOULDBLOCK flag set, which causes server to retry descriptor infinitely.
+            // To alleviate CPU contention server will simply yield CPU to client whenever
+            // there is 0 bytes to read.
+            Thread.yield();
+        }
+
         return read;
     }
 
