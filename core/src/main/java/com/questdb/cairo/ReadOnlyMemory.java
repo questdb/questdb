@@ -29,7 +29,7 @@ import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacade;
 import com.questdb.std.str.LPSZ;
 
-public class ReadOnlyMemory extends VirtualMemory {
+public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     private static final Log LOG = LogFactory.getLog(ReadOnlyMemory.class);
     private FilesFacade ff;
     private long fd = -1;

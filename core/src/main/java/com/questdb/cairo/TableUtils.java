@@ -172,7 +172,7 @@ public class TableUtils {
         path.of(root).concat(name).$();
         if (ff.exists(path)) {
             // prepare to replace trailing \0
-            if (ff.exists(path.trimTo(path.length()).concat(TXN_FILE_NAME).$())) {
+            if (ff.exists(path.chopZ().concat(TXN_FILE_NAME).$())) {
                 return 0;
             } else {
                 return 2;
@@ -310,8 +310,7 @@ public class TableUtils {
      */
     static long readColumnTop(FilesFacade ff, CompositePath path, CharSequence name, int plen, long buf) {
         try {
-            path.trimTo(path.length());
-            if (ff.exists(topFile(path, name))) {
+            if (ff.exists(topFile(path.chopZ(), name))) {
                 long fd = ff.openRO(path);
                 try {
                     if (ff.read(fd, buf, 8, 0) != 8) {

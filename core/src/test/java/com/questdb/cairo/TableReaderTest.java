@@ -538,6 +538,7 @@ public class TableReaderTest extends AbstractOptimiserTest {
 
                         // make sure reload works
                         Assert.assertTrue(reader.reload());
+                        reader.reloadStruct();
 
                         // two-step assert checks 3/4 rows ignoring new column
                         // todo: here check that new column is null

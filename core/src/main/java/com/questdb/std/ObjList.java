@@ -220,21 +220,6 @@ public class ObjList<T> implements Mutable, Sinkable {
         Arrays.fill(buffer, value);
     }
 
-// --Commented out by Inspection START (15/05/2016, 01:08):
-//    public void seed(int capacity, ObjectFactory<T> factory) {
-//        ensureCapacity0(capacity);
-//        pos = capacity;
-//        for (int i = 0; i < capacity; i++) {
-//            T o = Unsafe.arrayGet(buffer, i);
-//            if (o == null) {
-//                Unsafe.arrayPut(buffer, i, factory.newInstance());
-//            } else if (o instanceof Mutable) {
-//                ((Mutable) o).clear();
-//            }
-//        }
-//    }
-// --Commented out by Inspection STOP (15/05/2016, 01:08)
-
     public void setPos(int capacity) {
         ensureCapacity0(capacity);
         pos = capacity;

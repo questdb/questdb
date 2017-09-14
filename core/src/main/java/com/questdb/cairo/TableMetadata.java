@@ -3,7 +3,6 @@ package com.questdb.cairo;
 import com.questdb.factory.configuration.AbstractRecordMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.FilesFacade;
-import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
@@ -46,19 +45,26 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         if (address == 0) {
             return;
         }
-        Unsafe.free(address, Unsafe.getUnsafe().getInt(address) * 16);
+        Unsafe.free(address, Unsafe.getUnsafe().getInt(address));
     }
 
-    public static <T> void shuffle(long address, Shuffler<T> shuffler, Factory<T> factory) {
-        final int n = Unsafe.getUnsafe().getInt(address);
-        final int columnCount = Unsafe.getUnsafe().getInt(address + 4);
-        final long index = address + 8;
-        final long stateAddress = index + columnCount * 8;
+    public void applyTransitionIndex(long index) {
+        // re-open _meta file
+        this.metaMem.of(ff, path, ff.getPageSize());
+
+        final int columnCount = Unsafe.getUnsafe().getInt(index + 4);
+        final long index1 = index + 8;
+        final long stateAddress = index1 + columnCount * 8;
+
+        if (columnCount > this.columnCount) {
+            columnMetadata.setPos(columnCount);
+            this.columnCount = columnCount;
+        }
 
         Unsafe.getUnsafe().setMemory(stateAddress, columnCount, (byte) 0);
 
         // this is a silly exercise in walking the index
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < columnCount; i++) {
 
             if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
                 continue;
@@ -66,38 +72,35 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
 
             Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
 
-            final int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8);
+            final int copyFrom = Unsafe.getUnsafe().getInt(index1 + i * 8);
 
             if (copyFrom == i + 1) {
                 continue;
             }
 
             if (copyFrom > 0) {
-                T tmp = shuffler.move(copyFrom - 1, null);
-                shuffler.move(i, tmp);
+                TableColumnMetadata tmp = moveMetadata(copyFrom - 1, null);
+                tmp = moveMetadata(i, tmp);
 
-                int copyTo = Unsafe.getUnsafe().getInt(index + i * 8 + 4);
+                int copyTo = Unsafe.getUnsafe().getInt(index1 + i * 8 + 4);
                 while (copyTo > 0) {
                     if (Unsafe.getUnsafe().getByte(stateAddress + copyTo - 1) == -1) {
                         break;
                     }
                     Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
-                    tmp = shuffler.move(copyTo - 1, tmp);
-                    copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8 + 4);
+                    tmp = moveMetadata(copyTo - 1, tmp);
+                    copyTo = Unsafe.getUnsafe().getInt(index1 + (copyTo - 1) * 8 + 4);
                 }
-                Misc.free(tmp);
             } else {
                 // new instance
-                shuffler.move(i, factory.newInstance(i));
+                moveMetadata(i, newInstance(i, columnCount));
             }
         }
-    }
 
-    public void applyTransitionIndex(long index) {
-        // re-open _meta file
-        this.metaMem.of(ff, path, ff.getPageSize());
-        this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-        shuffle(index, this::moveMetadata, this::newInstance);
+        if (columnCount < this.columnCount) {
+            columnMetadata.setPos(columnCount);
+            this.columnCount = columnCount;
+        }
     }
 
     @Override
@@ -116,8 +119,14 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int n = Math.max(this.columnCount, columnCount);
             final long address;
-            long index = address = Unsafe.malloc(n * 16);
-            Unsafe.getUnsafe().putInt(index, n);
+            final int size = n * 16;
+            if (size < 0) {
+                throw CairoException.instance(0).put("Cannot create transition index for '").put(path).put("'. Too many columns");
+            }
+
+            long index = address = Unsafe.malloc(size);
+            Unsafe.getUnsafe().setMemory(address, size, (byte) 0);
+            Unsafe.getUnsafe().putInt(index, size);
             Unsafe.getUnsafe().putInt(index + 4, columnCount);
             index += 8;
 
@@ -177,37 +186,24 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         return columnMetadata.getAndSetQuick(index, metadata);
     }
 
-    private TableColumnMetadata newInstance(int index) {
-        if (index < columnCount) {
-            long offset = TableUtils.getColumnNameOffset(columnCount);
-            CharSequence name = null;
-            for (int i = 0; i <= index; i++) {
-                name = metaMem.getStr(offset);
-                offset += ReadOnlyMemory.getStorageLength(name);
-            }
-
-            if (name == null) {
-                throw CairoException.instance(0).put("Got NULL column name while looking for column index ").put(index).put(" in file [").put(metaMem.getFd()).put(']');
-            }
-
-            int type = TableUtils.getColumnType(metaMem, index);
-
-            if (ColumnType.sizeOf(type) == -1) {
-                throw CairoException.instance(0).put("Unrecognized column type for index ").put(index).put(" in file [").put(metaMem.getFd()).put(']');
-            }
-            return new TableColumnMetadata(name.toString(), type);
+    private TableColumnMetadata newInstance(int index, int columnCount) {
+        long offset = TableUtils.getColumnNameOffset(columnCount);
+        CharSequence name = null;
+        for (int i = 0; i <= index; i++) {
+            name = metaMem.getStr(offset);
+            offset += ReadOnlyMemory.getStorageLength(name);
         }
 
-        throw CairoException.instance(0).put("Column index is beyond column count. [").put(index).put(">=").put(columnCount).put("] in file [").put(metaMem.getFd()).put(']');
+        if (name == null) {
+            throw CairoException.instance(0).put("Got NULL column name while looking for column index ").put(index).put(" in file [").put(metaMem.getFd()).put(']');
+        }
+
+        int type = TableUtils.getColumnType(metaMem, index);
+
+        if (ColumnType.sizeOf(type) == -1) {
+            throw CairoException.instance(0).put("Unrecognized column type for index ").put(index).put(" in file [").put(metaMem.getFd()).put(']');
+        }
+        return new TableColumnMetadata(name.toString(), type);
     }
 
-    @FunctionalInterface
-    public interface Shuffler<T> {
-        T move(int index, T item);
-    }
-
-    @FunctionalInterface
-    public interface Factory<T> {
-        T newInstance(int index);
-    }
 }

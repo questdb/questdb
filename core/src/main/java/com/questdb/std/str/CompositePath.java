@@ -56,6 +56,16 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         return ptr;
     }
 
+    /**
+     * Removes trailing zero from path to allow reuse of path as parent.
+     *
+     * @return instance of this
+     */
+    public CompositePath chopZ() {
+        trimTo(this.length());
+        return this;
+    }
+
     @Override
     public void close() {
         if (ptr != 0) {
