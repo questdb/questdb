@@ -71,6 +71,13 @@ public final class TestUtils {
     private TestUtils() {
     }
 
+    public static void assertContains(CharSequence _this, CharSequence that) {
+        if (Chars.contains(_this, that)) {
+            return;
+        }
+        Assert.fail("\'" + _this.toString() + "\' does not contain: " + that);
+    }
+
     public static void assertCounter(AtomicInteger counter, int value, long timeout, TimeUnit unit) {
         long t = System.currentTimeMillis();
         while (counter.get() < value && (System.currentTimeMillis() - t) < unit.toMillis(timeout)) {

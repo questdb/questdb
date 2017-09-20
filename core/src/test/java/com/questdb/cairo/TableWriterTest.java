@@ -29,7 +29,6 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
-import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.std.Sinkable;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
@@ -38,31 +37,16 @@ import com.questdb.std.str.Path;
 import com.questdb.std.time.*;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
-import org.junit.After;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class TableWriterTest extends AbstractOptimiserTest {
+public class TableWriterTest extends AbstractCairoTest {
 
     public static final String PRODUCT = "product";
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
-    private static CharSequence root;
-
-    @BeforeClass
-    public static void setUp() throws Exception {
-        root = FACTORY_CONTAINER.getConfiguration().getJournalBase().getAbsolutePath();
-    }
-
-    @After
-    public void tearDown0() throws Exception {
-        try (CompositePath path = new CompositePath().of(root)) {
-            Files.rmdir(path.$());
-        }
-    }
 
     @Test
     public void tesFrequentCommit() throws Exception {

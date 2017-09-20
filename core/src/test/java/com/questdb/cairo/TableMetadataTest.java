@@ -2,35 +2,21 @@ package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacadeImpl;
-import com.questdb.ql.parser.AbstractOptimiserTest;
+import com.questdb.std.ObjIntHashMap;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.StringSink;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
-public class TableMetadataTest extends AbstractOptimiserTest {
-    private static CharSequence root;
-
-    @BeforeClass
-    public static void setUp() throws Exception {
-        root = FACTORY_CONTAINER.getConfiguration().getJournalBase().getAbsolutePath();
-    }
+public class TableMetadataTest extends AbstractCairoTest {
 
     @Before
     public void setUp2() throws Exception {
         CairoTestUtils.createAllTable(root, PartitionBy.DAY);
-    }
-
-    @Override
-    @After
-    public void tearDown() throws Exception {
-        super.tearDown();
-        try (CompositePath path = new CompositePath().of(root).concat("all").$()) {
-            Files.rmdir(path);
-        }
     }
 
     @Test
@@ -48,6 +34,29 @@ public class TableMetadataTest extends AbstractOptimiserTest {
                 "date:DATE\n" +
                 "xyz:STRING\n";
         assertThat(expected, (w) -> w.addColumn("xyz", ColumnType.STRING), 12);
+    }
+
+    @Test
+    public void testColumnIndex() throws Exception {
+        ObjIntHashMap<String> expected = new ObjIntHashMap<>();
+        expected.put("int", 0);
+        expected.put("byte", 2);
+        expected.put("bin", 9);
+        expected.put("short", 1);
+        expected.put("float", 4);
+        expected.put("long", 5);
+        expected.put("xyz", -1);
+        expected.put("str", 6);
+        expected.put("double", 3);
+        expected.put("sym", 7);
+        expected.put("bool", 8);
+
+        try (CompositePath path = new CompositePath().of(root).concat("all").concat(TableUtils.META_FILE_NAME).$();
+             TableMetadata metadata = new TableMetadata(FilesFacadeImpl.INSTANCE, path)) {
+            for (ObjIntHashMap.Entry<String> e : expected) {
+                Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
+            }
+        }
     }
 
     @Test
@@ -105,6 +114,11 @@ public class TableMetadataTest extends AbstractOptimiserTest {
             w.removeColumn("str");
             w.addColumn("str", ColumnType.STRING);
         }, 11);
+    }
+
+    @Test
+    public void testFreeNullAddressAsIndex() throws Exception {
+        TableMetadata.freeTransitionIndex(0);
     }
 
     @Test
@@ -173,6 +187,29 @@ public class TableMetadataTest extends AbstractOptimiserTest {
     }
 
     @Test
+    public void testRemoveColumnAndReAdd() throws Exception {
+        final String expected = "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n" +
+                "sym:SYMBOL\n" +
+                "bool:BOOLEAN\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n" +
+                "str:STRING\n" +
+                "short:INT\n";
+
+        assertThat(expected, (w) -> {
+            w.removeColumn("short");
+            w.removeColumn("str");
+            w.removeColumn("int");
+            w.addColumn("str", ColumnType.STRING);
+            // change column type
+            w.addColumn("short", ColumnType.INT);
+        }, 10);
+    }
+
+    @Test
     public void testRemoveSparseColumns() throws Exception {
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
@@ -223,8 +260,7 @@ public class TableMetadataTest extends AbstractOptimiserTest {
     }
 
     @FunctionalInterface
-    private interface ColumnManipulator {
+    public interface ColumnManipulator {
         void restructure(TableWriter writer);
     }
-
 }

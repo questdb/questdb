@@ -120,14 +120,20 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         long address;
         long offset = pageOffset(page);
         long sz = size - offset;
-        if (sz > pageSize) {
-            sz = pageSize;
+
+        if (sz > 0) {
+            if (sz > pageSize) {
+                sz = pageSize;
+            } else {
+                this.lastPageSize = sz;
+            }
+
+            address = ff.mmap(fd, sz, offset, Files.MAP_RO);
         } else {
-            this.lastPageSize = sz;
+            address = -1L;
         }
 
-        address = ff.mmap(fd, sz, offset, Files.MAP_RO);
-        if (address == -1) {
+        if (address == -1L) {
             throw CairoException.instance(ff.errno()).put("Cannot mmap(read) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(sz);
         }
         cachePageAddress(page, address);

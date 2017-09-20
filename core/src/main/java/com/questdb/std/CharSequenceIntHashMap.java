@@ -70,6 +70,10 @@ public class CharSequenceIntHashMap implements Mutable {
         free = this.capacity;
     }
 
+    public CharSequence entryKey(int index) {
+        return Unsafe.arrayGet(keys, index);
+    }
+
     public int get(CharSequence key) {
         int index = Chars.hashCode(key) & mask;
 
@@ -82,6 +86,20 @@ public class CharSequenceIntHashMap implements Mutable {
         }
 
         return probe(key, index);
+    }
+
+    public int getEntry(CharSequence key) {
+        int index = Chars.hashCode(key) & mask;
+
+        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+            return noEntryValue;
+        }
+
+        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+            return index;
+        }
+
+        return probeEntry(key, index);
     }
 
     public void increment(CharSequence key) {
@@ -163,6 +181,18 @@ public class CharSequenceIntHashMap implements Mutable {
         } while (true);
     }
 
+    private int probeEntry(CharSequence key, int index) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+                return noEntryValue;
+            }
+            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+                return index;
+            }
+        } while (true);
+    }
+
     private void probeIncrement(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
@@ -209,7 +239,6 @@ public class CharSequenceIntHashMap implements Mutable {
     }
 
     private void rehash() {
-
         int newCapacity = values.length << 1;
         mask = newCapacity - 1;
         free = capacity = (int) (newCapacity * loadFactor);
@@ -226,5 +255,4 @@ public class CharSequenceIntHashMap implements Mutable {
             }
         }
     }
-
 }

@@ -4,41 +4,24 @@ import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.*;
 import com.questdb.ql.Record;
-import com.questdb.ql.parser.AbstractOptimiserTest;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.LongList;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
-import org.junit.After;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.IOException;
 
-public class TableReaderTest extends AbstractOptimiserTest {
+public class TableReaderTest extends AbstractCairoTest {
     public static final int MUST_SWITCH = 1;
     public static final int MUST_NOT_SWITCH = 2;
     public static final int DONT_CARE = 0;
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final int blobLen = 64 * 1024;
-    private static CharSequence root;
-
-    @BeforeClass
-    public static void setUp() throws Exception {
-        root = FACTORY_CONTAINER.getConfiguration().getJournalBase().getAbsolutePath();
-    }
-
-    @After
-    public void tearDown0() throws Exception {
-        try (CompositePath path = new CompositePath().of(root)) {
-            Files.rmdir(path.$());
-        }
-    }
 
     @Test
     public void testReadByDay() throws Exception {
@@ -469,9 +452,9 @@ public class TableReaderTest extends AbstractOptimiserTest {
         writer.commit();
 
         if (testPartitionSwitch == MUST_SWITCH) {
-            Assert.assertFalse(TableUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+            Assert.assertFalse(CairoTestUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
         } else if (testPartitionSwitch == MUST_NOT_SWITCH) {
-            Assert.assertTrue(TableUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+            Assert.assertTrue(CairoTestUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
         }
 
         Assert.assertEquals(size + count, writer.size());

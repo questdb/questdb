@@ -30,7 +30,10 @@ import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.misc.*;
+import com.questdb.misc.ByteBuffers;
+import com.questdb.misc.Files;
+import com.questdb.misc.Rnd;
+import com.questdb.misc.Unsafe;
 import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.ql.parser.QueryError;
 import com.questdb.std.DirectInputStream;
@@ -1204,7 +1207,7 @@ public class DDLTests extends AbstractTest {
         try {
             exec("create table x (a INT, b BYTE, t DATE, x SYMBOL) partition by MONTH");
         } catch (ParserException e) {
-            Assert.assertTrue(Chars.contains(QueryError.getMessage(), "reserved"));
+            TestUtils.assertContains(QueryError.getMessage(), "reserved");
             Assert.assertEquals(13, QueryError.getPosition());
         }
     }

@@ -6,18 +6,20 @@ import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
+import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
 import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 
 class TableMetadata extends AbstractRecordMetadata implements Closeable {
+    private final static ThreadLocal<CharSequenceIntHashMap> tlColumnNameIndexMap = new ThreadLocal<>(CharSequenceIntHashMap::new);
     private final ObjList<TableColumnMetadata> columnMetadata;
-    private final CharSequenceIntHashMap columnNameHashTable;
-    private final int timestampIndex;
+    private final CharSequenceIntHashMap columnNameIndexMap = new CharSequenceIntHashMap();
     private final ReadOnlyMemory metaMem;
     private final CompositePath path;
     private final FilesFacade ff;
+    private int timestampIndex;
     private int columnCount;
     private ReadOnlyMemory transitionMeta;
 
@@ -25,19 +27,24 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         this.ff = ff;
         this.path = new CompositePath().of(path).$();
         this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize());
-        this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-        this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-        this.columnMetadata = new ObjList<>(columnCount);
-        this.columnNameHashTable = new CharSequenceIntHashMap(columnCount);
 
-        long offset = TableUtils.getColumnNameOffset(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            CharSequence name = metaMem.getStr(offset);
-            assert name != null;
-            String s = name.toString();
-            columnMetadata.add(new TableColumnMetadata(s, TableUtils.getColumnType(metaMem, i)));
-            columnNameHashTable.put(s, i);
-            offset += ReadOnlyMemory.getStorageLength(name);
+        try {
+            validate(ff, metaMem, this.columnNameIndexMap);
+            this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            this.columnMetadata = new ObjList<>(columnCount);
+            long offset = TableUtils.getColumnNameOffset(columnCount);
+
+            // don't create strings in this loop, we already have them in columnNameIndexMap
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence name = metaMem.getStr(offset);
+                int index = columnNameIndexMap.getEntry(name);
+                columnMetadata.add(new TableColumnMetadata(columnNameIndexMap.entryKey(index).toString(), TableUtils.getColumnType(metaMem, i)));
+                offset += ReadOnlyMemory.getStorageLength(name);
+            }
+        } catch (CairoException e) {
+            close();
+            throw e;
         }
     }
 
@@ -48,13 +55,69 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         Unsafe.free(address, Unsafe.getUnsafe().getInt(address));
     }
 
-    public void applyTransitionIndex(long index) {
+    public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
+        try {
+            final int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            final int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            long offset = TableUtils.getColumnNameOffset(columnCount);
+
+            if (offset < columnCount || (
+                    columnCount > 0 && (offset < 0 || offset >= ff.length(metaMem.getFd())))) {
+                throw ex(metaMem).put("Incorrect columnCount: ").put(columnCount);
+            }
+
+            if (timestampIndex < -1 || timestampIndex >= columnCount) {
+                throw ex(metaMem).put("Timestamp index is outside of columnCount");
+            }
+
+            if (timestampIndex != -1) {
+                int timestampType = TableUtils.getColumnType(metaMem, timestampIndex);
+                if (timestampType != ColumnType.DATE) {
+                    throw ex(metaMem).put("Timestamp column must by DATE but found ").put(ColumnType.nameOf(timestampType));
+                }
+            }
+
+            // validate column types
+            for (int i = 0; i < columnCount; i++) {
+                int type = TableUtils.getColumnType(metaMem, i);
+                if (ColumnType.sizeOf(type) == -1) {
+                    throw ex(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
+                }
+            }
+
+            // validate column names
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence name = metaMem.getStr(offset);
+                if (name == null || name.length() < 1) {
+                    throw ex(metaMem).put("NULL column name at [").put(i).put(']');
+                }
+
+                String s = name.toString();
+                if (!nameIndex.put(s, i)) {
+                    throw ex(metaMem).put("Duplicate column: ").put(s).put(" at [").put(i).put(']');
+                }
+                offset += ReadOnlyMemory.getStorageLength(name);
+            }
+        } catch (CairoException e) {
+            nameIndex.clear();
+            throw e;
+        }
+    }
+
+    public void applyTransitionIndex(long address) {
         // re-open _meta file
         this.metaMem.of(ff, path, ff.getPageSize());
 
-        final int columnCount = Unsafe.getUnsafe().getInt(index + 4);
-        final long index1 = index + 8;
-        final long stateAddress = index1 + columnCount * 8;
+        this.columnNameIndexMap.clear();
+
+        final int columnCount = Unsafe.getUnsafe().getInt(address + 4);
+        final long index = address + 8;
+        final long stateAddress = index + columnCount * 8;
+
+        // this also copies metadata entries exactly once
+        // the flag is there to monitor if we ever copy timestamp somewhere else
+        // after timestamp moves once - we no longer interested in tracking it
+        boolean timestampRequired = true;
 
         if (columnCount > this.columnCount) {
             columnMetadata.setPos(columnCount);
@@ -66,30 +129,61 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         // this is a silly exercise in walking the index
         for (int i = 0; i < columnCount; i++) {
 
+            // prevent writing same entry once
             if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
                 continue;
             }
 
             Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
 
-            final int copyFrom = Unsafe.getUnsafe().getInt(index1 + i * 8);
+            int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8);
 
+            // don't copy entries to themselves
             if (copyFrom == i + 1) {
                 continue;
             }
 
+            // check where we source entry:
+            // 1. from another entry
+            // 2. create new instance
             if (copyFrom > 0) {
                 TableColumnMetadata tmp = moveMetadata(copyFrom - 1, null);
                 tmp = moveMetadata(i, tmp);
 
-                int copyTo = Unsafe.getUnsafe().getInt(index1 + i * 8 + 4);
+                if (copyFrom - 1 == timestampIndex && timestampRequired) {
+                    timestampIndex = i;
+                    timestampRequired = false;
+                }
+
+                int copyTo = Unsafe.getUnsafe().getInt(index + i * 8 + 4);
+
+                // now we copied entry, what do we do with value that was already there?
+                // do we copy it somewhere else?
                 while (copyTo > 0) {
+
+                    // Yeah, we do. This can get recursive!
+
+                    // prevent writing same entry twice
                     if (Unsafe.getUnsafe().getByte(stateAddress + copyTo - 1) == -1) {
                         break;
                     }
                     Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
+
                     tmp = moveMetadata(copyTo - 1, tmp);
-                    copyTo = Unsafe.getUnsafe().getInt(index1 + (copyTo - 1) * 8 + 4);
+                    copyFrom = copyTo;
+                    copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8 + 4);
+
+                    if ((copyFrom - 1) == timestampIndex && timestampRequired) {
+                        timestampIndex = copyTo - 1;
+                        timestampRequired = false;
+                    }
+                }
+
+                // we have something left over?
+                // this means we are losing entry, better clear timestamp index
+                if (tmp != null && i == timestampIndex && timestampRequired) {
+                    timestampIndex = -1;
+                    timestampRequired = false;
                 }
             } else {
                 // new instance
@@ -97,7 +191,12 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
             }
         }
 
+        // ended up with fewer columns than before?
+        // good idea to resize array and may be drop timestamp index
         if (columnCount < this.columnCount) {
+            if (timestampIndex >= columnCount && timestampRequired) {
+                timestampIndex = -1;
+            }
             columnMetadata.setPos(columnCount);
             this.columnCount = columnCount;
         }
@@ -116,13 +215,13 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
 
         transitionMeta.of(ff, path, ff.getPageSize());
         try (ReadOnlyMemory metaMem = transitionMeta) {
+
+            validate(ff, metaMem);
+
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int n = Math.max(this.columnCount, columnCount);
             final long address;
             final int size = n * 16;
-            if (size < 0) {
-                throw CairoException.instance(0).put("Cannot create transition index for '").put(path).put("'. Too many columns");
-            }
 
             long index = address = Unsafe.malloc(size);
             Unsafe.getUnsafe().setMemory(address, size, (byte) 0);
@@ -145,9 +244,9 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(offset);
                 offset += ReadOnlyMemory.getStorageLength(name);
-                int oldPosition = columnNameHashTable.get(name);
+                int oldPosition = columnNameIndexMap.get(name);
                 // write primary (immutable) index
-                if (oldPosition > -1) {
+                if (oldPosition > -1 && TableUtils.getColumnType(metaMem, i) == TableUtils.getColumnType(this.metaMem, oldPosition)) {
                     Unsafe.getUnsafe().putInt(index + i * 8, oldPosition + 1);
                     Unsafe.getUnsafe().putInt(index + oldPosition * 8 + 4, i + 1);
                 } else {
@@ -165,7 +264,7 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
 
     @Override
     public int getColumnIndexQuiet(CharSequence name) {
-        return columnNameHashTable.get(name);
+        return columnNameIndexMap.get(name);
     }
 
     @Override
@@ -182,6 +281,16 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         return metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
     }
 
+    private static void validate(FilesFacade ff, ReadOnlyMemory metaMem) {
+        CharSequenceIntHashMap map = tlColumnNameIndexMap.get();
+        map.clear();
+        validate(ff, metaMem, map);
+    }
+
+    private static CairoException ex(ReadOnlyMemory mem) {
+        return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
+    }
+
     private TableColumnMetadata moveMetadata(int index, TableColumnMetadata metadata) {
         return columnMetadata.getAndSetQuick(index, metadata);
     }
@@ -193,17 +302,7 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
             name = metaMem.getStr(offset);
             offset += ReadOnlyMemory.getStorageLength(name);
         }
-
-        if (name == null) {
-            throw CairoException.instance(0).put("Got NULL column name while looking for column index ").put(index).put(" in file [").put(metaMem.getFd()).put(']');
-        }
-
-        int type = TableUtils.getColumnType(metaMem, index);
-
-        if (ColumnType.sizeOf(type) == -1) {
-            throw CairoException.instance(0).put("Unrecognized column type for index ").put(index).put(" in file [").put(metaMem.getFd()).put(']');
-        }
-        return new TableColumnMetadata(name.toString(), type);
+        assert name != null;
+        return new TableColumnMetadata(name.toString(), TableUtils.getColumnType(metaMem, index));
     }
-
 }

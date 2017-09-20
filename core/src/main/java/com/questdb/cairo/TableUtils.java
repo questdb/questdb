@@ -376,21 +376,6 @@ public class TableUtils {
         }
     }
 
-    static boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.NONE:
-                return true;
-            case PartitionBy.DAY:
-                return Dates.floorDD(timestampA) == Dates.floorDD(timestampB);
-            case PartitionBy.MONTH:
-                return Dates.floorMM(timestampA) == Dates.floorMM(timestampB);
-            case PartitionBy.YEAR:
-                return Dates.floorYYYY(timestampA) == Dates.floorYYYY(timestampB);
-            default:
-                throw CairoException.instance(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
-        }
-    }
-
     static DateFormat selectPartitionDirFmt(int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.DAY:
