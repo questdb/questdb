@@ -80,6 +80,11 @@ public class TableMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFreeNullAddressAsIndex() throws Exception {
+        TableMetadata.freeTransitionIndex(0);
+    }
+
+    @Test
     public void testRemoveAllColumns() throws Exception {
         final String expected = "";
         assertThat(expected, (w) -> {
@@ -117,8 +122,26 @@ public class TableMetadataTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFreeNullAddressAsIndex() throws Exception {
-        TableMetadata.freeTransitionIndex(0);
+    public void testRemoveColumnAndReAdd() throws Exception {
+        final String expected = "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n" +
+                "sym:SYMBOL\n" +
+                "bool:BOOLEAN\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n" +
+                "str:STRING\n" +
+                "short:INT\n";
+
+        assertThat(expected, (w) -> {
+            w.removeColumn("short");
+            w.removeColumn("str");
+            w.removeColumn("int");
+            w.addColumn("str", ColumnType.STRING);
+            // change column type
+            w.addColumn("short", ColumnType.INT);
+        }, 10);
     }
 
     @Test
@@ -187,29 +210,6 @@ public class TableMetadataTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveColumnAndReAdd() throws Exception {
-        final String expected = "byte:BYTE\n" +
-                "double:DOUBLE\n" +
-                "float:FLOAT\n" +
-                "long:LONG\n" +
-                "sym:SYMBOL\n" +
-                "bool:BOOLEAN\n" +
-                "bin:BINARY\n" +
-                "date:DATE\n" +
-                "str:STRING\n" +
-                "short:INT\n";
-
-        assertThat(expected, (w) -> {
-            w.removeColumn("short");
-            w.removeColumn("str");
-            w.removeColumn("int");
-            w.addColumn("str", ColumnType.STRING);
-            // change column type
-            w.addColumn("short", ColumnType.INT);
-        }, 10);
-    }
-
-    @Test
     public void testRemoveSparseColumns() throws Exception {
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
@@ -248,6 +248,16 @@ public class TableMetadataTest extends AbstractCairoTest {
                             }
 
                             TestUtils.assertEquals(expected, sink);
+
+                            if (expected.length() > 0) {
+                                String[] lines = expected.split("\n");
+                                Assert.assertEquals(columnCount, lines.length);
+
+                                for (int i = 0; i < columnCount; i++) {
+                                    int p = lines[i].indexOf(':');
+                                    Assert.assertEquals(i, metadata.getColumnIndexQuiet(lines[i].substring(0, p)));
+                                }
+                            }
                         } finally {
                             TableMetadata.freeTransitionIndex(address);
                         }

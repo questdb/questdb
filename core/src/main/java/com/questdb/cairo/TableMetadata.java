@@ -6,14 +6,11 @@ import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
-import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
-import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 
 class TableMetadata extends AbstractRecordMetadata implements Closeable {
-    private final static ThreadLocal<CharSequenceIntHashMap> tlColumnNameIndexMap = new ThreadLocal<>(CharSequenceIntHashMap::new);
     private final ObjList<TableColumnMetadata> columnMetadata;
     private final CharSequenceIntHashMap columnNameIndexMap = new CharSequenceIntHashMap();
     private final ReadOnlyMemory metaMem;
@@ -29,7 +26,7 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize());
 
         try {
-            validate(ff, metaMem, this.columnNameIndexMap);
+            TableUtils.validateMetadata(ff, metaMem, this.columnNameIndexMap);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.columnMetadata = new ObjList<>(columnCount);
@@ -53,55 +50,6 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
             return;
         }
         Unsafe.free(address, Unsafe.getUnsafe().getInt(address));
-    }
-
-    public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
-        try {
-            final int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-            final int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-            long offset = TableUtils.getColumnNameOffset(columnCount);
-
-            if (offset < columnCount || (
-                    columnCount > 0 && (offset < 0 || offset >= ff.length(metaMem.getFd())))) {
-                throw ex(metaMem).put("Incorrect columnCount: ").put(columnCount);
-            }
-
-            if (timestampIndex < -1 || timestampIndex >= columnCount) {
-                throw ex(metaMem).put("Timestamp index is outside of columnCount");
-            }
-
-            if (timestampIndex != -1) {
-                int timestampType = TableUtils.getColumnType(metaMem, timestampIndex);
-                if (timestampType != ColumnType.DATE) {
-                    throw ex(metaMem).put("Timestamp column must by DATE but found ").put(ColumnType.nameOf(timestampType));
-                }
-            }
-
-            // validate column types
-            for (int i = 0; i < columnCount; i++) {
-                int type = TableUtils.getColumnType(metaMem, i);
-                if (ColumnType.sizeOf(type) == -1) {
-                    throw ex(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
-                }
-            }
-
-            // validate column names
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence name = metaMem.getStr(offset);
-                if (name == null || name.length() < 1) {
-                    throw ex(metaMem).put("NULL column name at [").put(i).put(']');
-                }
-
-                String s = name.toString();
-                if (!nameIndex.put(s, i)) {
-                    throw ex(metaMem).put("Duplicate column: ").put(s).put(" at [").put(i).put(']');
-                }
-                offset += ReadOnlyMemory.getStorageLength(name);
-            }
-        } catch (CairoException e) {
-            nameIndex.clear();
-            throw e;
-        }
     }
 
     public void applyTransitionIndex(long address) {
@@ -140,6 +88,7 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
 
             // don't copy entries to themselves
             if (copyFrom == i + 1) {
+                columnNameIndexMap.put(columnMetadata.getQuick(i).getName(), i);
                 continue;
             }
 
@@ -148,6 +97,7 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
             // 2. create new instance
             if (copyFrom > 0) {
                 TableColumnMetadata tmp = moveMetadata(copyFrom - 1, null);
+                columnNameIndexMap.put(tmp.getName(), i);
                 tmp = moveMetadata(i, tmp);
 
                 if (copyFrom - 1 == timestampIndex && timestampRequired) {
@@ -169,6 +119,7 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
                     }
                     Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
 
+                    columnNameIndexMap.put(tmp.getName(), copyTo - 1);
                     tmp = moveMetadata(copyTo - 1, tmp);
                     copyFrom = copyTo;
                     copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8 + 4);
@@ -187,7 +138,9 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
                 }
             } else {
                 // new instance
-                moveMetadata(i, newInstance(i, columnCount));
+                TableColumnMetadata m = newInstance(i, columnCount);
+                moveMetadata(i, m);
+                columnNameIndexMap.put(m.getName(), i);
             }
         }
 
@@ -216,7 +169,7 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         transitionMeta.of(ff, path, ff.getPageSize());
         try (ReadOnlyMemory metaMem = transitionMeta) {
 
-            validate(ff, metaMem);
+            TableUtils.validateMetadata(ff, metaMem);
 
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int n = Math.max(this.columnCount, columnCount);
@@ -279,16 +232,6 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
 
     public int getPartitionBy() {
         return metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
-    }
-
-    private static void validate(FilesFacade ff, ReadOnlyMemory metaMem) {
-        CharSequenceIntHashMap map = tlColumnNameIndexMap.get();
-        map.clear();
-        validate(ff, metaMem, map);
-    }
-
-    private static CairoException ex(ReadOnlyMemory mem) {
-        return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
     private TableColumnMetadata moveMetadata(int index, TableColumnMetadata metadata) {

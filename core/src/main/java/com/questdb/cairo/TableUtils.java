@@ -8,6 +8,7 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.Sinkable;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
@@ -46,6 +47,7 @@ public class TableUtils {
     private final static ThreadLocal<CompositePath> tlRenamePath = new ThreadLocal<>(CompositePath::new);
     private final static ThreadLocal<AppendMemory> tlMetaAppendMem = new ThreadLocal<>(AppendMemory::new);
     private final static ThreadLocal<ReadOnlyMemory> tlMetaReadOnlyMem = new ThreadLocal<>(ReadOnlyMemory::new);
+    private final static ThreadLocal<CharSequenceIntHashMap> tlColumnNameIndexMap = new ThreadLocal<>(CharSequenceIntHashMap::new);
     private static Log LOG = LogFactory.getLog(TableUtils.class);
 
     public static void addColumn(FilesFacade ff, CharSequence root, CharSequence tableName, CharSequence columnName, int columnType) {
@@ -198,6 +200,61 @@ public class TableUtils {
 
     public static long getColumnNameOffset(int columnCount) {
         return META_OFFSET_COLUMN_TYPES + columnCount * 4;
+    }
+
+    public static void validateMetadata(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
+        try {
+            final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+            final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+            long offset = getColumnNameOffset(columnCount);
+
+            if (offset < columnCount || (
+                    columnCount > 0 && (offset < 0 || offset >= ff.length(metaMem.getFd())))) {
+                throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
+            }
+
+            if (timestampIndex < -1 || timestampIndex >= columnCount) {
+                throw validationException(metaMem).put("Timestamp index is outside of columnCount");
+            }
+
+            if (timestampIndex != -1) {
+                int timestampType = getColumnType(metaMem, timestampIndex);
+                if (timestampType != ColumnType.DATE) {
+                    throw validationException(metaMem).put("Timestamp column must by DATE but found ").put(ColumnType.nameOf(timestampType));
+                }
+            }
+
+            // validate column types
+            for (int i = 0; i < columnCount; i++) {
+                int type = getColumnType(metaMem, i);
+                if (ColumnType.sizeOf(type) == -1) {
+                    throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
+                }
+            }
+
+            // validate column names
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence name = metaMem.getStr(offset);
+                if (name == null || name.length() < 1) {
+                    throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
+                }
+
+                String s = name.toString();
+                if (!nameIndex.put(s, i)) {
+                    throw validationException(metaMem).put("Duplicate column: ").put(s).put(" at [").put(i).put(']');
+                }
+                offset += ReadOnlyMemory.getStorageLength(name);
+            }
+        } catch (CairoException e) {
+            nameIndex.clear();
+            throw e;
+        }
+    }
+
+    public static void validateMetadata(FilesFacade ff, ReadOnlyMemory metaMem) {
+        CharSequenceIntHashMap map = tlColumnNameIndexMap.get();
+        map.clear();
+        validateMetadata(ff, metaMem, map);
     }
 
     static void repairMetaRename(FilesFacade ff, CompositePath path, CompositePath newPath, int rootLen) {
@@ -480,6 +537,10 @@ public class TableUtils {
             default:
                 return "unknown";
         }
+    }
+
+    private static CairoException validationException(ReadOnlyMemory mem) {
+        return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
     static {
