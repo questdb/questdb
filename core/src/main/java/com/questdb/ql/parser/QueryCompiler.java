@@ -1558,14 +1558,15 @@ public class QueryCompiler {
                 m.setAlias(model.getAlias().token);
             }
 
-            IntrinsicModel im = queryFilterAnalyser.extract(model, model.getWhereClause(), m, null, getTimestampIndexQuiet(model.getTimestamp(), m));
+            int timestampIndex = getTimestampIndexQuiet(model.getTimestamp(), m);
+            IntrinsicModel im = queryFilterAnalyser.extract(model, model.getWhereClause(), m, null, timestampIndex);
 
             if (im.intrinsicValue == IntrinsicValue.FALSE) {
                 return new NoOpJournalRecordSource(rs);
             }
 
             if (im.intervals != null) {
-                rs = new IntervalRecordSource(rs, im.intervals);
+                rs = new IntervalRecordSource(rs, im.intervals, timestampIndex);
             }
 
             if (im.filter != null) {

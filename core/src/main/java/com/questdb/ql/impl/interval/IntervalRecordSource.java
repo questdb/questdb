@@ -43,12 +43,11 @@ public class IntervalRecordSource extends AbstractCombinedRecordSource {
     private boolean needRecord = true;
     private int intervalIndex = 0;
 
-    public IntervalRecordSource(RecordSource delegate, LongList intervals) {
+    public IntervalRecordSource(RecordSource delegate, LongList intervals, int timestampIndex) {
         this.delegate = delegate;
         this.intervals = intervals;
         this.intervalCount = intervals.size() / 2;
-        final RecordMetadata metadata = delegate.getMetadata();
-        this.timestampIndex = metadata.getTimestampIndex();
+        this.timestampIndex = timestampIndex;
     }
 
     @Override

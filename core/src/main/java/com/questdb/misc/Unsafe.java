@@ -50,46 +50,57 @@ public final class Unsafe {
 
     @SuppressWarnings("unchecked")
     public static <T> T arrayGet(T[] array, int index) {
+        assert index > -1 && index < array.length;
         return (T) Unsafe.getUnsafe().getObject(array, OBJ_OFFSET + (index << OBJ_SCALE));
     }
 
     public static int arrayGet(int[] array, int index) {
+        assert index > -1 && index < array.length;
         return Unsafe.getUnsafe().getInt(array, INT_OFFSET + (index << INT_SCALE));
     }
 
     public static boolean arrayGet(boolean[] array, int index) {
+        assert index > -1 && index < array.length;
         return Unsafe.getUnsafe().getBoolean(array, BOOL_OFFSET + (index << BOOL_SCALE));
     }
 
     public static long arrayGet(long[] array, int index) {
-        return Unsafe.getUnsafe().getLong(array, LONG_OFFSET + (index << LONG_SCALE));
+        assert index > -1 && index < array.length;
+        return array[index];
     }
 
     public static long arrayGetVolatile(long[] array, int index) {
+        assert index > -1 && index < array.length;
         return Unsafe.getUnsafe().getLongVolatile(array, LONG_OFFSET + (index << LONG_SCALE));
     }
 
     public static <T> void arrayPut(T[] array, int index, T obj) {
+        assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putObject(array, OBJ_OFFSET + (index << OBJ_SCALE), obj);
     }
 
     public static void arrayPut(int[] array, int index, int value) {
+        assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putInt(array, INT_OFFSET + (index << INT_SCALE), value);
     }
 
     public static void arrayPut(boolean[] array, int index, boolean value) {
+        assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putBoolean(array, BOOL_OFFSET + (index << BOOL_SCALE), value);
     }
 
-    public static void arrayPut(long[] array, long index, long value) {
+    public static void arrayPut(long[] array, int index, long value) {
+        assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putLong(array, LONG_OFFSET + (index << LONG_SCALE), value);
     }
 
-    public static void arrayPutOrdered(long[] array, long index, long value) {
+    public static void arrayPutOrdered(long[] array, int index, long value) {
+        assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + (index << LONG_SCALE), value);
     }
 
     public static boolean cas(long[] array, int index, long expected, long value) {
+        assert index > -1 && index < array.length;
         return Unsafe.getUnsafe().compareAndSwapLong(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);
     }
 
@@ -159,5 +170,4 @@ public final class Unsafe {
             throw new FatalError(e);
         }
     }
-
 }
