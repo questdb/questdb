@@ -202,7 +202,7 @@ public class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * 4;
     }
 
-    public static void validateMetadata(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
+    public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
         try {
             final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
             final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
@@ -251,10 +251,10 @@ public class TableUtils {
         }
     }
 
-    public static void validateMetadata(FilesFacade ff, ReadOnlyMemory metaMem) {
+    public static void validate(FilesFacade ff, ReadOnlyMemory metaMem) {
         CharSequenceIntHashMap map = tlColumnNameIndexMap.get();
         map.clear();
-        validateMetadata(ff, metaMem, map);
+        validate(ff, metaMem, map);
     }
 
     static void repairMetaRename(FilesFacade ff, CompositePath path, CompositePath newPath, int rootLen) {

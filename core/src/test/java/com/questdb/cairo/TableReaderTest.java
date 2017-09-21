@@ -295,21 +295,104 @@ public class TableReaderTest extends AbstractCairoTest {
     private void assertCursor(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize) {
         Assert.assertEquals(expectedSize, reader.size());
         reader.toTop();
-        assertCursor2(reader, rnd, ts, increment, blob, expectedSize, false);
+        assertCursor2(reader, rnd, ts, increment, blob, expectedSize);
     }
 
-    private long assertCursor2(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize, boolean assertNewColumn) {
+    private long assertCursor2(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize) {
         int count = 0;
         while (reader.hasNext() && count < expectedSize) {
             count++;
-            assertRecord(reader.next(), rnd, ts += increment, blob, assertNewColumn);
+            assertRecord(reader.next(), rnd, ts += increment, blob);
         }
         // did our loop run?
         Assert.assertEquals(expectedSize, count);
         return ts;
     }
 
-    private void assertRecord(Record r, Rnd exp, long ts, long blob, boolean assertNewColumn) {
+    private long assertCursorAndNullInLastColumn(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize) {
+        int count = 0;
+        while (reader.hasNext() && count < expectedSize) {
+            count++;
+            Record r = reader.next();
+            long ts1 = ts += increment;
+            if (rnd.nextBoolean()) {
+                Assert.assertEquals(rnd.nextByte(), r.get(2));
+            } else {
+                Assert.assertEquals(0, r.get(2));
+            }
+
+            if (rnd.nextBoolean()) {
+                Assert.assertEquals(rnd.nextBoolean(), r.getBool(8));
+            } else {
+                Assert.assertFalse(r.getBool(8));
+            }
+
+            if (rnd.nextBoolean()) {
+                Assert.assertEquals(rnd.nextShort(), r.getShort(1));
+            } else {
+                Assert.assertEquals(0, r.getShort(1));
+            }
+
+            if (rnd.nextBoolean()) {
+                Assert.assertEquals(rnd.nextInt(), r.getInt(0));
+            } else {
+                Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
+            }
+
+            if (rnd.nextBoolean()) {
+                Assert.assertEquals(rnd.nextDouble(), r.getDouble(3), 0.00000001);
+            } else {
+                Assert.assertTrue(Double.isNaN(r.getDouble(3)));
+            }
+
+            if (rnd.nextBoolean()) {
+                Assert.assertEquals(rnd.nextFloat(), r.getFloat(4), 0.000001f);
+            } else {
+                Assert.assertTrue(Float.isNaN(r.getFloat(4)));
+            }
+
+            if (rnd.nextBoolean()) {
+                Assert.assertEquals(rnd.nextLong(), r.getLong(5));
+            } else {
+                Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
+            }
+
+            if (rnd.nextBoolean()) {
+                Assert.assertEquals(ts1, r.getDate(10));
+            } else {
+                Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
+            }
+
+            if (rnd.nextBoolean()) {
+                rnd.nextChars(blob, blobLen / 2);
+                Assert.assertEquals(blobLen, r.getBinLen(9));
+                BinarySequence sq = r.getBin2(9);
+                for (int l = 0; l < blobLen; l++) {
+                    byte b = sq.byteAt(l);
+                    boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
+                    if (result) {
+                        Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
+                    }
+                }
+            } else {
+                Assert.assertEquals(-1, r.getBinLen(9));
+            }
+
+            if (rnd.nextBoolean()) {
+                assertStrColumn(rnd.nextChars(10), r, 6);
+            }
+
+            if (r.getFlyweightStr(11) != null) {
+                System.out.println("OOPS: " + count);
+            }
+            Assert.assertNull(r.getFlyweightStr(11));
+        }
+        // did our loop run?
+        Assert.assertEquals(expectedSize, count);
+        return ts;
+    }
+
+    private void assertRecord(Record r, Rnd exp, long ts, long blob) {
         if (exp.nextBoolean()) {
             Assert.assertEquals(exp.nextByte(), r.get(2));
         } else {
@@ -375,10 +458,6 @@ public class TableReaderTest extends AbstractCairoTest {
 
         if (exp.nextBoolean()) {
             assertStrColumn(exp.nextChars(10), r, 6);
-        }
-
-        if (assertNewColumn && (exp.nextPositiveInt() & 3) == 0) {
-            assertStrColumn(exp.nextChars(15), r, 11);
         }
     }
 
@@ -529,7 +608,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         // this is why we need to use same random state and timestamp
                         reader.toTop();
                         Rnd exp = new Rnd();
-                        long ts2 = assertCursor2(reader, exp, ts, increment, blob, 3 * count, false);
+                        long ts2 = assertCursorAndNullInLastColumn(reader, exp, ts, increment, blob, 3 * count);
                         // todo: the commented out line below must pass when metadata refresh is implemented
 //                        assertCursor2(reader, exp, ts2, increment, blob, count, true);
                     }
@@ -569,7 +648,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Rnd exp = new Rnd();
                 for (int i = 0, n = rows.size(); i < n; i++) {
-                    assertRecord(reader.recordAt(rows.getQuick(i)), exp, ts += increment, blob, false);
+                    assertRecord(reader.recordAt(rows.getQuick(i)), exp, ts += increment, blob);
                 }
             }
         } finally {

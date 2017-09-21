@@ -166,6 +166,7 @@ public class TableReader implements Closeable, RecordCursor {
         this.partitionSizes = new LongList(partitionCount);
         this.partitionSizes.seed(partitionCount, -1);
         this.columnTops = new LongList(capacity / 2);
+        this.columnTops.setPos(capacity / 2);
     }
 
     @Override
@@ -584,8 +585,159 @@ public class TableReader implements Closeable, RecordCursor {
 
         @Override
         public byte get(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return 0;
+            }
+            return colA(col).getByte(index);
+        }
+
+        @Override
+        public BinarySequence getBin2(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return null;
+            }
+            return colA(col).getBin(colB(col).getLong(index * 8));
+        }
+
+        @Override
+        public long getBinLen(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return -1;
+            }
+            return colA(col).getLong(colB(col).getLong(index * 8));
+        }
+
+        @Override
+        public boolean getBool(int col) {
+            long index = getIndex(col);
+            return index >= 0 && colA(col).getBool(index);
+        }
+
+        @Override
+        public long getDate(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return Numbers.LONG_NaN;
+            }
+            return colA(col).getLong(index * 8);
+        }
+
+        @Override
+        public double getDouble(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return Double.NaN;
+            }
+            return colA(col).getDouble(index * 8);
+        }
+
+        @Override
+        public float getFloat(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return Float.NaN;
+            }
+            return colA(col).getFloat(index * 4);
+        }
+
+        @Override
+        public CharSequence getFlyweightStr(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return null;
+            }
+            return colA(col).getStr(colB(col).getLong(index * 8));
+        }
+
+        @Override
+        public CharSequence getFlyweightStrB(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return null;
+            }
+            return colA(col).getStr2(colB(col).getLong(index * 8));
+        }
+
+        @Override
+        public int getInt(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return 0;
+            }
+            return colA(col).getInt(index * 4);
+        }
+
+        @Override
+        public long getLong(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return Numbers.LONG_NaN;
+            }
+            return colA(col).getLong(index * 8);
+        }
+
+        @Override
+        public long getRowId() {
+            return Rows.toRowID(columnBase >>> columnCountBits, recordIndex);
+        }
+
+        @Override
+        public short getShort(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return 0;
+            }
+            return colA(col).getShort(index * 2);
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return -1;
+            }
+            return colA(col).getInt(colB(col).getLong(index * 8));
+        }
+
+        @Override
+        public CharSequence getSym(int col) {
+            return getFlyweightStr(col);
+        }
+
+        private ReadOnlyColumn colA(int col) {
+            return columns.getQuick(columnBase + col * 2);
+        }
+
+        private ReadOnlyColumn colB(int col) {
+            return columns.getQuick(columnBase + col * 2 + 1);
+        }
+
+        private long getIndex(int col) {
+            return recordIndex - columnTops.get(columnBase / 2 + col);
+        }
+    }
+
+    private class OvelappedTableRecord implements Record {
+        private int columnBase;
+        private long recordIndex = 0;
+        private long maxRecordIndex = -1;
+
+        private ReadOnlyColumn colA(int col) {
+            return columns.getQuick(columnBase + col * 2);
+        }
+
+        private ReadOnlyColumn colB(int col) {
+            return columns.getQuick(columnBase + col * 2 + 1);
+        }
+
+        @Override
+        public byte get(int col) {
             return colA(col).getByte(recordIndex);
         }
+
 
         @Override
         public BinarySequence getBin2(int col) {
@@ -655,14 +807,6 @@ public class TableReader implements Closeable, RecordCursor {
         @Override
         public CharSequence getSym(int col) {
             return null;
-        }
-
-        private ReadOnlyColumn colA(int col) {
-            return columns.getQuick(columnBase + col * 2);
-        }
-
-        private ReadOnlyColumn colB(int col) {
-            return columns.getQuick(columnBase + col * 2 + 1);
         }
     }
 }

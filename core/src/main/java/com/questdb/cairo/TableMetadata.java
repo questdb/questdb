@@ -26,7 +26,7 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize());
 
         try {
-            TableUtils.validateMetadata(ff, metaMem, this.columnNameIndexMap);
+            TableUtils.validate(ff, metaMem, this.columnNameIndexMap);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.columnMetadata = new ObjList<>(columnCount);
@@ -169,7 +169,7 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         transitionMeta.of(ff, path, ff.getPageSize());
         try (ReadOnlyMemory metaMem = transitionMeta) {
 
-            TableUtils.validateMetadata(ff, metaMem);
+            TableUtils.validate(ff, metaMem);
 
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int n = Math.max(this.columnCount, columnCount);

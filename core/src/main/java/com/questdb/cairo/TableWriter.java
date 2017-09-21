@@ -716,7 +716,7 @@ public class TableWriter implements Closeable {
 
     private void openMetaFile() {
         TableUtils.openViaSharedPath(ff, metaMem, path.concat(TableUtils.META_FILE_NAME).$(), rootLen);
-        TableUtils.validateMetadata(ff, metaMem);
+        TableUtils.validate(ff, metaMem);
     }
 
     private void openNewColumnFiles(CharSequence name) {
