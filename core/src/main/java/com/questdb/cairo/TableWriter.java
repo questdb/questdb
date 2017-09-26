@@ -628,6 +628,7 @@ public class TableWriter implements Closeable {
         columns.add(primary);
         columns.add(secondary);
         configureNuller(type, primary, secondary);
+        refs.add(0);
     }
 
     private void configureColumnMemory() {

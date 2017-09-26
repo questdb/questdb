@@ -79,6 +79,7 @@ public class TableReader implements Closeable, RecordCursor {
         }
         return false;
     };
+
     private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = reader -> {
         // calling readTxn will set "size" member variable
         if (reader.readTxn()) {
@@ -87,10 +88,11 @@ public class TableReader implements Closeable, RecordCursor {
         }
         return false;
     };
+
     private static final TimestampFloorMethod INAPPROPRIATE_FLOOR_METHOD = timestamp -> {
         throw CairoException.instance(0).put("Cannot get partition floor for non-partitioned table");
     };
-    private final ObjList<ReadOnlyColumn> columns;
+
     private final FilesFacade ff;
     private final CompositePath path;
     private final int rootLen;
@@ -103,7 +105,8 @@ public class TableReader implements Closeable, RecordCursor {
     private final ReloadMethod reloadMethod;
     private final TimestampFloorMethod timestampFloorMethod;
     private final IntervalLengthMethod intervalLengthMethod;
-    private final LongList columnTops;
+    private LongList columnTops;
+    private ObjList<ReadOnlyColumn> columns;
     private int columnCount;
     private int columnCountBits;
     private long transientRowCount;
@@ -123,7 +126,7 @@ public class TableReader implements Closeable, RecordCursor {
         this.txMem = openTxnFile();
         this.metadata = openMetaFile();
         this.columnCount = this.metadata.getColumnCount();
-        this.columnCountBits = Numbers.msb(Numbers.ceilPow2(this.columnCount) * 2);
+        this.columnCountBits = getColumnBits(columnCount);
         readTxn();
 
         switch (this.metadata.getPartitionBy()) {
@@ -250,64 +253,13 @@ public class TableReader implements Closeable, RecordCursor {
         try {
             metadata.applyTransitionIndex(address);
             final int columnCount = Unsafe.getUnsafe().getInt(address + 4);
-            final long index = address + 8;
-            final long stateAddress = index + columnCount * 8;
+            final long stateAddress = address + 8 + columnCount * 8;
 
-
-            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-
-                int base = getColumnBase(partitionIndex);
-
-                try {
-                    CompositePath path = partitionPathGenerator.generate(this, partitionIndex);
-
-                    Unsafe.getUnsafe().setMemory(stateAddress, columnCount, (byte) 0);
-
-                    for (int i = 0; i < columnCount; i++) {
-
-                        if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
-                            continue;
-                        }
-
-                        Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
-
-                        final int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8);
-
-                        if (copyFrom == i + 1) {
-                            continue;
-                        }
-
-                        if (copyFrom > 0) {
-                            ReadOnlyColumn mem1;
-                            ReadOnlyColumn mem2;
-
-                            mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, copyFrom - 1), null);
-                            mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, copyFrom - 1), null);
-
-                            mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, i), mem1);
-                            mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, i), mem2);
-
-                            int copyTo = Unsafe.getUnsafe().getInt(index + i * 8 + 4);
-                            while (copyTo > 0) {
-                                if (Unsafe.getUnsafe().getByte(stateAddress + copyTo - 1) == -1) {
-                                    break;
-                                }
-                                Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
-
-                                mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, copyTo - 1), mem1);
-                                mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, copyTo - 1), mem2);
-                                copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8 + 4);
-                            }
-                            Misc.free(mem1);
-                            Misc.free(mem2);
-                        } else {
-                            // new instance
-                            createColumnInstanceAt(path, i, base);
-                        }
-                    }
-                } finally {
-                    path.trimTo(rootLen);
-                }
+            int columnCountBits = getColumnBits(columnCount);
+            if (columnCountBits > this.columnCountBits) {
+                copyToNewList(columnCount, address + 8, stateAddress, columnCountBits);
+            } else {
+                reloadWithinSameColumnList(columnCount, address + 8, stateAddress);
             }
             this.columnCount = columnCount;
         } finally {
@@ -317,6 +269,10 @@ public class TableReader implements Closeable, RecordCursor {
 
     public long size() {
         return size;
+    }
+
+    private static int getColumnBits(int columnCount) {
+        return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
     }
 
     private static int getPrimaryColumnIndex(int base, int index) {
@@ -352,7 +308,54 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private void createColumnInstanceAt(CompositePath path, int columnIndex, int columnBase) {
+    private void copyToNewList(int columnCount, long address, long stateAddress, int columnBits) {
+        int capacity = partitionCount << columnBits;
+
+        ObjList<ReadOnlyColumn> columns = new ObjList<>(capacity);
+        LongList columnTops = new LongList();
+        columns.setPos(capacity);
+        columnTops.setPos(capacity / 2);
+
+        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+            int base = partitionIndex << columnBits;
+            int oldBase = partitionIndex << columnCountBits;
+
+            try {
+                CompositePath path = partitionPathGenerator.generate(this, partitionIndex);
+
+                Unsafe.getUnsafe().setMemory(stateAddress, columnCount, (byte) 0);
+
+                for (int i = 0; i < columnCount; i++) {
+                    if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
+                        continue;
+                    }
+                    Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
+                    final int copyFrom = Unsafe.getUnsafe().getInt(address + i * 8) - 1;
+                    if (copyFrom > -1) {
+                        columns.setQuick(getPrimaryColumnIndex(base, i), this.columns.getAndSetQuick(getPrimaryColumnIndex(oldBase, copyFrom), null));
+                        columns.setQuick(getSecondaryColumnIndex(base, i), this.columns.getAndSetQuick(getSecondaryColumnIndex(oldBase, copyFrom), null));
+                        columnTops.setQuick(base / 2 + i, this.columnTops.getQuick(oldBase / 2 + copyFrom));
+                    } else {
+                        // new instance
+                        createColumnInstanceAt(path, columns, columnTops, i, base);
+                    }
+                }
+
+                // free remaining columns
+                for (int i = 0; i < this.columnCount; i++) {
+                    Misc.free(this.columns.getQuick(getPrimaryColumnIndex(oldBase, i)));
+                    Misc.free(this.columns.getQuick(getSecondaryColumnIndex(oldBase, i)));
+                }
+            } finally {
+                path.trimTo(rootLen);
+            }
+        }
+        this.columns = columns;
+        this.columnTops = columnTops;
+        this.columnCountBits = columnBits;
+    }
+
+    private void createColumnInstanceAt(CompositePath path, ObjList<ReadOnlyColumn> columns, LongList columnTops, int columnIndex, int columnBase) {
         int plen = path.length();
         try {
             String name = metadata.getColumnName(columnIndex);
@@ -482,7 +485,7 @@ public class TableReader implements Closeable, RecordCursor {
     private void openPartitionColumns(CompositePath path, int columnBase) {
         for (int i = 0; i < columnCount; i++) {
             if (columns.getQuick(getPrimaryColumnIndex(columnBase, i)) == null) {
-                createColumnInstanceAt(path, i, columnBase);
+                createColumnInstanceAt(path, this.columns, this.columnTops, i, columnBase);
             }
         }
     }
@@ -534,6 +537,62 @@ public class TableReader implements Closeable, RecordCursor {
                 }
             }
             partitionSizes.setQuick(partitionIndex, size);
+        }
+    }
+
+    private void reloadWithinSameColumnList(int columnCount, long address, long stateAddress) {
+        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+            int base = getColumnBase(partitionIndex);
+            try {
+                CompositePath path = partitionPathGenerator.generate(this, partitionIndex);
+
+                Unsafe.getUnsafe().setMemory(stateAddress, columnCount, (byte) 0);
+
+                for (int i = 0; i < columnCount; i++) {
+
+                    if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
+                        continue;
+                    }
+
+                    Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
+
+                    final int copyFrom = Unsafe.getUnsafe().getInt(address + i * 8);
+
+                    if (copyFrom == i + 1) {
+                        continue;
+                    }
+
+                    if (copyFrom > 0) {
+                        ReadOnlyColumn mem1;
+                        ReadOnlyColumn mem2;
+
+                        mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, copyFrom - 1), null);
+                        mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, copyFrom - 1), null);
+
+                        mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, i), mem1);
+                        mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, i), mem2);
+
+                        int copyTo = Unsafe.getUnsafe().getInt(address + i * 8 + 4);
+                        while (copyTo > 0) {
+                            if (Unsafe.getUnsafe().getByte(stateAddress + copyTo - 1) == -1) {
+                                break;
+                            }
+                            Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
+
+                            mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, copyTo - 1), mem1);
+                            mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, copyTo - 1), mem2);
+                            copyTo = Unsafe.getUnsafe().getInt(address + (copyTo - 1) * 8 + 4);
+                        }
+                        Misc.free(mem1);
+                        Misc.free(mem2);
+                    } else {
+                        // new instance
+                        createColumnInstanceAt(path, this.columns, this.columnTops, i, base);
+                    }
+                }
+            } finally {
+                path.trimTo(rootLen);
+            }
         }
     }
 
@@ -607,7 +666,24 @@ public class TableReader implements Closeable, RecordCursor {
             if (index < 0) {
                 return -1;
             }
-            return colA(col).getLong(colB(col).getLong(index * 8));
+            return colA(col).getBinLen(colB(col).getLong(index * 8));
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return -1;
+            }
+            return colA(col).getStrLen(colB(col).getLong(index * 8));
+        }
+
+        private ReadOnlyColumn colA(int col) {
+            return columns.getQuick(columnBase + col * 2);
+        }
+
+        private ReadOnlyColumn colB(int col) {
+            return columns.getQuick(columnBase + col * 2 + 1);
         }
 
         @Override
@@ -693,13 +769,8 @@ public class TableReader implements Closeable, RecordCursor {
             return colA(col).getShort(index * 2);
         }
 
-        @Override
-        public int getStrLen(int col) {
-            long index = getIndex(col);
-            if (index < 0) {
-                return -1;
-            }
-            return colA(col).getInt(colB(col).getLong(index * 8));
+        private long getIndex(int col) {
+            return recordIndex - columnTops.get(columnBase / 2 + col);
         }
 
         @Override
@@ -707,17 +778,7 @@ public class TableReader implements Closeable, RecordCursor {
             return getFlyweightStr(col);
         }
 
-        private ReadOnlyColumn colA(int col) {
-            return columns.getQuick(columnBase + col * 2);
-        }
 
-        private ReadOnlyColumn colB(int col) {
-            return columns.getQuick(columnBase + col * 2 + 1);
-        }
-
-        private long getIndex(int col) {
-            return recordIndex - columnTops.get(columnBase / 2 + col);
-        }
     }
 
     private class OvelappedTableRecord implements Record {

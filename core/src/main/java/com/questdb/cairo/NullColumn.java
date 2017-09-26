@@ -17,6 +17,11 @@ public final class NullColumn implements ReadOnlyColumn {
     }
 
     @Override
+    public long getBinLen(long offset) {
+        return -1;
+    }
+
+    @Override
     public boolean getBool(long offset) {
         return false;
     }
@@ -59,6 +64,11 @@ public final class NullColumn implements ReadOnlyColumn {
     @Override
     public CharSequence getStr2(long offset) {
         return null;
+    }
+
+    @Override
+    public int getStrLen(long offset) {
+        return -1;
     }
 
     @Override

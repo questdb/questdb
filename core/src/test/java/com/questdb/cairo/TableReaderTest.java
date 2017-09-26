@@ -22,6 +22,143 @@ public class TableReaderTest extends AbstractCairoTest {
     public static final int DONT_CARE = 0;
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final int blobLen = 64 * 1024;
+    private static final RecordAssert BATCH1_ASSERTER = TableReaderTest::assertRecord;
+    private static final RecordAssert BATCH2_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
+        Assert.assertNull(r.getFlyweightStr(11));
+        Assert.assertNull(r.getFlyweightStrB(11));
+        Assert.assertEquals(-1, r.getStrLen(11));
+    };
+
+    private static final RecordAssert BATCH2_ASSERTER = (r, rnd, ts, blob) -> {
+        BATCH1_ASSERTER.assertRecord(r, rnd, ts, blob);
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            assertStrColumn(rnd.nextChars(15), r, 11);
+        }
+    };
+
+    private static final RecordAssert BATCH3_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(0, r.getInt(12));
+
+    private static final RecordAssert BATCH3_ASSERTER = (r, rnd, ts, blob) -> {
+        BATCH2_ASSERTER.assertRecord(r, rnd, ts, blob);
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            Assert.assertEquals(rnd.nextInt(), r.getInt(12));
+        }
+    };
+
+    private static final RecordAssert BATCH4_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
+        Assert.assertEquals(0, r.getShort(13));
+        Assert.assertFalse(r.getBool(14));
+        Assert.assertEquals(0, r.get(15));
+        Assert.assertTrue(Float.isNaN(r.getFloat(16)));
+        Assert.assertTrue(Double.isNaN(r.getDouble(17)));
+        Assert.assertNull(r.getFlyweightStrB(18));
+        Assert.assertEquals(Numbers.LONG_NaN, r.getLong(19));
+        Assert.assertEquals(Numbers.LONG_NaN, r.getDate(20));
+        Assert.assertNull(r.getBin2(21));
+    };
+
+    private static final FieldGenerator BATCH1_GENERATOR = (r, rnd, ts, blob) -> {
+        if (rnd.nextBoolean()) {
+            r.putByte(2, rnd.nextByte());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putBool(8, rnd.nextBoolean());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putShort(1, rnd.nextShort());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putInt(0, rnd.nextInt());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDouble(3, rnd.nextDouble());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putFloat(4, rnd.nextFloat());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putLong(5, rnd.nextLong());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDate(10, ts);
+        }
+
+        if (rnd.nextBoolean()) {
+            rnd.nextChars(blob, blobLen / 2);
+            r.putBin(9, blob, blobLen);
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putStr(6, rnd.nextChars(10));
+        }
+    };
+
+    private static final FieldGenerator BATCH2_GENERATOR = (r, rnd, ts, blob) -> {
+        BATCH1_GENERATOR.generate(r, rnd, ts, blob);
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            r.putStr(11, rnd.nextChars(15));
+        }
+    };
+
+    private static final FieldGenerator BATCH3_GENERATOR = (r, rnd, ts, blob) -> {
+        BATCH2_GENERATOR.generate(r, rnd, ts, blob);
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            r.putInt(12, rnd.nextInt());
+        }
+    };
+
+    private static final FieldGenerator BATCH4_GENERATOR = (r, rnd, ts, blob) -> {
+        BATCH1_GENERATOR.generate(r, rnd, ts, blob);
+        BATCH2_GENERATOR.generate(r, rnd, ts, blob);
+        BATCH3_GENERATOR.generate(r, rnd, ts, blob);
+
+        if (rnd.nextBoolean()) {
+            r.putShort(13, rnd.nextShort());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putBool(14, rnd.nextBoolean());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putByte(15, rnd.nextByte());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putFloat(16, rnd.nextFloat());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDouble(17, rnd.nextDouble());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putStr(18, rnd.nextChars(10));
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putLong(19, rnd.nextLong());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDate(20, rnd.nextLong());
+        }
+
+        if (rnd.nextBoolean()) {
+            rnd.nextChars(blob, blobLen / 2);
+            r.putBin(21, blob, blobLen);
+        }
+    };
 
     @Test
     public void testReadByDay() throws Exception {
@@ -292,107 +429,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Unsafe.free(blob, blobLen);
     }
 
-    private void assertCursor(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize) {
-        Assert.assertEquals(expectedSize, reader.size());
-        reader.toTop();
-        assertCursor2(reader, rnd, ts, increment, blob, expectedSize);
-    }
-
-    private long assertCursor2(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize) {
-        int count = 0;
-        while (reader.hasNext() && count < expectedSize) {
-            count++;
-            assertRecord(reader.next(), rnd, ts += increment, blob);
-        }
-        // did our loop run?
-        Assert.assertEquals(expectedSize, count);
-        return ts;
-    }
-
-    private long assertCursorAndNullInLastColumn(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize) {
-        int count = 0;
-        while (reader.hasNext() && count < expectedSize) {
-            count++;
-            Record r = reader.next();
-            long ts1 = ts += increment;
-            if (rnd.nextBoolean()) {
-                Assert.assertEquals(rnd.nextByte(), r.get(2));
-            } else {
-                Assert.assertEquals(0, r.get(2));
-            }
-
-            if (rnd.nextBoolean()) {
-                Assert.assertEquals(rnd.nextBoolean(), r.getBool(8));
-            } else {
-                Assert.assertFalse(r.getBool(8));
-            }
-
-            if (rnd.nextBoolean()) {
-                Assert.assertEquals(rnd.nextShort(), r.getShort(1));
-            } else {
-                Assert.assertEquals(0, r.getShort(1));
-            }
-
-            if (rnd.nextBoolean()) {
-                Assert.assertEquals(rnd.nextInt(), r.getInt(0));
-            } else {
-                Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
-            }
-
-            if (rnd.nextBoolean()) {
-                Assert.assertEquals(rnd.nextDouble(), r.getDouble(3), 0.00000001);
-            } else {
-                Assert.assertTrue(Double.isNaN(r.getDouble(3)));
-            }
-
-            if (rnd.nextBoolean()) {
-                Assert.assertEquals(rnd.nextFloat(), r.getFloat(4), 0.000001f);
-            } else {
-                Assert.assertTrue(Float.isNaN(r.getFloat(4)));
-            }
-
-            if (rnd.nextBoolean()) {
-                Assert.assertEquals(rnd.nextLong(), r.getLong(5));
-            } else {
-                Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
-            }
-
-            if (rnd.nextBoolean()) {
-                Assert.assertEquals(ts1, r.getDate(10));
-            } else {
-                Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
-            }
-
-            if (rnd.nextBoolean()) {
-                rnd.nextChars(blob, blobLen / 2);
-                Assert.assertEquals(blobLen, r.getBinLen(9));
-                BinarySequence sq = r.getBin2(9);
-                for (int l = 0; l < blobLen; l++) {
-                    byte b = sq.byteAt(l);
-                    boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
-                    if (result) {
-                        Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
-                    }
-                }
-            } else {
-                Assert.assertEquals(-1, r.getBinLen(9));
-            }
-
-            if (rnd.nextBoolean()) {
-                assertStrColumn(rnd.nextChars(10), r, 6);
-            }
-
-            if (r.getFlyweightStr(11) != null) {
-                System.out.println("OOPS: " + count);
-            }
-            Assert.assertNull(r.getFlyweightStr(11));
-        }
-        // did our loop run?
-        Assert.assertEquals(expectedSize, count);
-        return ts;
-    }
-
-    private void assertRecord(Record r, Rnd exp, long ts, long blob) {
+    private static void assertRecord(Record r, Rnd exp, long ts, long blob) {
         if (exp.nextBoolean()) {
             Assert.assertEquals(exp.nextByte(), r.get(2));
         } else {
@@ -461,69 +498,143 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     }
 
-    private void assertStrColumn(CharSequence expected, Record r, int index) {
+    private static void assertStrColumn(CharSequence expected, Record r, int index) {
         TestUtils.assertEquals(expected, r.getFlyweightStr(index));
         TestUtils.assertEquals(expected, r.getFlyweightStrB(index));
         Assert.assertFalse(r.getFlyweightStr(index) == r.getFlyweightStrB(6));
         Assert.assertEquals(expected.length(), r.getStrLen(index));
     }
 
-    private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts, int count, long inc, long blob, int testPartitionSwitch) throws NumericException {
-        try (TableWriter writer = new TableWriter(ff, root, "all")) {
-            return testAppendNulls(writer, rnd, ts, count, inc, blob, testPartitionSwitch, false);
+    private long assertBatch1(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize) {
+        int count = 0;
+        while (reader.hasNext() && count < expectedSize) {
+            count++;
+            Record r = reader.next();
+            assertRecord(r, rnd, ts += increment, blob);
+
+            Assert.assertNull(r.getFlyweightStr(11));
+            Assert.assertNull(r.getFlyweightStrB(11));
+            Assert.assertEquals(-1, r.getStrLen(11));
+//            Assert.assertEquals(0, r.getInt(12));
+//            Assert.assertEquals(0, r.getShort(13));
+//            Assert.assertFalse(r.getBool(14));
+//            Assert.assertEquals(0, r.get(15));
+//            Assert.assertTrue(Float.isNaN(r.getFloat(16)));
+//            Assert.assertTrue(Double.isNaN(r.getDouble(17)));
+//            Assert.assertNull(r.getSym(18));
+//            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(19));
+//            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(20));
+//            Assert.assertEquals(-1L, r.getBinLen(21));
+//            Assert.assertNull(r.getBin2(21));
+        }
+        // did our loop run?
+        Assert.assertEquals(expectedSize, count);
+        return ts;
+    }
+
+    private void assertCursor(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize, RecordAssert asserter) {
+        Assert.assertEquals(expectedSize, reader.size());
+        reader.toTop();
+        assertPartialCursor(reader, rnd, ts, increment, blob, expectedSize, asserter);
+    }
+
+    private long assertPartialCursor(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize, RecordAssert asserter) {
+        int count = 0;
+        while (reader.hasNext() && count < expectedSize) {
+            count++;
+            asserter.assertRecord(reader.next(), rnd, ts += increment, blob);
+        }
+        // did our loop run?
+        Assert.assertEquals(expectedSize, count);
+        return ts;
+    }
+
+    private void populateRecord(TableWriter.Row r, Rnd rnd, long ts, long blob) {
+        if (rnd.nextBoolean()) {
+            r.putByte(2, rnd.nextByte());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putBool(8, rnd.nextBoolean());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putShort(1, rnd.nextShort());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putInt(0, rnd.nextInt());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDouble(3, rnd.nextDouble());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putFloat(4, rnd.nextFloat());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putLong(5, rnd.nextLong());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDate(10, ts);
+        }
+
+        if (rnd.nextBoolean()) {
+            rnd.nextChars(blob, blobLen / 2);
+            r.putBin(9, blob, blobLen);
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putStr(6, rnd.nextChars(10));
+        }
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            r.putStr(11, rnd.nextChars(15));
         }
     }
 
-    private long testAppendNulls(TableWriter writer, Rnd rnd, long ts, int count, long inc, long blob, int testPartitionSwitch, boolean populateNewColumn) {
+    private long testAppend(Rnd rnd, FilesFacade ff, long ts, int count, long inc, long blob, int testPartitionSwitch, FieldGenerator generator) throws NumericException {
+        try (TableWriter writer = new TableWriter(ff, root, "all")) {
+            return testAppend(writer, rnd, ts, count, inc, blob, testPartitionSwitch, generator);
+        }
+    }
+
+    private long testAppend(TableWriter writer, Rnd rnd, long ts, int count, long inc, long blob, int testPartitionSwitch, FieldGenerator generator) {
         long size = writer.size();
 
         long timestamp = writer.getMaxTimestamp();
 
         for (int i = 0; i < count; i++) {
             TableWriter.Row r = writer.newRow(ts += inc);
-            if (rnd.nextBoolean()) {
-                r.putByte(2, rnd.nextByte());
-            }
+            generator.generate(r, rnd, ts, blob);
+            r.append();
+        }
+        writer.commit();
 
-            if (rnd.nextBoolean()) {
-                r.putBool(8, rnd.nextBoolean());
-            }
+        if (testPartitionSwitch == MUST_SWITCH) {
+            Assert.assertFalse(CairoTestUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+        } else if (testPartitionSwitch == MUST_NOT_SWITCH) {
+            Assert.assertTrue(CairoTestUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+        }
 
-            if (rnd.nextBoolean()) {
-                r.putShort(1, rnd.nextShort());
-            }
+        Assert.assertEquals(size + count, writer.size());
+        return ts;
+    }
 
-            if (rnd.nextBoolean()) {
-                r.putInt(0, rnd.nextInt());
-            }
+    private void testAppendBatch3(TableWriter writer, Rnd rnd, long ts, int count, long inc, long blob, int testPartitionSwitch) {
+        long size = writer.size();
 
-            if (rnd.nextBoolean()) {
-                r.putDouble(3, rnd.nextDouble());
-            }
+        long timestamp = writer.getMaxTimestamp();
 
-            if (rnd.nextBoolean()) {
-                r.putFloat(4, rnd.nextFloat());
-            }
+        for (int i = 0; i < count; i++) {
+            TableWriter.Row r = writer.newRow(ts += inc);
+            populateRecord(r, rnd, ts, blob);
 
-            if (rnd.nextBoolean()) {
-                r.putLong(5, rnd.nextLong());
-            }
-
-            if (rnd.nextBoolean()) {
-                r.putDate(10, ts);
-            }
-
-            if (rnd.nextBoolean()) {
-                rnd.nextChars(blob, blobLen / 2);
-                r.putBin(9, blob, blobLen);
-            }
-
-            if (rnd.nextBoolean()) {
-                r.putStr(6, rnd.nextChars(10));
-            }
-
-            if (populateNewColumn && (rnd.nextPositiveInt() & 3) == 0) {
-                r.putStr(11, rnd.nextChars(15));
+            if ((rnd.nextPositiveInt() & 3) == 0) {
+                r.putInt(12, rnd.nextInt());
             }
 
             r.append();
@@ -537,7 +648,6 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         Assert.assertEquals(size + count, writer.size());
-        return ts;
     }
 
     private void testReload(int partitionBy, int count, long increment, final int testPartitionSwitch) throws Exception {
@@ -555,62 +665,155 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 try (TableReader reader = new TableReader(FF, root, "all")) {
                     // reader can see all the rows ?
-                    assertCursor(reader, new Rnd(), ts, increment, blob, 0);
+                    assertCursor(reader, new Rnd(), ts, increment, blob, 0, BATCH1_ASSERTER);
                 }
 
-                // create table before we open reader
-                long nextTs = testAppendNulls(rnd, FF, ts, count, increment, blob, 0);
+                // create table with first batch populating all columns (there could be null values too)
+                long nextTs = testAppend(rnd, FF, ts, count, increment, blob, 0, BATCH1_GENERATOR);
 
                 try (TableReader reader = new TableReader(FF, root, "all")) {
 
-                    // reader can see all the rows ?
-                    assertCursor(reader, new Rnd(), ts, increment, blob, count);
+                    // make sure we can see first batch right after table is open
+                    assertCursor(reader, new Rnd(), ts, increment, blob, count, BATCH1_ASSERTER);
 
                     // try reload when table hasn't changed
                     Assert.assertFalse(reader.reload());
 
-                    // add more rows to the table while reader is open
-                    nextTs = testAppendNulls(rnd, FF, nextTs, count, increment, blob, testPartitionSwitch);
+                    // add second batch to test if reload of open table will pick it up
+                    nextTs = testAppend(rnd, FF, nextTs, count, increment, blob, testPartitionSwitch, BATCH1_GENERATOR);
 
-                    // if we don't reload reader it should still see old data set
+                    // if we don't reload reader it should still see first batch
                     // reader can see all the rows ?
-                    assertCursor(reader, new Rnd(), ts, increment, blob, count);
+                    assertCursor(reader, new Rnd(), ts, increment, blob, count, BATCH1_ASSERTER);
 
                     // reload should be successful because we have new data in the table
                     Assert.assertTrue(reader.reload());
-                    assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count);
+
+                    // check if we can see second batch after reader was reloaded
+                    assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count, BATCH1_ASSERTER);
 
                     // writer will inflate last partition in order to optimise appends
                     // reader must be able to cope with that
                     try (TableWriter writer = new TableWriter(FF, root, "all")) {
-                        assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count);
+
+                        // this is a bit of paranoid check, but make sure our reader doesn't flinch when new writer is open
+                        assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count, BATCH1_ASSERTER);
+
+                        // also make sure that there is nothing to reload, we've not done anything to data after all
                         Assert.assertFalse(reader.reload());
-                        assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count);
 
-                        nextTs = testAppendNulls(writer, rnd, nextTs, count, increment, blob, 0, false);
+                        // check that we can still see two batches after no-op reload
+                        // we rule out possibility of reload() corrupting table state
+                        assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count, BATCH1_ASSERTER);
+
+                        // just for no reason add third batch
+                        nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH1_GENERATOR);
+
+                        // table must be able to reload now
                         Assert.assertTrue(reader.reload());
 
-                        assertCursor(reader, new Rnd(), ts, increment, blob, 3 * count);
+                        // and we should see three batches of data
+                        assertCursor(reader, new Rnd(), ts, increment, blob, 3 * count, BATCH1_ASSERTER);
 
-                        // add column
-                        writer.addColumn("x", ColumnType.STRING);
+                        // this is where things get interesting
+                        // add single column
+                        writer.addColumn("str2", ColumnType.STRING);
 
-                        // populate table again, this type also populate new column
-                        testAppendNulls(writer, rnd, nextTs, count, increment, blob, 0, true);
+//                        writer.addColumn("short2", ColumnType.SHORT);
+//                        writer.addColumn("bool2", ColumnType.BOOLEAN);
+//                        writer.addColumn("byte2", ColumnType.BYTE);
+//                        writer.addColumn("float2", ColumnType.FLOAT);
+//                        writer.addColumn("double2", ColumnType.DOUBLE);
+//                        writer.addColumn("sym2", ColumnType.SYMBOL);
+//                        writer.addColumn("long2", ColumnType.LONG);
+//                        writer.addColumn("date2", ColumnType.DATE);
+//                        writer.addColumn("bin2", ColumnType.BINARY);
 
-                        // make sure reload works
+                        // populate table with fourth batch, this time we also populate new column
+                        // we expect that values of new column will be NULL for first three batches and non-NULL for fourth
+                        nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH2_GENERATOR);
+
+                        // reload table, check if it was positive effort
+                        // todo: reload() will not reload structure just yet, make sure it does
                         Assert.assertTrue(reader.reload());
+                        // this is a temporary arrangement, we know that structure changed, so we force reload structure
+                        // normally reader doesn't know if structure changed, reload() method should be able to determine that
+                        // on its own
                         reader.reloadStruct();
 
-                        // two-step assert checks 3/4 rows ignoring new column
-                        // todo: here check that new column is null
+                        // two-step assert checks 3/4 rows checking that new column is NUL
                         // the last 1/3 is checked including new column
                         // this is why we need to use same random state and timestamp
                         reader.toTop();
                         Rnd exp = new Rnd();
-                        long ts2 = assertCursorAndNullInLastColumn(reader, exp, ts, increment, blob, 3 * count);
-                        // todo: the commented out line below must pass when metadata refresh is implemented
-//                        assertCursor2(reader, exp, ts2, increment, blob, count, true);
+                        long ts2 = assertPartialCursor(reader, exp, ts, increment, blob, 3 * count, (r, rnd13, ts13, blob13) -> {
+                            BATCH1_ASSERTER.assertRecord(r, rnd13, ts13, blob13);
+                            BATCH2_BEFORE_ASSERTER.assertRecord(r, rnd13, ts13, blob13);
+                        });
+                        assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH2_ASSERTER);
+
+                        // good job we got as far as this
+                        // now add another column and populate fifth batch, including new column
+                        // reading this tabe will ensure tops are preserved
+
+                        writer.addColumn("int2", ColumnType.INT);
+                        nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH3_GENERATOR);
+
+                        Assert.assertTrue(reader.reload());
+                        reader.reloadStruct();
+
+                        exp = new Rnd();
+                        reader.toTop();
+                        ts2 = assertPartialCursor(reader, exp, ts, increment, blob, 3 * count, (r, rnd1, ts1, blob1) -> {
+                            BATCH1_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+                            BATCH2_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+                            BATCH3_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+                        });
+
+                        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, (r, rnd12, ts12, blob12) -> {
+                            BATCH2_ASSERTER.assertRecord(r, rnd12, ts12, blob12);
+                            BATCH3_BEFORE_ASSERTER.assertRecord(r, rnd12, ts12, blob12);
+                        });
+
+                        assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH3_ASSERTER);
+
+                        // now append more columns that would overflow column buffer and force table to use different
+                        // algo when retaining resources
+
+                        writer.addColumn("short2", ColumnType.SHORT);
+                        writer.addColumn("bool2", ColumnType.BOOLEAN);
+                        writer.addColumn("byte2", ColumnType.BYTE);
+                        writer.addColumn("float2", ColumnType.FLOAT);
+                        writer.addColumn("double2", ColumnType.DOUBLE);
+                        writer.addColumn("sym2", ColumnType.SYMBOL);
+                        writer.addColumn("long2", ColumnType.LONG);
+                        writer.addColumn("date2", ColumnType.DATE);
+                        writer.addColumn("bin2", ColumnType.BINARY);
+
+                        nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH4_GENERATOR);
+
+                        Assert.assertTrue(reader.reload());
+                        reader.reloadStruct();
+
+                        exp = new Rnd();
+                        reader.toTop();
+                        ts2 = assertPartialCursor(reader, exp, ts, increment, blob, 3 * count, (r, rnd1, ts1, blob1) -> {
+                            BATCH1_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+                            BATCH2_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+                            BATCH3_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+                            BATCH4_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+                        });
+
+                        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, (r, rnd12, ts12, blob12) -> {
+                            BATCH2_ASSERTER.assertRecord(r, rnd12, ts12, blob12);
+                            BATCH3_BEFORE_ASSERTER.assertRecord(r, rnd12, ts12, blob12);
+                            BATCH4_BEFORE_ASSERTER.assertRecord(r, rnd12, ts12, blob12);
+                        });
+
+                        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, (r, rnd14, ts14, blob14) -> {
+                            BATCH4_BEFORE_ASSERTER.assertRecord(r, rnd14, ts14, blob14);
+                            BATCH3_ASSERTER.assertRecord(r, rnd14, ts14, blob14);
+                        });
                     }
                 }
             } finally {
@@ -625,7 +828,7 @@ public class TableReaderTest extends AbstractCairoTest {
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
         long blob = allocBlob();
         try {
-            testAppendNulls(rnd, FF, ts, N, increment, blob, 0);
+            testAppend(rnd, FF, ts, N, increment, blob, 0, BATCH1_GENERATOR);
 
             final StringSink sink = new StringSink();
             final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
@@ -759,5 +962,15 @@ public class TableReaderTest extends AbstractCairoTest {
                 "NaN\t-22994\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\tOJZOVQGFZU\t\tfalse\t\t\n";
         testTableCursor(60 * 60000, expected);
+    }
+
+    @FunctionalInterface
+    private interface RecordAssert {
+        void assertRecord(Record r, Rnd rnd, long ts, long blob);
+    }
+
+    @FunctionalInterface
+    private interface FieldGenerator {
+        void generate(TableWriter.Row r, Rnd rnd, long ts, long blob);
     }
 }

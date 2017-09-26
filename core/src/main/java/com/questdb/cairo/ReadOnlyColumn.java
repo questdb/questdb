@@ -11,6 +11,8 @@ public interface ReadOnlyColumn extends Closeable {
 
     BinarySequence getBin(long offset);
 
+    long getBinLen(long offset);
+
     boolean getBool(long offset);
 
     byte getByte(long offset);
@@ -28,6 +30,8 @@ public interface ReadOnlyColumn extends Closeable {
     CharSequence getStr(long offset);
 
     CharSequence getStr2(long offset);
+
+    int getStrLen(long offset);
 
     void trackFileSize();
 }

@@ -495,6 +495,7 @@ public class VirtualMemoryTest {
         }
 
         TestUtils.assertEquals("123", mem.getStr(o1));
+        Assert.assertEquals(3, mem.getStrLen(o1));
         TestUtils.assertEquals("123", mem.getStr2(o1));
         TestUtils.assertEquals("0987654321abcd", mem.getStr(o2));
         TestUtils.assertEquals("0987654321abcd", mem.getStr2(o2));
@@ -504,6 +505,7 @@ public class VirtualMemoryTest {
         TestUtils.assertEquals("xyz123", mem.getStr2(o4));
         assertNull(mem.getStr(o5));
         assertNull(mem.getStr2(o5));
+        Assert.assertEquals(-1, mem.getStrLen(o5));
 
         CharSequence s1 = mem.getStr(o1);
         CharSequence s2 = mem.getStr2(o2);
@@ -556,9 +558,11 @@ public class VirtualMemoryTest {
 
                     if (sequence1 == null) {
                         Assert.assertNull(sequence2);
+                        Assert.assertEquals(-1L, mem2.getBinLen(o));
                         o += 8;
                     } else {
                         Assert.assertNotNull(sequence2);
+                        Assert.assertEquals(mem.getBinLen(o), mem2.getBinLen(o));
                         assertEquals(sequence1.length(), sequence2.length());
                         for (long l = 0, len = sequence1.length(); l < len; l++) {
                             Assert.assertTrue(sequence1.byteAt(l) == sequence2.byteAt(l));

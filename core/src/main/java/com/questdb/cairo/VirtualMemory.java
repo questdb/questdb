@@ -102,6 +102,10 @@ public class VirtualMemory implements Closeable {
         return getByteSequenceView().of(offset + 8, len);
     }
 
+    public final long getBinLen(long offset) {
+        return getLong(offset);
+    }
+
     public boolean getBool(long offset) {
         return getByte(offset) == 1;
     }
@@ -165,6 +169,10 @@ public class VirtualMemory implements Closeable {
             csview2 = new CharSequenceView();
         }
         return csview2.of(offset + STRING_LENGTH_BYTES, len);
+    }
+
+    public final int getStrLen(long offset) {
+        return getInt(offset);
     }
 
     /**
