@@ -128,7 +128,7 @@ public class FilesTest {
             File f = temporaryFolder.newFile();
             long fd = Files.openRW(path.of(f.getAbsolutePath()));
             Assert.assertTrue(Files.exists(fd));
-            Files.remove(path);
+            Assert.assertTrue(Files.remove(path));
             Assert.assertFalse(Files.exists(fd));
             Files.close(fd);
         }

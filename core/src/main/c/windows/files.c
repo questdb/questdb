@@ -21,6 +21,8 @@
  *
  ******************************************************************************/
 
+#define _WIN32_WINNT 0x600 /* GetFileInformationByHandleEx is Vista+ */
+
 #include <unistd.h>
 #include <sys/stat.h>
 #include <minwindef.h>
@@ -30,6 +32,7 @@ typedef HANDLE HWND;
 
 #include <winbase.h>
 #include <direct.h>
+#include <winternl.h>
 #include "../share/files.h"
 
 int set_file_pos(HANDLE fd, jlong offset) {
@@ -135,7 +138,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRO
     return (jlong) CreateFile(
             (LPCSTR) lpszName,
             GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             NULL,
             OPEN_EXISTING,
             FILE_ATTRIBUTE_NORMAL,
@@ -155,10 +158,11 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_dup
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
+    //NtOpenFile()
     return (jlong) CreateFile(
             (LPCSTR) lpszName,
             GENERIC_WRITE | GENERIC_READ,
-            FILE_SHARE_READ,
+            FILE_SHARE_READ | FILE_SHARE_DELETE,
             NULL,
             OPEN_ALWAYS,
             FILE_ATTRIBUTE_NORMAL,
@@ -171,7 +175,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openAppend
     HANDLE h = CreateFile(
             (LPCSTR) lpszName,
             FILE_APPEND_DATA,
-            FILE_SHARE_READ,
+            FILE_SHARE_READ | FILE_SHARE_DELETE,
             NULL,
             OPEN_ALWAYS,
             FILE_ATTRIBUTE_NORMAL,
@@ -199,6 +203,14 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
     DWORD high;
     DWORD low = GetFileSize((HANDLE) fd, &high);
     return low | (__int64) high << 32;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_exists
+        (JNIEnv *e, jclass cl, jlong fd) {
+
+    FILE_STANDARD_INFO info;
+    GetFileInformationByHandleEx((HANDLE) fd, FileStandardInfo, &info, sizeof(FILE_STANDARD_INFO));
+    return (jboolean) !info.DeletePending;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
@@ -238,7 +250,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
         dwDesiredAccess = FILE_MAP_READ;
     }
 
-    HANDLE hMapping = CreateFileMapping((HANDLE) fd, NULL, flProtect, (DWORD) (maxsize >> 32), (DWORD) maxsize, NULL);
+    HANDLE hMapping = CreateFileMapping((HANDLE) fd, NULL, flProtect | SEC_RESERVE, (DWORD) (maxsize >> 32), (DWORD) maxsize, NULL);
     if (hMapping == NULL) {
         return -1;
     }
@@ -292,17 +304,26 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findFirst
     sprintf(path, "%s\\*.*", (char *) lpszName);
     find->hFind = FindFirstFile(path, find->find_dataa);
     if (find->hFind == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
         free(find->find_dataa);
         free(find);
-        return 0;
+        return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND ? 0 : -1;
     }
     return (jlong) find;
 }
 
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_findNext
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findNext
         (JNIEnv *e, jclass cl, jlong findPtr) {
     FIND *find = (FIND *) findPtr;
-    return (jboolean) FindNextFile(find->hFind, find->find_dataa);
+    if (FindNextFile(find->hFind, find->find_dataa)) {
+        return 1;
+    }
+
+    if (GetLastError() == ERROR_NO_MORE_FILES) {
+        return 0;
+    }
+
+    return -1;
 }
 
 JNIEXPORT void JNICALL Java_com_questdb_misc_Files_findClose
