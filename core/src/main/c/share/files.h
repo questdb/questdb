@@ -39,10 +39,10 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
 
 /*
  * Class:     com_questdb_misc_Files
- * Method:    dup
- * Signature: (J)J
+ * Method:    exists
+ * Signature: (J)Z
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_dup
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_exists
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -79,14 +79,6 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
 
 /*
  * Class:     com_questdb_misc_Files
- * Method:    lock
- * Signature: (J)I
- */
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_lock
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_questdb_misc_Files
  * Method:    getStdOutFd
  * Signature: ()J
  */
@@ -99,6 +91,14 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
  * Signature: (J)J
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Files
+ * Method:    lock
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_lock
         (JNIEnv *, jclass, jlong);
 
 /*

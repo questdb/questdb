@@ -76,10 +76,6 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         }
     }
 
-    public long getFd() {
-        return fd;
-    }
-
     public void of(FilesFacade ff, LPSZ name, long maxPageSize) {
         close();
         this.ff = ff;
@@ -97,6 +93,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         LOG.info().$("Open ").$(name).$(" [").$(fd).$(']').$();
     }
 
+    @Override
     public void trackFileSize() {
         long size = ff.length(fd);
         if (size < this.size) {
@@ -114,6 +111,11 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
             }
             this.size = size;
         }
+    }
+
+    @Override
+    public long getFd() {
+        return fd;
     }
 
     private long mapPage(int page) {

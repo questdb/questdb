@@ -74,4 +74,9 @@ public final class NullColumn implements ReadOnlyColumn {
     @Override
     public void trackFileSize() {
     }
+
+    @Override
+    public long getFd() {
+        return -1;
+    }
 }

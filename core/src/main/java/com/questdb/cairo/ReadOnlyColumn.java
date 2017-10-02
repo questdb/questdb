@@ -34,4 +34,6 @@ public interface ReadOnlyColumn extends Closeable {
     int getStrLen(long offset);
 
     void trackFileSize();
+
+    long getFd();
 }

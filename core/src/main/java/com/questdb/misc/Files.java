@@ -104,7 +104,7 @@ public final class Files {
         }
     }
 
-    public static native long dup(long fd);
+    public static native boolean exists(long fd);
 
     public static boolean exists(LPSZ lpsz) {
         return lpsz != null && getLastModified(lpsz) != -1;

@@ -689,10 +689,12 @@ public class TableWriter implements Closeable {
     }
 
     private AppendMemory getPrimaryColumn(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getPrimaryColumnIndex(column));
     }
 
     private AppendMemory getSecondaryColumn(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
@@ -860,7 +862,8 @@ public class TableWriter implements Closeable {
     }
 
     private void removeLastColumn() {
-        removeColumn(--columnCount);
+        removeColumn(columnCount - 1);
+        columnCount--;
     }
 
     private void removeMetaFile() {

@@ -271,6 +271,12 @@ public class LongList implements Mutable {
         Unsafe.arrayPut(buffer, index, value);
     }
 
+    public long getAndSetQuick(int index, long value) {
+        long v = getQuick(index);
+        Unsafe.arrayPut(buffer, index, value);
+        return v;
+    }
+
     public void shuffle(Rnd rnd) {
         for (int i = 0, sz = size(); i < sz; i++) {
             swap(i, rnd.nextPositiveInt() & (sz - 1));

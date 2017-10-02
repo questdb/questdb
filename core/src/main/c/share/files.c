@@ -142,9 +142,11 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
     return r == 0 ? st.st_size : r;
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_dup
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_exists
         (JNIEnv *e, jclass cl, jlong fd) {
-    return dup((int) fd);
+    struct stat st;
+    int r = fstat((int) fd, &st);
+    return (jboolean) (r == 0 ? st.st_nlink > 0 : 0);
 }
 
 #ifdef __APPLE__
