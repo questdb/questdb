@@ -37,7 +37,11 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public long findFirst(LPSZ path) {
-        return Files.findFirst(path);
+        long ptr = Files.findFirst(path);
+        if (ptr == -1) {
+            throw CairoException.instance(Os.errno()).put("findFirst failed on ").put(path);
+        }
+        return ptr;
     }
 
     @Override
@@ -46,8 +50,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean findNext(long findPtr) {
-        return Files.findNext(findPtr);
+    public int findNext(long findPtr) {
+        int r = Files.findNext(findPtr);
+        if (r == -1) {
+            throw CairoException.instance(Os.errno()).put("findNext failed");
+        }
+        return r;
     }
 
     @Override
@@ -71,7 +79,7 @@ public class FilesFacadeImpl implements FilesFacade {
             try {
                 do {
                     func.onFind(findName(p), findType(p));
-                } while (findNext(p));
+                } while (findNext(p) > 0);
             } finally {
                 findClose(p);
             }

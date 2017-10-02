@@ -155,7 +155,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
                                 records.appendLong(sumSizes(compositePath));
                             }
                         }
-                    } while (Files.findNext(find));
+                    } while (Files.findNext(find) > 0);
                 } finally {
                     Files.findClose(find);
                 }
@@ -209,7 +209,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
                 if (Files.findType(find) == Files.DT_DIR) {
                     count++;
                 }
-            } while (Files.findNext(find));
+            } while (Files.findNext(find) > 0);
         } finally {
             Files.findClose(find);
         }
@@ -239,7 +239,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
                     } else {
                         total += Files.length(n);
                     }
-                } while (Files.findNext(find));
+                } while (Files.findNext(find) > 0);
             } finally {
                 Files.findClose(find);
             }

@@ -118,7 +118,7 @@ public final class Files {
 
     public native static long findName(long findPtr);
 
-    public native static boolean findNext(long findPtr);
+    public native static int findNext(long findPtr);
 
     public native static int findType(long findPtr);
 
@@ -292,7 +292,7 @@ public final class Files {
                             break;
 
                     }
-                } while (findNext(p));
+                } while (findNext(p) > 0);
             } finally {
                 findClose(p);
             }

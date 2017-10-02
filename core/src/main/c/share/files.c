@@ -39,6 +39,7 @@
 
 #include <stdlib.h>
 #include <dirent.h>
+#include <sys/errno.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
@@ -203,13 +204,22 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findFirst
 
     dir = opendir((const char *) lpszName);
     if (!dir) {
-        return 0;
+        if (errno == ENOENT) {
+            return 0;
+        }
+        return -1;
     }
 
+    errno = 0;
     entry = readdir(dir);
     if (!entry) {
+        if (errno == 0) {
+            closedir(dir);
+            return 0;
+        }
         closedir(dir);
-        return 0;
+        return -1;
+
     }
 
     FIND *find = malloc(sizeof(FIND));
@@ -224,11 +234,15 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getPageSize
 }
 
 
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_findNext
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findNext
         (JNIEnv *e, jclass cl, jlong findPtr) {
     FIND *find = (FIND *) findPtr;
+    errno = 0;
     find->entry = readdir(find->dir);
-    return (jboolean) (find->entry != NULL);
+    if (find->entry != NULL) {
+        return 1;
+    }
+    return errno == 0 ? 0 : -1;
 }
 
 JNIEXPORT void JNICALL Java_com_questdb_misc_Files_findClose

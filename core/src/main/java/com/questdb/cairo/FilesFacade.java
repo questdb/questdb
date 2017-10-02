@@ -19,7 +19,7 @@ public interface FilesFacade {
 
     long findName(long findPtr);
 
-    boolean findNext(long findPtr);
+    int findNext(long findPtr);
 
     int findType(long findPtr);
 

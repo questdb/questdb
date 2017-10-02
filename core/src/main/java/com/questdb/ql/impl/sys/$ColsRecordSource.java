@@ -181,7 +181,7 @@ public class $ColsRecordSource extends AbstractRecordSource {
                                 }
                             }
                         }
-                    } while (Files.findNext(find));
+                    } while (Files.findNext(find) > 0);
                 } finally {
                     Files.findClose(find);
                 }

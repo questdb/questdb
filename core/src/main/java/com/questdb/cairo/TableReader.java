@@ -447,7 +447,7 @@ public class TableReader implements Closeable, RecordCursor {
                             } catch (NumericException ignore) {
                             }
                         }
-                    } while (ff.findNext(p));
+                    } while (ff.findNext(p) > 0);
                 } finally {
                     ff.findClose(p);
                 }

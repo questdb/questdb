@@ -158,7 +158,7 @@ public class FilesTest {
                 try {
                     do {
                         names.add(name.of(Files.findName(pFind)).toString());
-                    } while (Files.findNext(pFind));
+                    } while (Files.findNext(pFind) > 0);
                 } finally {
                     Files.findClose(pFind);
                 }

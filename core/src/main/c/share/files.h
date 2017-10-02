@@ -64,9 +64,9 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findName
 /*
  * Class:     com_questdb_misc_Files
  * Method:    findNext
- * Signature: (J)Z
+ * Signature: (J)I
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_findNext
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findNext
         (JNIEnv *, jclass, jlong);
 
 /*
