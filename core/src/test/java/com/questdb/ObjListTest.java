@@ -40,9 +40,9 @@ public class ObjListTest {
 
         Assert.assertEquals(100, list.size());
 
-        Rnd rnd2 = new Rnd();
+        rnd.reset();
         for (int i = 0; i < list.size(); i++) {
-            Assert.assertEquals(rnd2.nextString(10), list.getQuick(i));
+            Assert.assertEquals(rnd.nextString(10), list.getQuick(i));
         }
     }
 

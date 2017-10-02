@@ -31,13 +31,11 @@ public class Rnd {
     private long s1;
 
     public Rnd(long s0, long s1) {
-        this.s0 = s0;
-        this.s1 = s1;
+        reset(s0, s1);
     }
 
     public Rnd() {
-        this.s0 = 0xdeadbeef;
-        this.s1 = 0xdee4c0ed;
+        reset();
     }
 
     public boolean nextBoolean() {
@@ -110,6 +108,15 @@ public class Rnd {
             chars[i] = (char) (nextPositiveInt() % 25 + 66);
         }
         return new String(chars);
+    }
+
+    public final void reset(long s0, long s1) {
+        this.s0 = s0;
+        this.s1 = s1;
+    }
+
+    public final void reset() {
+        reset(0xdeadbeef, 0xdee4c0ed);
     }
 
     private long nextLong(int bits) {

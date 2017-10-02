@@ -933,6 +933,8 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(expectedSize, reader.size());
         reader.toTop();
         assertPartialCursor(reader, rnd, ts, increment, blob, expectedSize, asserter);
+        // courtesy call to no-op method
+        reader.releaseCursor();
     }
 
     private long assertPartialCursor(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize, RecordAssert asserter) {

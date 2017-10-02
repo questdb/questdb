@@ -51,14 +51,14 @@ public class UnstructuredFileTest {
             hb.put(vals);
         }
 
-        Rnd expected = new Rnd();
 
+        rnd.reset();
         hb.setPos(pos);
 
         for (int i = 0; i < 10000; i++) {
             hb.get(vals);
             for (int k = 0; k < vals.length; k++) {
-                Assert.assertEquals(expected.nextInt(), vals[k]);
+                Assert.assertEquals(rnd.nextInt(), vals[k]);
             }
         }
     }
@@ -79,14 +79,14 @@ public class UnstructuredFileTest {
             hb.put(vals);
         }
 
-        Rnd expected = new Rnd();
 
+        rnd.reset();
         hb.setPos(pos);
 
         for (int i = 0; i < 10000; i++) {
             hb.get(vals);
             for (int k = 0; k < vals.length; k++) {
-                Assert.assertEquals(expected.nextLong(), vals[k]);
+                Assert.assertEquals(rnd.nextLong(), vals[k]);
             }
         }
     }

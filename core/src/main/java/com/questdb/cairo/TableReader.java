@@ -667,9 +667,10 @@ public class TableReader implements Closeable, RecordCursor {
     }
 
     private class TableRecord implements Record {
-        private int columnBase;
-        private long recordIndex = 0;
-        private long maxRecordIndex = -1;
+
+        protected int columnBase;
+        protected long recordIndex = 0;
+        protected long maxRecordIndex = -1;
 
         @Override
         public byte get(int col) {
@@ -678,19 +679,6 @@ public class TableReader implements Closeable, RecordCursor {
                 return 0;
             }
             return colA(col).getByte(index);
-        }
-
-        private ReadOnlyColumn colA(int col) {
-            return columns.getQuick(columnBase + col * 2);
-        }
-
-        private ReadOnlyColumn colB(int col) {
-            return columns.getQuick(columnBase + col * 2 + 1);
-        }
-
-        private long getIndex(int col) {
-            assert col > -1 && col < columnCount : "Column index out of bounds: " + col + " >= " + columnCount;
-            return recordIndex - columnTops.get(columnBase / 2 + col);
         }
 
         @Override
@@ -702,7 +690,6 @@ public class TableReader implements Closeable, RecordCursor {
             return colA(col).getBin(colB(col).getLong(index * 8));
         }
 
-
         @Override
         public long getBinLen(int col) {
             long index = getIndex(col);
@@ -710,15 +697,6 @@ public class TableReader implements Closeable, RecordCursor {
                 return -1;
             }
             return colA(col).getBinLen(colB(col).getLong(index * 8));
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            long index = getIndex(col);
-            if (index < 0) {
-                return -1;
-            }
-            return colA(col).getStrLen(colB(col).getLong(index * 8));
         }
 
         @Override
@@ -805,15 +783,18 @@ public class TableReader implements Closeable, RecordCursor {
         }
 
         @Override
+        public int getStrLen(int col) {
+            long index = getIndex(col);
+            if (index < 0) {
+                return -1;
+            }
+            return colA(col).getStrLen(colB(col).getLong(index * 8));
+        }
+
+        @Override
         public CharSequence getSym(int col) {
             return getFlyweightStr(col);
         }
-    }
-
-    private class OvelappedTableRecord implements Record {
-        private int columnBase;
-        private long recordIndex = 0;
-        private long maxRecordIndex = -1;
 
         private ReadOnlyColumn colA(int col) {
             return columns.getQuick(columnBase + col * 2);
@@ -823,80 +804,10 @@ public class TableReader implements Closeable, RecordCursor {
             return columns.getQuick(columnBase + col * 2 + 1);
         }
 
-        @Override
-        public byte get(int col) {
-            return colA(col).getByte(recordIndex);
-        }
-
-
-        @Override
-        public BinarySequence getBin2(int col) {
-            return colA(col).getBin(colB(col).getLong(recordIndex * 8));
-        }
-
-        @Override
-        public long getBinLen(int col) {
-            return colA(col).getLong(colB(col).getLong(recordIndex * 8));
-        }
-
-        @Override
-        public boolean getBool(int col) {
-            return colA(col).getBool(recordIndex);
-        }
-
-        @Override
-        public long getDate(int col) {
-            return colA(col).getLong(recordIndex * 8);
-        }
-
-        @Override
-        public double getDouble(int col) {
-            return colA(col).getDouble(recordIndex * 8);
-        }
-
-        @Override
-        public float getFloat(int col) {
-            return colA(col).getFloat(recordIndex * 4);
-        }
-
-        @Override
-        public CharSequence getFlyweightStr(int col) {
-            return colA(col).getStr(colB(col).getLong(recordIndex * 8));
-        }
-
-        @Override
-        public CharSequence getFlyweightStrB(int col) {
-            return colA(col).getStr2(colB(col).getLong(recordIndex * 8));
-        }
-
-        @Override
-        public int getInt(int col) {
-            return colA(col).getInt(recordIndex * 4);
-        }
-
-        @Override
-        public long getLong(int col) {
-            return colA(col).getLong(recordIndex * 8);
-        }
-
-        @Override
-        public long getRowId() {
-            return Rows.toRowID(columnBase >>> columnCountBits, recordIndex);
-        }
-
-        @Override
-        public short getShort(int col) {
-            return colA(col).getShort(recordIndex * 2);
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            return colA(col).getInt(colB(col).getLong(recordIndex * 8));
-        }
-
-        @Override
-        public CharSequence getSym(int col) {
-            return null;
+        private long getIndex(int col) {
+            assert col > -1 && col < columnCount : "Column index out of bounds: " + col + " >= " + columnCount;
+            long top = columnTops.getQuick(columnBase / 2 + col);
+            return top > 0L ? recordIndex - top : recordIndex;
         }
     }
 }

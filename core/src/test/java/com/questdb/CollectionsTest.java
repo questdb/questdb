@@ -95,9 +95,9 @@ public class CollectionsTest {
 
         Assert.assertEquals(1000, map.size());
 
-        Rnd rnd2 = new Rnd();
+        rnd.reset();
         for (int i = 0; i < 1000; i++) {
-            Assert.assertEquals(rnd2.nextString(25), map.get(i));
+            Assert.assertEquals(rnd.nextString(25), map.get(i));
         }
     }
 
@@ -125,9 +125,9 @@ public class CollectionsTest {
             map.put(rnd.nextString(25), i);
         }
 
-        Rnd rnd2 = new Rnd();
+        rnd.reset();
         for (int i = 0; i < 1000; i++) {
-            Assert.assertEquals(i, map.get(rnd2.nextString(25)));
+            Assert.assertEquals(i, map.get(rnd.nextString(25)));
         }
 
         Assert.assertEquals(1000, map.size());
