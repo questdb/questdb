@@ -1,5 +1,6 @@
-package com.questdb.misc;
+package com.questdb.cairo;
 
+import com.questdb.misc.FindVisitor;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 
@@ -55,4 +56,6 @@ public interface FilesFacade {
     boolean truncate(long fd, long size);
 
     long write(long fd, long address, long len, long offset);
+
+    boolean exists(long fd);
 }

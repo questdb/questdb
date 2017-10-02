@@ -71,6 +71,7 @@ import org.apache.http.impl.client.HttpClients;
 import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -803,6 +804,7 @@ public class HttpServerTest extends AbstractJournalTest {
     // symptoms are: http client is in blocking write to socket, server epoll triggers fd, but
     // recv(fd) returns -1 and EWOULDBLOCK and this goes on forever with epoll keep firing fd that has nothing to show
     // fix is in server, which would allow limited number of this iterations after which connection is closed.
+    @Ignore
     public void testRangesNative() throws Exception {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = new ServerConfiguration(new File(HttpServerTest.class.getResource("/site").getPath(), "conf/questdb.conf")) {

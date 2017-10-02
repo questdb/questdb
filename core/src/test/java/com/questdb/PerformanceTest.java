@@ -23,6 +23,7 @@
 
 package com.questdb;
 
+import com.questdb.cairo.FilesFacadeImpl;
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.TableWriter;
@@ -33,7 +34,6 @@ import com.questdb.factory.Factory;
 import com.questdb.factory.ReaderFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
 import com.questdb.ql.Record;

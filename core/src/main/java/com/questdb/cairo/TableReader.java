@@ -130,55 +130,60 @@ public class TableReader implements Closeable, RecordCursor {
         this.ff = ff;
         this.path = new CompositePath().of(root).concat(name);
         this.rootLen = path.length();
-        failOnPendingTodo();
-        this.txMem = openTxnFile();
-        this.metadata = openMetaFile();
-        this.columnCount = this.metadata.getColumnCount();
-        this.columnCountBits = getColumnBits(columnCount);
-        readTxn();
-        this.prevStructVersion = structVersion;
+        try {
+            failOnPendingTodo();
+            this.txMem = openTxnFile();
+            this.metadata = openMetaFile();
+            this.columnCount = this.metadata.getColumnCount();
+            this.columnCountBits = getColumnBits(columnCount);
+            readTxn();
+            this.prevStructVersion = structVersion;
 
-        switch (this.metadata.getPartitionBy()) {
-            case PartitionBy.DAY:
-                partitionPathGenerator = DAY_GEN;
-                reloadMethod = PARTITIONED_RELOAD_METHOD;
-                timestampFloorMethod = Dates::floorDD;
-                intervalLengthMethod = Dates::getDaysBetween;
-                partitionMin = findPartitionMinimum(TableUtils.fmtDay);
-                partitionCount = getPartitionCount();
-                break;
-            case PartitionBy.MONTH:
-                partitionPathGenerator = MONTH_GEN;
-                reloadMethod = PARTITIONED_RELOAD_METHOD;
-                timestampFloorMethod = Dates::floorMM;
-                intervalLengthMethod = Dates::getMonthsBetween;
-                partitionMin = findPartitionMinimum(TableUtils.fmtMonth);
-                partitionCount = getPartitionCount();
-                break;
-            case PartitionBy.YEAR:
-                partitionPathGenerator = YEAR_GEN;
-                reloadMethod = PARTITIONED_RELOAD_METHOD;
-                timestampFloorMethod = Dates::floorYYYY;
-                intervalLengthMethod = Dates::getYearsBetween;
-                partitionMin = findPartitionMinimum(TableUtils.fmtYear);
-                partitionCount = getPartitionCount();
-                break;
-            default:
-                partitionPathGenerator = DEFAULT_GEN;
-                reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
-                timestampFloorMethod = INAPPROPRIATE_FLOOR_METHOD;
-                intervalLengthMethod = (min, max) -> 0;
-                partitionCount = 1;
-                break;
+            switch (this.metadata.getPartitionBy()) {
+                case PartitionBy.DAY:
+                    partitionPathGenerator = DAY_GEN;
+                    reloadMethod = PARTITIONED_RELOAD_METHOD;
+                    timestampFloorMethod = Dates::floorDD;
+                    intervalLengthMethod = Dates::getDaysBetween;
+                    partitionMin = findPartitionMinimum(TableUtils.fmtDay);
+                    partitionCount = getPartitionCount();
+                    break;
+                case PartitionBy.MONTH:
+                    partitionPathGenerator = MONTH_GEN;
+                    reloadMethod = PARTITIONED_RELOAD_METHOD;
+                    timestampFloorMethod = Dates::floorMM;
+                    intervalLengthMethod = Dates::getMonthsBetween;
+                    partitionMin = findPartitionMinimum(TableUtils.fmtMonth);
+                    partitionCount = getPartitionCount();
+                    break;
+                case PartitionBy.YEAR:
+                    partitionPathGenerator = YEAR_GEN;
+                    reloadMethod = PARTITIONED_RELOAD_METHOD;
+                    timestampFloorMethod = Dates::floorYYYY;
+                    intervalLengthMethod = Dates::getYearsBetween;
+                    partitionMin = findPartitionMinimum(TableUtils.fmtYear);
+                    partitionCount = getPartitionCount();
+                    break;
+                default:
+                    partitionPathGenerator = DEFAULT_GEN;
+                    reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
+                    timestampFloorMethod = INAPPROPRIATE_FLOOR_METHOD;
+                    intervalLengthMethod = (min, max) -> 0;
+                    partitionCount = 1;
+                    break;
+            }
+
+            int capacity = getColumnBase(partitionCount);
+            this.columns = new ObjList<>(capacity);
+            columns.setPos(capacity);
+            this.partitionSizes = new LongList(partitionCount);
+            this.partitionSizes.seed(partitionCount, -1);
+            this.columnTops = new LongList(capacity / 2);
+            this.columnTops.setPos(capacity / 2);
+        } catch (CairoException e) {
+            close();
+            throw e;
         }
-
-        int capacity = getColumnBase(partitionCount);
-        this.columns = new ObjList<>(capacity);
-        columns.setPos(capacity);
-        this.partitionSizes = new LongList(partitionCount);
-        this.partitionSizes.seed(partitionCount, -1);
-        this.columnTops = new LongList(capacity / 2);
-        this.columnTops.setPos(capacity / 2);
     }
 
     @Override
@@ -186,10 +191,12 @@ public class TableReader implements Closeable, RecordCursor {
         Misc.free(path);
         Misc.free(metadata);
         Misc.free(txMem);
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            ReadOnlyColumn mem = columns.getQuick(i);
-            if (mem != null) {
-                mem.close();
+        if (columns != null) {
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                ReadOnlyColumn mem = columns.getQuick(i);
+                if (mem != null) {
+                    mem.close();
+                }
             }
         }
         if (tempMem8b != 0) {
@@ -313,7 +320,7 @@ public class TableReader implements Closeable, RecordCursor {
     }
 
     private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, ColumnCopyStruct struct, int base, int index) {
-        if (struct.mem1 != null && !Files.exists(struct.mem1.getFd())) {
+        if (struct.mem1 != null && !ff.exists(struct.mem1.getFd())) {
             Misc.free(struct.mem1);
             Misc.free(struct.mem2);
             fetchColumnsFrom(columns, columnTops, struct, base, index);
@@ -520,11 +527,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     private ReadOnlyMemory openTxnFile() {
         try {
-            if (ff.exists(path.concat(TableUtils.TXN_FILE_NAME).$())) {
-                return new ReadOnlyMemory(ff, path, ff.getPageSize());
-            }
-            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
-
+            return new ReadOnlyMemory(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
         } finally {
             path.trimTo(rootLen);
         }

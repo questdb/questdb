@@ -2,7 +2,9 @@ package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
-import com.questdb.misc.*;
+import com.questdb.misc.Numbers;
+import com.questdb.misc.Rnd;
+import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.LongList;
@@ -929,10 +931,49 @@ public class TableReaderTest extends AbstractCairoTest {
         assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH6_7_ASSERTER);
     }
 
-    private void assertCursor(TableReader reader, Rnd rnd, long ts, long increment, long blob, long expectedSize, RecordAssert asserter) {
+    private void assertCursor(TableReader reader, long ts, long increment, long blob, long expectedSize, RecordAssert asserter) {
+        Rnd rnd = new Rnd();
         Assert.assertEquals(expectedSize, reader.size());
         reader.toTop();
-        assertPartialCursor(reader, rnd, ts, increment, blob, expectedSize, asserter);
+        int count = 0;
+        long timestamp = ts;
+        LongList rows = new LongList((int) expectedSize);
+
+        while (reader.hasNext() && count < expectedSize) {
+            count++;
+            Record rec = reader.next();
+            asserter.assertRecord(rec, rnd, timestamp += increment, blob);
+            rows.add(rec.getRowId());
+        }
+        // did our loop run?
+        Assert.assertEquals(expectedSize, count);
+
+        // assert rowid access, method 1
+        rnd.reset();
+        timestamp = ts;
+        for (int i = 0; i < count; i++) {
+            Record rec = reader.recordAt(rows.getQuick(i));
+            asserter.assertRecord(rec, rnd, timestamp += increment, blob);
+        }
+
+        // assert rowid access, method 2
+        rnd.reset();
+        timestamp = ts;
+        Record rec = reader.getRecord();
+        for (int i = 0; i < count; i++) {
+            reader.recordAt(rec, rows.getQuick(i));
+            asserter.assertRecord(rec, rnd, timestamp += increment, blob);
+        }
+
+        // assert rowid access, method 3
+        rnd.reset();
+        timestamp = ts;
+        rec = reader.newRecord();
+        for (int i = 0; i < count; i++) {
+            reader.recordAt(rec, rows.getQuick(i));
+            asserter.assertRecord(rec, rnd, timestamp += increment, blob);
+        }
+
         // courtesy call to no-op method
         reader.releaseCursor();
     }
@@ -991,7 +1032,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 try (TableReader reader = new TableReader(FF, root, "all")) {
                     // reader can see all the rows ?
-                    assertCursor(reader, new Rnd(), ts, increment, blob, 0, BATCH1_ASSERTER);
+                    assertCursor(reader, ts, increment, blob, 0, BATCH1_ASSERTER);
                 }
 
                 // create table with first batch populating all columns (there could be null values too)
@@ -1000,7 +1041,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 try (TableReader reader = new TableReader(FF, root, "all")) {
 
                     // make sure we can see first batch right after table is open
-                    assertCursor(reader, new Rnd(), ts, increment, blob, count, BATCH1_ASSERTER);
+                    assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
 
                     // try reload when table hasn't changed
                     Assert.assertFalse(reader.reload());
@@ -1010,27 +1051,27 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     // if we don't reload reader it should still see first batch
                     // reader can see all the rows ?
-                    assertCursor(reader, new Rnd(), ts, increment, blob, count, BATCH1_ASSERTER);
+                    assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
 
                     // reload should be successful because we have new data in the table
                     Assert.assertTrue(reader.reload());
 
                     // check if we can see second batch after reader was reloaded
-                    assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count, BATCH1_ASSERTER);
+                    assertCursor(reader, ts, increment, blob, 2 * count, BATCH1_ASSERTER);
 
                     // writer will inflate last partition in order to optimise appends
                     // reader must be able to cope with that
                     try (TableWriter writer = new TableWriter(FF, root, "all")) {
 
                         // this is a bit of paranoid check, but make sure our reader doesn't flinch when new writer is open
-                        assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count, BATCH1_ASSERTER);
+                        assertCursor(reader, ts, increment, blob, 2 * count, BATCH1_ASSERTER);
 
                         // also make sure that there is nothing to reload, we've not done anything to data after all
                         Assert.assertFalse(reader.reload());
 
                         // check that we can still see two batches after no-op reload
                         // we rule out possibility of reload() corrupting table state
-                        assertCursor(reader, new Rnd(), ts, increment, blob, 2 * count, BATCH1_ASSERTER);
+                        assertCursor(reader, ts, increment, blob, 2 * count, BATCH1_ASSERTER);
 
                         // just for no reason add third batch
                         nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH1_GENERATOR);
@@ -1039,7 +1080,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         Assert.assertTrue(reader.reload());
 
                         // and we should see three batches of data
-                        assertCursor(reader, new Rnd(), ts, increment, blob, 3 * count, BATCH1_ASSERTER);
+                        assertCursor(reader, ts, increment, blob, 3 * count, BATCH1_ASSERTER);
 
                         // this is where things get interesting
                         // add single column

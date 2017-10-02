@@ -2,7 +2,7 @@ package com.questdb.cairo;
 
 import com.questdb.factory.configuration.AbstractRecordMetadata;
 import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.misc.FilesFacade;
+import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
@@ -23,9 +23,8 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
     public TableMetadata(FilesFacade ff, CompositePath path) {
         this.ff = ff;
         this.path = new CompositePath().of(path).$();
-        this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize());
-
         try {
+            this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize());
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
@@ -157,8 +156,8 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
 
     @Override
     public void close() {
-        metaMem.close();
-        path.close();
+        Misc.free(metaMem);
+        Misc.free(path);
     }
 
     public long createTransitionIndex() {

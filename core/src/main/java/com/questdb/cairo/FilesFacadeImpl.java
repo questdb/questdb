@@ -1,5 +1,8 @@
-package com.questdb.misc;
+package com.questdb.cairo;
 
+import com.questdb.misc.Files;
+import com.questdb.misc.FindVisitor;
+import com.questdb.misc.Os;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 
@@ -63,7 +66,16 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     public void iterateDir(LPSZ path, FindVisitor func) {
-        Files.iterateDir(path, func);
+        long p = findFirst(path);
+        if (p > 0) {
+            try {
+                do {
+                    func.onFind(findName(p), findType(p));
+                } while (findNext(p));
+            } finally {
+                findClose(p);
+            }
+        }
     }
 
     @Override
@@ -134,5 +146,10 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long write(long fd, long address, long len, long offset) {
         return Files.write(fd, address, len, offset);
+    }
+
+    @Override
+    public boolean exists(long fd) {
+        return Files.exists(fd);
     }
 }

@@ -4,8 +4,6 @@ import com.questdb.PartitionBy;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Files;
-import com.questdb.misc.FilesFacade;
-import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;

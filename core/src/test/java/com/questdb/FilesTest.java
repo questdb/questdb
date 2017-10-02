@@ -171,6 +171,15 @@ public class FilesTest {
     }
 
     @Test
+    public void testListNonExistingDir() throws Exception {
+        String temp = temporaryFolder.getRoot().getAbsolutePath();
+        try (CompositePath path = new CompositePath().of(temp).concat("xyz")) {
+            long pFind = Files.findFirst(path);
+            Assert.assertTrue(pFind == 0);
+        }
+    }
+
+    @Test
     public void testMkdirs() throws Exception {
         File r = temporaryFolder.newFolder("to_delete");
         try (CompositePath path = new CompositePath().of(r.getAbsolutePath())) {

@@ -2,8 +2,6 @@ package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
 import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.misc.FilesFacade;
-import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.std.time.Dates;
 
 public class CairoTestUtils {

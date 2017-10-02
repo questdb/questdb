@@ -1,7 +1,6 @@
 package com.questdb.cairo;
 
 import com.questdb.misc.Files;
-import com.questdb.misc.FilesFacade;
 import com.questdb.std.str.LPSZ;
 
 public class ReadWriteMemory extends VirtualMemory {

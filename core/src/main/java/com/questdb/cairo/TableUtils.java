@@ -5,7 +5,6 @@ import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Chars;
-import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
@@ -539,6 +538,7 @@ public class TableUtils {
             case TODO_RESTORE_META:
                 return "restore meta";
             default:
+                // really impossible to happen, but we keep this line to comply with Murphy's law.
                 return "unknown";
         }
     }
