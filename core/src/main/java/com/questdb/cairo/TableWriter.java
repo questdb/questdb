@@ -49,7 +49,6 @@ import java.util.function.LongConsumer;
 public class TableWriter implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
-    private static final long TX_EOF = 32;
     private static final CharSequenceHashSet ignoredFiles = new CharSequenceHashSet();
     final ObjList<AppendMemory> columns;
     private final CompositePath path;
@@ -76,6 +75,7 @@ public class TableWriter implements Closeable {
     private int mode = 509;
     private long fixedRowCount = 0;
     private long txn;
+    private long structVersion;
     private RowFunction rowFunction = openPartitionFunction;
     private long prevTimestamp;
     private long prevTransientRowCount;
@@ -99,7 +99,7 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(Os.errno()).put("Cannot lock table: ").put(path.$());
             }
 
-            this.txMem.jumpTo(TX_EOF);
+            this.txMem.jumpTo(TableUtils.TX_EOF);
             byte todo = readTodoTaskCode();
             switch (todo) {
                 case -1:
@@ -222,6 +222,8 @@ public class TableWriter implements Closeable {
             throw new CairoError(err);
         }
 
+        bumpStructureVersion();
+
         LOG.info().$("ADDED column '").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
     }
 
@@ -249,12 +251,8 @@ public class TableWriter implements Closeable {
             }
 
             txMem.putLong(maxTimestamp);
-
-            Unsafe.getUnsafe().storeFence();
-            txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
-            txMem.putLong(++txn);
-            Unsafe.getUnsafe().storeFence();
-            txMem.jumpTo(TX_EOF);
+            fencedTxnBump();
+            prevTransientRowCount = transientRowCount;
         }
     }
 
@@ -337,6 +335,8 @@ public class TableWriter implements Closeable {
         } catch (CairoException err) {
             throw new CairoError(err);
         }
+
+        bumpStructureVersion();
 
         LOG.info().$("REMOVED column '").$(name).$("' from ").$(path).$();
     }
@@ -464,6 +464,12 @@ public class TableWriter implements Closeable {
             cancelRow();
         }
         masterRef++;
+    }
+
+    private void bumpStructureVersion() {
+        txMem.jumpTo(TableUtils.TX_OFFSET_STRUCT_VERSION);
+        txMem.putLong(++structVersion);
+        fencedTxnBump();
     }
 
     private void cancelRow() {
@@ -599,6 +605,7 @@ public class TableWriter implements Closeable {
         this.prevTransientRowCount = this.transientRowCount;
         this.fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
         this.maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
+        this.structVersion = txMem.getLong(TableUtils.TX_OFFSET_STRUCT_VERSION);
         this.prevTimestamp = this.maxTimestamp;
         if (this.maxTimestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
             openFirstPartition(this.maxTimestamp);
@@ -686,6 +693,14 @@ public class TableWriter implements Closeable {
             }
             return getPrimaryColumn(index)::putLong;
         }
+    }
+
+    private void fencedTxnBump() {
+        Unsafe.getUnsafe().storeFence();
+        txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
+        txMem.putLong(++txn);
+        Unsafe.getUnsafe().storeFence();
+        txMem.jumpTo(TableUtils.TX_EOF);
     }
 
     private AppendMemory getPrimaryColumn(int column) {

@@ -78,6 +78,8 @@ public class TableReader implements Closeable, RecordCursor {
             } else {
                 reader.reloadPartition(partitionIndex, reader.transientRowCount);
             }
+
+            reader.reloadStruct();
             return true;
         }
         return false;
@@ -87,6 +89,7 @@ public class TableReader implements Closeable, RecordCursor {
         // calling readTxn will set "size" member variable
         if (reader.readTxn()) {
             reader.reloadPartition(0, reader.size);
+            reader.reloadStruct();
             return true;
         }
         return false;
@@ -113,6 +116,8 @@ public class TableReader implements Closeable, RecordCursor {
     private int columnCount;
     private int columnCountBits;
     private long transientRowCount;
+    private long structVersion;
+    private long prevStructVersion;
     private long size;
     private long txn = -1;
     private long maxTimestamp;
@@ -131,6 +136,7 @@ public class TableReader implements Closeable, RecordCursor {
         this.columnCount = this.metadata.getColumnCount();
         this.columnCountBits = getColumnBits(columnCount);
         readTxn();
+        this.prevStructVersion = structVersion;
 
         switch (this.metadata.getPartitionBy()) {
             case PartitionBy.DAY:
@@ -249,24 +255,6 @@ public class TableReader implements Closeable, RecordCursor {
 
     public boolean reload() {
         return reloadMethod.reload(this);
-    }
-
-    public void reloadStruct() {
-        long address = metadata.createTransitionIndex();
-        try {
-            metadata.applyTransitionIndex(address);
-            final int columnCount = Unsafe.getUnsafe().getInt(address + 4);
-
-            int columnCountBits = getColumnBits(columnCount);
-            if (columnCountBits > this.columnCountBits) {
-                createNewColumnList(columnCount, address + 8, columnCountBits);
-            } else {
-                reshuffleExistingColumnList(columnCount, address + 8, address + 8 + columnCount * 8);
-            }
-            this.columnCount = columnCount;
-        } finally {
-            TableMetadata.freeTransitionIndex(address);
-        }
     }
 
     public long size() {
@@ -407,6 +395,24 @@ public class TableReader implements Closeable, RecordCursor {
         this.columnCountBits = columnBits;
     }
 
+    private void doReloadStruct() {
+        long address = metadata.createTransitionIndex();
+        try {
+            metadata.applyTransitionIndex(address);
+            final int columnCount = Unsafe.getUnsafe().getInt(address + 4);
+
+            int columnCountBits = getColumnBits(columnCount);
+            if (columnCountBits > this.columnCountBits) {
+                createNewColumnList(columnCount, address + 8, columnCountBits);
+            } else {
+                reshuffleExistingColumnList(columnCount, address + 8, address + 8 + columnCount * 8);
+            }
+            this.columnCount = columnCount;
+        } finally {
+            TableMetadata.freeTransitionIndex(address);
+        }
+    }
+
     private void failOnPendingTodo() {
         try {
             if (ff.exists(path.concat(TableUtils.TODO_FILE_NAME).$())) {
@@ -535,12 +541,15 @@ public class TableReader implements Closeable, RecordCursor {
             Unsafe.getUnsafe().loadFence();
             long transientRowCount = txMem.getLong(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
             long fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
-            this.maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
+            long maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
+            long structVersion = txMem.getLong(TableUtils.TX_OFFSET_STRUCT_VERSION);
             Unsafe.getUnsafe().loadFence();
             if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN)) {
                 this.txn = txn;
                 this.transientRowCount = transientRowCount;
                 this.size = fixedRowCount + transientRowCount;
+                this.maxTimestamp = maxTimestamp;
+                this.structVersion = structVersion;
                 break;
             }
             LockSupport.parkNanos(1);
@@ -559,6 +568,13 @@ public class TableReader implements Closeable, RecordCursor {
                 }
             }
             partitionSizes.setQuick(partitionIndex, size);
+        }
+    }
+
+    private void reloadStruct() {
+        if (this.prevStructVersion != this.structVersion) {
+            doReloadStruct();
+            this.prevStructVersion = this.structVersion;
         }
     }
 

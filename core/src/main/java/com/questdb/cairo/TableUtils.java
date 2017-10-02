@@ -35,13 +35,14 @@ public class TableUtils {
     static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
     static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
     static final long TX_OFFSET_MAX_TIMESTAMP = 24;
+    static final long TX_OFFSET_STRUCT_VERSION = 32;
+    static final long TX_EOF = 40;
     static final String META_SWAP_FILE_NAME = "_meta.swp";
     static final String META_PREV_FILE_NAME = "_meta.prev";
     static final String TODO_FILE_NAME = "_todo";
     static final long META_OFFSET_COUNT = 0;
     static final long META_OFFSET_PARTITION_BY = 4;
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-
     private static final int _16M = 16 * 1024 * 1024;
     private final static ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath::new);
     private final static ThreadLocal<CompositePath> tlRenamePath = new ThreadLocal<>(CompositePath::new);
@@ -352,6 +353,9 @@ public class TableUtils {
         txMem.putLong(0);
         // partition low
         txMem.putLong(Long.MIN_VALUE);
+        // structure version
+        txMem.putLong(0);
+        //
         Unsafe.getUnsafe().storeFence();
         txMem.jumpTo(0);
         // txn

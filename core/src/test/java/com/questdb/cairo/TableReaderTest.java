@@ -1048,12 +1048,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH2_GENERATOR);
 
                         // reload table, check if it was positive effort
-                        // todo: reload() will not reload structure just yet, make sure it does
                         Assert.assertTrue(reader.reload());
-                        // this is a temporary arrangement, we know that structure changed, so we force reload structure
-                        // normally reader doesn't know if structure changed, reload() method should be able to determine that
-                        // on its own
-                        reader.reloadStruct();
 
                         // two-step assert checks 3/4 rows checking that new column is NUL
                         // the last 1/3 is checked including new column
@@ -1069,7 +1064,6 @@ public class TableReaderTest extends AbstractCairoTest {
                         nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH3_GENERATOR);
 
                         Assert.assertTrue(reader.reload());
-                        reader.reloadStruct();
 
                         assertBatch3(count, increment, ts, blob, reader);
 
@@ -1091,7 +1085,6 @@ public class TableReaderTest extends AbstractCairoTest {
                         nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH4_GENERATOR);
 
                         Assert.assertTrue(reader.reload());
-                        reader.reloadStruct();
 
                         assertBatch4(count, increment, ts, blob, reader);
 
@@ -1100,7 +1093,6 @@ public class TableReaderTest extends AbstractCairoTest {
                         writer.removeColumn("bin2");
 
                         Assert.assertTrue(reader.reload());
-                        reader.reloadStruct();
 
                         // and assert that all columns that have not been deleted contain correct values
 
@@ -1119,10 +1111,10 @@ public class TableReaderTest extends AbstractCairoTest {
                         writer.addColumn("int", ColumnType.INT);
 
                         Assert.assertTrue(reader.reload());
-                        reader.reloadStruct();
 
                         assertBatch7(count, increment, ts, blob, reader);
 
+                        Assert.assertFalse(reader.reload());
                     }
                 }
             } finally {

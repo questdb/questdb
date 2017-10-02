@@ -2384,6 +2384,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
             writer.commit();
 
+            Assert.assertFalse(writer.inTransaction());
             Assert.assertEquals(size + 10000, writer.size());
         } finally {
             Unsafe.free(blob, blobLen);
