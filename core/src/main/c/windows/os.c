@@ -28,8 +28,8 @@
 
 #include <sspi.h>
 #include <issper16.h>
-#include <lm.h>
 #include "../share/os.h"
+#include "errno.h"
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_getPid
         (JNIEnv *e, jclass cl) {
@@ -38,7 +38,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_getPid
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_errno
         (JNIEnv *e, jclass cl) {
-    return GetLastError();
+    return (jint) TlsGetValue(dwTlsIndexLastError);
 }
 
 typedef struct {
@@ -61,7 +61,6 @@ jlong JNICALL Java_com_questdb_misc_Os_generateKrbToken
 
     if (result->status != SEC_E_OK) {
         FreeContextBuffer(pkgInfo);
-//        printSecStatus(result->status);
         return (jlong) result;
     }
 
@@ -81,7 +80,6 @@ jlong JNICALL Java_com_questdb_misc_Os_generateKrbToken
             NULL);
 
     if (result->status != SEC_E_OK) {
-//        printSecStatus(result->status);
         return (jlong) result;
     }
 
@@ -130,3 +128,26 @@ JNIEXPORT void JNICALL Java_com_questdb_misc_Os_freeKrbToken
     }
     free(ptoken);
 }
+
+BOOL WINAPI DllMain(
+        _In_  HINSTANCE hinstDLL,
+        _In_  DWORD fdwReason,
+        _In_  LPVOID lpvReserved
+) {
+    switch (fdwReason) {
+        case DLL_PROCESS_ATTACH:
+            dwTlsIndexLastError = TlsAlloc();
+            break;
+        case DLL_PROCESS_DETACH:
+            TlsFree(dwTlsIndexLastError);
+            dwTlsIndexLastError = 0;
+            break;
+        default:
+            break;
+    }
+    return TRUE;
+}
+
+void SaveLastError() {
+    TlsSetValue(dwTlsIndexLastError, (LPVOID) (DWORD_PTR) GetLastError());
+};

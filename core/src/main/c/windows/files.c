@@ -32,15 +32,19 @@ typedef HANDLE HWND;
 
 #include <winbase.h>
 #include <direct.h>
-#include <winternl.h>
 #include "../share/files.h"
+#include "errno.h"
 
 int set_file_pos(HANDLE fd, jlong offset) {
     if (offset < 0) {
         return 1;
     }
     long highPos = (long) (offset >> 32);
-    return SetFilePointer(fd, (DWORD) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
+    int r = SetFilePointer(fd, (DWORD) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
+    if (r == INVALID_SET_FILE_POINTER) {
+        SaveLastError();
+    }
+    return r;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
@@ -50,8 +54,11 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
          jlong len,
          jlong offset) {
     DWORD count;
-    return set_file_pos((HANDLE) fd, offset) &&
-           WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL) ? count : 0;
+    if (set_file_pos((HANDLE) fd, offset) && WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL)) {
+        return count;
+    }
+    SaveLastError();
+    return 0;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
@@ -61,14 +68,18 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
          jlong len,
          jlong offset) {
     DWORD count;
-    return set_file_pos((HANDLE) fd, offset) &&
-           ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL) ? count : 0;
+    if (set_file_pos((HANDLE) fd, offset) &&
+        ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL)) {
+        return count;
+    }
+    SaveLastError();
+    return 0;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_sequentialRead
         (JNIEnv *e, jclass cl, jlong fd, jlong address, jint len) {
     DWORD count;
-    return ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL) ? count : 0;
+    jlong r = ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL) ? count : 0;
 
 }
 
@@ -93,7 +104,12 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getLastModified
     }
     struct stat st;
     int r = stat((const char *) pchar, &st);
-    return r == 0 ? (1000 * (jlong) st.st_mtime) + bias : r;
+    if (r == 0) {
+        return (1000 * (jlong) st.st_mtime) + bias;
+    }
+
+    SaveLastError();
+    return r;
 }
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
@@ -109,6 +125,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
             NULL
     );
     if (handle == INVALID_HANDLE_VALUE) {
+        SaveLastError();
         return 0;
     }
     millis += 11644477200000;
@@ -125,17 +142,25 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length0
         (JNIEnv *e, jclass cl, jlong lpszName) {
     struct stat st;
     int r = stat((const char *) lpszName, &st);
-    return r == 0 ? st.st_size : r;
+    if (r == 0) {
+        return st.st_size;
+    }
+    SaveLastError();
+    return r;
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_mkdir
         (JNIEnv *e, jclass cl, jlong lpszName, jint mode) {
-    return _mkdir((const char *) lpszName);
+    jint r = _mkdir((const char *) lpszName);
+    if (r != 0) {
+        SaveLastError();
+    }
+    return r;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRO
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    return (jlong) CreateFile(
+    HANDLE fd = CreateFile(
             (LPCSTR) lpszName,
             GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -144,6 +169,11 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRO
             FILE_ATTRIBUTE_NORMAL,
             NULL
     );
+
+    if (fd == INVALID_HANDLE_VALUE) {
+        SaveLastError();
+    }
+    return (jlong) fd;
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close0
@@ -159,7 +189,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_dup
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
     //NtOpenFile()
-    return (jlong) CreateFile(
+    HANDLE r = CreateFile(
             (LPCSTR) lpszName,
             GENERIC_WRITE | GENERIC_READ,
             FILE_SHARE_READ | FILE_SHARE_DELETE,
@@ -168,6 +198,11 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRW
             FILE_ATTRIBUTE_NORMAL,
             NULL
     );
+
+    if (r == INVALID_HANDLE_VALUE) {
+        SaveLastError();
+    }
+    return (jlong) r;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openAppend
@@ -195,14 +230,24 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
          jlong address,
          jlong len) {
     DWORD count;
-    return WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL) ? count : 0;
+    if (WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL)) {
+        return count;
+    }
+
+    SaveLastError();
+    return 0;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
         (JNIEnv *e, jclass cl, jlong fd) {
     DWORD high;
     DWORD low = GetFileSize((HANDLE) fd, &high);
-    return low | (__int64) high << 32;
+    if (low != INVALID_FILE_SIZE) {
+        return low | (__int64) high << 32;
+    } else {
+        SaveLastError();
+        return INVALID_FILE_SIZE;
+    }
 }
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_exists
@@ -223,12 +268,14 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_truncate
     if (set_file_pos((HANDLE) handle, size)) {
         return (jboolean) SetEndOfFile((HANDLE) handle);
     }
+    SaveLastError();
     return FALSE;
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_munmap0
         (JNIEnv *e, jclass cl, jlong address, jlong len) {
     if (UnmapViewOfFile((LPCVOID) address) == 0) {
+        SaveLastError();
         return -1;
     } else {
         return 0;
@@ -250,15 +297,19 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
         dwDesiredAccess = FILE_MAP_READ;
     }
 
-    HANDLE hMapping = CreateFileMapping((HANDLE) fd, NULL, flProtect | SEC_RESERVE, (DWORD) (maxsize >> 32), (DWORD) maxsize, NULL);
+    HANDLE hMapping = CreateFileMapping((HANDLE) fd, NULL, flProtect | SEC_RESERVE, (DWORD) (maxsize >> 32),
+                                        (DWORD) maxsize, NULL);
     if (hMapping == NULL) {
+        SaveLastError();
         return -1;
     }
 
     address = MapViewOfFile(hMapping, dwDesiredAccess, (DWORD) (offset >> 32), (DWORD) offset, (SIZE_T) len);
 
-    unsigned long err = GetLastError();
+    SaveLastError();
+
     if (CloseHandle(hMapping) == 0) {
+        SaveLastError();
         if (address != NULL) {
             UnmapViewOfFile(address);
         }
@@ -281,12 +332,21 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getPageSize
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_remove
         (JNIEnv *e, jclass cl, jlong lpsz) {
-    return (jboolean) DeleteFile((LPCSTR) lpsz);
+    jboolean b = (jboolean) DeleteFile((LPCSTR) lpsz);
+    if (!b) {
+        SaveLastError();
+    }
+    return b;
 }
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rmdir
         (JNIEnv *e, jclass cl, jlong lpsz) {
-    return (jboolean) RemoveDirectoryA((LPCSTR) lpsz);
+    jboolean b = (jboolean) RemoveDirectoryA((LPCSTR) lpsz);
+    if (!b) {
+        SaveLastError();
+    }
+
+    return b;
 }
 
 typedef struct {
@@ -304,6 +364,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findFirst
     sprintf(path, "%s\\*.*", (char *) lpszName);
     find->hFind = FindFirstFile(path, find->find_dataa);
     if (find->hFind == INVALID_HANDLE_VALUE) {
+        SaveLastError();
         DWORD err = GetLastError();
         free(find->find_dataa);
         free(find);
@@ -323,6 +384,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findNext
         return 0;
     }
 
+    SaveLastError();
     return -1;
 }
 
@@ -350,11 +412,20 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_lock
         (JNIEnv *e, jclass cl, jlong fd) {
     DWORD high;
     DWORD low = GetFileSize((HANDLE) fd, &high);
-    return LockFile((HANDLE) fd, 0, 0, low, high) ? 0 : 1;
+    if (LockFile((HANDLE) fd, 0, 0, low, high)) {
+        return 0;
+    }
+
+    SaveLastError();
+    return 1;
 }
 
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rename
         (JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
-    return (jboolean) MoveFile((LPCSTR) lpszOld, (LPCSTR) lpszNew);
+    if (MoveFile((LPCSTR) lpszOld, (LPCSTR) lpszNew)) {
+        return TRUE;
+    }
+    SaveLastError();
+    return FALSE;
 }
