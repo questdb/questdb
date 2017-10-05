@@ -264,6 +264,7 @@ public class TableUtils {
                 path.put('.').put(index);
             }
             path.$();
+
             if (ff.exists(path)) {
                 LOG.info().$("Repairing metadata from: ").$(path).$();
                 if (ff.exists(newPath.concat(TableUtils.META_FILE_NAME).$()) && !ff.remove(newPath)) {
@@ -507,8 +508,10 @@ public class TableUtils {
                         return index;
                     } catch (CairoException e) {
                         // right, cannot open file for some reason?
-                        LOG.error().$("Cannot open file: ").$(path).$();
+                        LOG.error().$("Cannot open file: ").$(path).$('[').$(Os.errno()).$(']').$();
                     }
+                } else {
+                    LOG.error().$("Cannot remove file: ").$(path).$('[').$(Os.errno()).$(']').$();
                 }
             } while (++index < retries);
             throw CairoException.instance(0).put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);

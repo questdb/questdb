@@ -69,6 +69,9 @@ public final class Chars {
 
         for (int i = 0, n = _this.length(); i < n; i++) {
             if (_this.charAt(i) == that.charAt(0)) {
+                if (n - i < m) {
+                    return false;
+                }
                 boolean found = true;
                 for (int k = 1; k < m && k + i < n; k++) {
                     if (_this.charAt(i + k) != that.charAt(k)) {

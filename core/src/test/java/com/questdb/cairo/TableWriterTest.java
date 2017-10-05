@@ -171,6 +171,19 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnCannotRenameMetaSwapAndUseIndexedPrevMeta() throws Exception {
+        FilesFacade ff = new SwapMetaRenameDenyingFacade() {
+            int count = 5;
+
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                return (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --count <= 0) && super.rename(from, to);
+            }
+        };
+        testAddColumnRecoverableFault(ff);
+    }
+
+    @Test
     public void testAddColumnCommitPartitioned() throws Exception {
         create(FF, PartitionBy.DAY);
         Rnd rnd = new Rnd();
@@ -258,6 +271,69 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnFileOpenFailAndIndexedPrev() throws Exception {
+        // simulate existence of _meta.swp
+        testUnrecoverableAddColumn(new FilesFacadeImpl() {
+            int count = 2;
+            int toCount = 5;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "abc.d")) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (Chars.contains(from, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
+                    return false;
+                }
+
+                if (Chars.contains(to, TableUtils.META_PREV_FILE_NAME) && --toCount > 0) {
+                    return false;
+                }
+
+                return super.rename(from, to);
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnHavingTroubleCreatingMetaSwap() throws Exception {
+        create(FF, PartitionBy.DAY);
+        FilesFacade ff = new FilesFacadeImpl() {
+
+            int count = 5;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                return Chars.contains(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    return --count < 0;
+                }
+                return super.remove(name);
+            }
+        };
+
+        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+            writer.addColumn("xyz", ColumnType.STRING);
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+            int N = 10000;
+            Rnd rnd = new Rnd();
+            populateProducts(writer, rnd, ts, N, 6 * 60000);
+            writer.commit();
+            Assert.assertEquals(N, writer.size());
+        }
+    }
+
+    @Test
     public void testAddColumnMetaOpenFail() throws Exception {
         testUnrecoverableAddColumn(new FilesFacadeImpl() {
             int counter = 2;
@@ -292,13 +368,31 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnNonPartitioned() throws Exception {
         create(FF, PartitionBy.NONE);
-        addColumnAndPopulate();
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            writer.addColumn("xyz", ColumnType.STRING);
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+            int N = 100000;
+            Rnd rnd = new Rnd();
+            populateProducts(writer, rnd, ts, N, 60 * 60000);
+            writer.commit();
+            Assert.assertEquals(N, writer.size());
+        }
     }
 
     @Test
     public void testAddColumnPartitioned() throws Exception {
         create(FF, PartitionBy.DAY);
-        addColumnAndPopulate();
+        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+            writer.addColumn("xyz", ColumnType.STRING);
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+            int N = 100000;
+            Rnd rnd = new Rnd();
+            populateProducts(writer, rnd, ts, N, 60 * 60000);
+            writer.commit();
+            Assert.assertEquals(N, writer.size());
+        }
     }
 
     @Test
@@ -581,12 +675,12 @@ public class TableWriterTest extends AbstractCairoTest {
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
+                return Chars.contains(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME) && super.remove(name);
+                return !Chars.contains(name, TableUtils.META_SWAP_FILE_NAME) && super.remove(name);
             }
         });
     }
@@ -1919,19 +2013,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 $ts();
     }
 
-    private void addColumnAndPopulate() throws NumericException {
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            writer.addColumn("xyz", ColumnType.STRING);
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-
-            int N = 100000;
-            Rnd rnd = new Rnd();
-            populateProducts(writer, rnd, ts, N, 60 * 60000);
-            writer.commit();
-            Assert.assertEquals(N, writer.size());
-        }
-    }
-
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {
         int productId = writer.getColumnIndex("productId");
         int productName = writer.getColumnIndex("productName");
@@ -2248,6 +2329,7 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.commit();
             try {
                 writer.addColumn("abc", ColumnType.STRING);
+                Assert.fail();
             } catch (CairoException ignore) {
             }
 

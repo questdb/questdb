@@ -960,13 +960,13 @@ public class TableWriter implements Closeable {
                 }
 
                 if (ff.exists(other) && !ff.remove(other)) {
-                    // todo: log
+                    LOG.info().$("Cannot remove target of rename '").$(path).$("' to '").$(other).$('[').$(Os.errno()).$(']').$();
                     index++;
                     continue;
                 }
 
                 if (!ff.rename(path, other)) {
-                    // todo: log
+                    LOG.info().$("Cannot rename '").$(path).$("' to '").$(other).$('[').$(Os.errno()).$(']').$();
                     index++;
                     continue;
                 }
