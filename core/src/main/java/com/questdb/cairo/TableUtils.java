@@ -59,9 +59,9 @@ public class TableUtils {
         long buf = Unsafe.malloc(8);
         try {
 
-            byte code = readTodo(ff, path, rootLen, buf);
+            byte code = (byte) readTodo(ff, path, rootLen, buf);
             if (code == TODO_RESTORE_META) {
-                repairMetaRename(ff, path, other, rootLen);
+                repairMetaRename(ff, path, other, rootLen, 0);
             }
 
             try (ReadOnlyMemory mem = tlMetaReadOnlyMem.get()) {
@@ -257,9 +257,14 @@ public class TableUtils {
         validate(ff, metaMem, map);
     }
 
-    static void repairMetaRename(FilesFacade ff, CompositePath path, CompositePath newPath, int rootLen) {
+    static void repairMetaRename(FilesFacade ff, CompositePath path, CompositePath newPath, int rootLen, int index) {
         try {
-            if (ff.exists(path.concat(TableUtils.META_PREV_FILE_NAME).$())) {
+            path.concat(TableUtils.META_PREV_FILE_NAME);
+            if (index > 0) {
+                path.put('.').put(index);
+            }
+            path.$();
+            if (ff.exists(path)) {
                 LOG.info().$("Repairing metadata from: ").$(path).$();
                 if (ff.exists(newPath.concat(TableUtils.META_FILE_NAME).$()) && !ff.remove(newPath)) {
                     throw CairoException.instance(Os.errno()).put("Repair failed. Cannot replace ").put(newPath);
@@ -286,7 +291,7 @@ public class TableUtils {
         }
     }
 
-    static byte readTodo(FilesFacade ff, CompositePath path, int rootLen, long buf) {
+    static long readTodo(FilesFacade ff, CompositePath path, int rootLen, long buf) {
         try {
             if (ff.exists(path.concat(TableUtils.TODO_FILE_NAME).$())) {
                 long todoFd = ff.openRO(path);
@@ -294,11 +299,11 @@ public class TableUtils {
                     throw CairoException.instance(Os.errno()).put("Cannot open *todo*: ").put(path);
                 }
                 try {
-                    if (ff.read(todoFd, buf, 1, 0) != 1) {
+                    if (ff.read(todoFd, buf, 8, 0) != 8) {
                         LOG.info().$("Cannot read *todo* code. File seems to be truncated. Ignoring").$();
                         return -1;
                     }
-                    return Unsafe.getUnsafe().getByte(buf);
+                    return Unsafe.getUnsafe().getLong(buf);
                 } finally {
                     ff.close(todoFd);
                 }
@@ -328,18 +333,14 @@ public class TableUtils {
         }
     }
 
-    static void renameOrElse(FilesFacade ff, CompositePath path, CharSequence name, CompositePath newPath, CharSequence newName, int rootLen, Runnable fail) {
+    static void runFragile(Runnable runnable, CairoException e) {
         try {
-            rename(ff, path, name, newPath, newName, rootLen);
-        } catch (CairoException e) {
-            try {
-                fail.run();
-            } catch (CairoException err) {
-                LOG.error().$("DOUBLE ERROR: 1st: '").$((Sinkable) e).$('\'').$();
-                throw new CairoError(err);
-            }
-            throw e;
+            runnable.run();
+        } catch (CairoException err) {
+            LOG.error().$("DOUBLE ERROR: 1st: '").$((Sinkable) e).$('\'').$();
+            throw new CairoError(err);
         }
+        throw e;
     }
 
 
@@ -473,7 +474,50 @@ public class TableUtils {
         return -1;
     }
 
-    static void addColumnToMeta(
+    static int openMetaSwapFile(FilesFacade ff, AppendMemory mem, CompositePath path, int rootLen) {
+        return openIndexedFile(ff, META_SWAP_FILE_NAME, mem, path, rootLen, 30);
+    }
+
+    /**
+     * Ensures there is file available for writing new metadata. On Windows or in a hostile OS environment
+     * it is possible that swap file cannot be created from single attempt. It could exist and be open
+     * by antivirus or exist and have permissions forbidding us access. Whatever is the reason we should
+     * not be hellbent on trying to open same file name if it can't be opened.
+     * This method will cycle thru up to 30 file names initializing AppendMemory with first one that
+     * succeeded. The names are suffixed with cycle index, for example meta.swp.1 etc.
+     *
+     * @param mem     AppendMemory to be wrapped around swap file this method manages to open.
+     * @param path    object that can be reused for opening new file.
+     * @param rootLen length to trim path to when we are done.
+     */
+    static int openIndexedFile(FilesFacade ff, CharSequence base, AppendMemory mem, CompositePath path, int rootLen, int retries) {
+        try {
+            path.concat(base).$();
+            int l = path.length();
+            int index = 0;
+            do {
+                if (index > 0) {
+                    path.trimTo(l).put('.').put(index);
+                    path.$();
+                }
+
+                if (!ff.exists(path) || ff.remove(path)) {
+                    try {
+                        mem.of(ff, path, ff.getPageSize());
+                        return index;
+                    } catch (CairoException e) {
+                        // right, cannot open file for some reason?
+                        LOG.error().$("Cannot open file: ").$(path).$();
+                    }
+                }
+            } while (++index < retries);
+            throw CairoException.instance(0).put("Cannot open indexed file. Max number of attempts reached [").put(index).put("]. Last file tried: ").put(path);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    static int addColumnToMeta(
             FilesFacade ff,
             ReadOnlyMemory metaMem,
             CharSequence name,
@@ -481,47 +525,41 @@ public class TableUtils {
             CompositePath path,
             int rootLen,
             AppendMemory ddlMem) {
+
+        int index;
         try {
-            // delete stale _meta.swp
-            path.concat(META_SWAP_FILE_NAME).$();
+            index = openMetaSwapFile(ff, ddlMem, path, rootLen);
 
-            if (ff.exists(path) && !ff.remove(path)) {
-                throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
+            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+
+            ddlMem.putInt(columnCount + 1);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+            for (int i = 0; i < columnCount; i++) {
+                ddlMem.putInt(getColumnType(metaMem, i));
             }
+            ddlMem.putInt(type);
 
-            try {
-                int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-                ddlMem.of(ff, path, ff.getPageSize());
-                ddlMem.putInt(columnCount + 1);
-                ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-                ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-                for (int i = 0; i < columnCount; i++) {
-                    ddlMem.putInt(getColumnType(metaMem, i));
-                }
-                ddlMem.putInt(type);
-
-                long nameOffset = getColumnNameOffset(columnCount);
-                for (int i = 0; i < columnCount; i++) {
-                    CharSequence columnName = metaMem.getStr(nameOffset);
-                    ddlMem.putStr(columnName);
-                    nameOffset += VirtualMemory.getStorageLength(columnName);
-                }
-                ddlMem.putStr(name);
-            } finally {
-                ddlMem.close();
+            long nameOffset = getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                ddlMem.putStr(columnName);
+                nameOffset += VirtualMemory.getStorageLength(columnName);
             }
+            ddlMem.putStr(name);
         } finally {
-            path.trimTo(rootLen);
+            ddlMem.close();
         }
+        return index;
     }
 
-    static void writeTodo(FilesFacade ff, CompositePath path, byte code, int rootLen, long buf) {
+    static void writeTodo(FilesFacade ff, CompositePath path, long todo, int rootLen, long buf) {
         try {
             long fd = TableUtils.openAppend(ff, path.concat(TableUtils.TODO_FILE_NAME).$());
             try {
-                Unsafe.getUnsafe().putByte(buf, code);
-                if (ff.append(fd, buf, 1) != 1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot write ").put(getTodoText(code)).put(" *todo*: ").put(path);
+                Unsafe.getUnsafe().putLong(buf, todo);
+                if (ff.append(fd, buf, 8) != 8) {
+                    throw CairoException.instance(Os.errno()).put("Cannot write ").put(getTodoText(todo)).put(" *todo*: ").put(path);
                 }
             } finally {
                 ff.close(fd);
@@ -531,8 +569,8 @@ public class TableUtils {
         }
     }
 
-    static String getTodoText(int code) {
-        switch (code) {
+    static String getTodoText(long code) {
+        switch ((int) (code & 0xff)) {
             case TODO_TRUNCATE:
                 return "truncate";
             case TODO_RESTORE_META:

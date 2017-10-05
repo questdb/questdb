@@ -68,11 +68,12 @@ public class TableWriter implements Closeable {
     private final FilesFacade ff;
     private final DateFormat partitionDirFmt;
     private final AppendMemory ddlMem;
+    private final int mode = 509;
+    private final int fileOperationRetryCount = 30;
     int txPartitionCount = 0;
     private LongConsumer timestampSetter;
     private int columnCount;
     private ObjList<Runnable> nullers = new ObjList<>();
-    private int mode = 509;
     private long fixedRowCount = 0;
     private long txn;
     private long structVersion;
@@ -86,6 +87,8 @@ public class TableWriter implements Closeable {
     private long masterRef = 0;
     private boolean removeDirOnCancelRow = true;
     private long tempMem8b = Unsafe.malloc(8);
+    private int metaSwapIndex;
+    private int metaPrevIndex;
 
     public TableWriter(FilesFacade ff, CharSequence root, CharSequence name) {
         this.ff = ff;
@@ -100,8 +103,8 @@ public class TableWriter implements Closeable {
             }
 
             this.txMem.jumpTo(TableUtils.TX_EOF);
-            byte todo = readTodoTaskCode();
-            switch (todo) {
+            long todo = readTodoTaskCode();
+            switch ((int) (todo & 0xff)) {
                 case -1:
                     // nothing to do
                     break;
@@ -109,7 +112,7 @@ public class TableWriter implements Closeable {
                     repairTruncate();
                     break;
                 case TableUtils.TODO_RESTORE_META:
-                    repairMetaRename();
+                    repairMetaRename((int) (todo >> 8));
                     break;
                 default:
                     LOG.error().$("Ignoring unknown *todo* code: ").$(todo).$();
@@ -168,20 +171,20 @@ public class TableWriter implements Closeable {
         commit();
 
         // create new _meta.swp
-        TableUtils.addColumnToMeta(ff, metaMem, name, type, path, rootLen, ddlMem);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeTodo(TableUtils.TODO_RESTORE_META);
+        this.metaSwapIndex = TableUtils.addColumnToMeta(ff, metaMem, name, type, path, rootLen, ddlMem);
 
         // close _meta so we can rename it
         metaMem.close();
 
         // rename _meta to _meta.prev
-        renameOrElse(TableUtils.META_FILE_NAME, TableUtils.META_PREV_FILE_NAME, this::openMetaFile);
+        renameMetaToMetaPrev();
+
+        // after we moved _meta to _meta.prev
+        // we have to have _todo to restore _meta should anything go wrong
+        writeRestoreMetaTodo();
 
         // rename _meta.swp to _meta
-        rollbackMeta();
+        renameSwapMetaToMeta();
 
         // add column objects
         configureColumn(type);
@@ -198,16 +201,13 @@ public class TableWriter implements Closeable {
             try {
                 openNewColumnFiles(name);
             } catch (CairoException e) {
-                try {
+                TableUtils.runFragile(() -> {
                     removeMetaFile();
                     removeLastColumn();
-                    rename(TableUtils.META_PREV_FILE_NAME, TableUtils.META_FILE_NAME);
+                    rename(TableUtils.META_PREV_FILE_NAME, metaPrevIndex, TableUtils.META_FILE_NAME);
                     openMetaFile();
                     removeTodoFile();
-                } catch (CairoException err) {
-                    throw new CairoError(err);
-                }
-                throw e;
+                }, e);
             }
         }
 
@@ -232,6 +232,12 @@ public class TableWriter implements Closeable {
         close0();
     }
 
+    /**
+     * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
+     * <p>
+     * <b>Pending rows</b>
+     * <p>This method will cancel pending rows by calling {@link #cancelRow()}. Data in partially appended row will be lost.</p>
+     */
     public void commit() {
         if ((masterRef & 1) != 0) {
             cancelRow();
@@ -294,20 +300,20 @@ public class TableWriter implements Closeable {
 
         commit();
 
-        removeColumnFromMeta(index);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wront
-        writeTodo(TableUtils.TODO_RESTORE_META);
+        this.metaSwapIndex = removeColumnFromMeta(index);
 
         // close _meta so we can rename it
         metaMem.close();
 
         // rename _meta to _meta.prev
-        renameOrElse(TableUtils.META_FILE_NAME, TableUtils.META_PREV_FILE_NAME, this::openMetaFile);
+        renameMetaToMetaPrev();
+
+        // after we moved _meta to _meta.prev
+        // we have to have _todo to restore _meta should anything go wrong
+        writeRestoreMetaTodo();
 
         // rename _meta.swp to _meta
-        rollbackMeta();
+        renameSwapMetaToMeta();
 
         // remove column objects
         removeColumn(index);
@@ -791,7 +797,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private byte readTodoTaskCode() {
+    private long readTodoTaskCode() {
         return TableUtils.readTodo(ff, path, rootLen, tempMem8b);
     }
 
@@ -821,48 +827,39 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void removeColumnFromMeta(int index) {
+    private int removeColumnFromMeta(int index) {
         try {
-            // delete stale _meta.swp
-            path.concat(TableUtils.META_SWAP_FILE_NAME).$();
+            int metaSwapIndex = TableUtils.openMetaSwapFile(ff, ddlMem, path, rootLen);
+            int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            ddlMem.putInt(columnCount - 1);
+            ddlMem.putInt(partitionBy);
 
-            if (ff.exists(path) && !ff.remove(path)) {
-                throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
+            if (timestampIndex == index) {
+                ddlMem.putInt(-1);
+            } else if (index < timestampIndex) {
+                ddlMem.putInt(timestampIndex - 1);
+            } else {
+                ddlMem.putInt(timestampIndex);
             }
 
-            try {
-                int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-                ddlMem.of(ff, path, ff.getPageSize());
-                ddlMem.putInt(columnCount - 1);
-                ddlMem.putInt(partitionBy);
-
-                if (timestampIndex == index) {
-                    ddlMem.putInt(-1);
-                } else if (index < timestampIndex) {
-                    ddlMem.putInt(timestampIndex - 1);
-                } else {
-                    ddlMem.putInt(timestampIndex);
+            for (int i = 0; i < columnCount; i++) {
+                if (i != index) {
+                    ddlMem.putInt(TableUtils.getColumnType(metaMem, i));
                 }
-
-                for (int i = 0; i < columnCount; i++) {
-                    if (i != index) {
-                        ddlMem.putInt(TableUtils.getColumnType(metaMem, i));
-                    }
-                }
-
-                long nameOffset = TableUtils.getColumnNameOffset(columnCount);
-                for (int i = 0; i < columnCount; i++) {
-                    CharSequence columnName = metaMem.getStr(nameOffset);
-                    if (i != index) {
-                        ddlMem.putStr(columnName);
-                    }
-                    nameOffset += VirtualMemory.getStorageLength(columnName);
-                }
-            } finally {
-                ddlMem.close();
             }
+
+            long nameOffset = TableUtils.getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                if (i != index) {
+                    ddlMem.putStr(columnName);
+                }
+                nameOffset += VirtualMemory.getStorageLength(columnName);
+            }
+
+            return metaSwapIndex;
         } finally {
-            path.trimTo(rootLen);
+            ddlMem.close();
         }
     }
 
@@ -947,16 +944,83 @@ public class TableWriter implements Closeable {
         TableUtils.removeTodoFile(ff, path, rootLen);
     }
 
-    private void rename(CharSequence from, CharSequence to) {
-        TableUtils.rename(ff, path, from, other, to, rootLen);
+    private int rename(CharSequence from, CharSequence toBase, int retries) {
+        try {
+
+            int index = 0;
+            other.concat(toBase).$();
+            path.concat(from).$();
+            int l = other.length();
+
+            do {
+                if (index > 0) {
+                    other.trimTo(l);
+                    other.put('.').put(index);
+                    other.$();
+                }
+
+                if (ff.exists(other) && !ff.remove(other)) {
+                    // todo: log
+                    index++;
+                    continue;
+                }
+
+                if (!ff.rename(path, other)) {
+                    // todo: log
+                    index++;
+                    continue;
+                }
+
+                return index;
+            } while (index < retries);
+
+            throw CairoException.instance(0).put("Cannot rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
+        } finally {
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
+        }
     }
 
-    private void renameOrElse(CharSequence from, CharSequence to, Runnable fail) {
-        TableUtils.renameOrElse(ff, path, from, other, to, rootLen, fail);
+    private void rename(CharSequence fromBase, int fromIndex, CharSequence to) {
+        try {
+            path.concat(fromBase);
+            if (fromIndex > 0) {
+                path.put('.').put(fromIndex);
+            }
+            path.$();
+
+            if (!ff.rename(path, other.concat(to).$())) {
+                throw CairoException.instance(Os.errno()).put("Cannot rename ").put(path).put(" -> ").put(other);
+            }
+        } finally {
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
+        }
     }
 
-    private void repairMetaRename() {
-        TableUtils.repairMetaRename(ff, path, other, rootLen);
+    private void renameMetaToMetaPrev() {
+        try {
+            this.metaPrevIndex = rename(TableUtils.META_FILE_NAME, TableUtils.META_PREV_FILE_NAME, fileOperationRetryCount);
+        } catch (CairoException e) {
+            TableUtils.runFragile(this::openMetaFile, e);
+        }
+    }
+
+    private void renameSwapMetaToMeta() {
+        // rename _meta.swp to _meta
+        try {
+            rename(TableUtils.META_SWAP_FILE_NAME, metaSwapIndex, TableUtils.META_FILE_NAME);
+        } catch (CairoException e) {
+            TableUtils.runFragile(() -> {
+                rename(TableUtils.META_PREV_FILE_NAME, metaPrevIndex, TableUtils.META_FILE_NAME);
+                openMetaFile();
+                removeTodoFile();
+            }, e);
+        }
+    }
+
+    private void repairMetaRename(int index) {
+        TableUtils.repairMetaRename(ff, path, other, rootLen, index);
     }
 
     private void repairTruncate() {
@@ -967,15 +1031,6 @@ public class TableWriter implements Closeable {
         txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
         TableUtils.resetTxn(txMem);
         removeTodoFile();
-    }
-
-    private void rollbackMeta() {
-        // rename _meta.swp to _meta
-        renameOrElse(TableUtils.META_SWAP_FILE_NAME, TableUtils.META_FILE_NAME, () -> {
-            rename(TableUtils.META_PREV_FILE_NAME, TableUtils.META_FILE_NAME);
-            openMetaFile();
-            removeTodoFile();
-        });
     }
 
     private void setAppendPosition(final long position) {
@@ -1074,7 +1129,18 @@ public class TableWriter implements Closeable {
         this.timestampSetter.accept(timestamp);
     }
 
-    private void writeTodo(byte code) {
+    private void writeRestoreMetaTodo() {
+        try {
+            writeTodo(((long) metaPrevIndex << 8) | TableUtils.TODO_RESTORE_META);
+        } catch (CairoException e) {
+            TableUtils.runFragile(() -> {
+                rename(TableUtils.META_PREV_FILE_NAME, metaPrevIndex, TableUtils.META_FILE_NAME);
+                openMetaFile();
+            }, e);
+        }
+    }
+
+    private void writeTodo(long code) {
         TableUtils.writeTodo(ff, path, code, rootLen, tempMem8b);
     }
 

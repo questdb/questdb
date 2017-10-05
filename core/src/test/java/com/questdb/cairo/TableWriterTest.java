@@ -1532,7 +1532,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
+                if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
                     return -1;
                 }
                 return super.openRW(name);
@@ -1610,12 +1610,12 @@ public class TableWriterTest extends AbstractCairoTest {
         class X extends FilesFacadeImpl {
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
+                return Chars.contains(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME) && super.remove(name);
+                return !Chars.contains(name, TableUtils.META_SWAP_FILE_NAME) && super.remove(name);
             }
         }
         testRemoveColumn(new X());
@@ -2248,7 +2248,6 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.commit();
             try {
                 writer.addColumn("abc", ColumnType.STRING);
-                Assert.fail();
             } catch (CairoException ignore) {
             }
 
@@ -2790,7 +2789,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private static class MetaRenameDenyingFacade extends FilesFacadeImpl {
         @Override
         public boolean rename(LPSZ from, LPSZ to) {
-            return !Chars.endsWith(to, TableUtils.META_PREV_FILE_NAME) && super.rename(from, to);
+            return !Chars.contains(to, TableUtils.META_PREV_FILE_NAME) && super.rename(from, to);
         }
     }
 
