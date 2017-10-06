@@ -312,11 +312,16 @@ public class CairoMemoryTest {
         long used = Unsafe.getMemUsed();
 
         class X extends FilesFacadeImpl {
-            int count = 3;
+            int count = 2;
+            boolean allClear = false;
 
             @Override
             public boolean truncate(long fd, long size) {
-                return --count > 0 && super.truncate(fd, size);
+                if (allClear || --count > 0) {
+                    return super.truncate(fd, size);
+                }
+                allClear = true;
+                return false;
             }
         }
 
@@ -326,7 +331,7 @@ public class CairoMemoryTest {
         try (Path path = new Path(temp.newFile().getAbsolutePath())) {
             try (AppendMemory mem = new AppendMemory(ff, path, 2 * ff.getPageSize())) {
                 try {
-                    for (int i = 0; i < N; i++) {
+                    for (int i = 0; i < N * 10; i++) {
                         mem.putLong(i);
                     }
                     Assert.fail();

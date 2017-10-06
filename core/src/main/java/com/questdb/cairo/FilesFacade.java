@@ -58,4 +58,6 @@ public interface FilesFacade {
     long write(long fd, long address, long len, long offset);
 
     boolean exists(long fd);
+
+    boolean supportsTruncateMappedFiles();
 }

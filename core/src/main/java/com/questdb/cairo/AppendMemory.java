@@ -69,16 +69,24 @@ public class AppendMemory extends VirtualMemory {
 
     public final void close(boolean truncate) {
         long sz = getAppendOffset();
-        super.close();
         releaseCurrentPage();
+        super.close();
         if (fd != -1) {
-            if (truncate) {
-                ff.truncate(fd, sz);
-                LOG.info().$("Truncated and closed [").$(fd).$(']').$();
-            } else {
-                LOG.info().$("Closed [").$(fd).$(']').$();
+            try {
+                if (truncate) {
+                    if (ff.truncate(fd, sz)) {
+                        LOG.info().$("Truncated and closed fd=").$(fd).$();
+                    } else {
+                        if (ff.supportsTruncateMappedFiles()) {
+                            throw CairoException.instance(Os.errno()).put("Cannot truncate fd=").put(fd);
+                        }
+                    }
+                } else {
+                    LOG.info().$("Closed fd=").$(fd).$();
+                }
+            } finally {
+                closeFd();
             }
-            closeFd();
         }
 
     }

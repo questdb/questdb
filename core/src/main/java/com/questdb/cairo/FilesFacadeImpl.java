@@ -160,4 +160,9 @@ public class FilesFacadeImpl implements FilesFacade {
     public boolean exists(long fd) {
         return Files.exists(fd);
     }
+
+    @Override
+    public boolean supportsTruncateMappedFiles() {
+        return Os.type != Os.WINDOWS;
+    }
 }
