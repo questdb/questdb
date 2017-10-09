@@ -62,9 +62,18 @@ public class AppendMemory extends VirtualMemory {
         return pageAddress = address;
     }
 
-    @Override
-    protected void release(long address) {
-        ff.munmap(address, pageSize);
+    public void truncate() {
+        if (fd == -1) {
+            // are we closed ?
+            return;
+        }
+
+        this.size = 0;
+        releaseCurrentPage();
+        if (!ff.truncate(fd, getMapPageSize())) {
+            throw CairoException.instance(Os.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getMapPageSize()).put(" bytes");
+        }
+        updateLimits(0, pageAddress = mapPage(0));
     }
 
     public final void close(boolean truncate) {
@@ -118,20 +127,6 @@ public class AppendMemory extends VirtualMemory {
         return size;
     }
 
-    public void truncate() {
-        if (fd == -1) {
-            // are we closed ?
-            return;
-        }
-
-        this.size = 0;
-        releaseCurrentPage();
-        if (!ff.truncate(fd, pageSize)) {
-            throw CairoException.instance(Os.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(pageSize).put(" bytes");
-        }
-        updateLimits(0, pageAddress = mapPage(0));
-    }
-
     private void closeFd() {
         ff.close(fd);
         fd = -1;
@@ -143,16 +138,21 @@ public class AppendMemory extends VirtualMemory {
             throw CairoException.instance(ff.errno()).put("Appender resize failed fd=").put(fd).put(", size=").put(target);
         }
         long offset = pageOffset(page);
-        long address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
+        long address = ff.mmap(fd, getMapPageSize(), offset, Files.MAP_RW);
         if (address == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot mmap(append) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(pageSize);
+            throw CairoException.instance(ff.errno()).put("Cannot mmap(append) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
         }
         return address;
     }
 
+    @Override
+    protected void release(int page, long address) {
+        ff.munmap(address, getPageSize(page));
+    }
+
     private void releaseCurrentPage() {
         if (pageAddress != 0) {
-            release(pageAddress);
+            release(0, pageAddress);
             pageAddress = 0;
         }
     }

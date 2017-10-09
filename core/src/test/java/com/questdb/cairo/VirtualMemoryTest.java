@@ -132,10 +132,11 @@ public class VirtualMemoryTest {
 
     @Test
     public void testDoubleCompatibility() throws Exception {
-        try (VirtualMemory mem = new VirtualMemory(64)) {
+        long pageSize = 64;
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
             mem.putDouble(8980980284.22234);
             mem.putDoubleBytes(8979283749.72983477);
-            assertEquals(8980980284.22234, mem.getDoubleBytes(0, 0), 0.00001);
+            assertEquals(8980980284.22234, mem.getDoubleBytes(0, 0, pageSize), 0.00001);
             assertEquals(8979283749.72983477, mem.getDouble(8), 0.00001);
         }
     }
@@ -297,10 +298,11 @@ public class VirtualMemoryTest {
 
     @Test
     public void testLongCompatibility() throws Exception {
-        try (VirtualMemory mem = new VirtualMemory(64)) {
+        long pageSize = 64;
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
             mem.putLong(8980980284302834L);
             mem.putLongBytes(897928374972983477L);
-            assertEquals(8980980284302834L, mem.getLongBytes(0, 0));
+            assertEquals(8980980284302834L, mem.getLongBytes(0, 0, pageSize));
             assertEquals(897928374972983477L, mem.getLong(8));
         }
     }
@@ -394,10 +396,11 @@ public class VirtualMemoryTest {
 
     @Test
     public void testShortCompatibility() throws Exception {
-        try (VirtualMemory mem = new VirtualMemory(64)) {
+        long pageSize = 64;
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
             mem.putShort((short) 1024);
             mem.putShortBytes((short) 2048);
-            assertEquals(1024, mem.getShortBytes(0, 0));
+            assertEquals(1024, mem.getShortBytes(0, 0, pageSize));
             assertEquals(2048, mem.getShort(2));
         }
     }

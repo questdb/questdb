@@ -1,3 +1,26 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.cairo;
 
 import com.questdb.misc.Files;
@@ -37,26 +60,30 @@ public class ReadWriteMemory extends VirtualMemory {
 
     @Override
     protected long allocateNextPage(int page) {
-        return mapPage(page);
-    }
-
-    @Override
-    protected long getPageAddress(int page) {
         long address;
-        if (page < pages.size()) {
-            address = pages.getQuick(page);
-            if (address != 0) {
-                return address;
-            }
+        long offset = pageOffset(page);
+        final long pageSize = getMapPageSize();
+
+        if (ff.length(fd) < offset + pageSize) {
+            ff.truncate(fd, offset + pageSize);
         }
-        address = mapPage(page);
-        cachePageAddress(page, address);
+
+        address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
+
+        if (address == -1) {
+            throw CairoException.instance(ff.errno()).put("Cannot mmap(RW) fd=").put(fd).put(", offset").put(offset).put(", size").put(pageSize);
+        }
         return address;
     }
 
     @Override
-    protected void release(long address) {
-        ff.munmap(address, pageSize);
+    protected long getPageAddress(int page) {
+        return mapWritePage(page);
+    }
+
+    @Override
+    protected void release(int page, long address) {
+        ff.munmap(address, getPageSize(page));
     }
 
     public long getFd() {
@@ -86,23 +113,8 @@ public class ReadWriteMemory extends VirtualMemory {
         } else {
             setPageSize(Math.max(defaultPageSize, (size / ff.getPageSize()) * ff.getPageSize()));
         }
-        pages.ensureCapacity((int) (size / this.pageSize + 1));
+        pages.ensureCapacity((int) (size / getMapPageSize() + 1));
         this.size = size;
     }
 
-    private long mapPage(int page) {
-        long address;
-        long offset = pageOffset(page);
-
-        if (ff.length(fd) < offset + pageSize) {
-            ff.truncate(fd, offset + pageSize);
-        }
-
-        address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
-
-        if (address == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot mmap(RW) fd=").put(fd).put(", offset").put(offset).put(", size").put(pageSize);
-        }
-        return address;
-    }
 }

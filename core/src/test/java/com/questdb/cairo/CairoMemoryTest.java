@@ -31,6 +31,7 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
+import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Rule;
@@ -409,18 +410,18 @@ public class CairoMemoryTest {
 
     @Test
     public void testReadWriteMemoryJump() throws Exception {
-        long used = Unsafe.getMemUsed();
-        try (Path path = new Path(temp.newFile().getAbsolutePath())) {
-            try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, FF.getPageSize(), 0, FF.getPageSize())) {
-                for (int i = 0; i < 100; i++) {
-                    mem.putLong(i);
-                    mem.skip(2 * FF.getPageSize());
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path(temp.newFile().getAbsolutePath())) {
+                try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, FF.getPageSize(), 0, FF.getPageSize())) {
+                    for (int i = 0; i < 100; i++) {
+                        mem.putLong(i);
+                        mem.skip(2 * FF.getPageSize());
+                    }
+                    mem.jumpTo(0);
+                    Assert.assertEquals((8 + 2 * FF.getPageSize()) * 100, mem.size());
                 }
-                mem.jumpTo(0);
-                Assert.assertEquals((8 + 2 * FF.getPageSize()) * 100, mem.size());
             }
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
+        });
     }
 
     @Test

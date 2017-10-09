@@ -34,6 +34,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     private long fd = -1;
     private long size = 0;
     private long lastPageSize;
+    private int lastPageIndex;
     private long maxPageSize;
 
     public ReadOnlyMemory(FilesFacade ff, LPSZ name, long maxPageSize) {
@@ -63,15 +64,35 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     }
 
     @Override
-    protected void release(long address) {
-        ff.munmap(address, pageSize);
+    public void trackFileSize() {
+        long size = ff.length(fd);
+        if (size < this.size) {
+            setInitialSize(size);
+        } else if (size > this.size) {
+            pages.ensureCapacity((int) (size / getMapPageSize() + 1));
+            if (lastPageSize < getMapPageSize()) {
+                int lastIndex = pages.size() - 1;
+                if (lastIndex > -1) {
+                    long address = pages.getQuick(lastIndex);
+                    if (address != 0) {
+                        release(lastIndex, address);
+                        pages.setQuick(lastIndex, 0);
+                    }
+                    clearHotPage();
+                }
+                this.lastPageIndex = 0;
+                this.lastPageSize = getMapPageSize();
+            }
+            this.size = size;
+        }
     }
 
     @Override
-    protected void releaseLast(long address) {
-        if (address != 0) {
-            ff.munmap(address, lastPageSize);
-            lastPageSize = pageSize;
+    protected long getPageSize(int page) {
+        if (page == lastPageIndex) {
+            return lastPageSize;
+        } else {
+            return super.getPageSize(page);
         }
     }
 
@@ -93,22 +114,12 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     }
 
     @Override
-    public void trackFileSize() {
-        long size = ff.length(fd);
-        if (size < this.size) {
-            setInitialSize(size);
-        } else if (size > this.size && lastPageSize < pageSize) {
-            pages.ensureCapacity((int) (size / this.pageSize + 1));
-            int lastIndex = pages.size() - 1;
-            if (lastIndex > -1) {
-                long address = pages.getQuick(lastIndex);
-                if (address != 0) {
-                    releaseLast(address);
-                    pages.setQuick(lastIndex, 0);
-                }
-                clearHotPage();
+    protected void release(int page, long address) {
+        if (address != 0) {
+            ff.munmap(address, getPageSize(page));
+            if (page == lastPageIndex) {
+                lastPageSize = getMapPageSize();
             }
-            this.size = size;
         }
     }
 
@@ -123,22 +134,20 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         long sz = size - offset;
 
         if (sz > 0) {
-            if (sz > pageSize) {
-                sz = pageSize;
+            if (sz >= getMapPageSize()) {
+                sz = getMapPageSize();
             } else {
                 this.lastPageSize = sz;
+                this.lastPageIndex = page;
             }
 
             address = ff.mmap(fd, sz, offset, Files.MAP_RO);
-        } else {
-            address = -1L;
+            if (address == -1L) {
+                throw CairoException.instance(ff.errno()).put("Cannot mmap(read) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(sz);
+            }
+            return cachePageAddress(page, address);
         }
-
-        if (address == -1L) {
-            throw CairoException.instance(ff.errno()).put("Cannot mmap(read) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(sz);
-        }
-        cachePageAddress(page, address);
-        return address;
+        throw CairoException.instance(ff.errno()).put("Trying to map(read) page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(sz);
     }
 
     private void setInitialSize(long size) {
@@ -149,9 +158,11 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
             targetPageSize = Math.max(ff.getPageSize(), (size / ff.getPageSize()) * ff.getPageSize());
         }
 
-        if (targetPageSize != pageSize) {
+        if (targetPageSize != getMapPageSize()) {
             setPageSize(targetPageSize);
-            pages.ensureCapacity((int) (size / this.pageSize + 1));
+            pages.ensureCapacity((int) (size / getMapPageSize() + 1));
+            this.lastPageSize = targetPageSize < size ? targetPageSize : size;
+        } else {
             this.lastPageSize = targetPageSize;
         }
 
