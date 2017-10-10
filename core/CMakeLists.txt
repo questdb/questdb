@@ -43,6 +43,7 @@ if (WIN32)
             src/main/c/windows/os.c
             src/main/c/windows/net.c
             src/main/c/windows/select.h
+            src/main/c/windows/errno.h
             src/main/c/windows/select.c)
 else ()
     set(SOURCE_FILES

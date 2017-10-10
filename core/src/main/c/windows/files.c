@@ -79,8 +79,12 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_sequentialRead
         (JNIEnv *e, jclass cl, jlong fd, jlong address, jint len) {
     DWORD count;
-    jlong r = ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL) ? count : 0;
-
+    WINBOOL r = ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL);
+    if (r) {
+        return count;
+    }
+    SaveLastError();
+    return 0;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getLastModified
@@ -265,8 +269,8 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_truncate
         (JNIEnv *e, jclass cl, jlong handle, jlong size) {
-    if (set_file_pos((HANDLE) handle, size)) {
-        return (jboolean) SetEndOfFile((HANDLE) handle);
+    if (set_file_pos((HANDLE) handle, size) && SetEndOfFile((HANDLE) handle)) {
+        return TRUE;
     }
     SaveLastError();
     return FALSE;
@@ -332,11 +336,11 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getPageSize
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_remove
         (JNIEnv *e, jclass cl, jlong lpsz) {
-    jboolean b = (jboolean) DeleteFile((LPCSTR) lpsz);
-    if (!b) {
-        SaveLastError();
+    if (DeleteFile((LPCSTR) lpsz)) {
+        return TRUE;
     }
-    return b;
+    SaveLastError();
+    return FALSE;
 }
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rmdir

@@ -49,7 +49,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         super.close();
         if (fd != -1) {
             ff.close(fd);
-            LOG.info().$("Closed [").$(fd).$(']').$();
+            LOG.info().$("Closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
     }
@@ -110,7 +110,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
 
         this.maxPageSize = maxPageSize;
         setInitialSize(ff.length(fd));
-        LOG.info().$("Open ").$(name).$(" [").$(fd).$(']').$();
+        LOG.info().$("Open ").$(name).$(" [fd=").$(fd).$(']').$();
     }
 
     @Override

@@ -24,6 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
+import com.questdb.misc.Os;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.Path;
 import com.questdb.store.ColumnType;
@@ -142,7 +143,13 @@ public class TableMetadataCorruptionTest extends AbstractCairoTest {
 
     @Test
     public void testTransitionIndexWhenColumnCountIsBeyondFileSize() throws Exception {
-        assertTransitionIndexValidation(99);
+        // this test asserts that validator compares column count to file size, where
+        // file is prepared to be smaller than count. On windows this setup does not work
+        // because appender cannot truncate file to size smaller than default page size
+        // when reader is open.
+        if (Os.type != Os.WINDOWS) {
+            assertTransitionIndexValidation(99);
+        }
     }
 
     @Test

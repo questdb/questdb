@@ -26,6 +26,7 @@ package com.questdb.cairo;
 import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Numbers;
+import com.questdb.misc.Os;
 import com.questdb.misc.Rnd;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
@@ -159,6 +160,7 @@ public class TableReaderTest extends AbstractCairoTest {
         } else {
             assertNullStr(r, 5);
         }
+
         Assert.assertEquals(0, r.getInt(20));
     };
 
@@ -1055,7 +1057,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 try (TableReader reader = new TableReader(FF, root, "all")) {
                     // reader can see all the rows ?
-                    assertCursor(reader, ts, increment, blob, 0, BATCH1_ASSERTER);
+                    assertCursor(reader, ts, increment, blob, 0, null);
                 }
 
                 // create table with first batch populating all columns (there could be null values too)
@@ -1156,6 +1158,10 @@ public class TableReaderTest extends AbstractCairoTest {
 
                         // now delete last column
 
+                        if (Os.type == Os.WINDOWS) {
+                            reader.closeColumn("bin2");
+                        }
+
                         writer.removeColumn("bin2");
 
                         Assert.assertTrue(reader.reload());
@@ -1172,6 +1178,9 @@ public class TableReaderTest extends AbstractCairoTest {
                         // and assert that all columns that have not been deleted contain correct values
                         assertBatch6(count, increment, ts, blob, reader);
 
+                        if (Os.type == Os.WINDOWS) {
+                            reader.closeColumn("int");
+                        }
                         // remove first column and add new column by same name
                         writer.removeColumn("int");
                         writer.addColumn("int", ColumnType.INT);

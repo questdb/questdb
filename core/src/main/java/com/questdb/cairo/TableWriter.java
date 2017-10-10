@@ -27,7 +27,10 @@ import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.*;
+import com.questdb.misc.Files;
+import com.questdb.misc.Misc;
+import com.questdb.misc.Numbers;
+import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
@@ -99,7 +102,7 @@ public class TableWriter implements Closeable {
             this.txMem = openTxnFile();
 
             if (Files.lock(txMem.getFd()) != 0) {
-                throw CairoException.instance(Os.errno()).put("Cannot lock table: ").put(path.$());
+                throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
             }
 
             this.txMem.jumpTo(TableUtils.TX_EOF);
@@ -166,7 +169,7 @@ public class TableWriter implements Closeable {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
         }
 
-        LOG.info().$("Adding column [writer]' ").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
+        LOG.info().$("Adding column [writer] '").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
 
         commit();
 
@@ -492,7 +495,7 @@ public class TableWriter implements Closeable {
                     try {
                         setStateForTimestamp(maxTimestamp, false);
                         if (!ff.rmdir(path.$())) {
-                            throw CairoException.instance(Os.errno()).put("Cannot remove directory: ").put(path);
+                            throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
                         }
                         removeDirOnCancelRow = false;
                     } finally {
@@ -868,7 +871,7 @@ public class TableWriter implements Closeable {
             if (ff.remove(name)) {
                 LOG.info().$("Removed: ").$(path).$();
             } else {
-                LOG.error().$("Cannot remove: ").$(name).$();
+                LOG.error().$("Cannot remove: ").$(name).$(" [errno=").$(ff.errno()).$(']').$();
             }
         }
     }
@@ -882,7 +885,7 @@ public class TableWriter implements Closeable {
         try {
             path.concat(TableUtils.META_FILE_NAME).$();
             if (ff.exists(path) && !ff.remove(path)) {
-                throw CairoException.instance(Os.errno()).put("Recovery failed. Cannot remove: ").put(path);
+                throw CairoException.instance(ff.errno()).put("Recovery failed. Cannot remove: ").put(path);
             }
         } finally {
             path.trimTo(rootLen);
@@ -930,7 +933,7 @@ public class TableWriter implements Closeable {
                         if (ff.rmdir(path)) {
                             LOG.info().$("Removing partition dir: ").$(path).$();
                         } else {
-                            LOG.error().$('[').$(ff.errno()).$("] Cannot remove: ").$(path).$();
+                            LOG.error().$("Cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
                         }
                     }
                 }
@@ -960,13 +963,13 @@ public class TableWriter implements Closeable {
                 }
 
                 if (ff.exists(other) && !ff.remove(other)) {
-                    LOG.info().$("Cannot remove target of rename '").$(path).$("' to '").$(other).$('[').$(Os.errno()).$(']').$();
+                    LOG.info().$("Cannot remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).$(']').$();
                     index++;
                     continue;
                 }
 
                 if (!ff.rename(path, other)) {
-                    LOG.info().$("Cannot rename '").$(path).$("' to '").$(other).$('[').$(Os.errno()).$(']').$();
+                    LOG.info().$("Cannot rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).$(']').$();
                     index++;
                     continue;
                 }
@@ -990,7 +993,7 @@ public class TableWriter implements Closeable {
             path.$();
 
             if (!ff.rename(path, other.concat(to).$())) {
-                throw CairoException.instance(Os.errno()).put("Cannot rename ").put(path).put(" -> ").put(other);
+                throw CairoException.instance(ff.errno()).put("Cannot rename ").put(path).put(" -> ").put(other);
             }
         } finally {
             path.trimTo(rootLen);

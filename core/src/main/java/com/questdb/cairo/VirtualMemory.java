@@ -761,6 +761,7 @@ public class VirtualMemory implements Closeable {
         private long pageSize;
         private long pageAddress;
         private long pageOffset;
+        private long mod;
 
         @Override
         public int length() {
@@ -787,6 +788,7 @@ public class VirtualMemory implements Closeable {
             this.lastIndex = -1;
             this.page = pageIndex(offset);
             this.pageSize = getPageSize(page);
+            this.mod = pageSize - 1;
             this.pageAddress = getPageAddress(page);
             this.pageOffset = offsetInPage(offset);
             return this;
@@ -797,6 +799,7 @@ public class VirtualMemory implements Closeable {
             long offset = this.offset + index * 2;
             page = pageIndex(offset);
             pageSize = getPageSize(page);
+            mod = pageSize - 1;
             pageAddress = getPageAddress(page);
             pageOffset = offsetInPage(offset);
 

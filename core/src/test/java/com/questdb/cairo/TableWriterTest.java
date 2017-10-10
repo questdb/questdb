@@ -79,7 +79,7 @@ public class TableWriterTest extends AbstractCairoTest {
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
             int N = 10000;
             Rnd rnd = new Rnd();
-            populateProducts(writer, rnd, ts, N, 60 * 60000);
+            populateProducts(writer, rnd, ts, N, 60000);
             writer.addColumn("xyz", ColumnType.STRING);
             Assert.assertEquals(N, writer.size());
         }
@@ -187,22 +187,24 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testAddColumnCommitPartitioned() throws Exception {
         create(FF, PartitionBy.DAY);
         Rnd rnd = new Rnd();
+        long interval = 60000L;
+        int count = 10000;
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            ts = populateProducts(writer, rnd, ts, 10000, 60 * 60000);
-            Assert.assertEquals(10000, writer.size());
+            ts = populateProducts(writer, rnd, ts, count, interval);
+            Assert.assertEquals(count, writer.size());
             writer.addColumn("abc", ColumnType.STRING);
             // add more data including updating new column
-            ts = populateTable2(rnd, writer, ts, 10000);
-            Assert.assertEquals(2 * 10000, writer.size());
+            ts = populateTable2(rnd, writer, ts, count, interval);
+            Assert.assertEquals(2 * count, writer.size());
             writer.rollback();
         }
 
         // append more
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            populateTable2(rnd, writer, ts, 10000);
+            populateTable2(rnd, writer, ts, count, interval);
             writer.commit();
-            Assert.assertEquals(2 * 10000, writer.size());
+            Assert.assertEquals(2 * count, writer.size());
         }
     }
 
@@ -215,7 +217,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (CairoException ignore) {
             }
-            populateProducts(writer, new Rnd(), ts, 10000, 60000);
+            populateProducts(writer, new Rnd(), ts, 10000, 6000);
             writer.commit();
             Assert.assertEquals(20000, writer.size());
         }
@@ -287,15 +289,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
-                if (Chars.contains(from, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
-                    return false;
-                }
-
-                if (Chars.contains(to, TableUtils.META_PREV_FILE_NAME) && --toCount > 0) {
-                    return false;
-                }
-
-                return super.rename(from, to);
+                return (!Chars.contains(from, TableUtils.META_PREV_FILE_NAME) || --count <= 0) && (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --toCount <= 0) && super.rename(from, to);
             }
         });
     }
@@ -387,9 +381,9 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.addColumn("xyz", ColumnType.STRING);
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-            int N = 100000;
+            int N = 10000;
             Rnd rnd = new Rnd();
-            populateProducts(writer, rnd, ts, N, 60 * 60000);
+            populateProducts(writer, rnd, ts, N, 60000);
             writer.commit();
             Assert.assertEquals(N, writer.size());
         }
@@ -959,7 +953,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 int cancelCount = 0;
                 while (i < N) {
-                    TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+                    TableWriter.Row r = writer.newRow(ts += 60000);
                     r.putInt(0, rnd.nextPositiveInt());
                     r.putStr(1, rnd.nextString(7));
                     r.putStr(2, rnd.nextString(4));
@@ -998,7 +992,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int i = 0;
             TableWriter.Row r;
             while (i < 10000) {
-                r = writer.newRow(ts += 60 * 60000);
+                r = writer.newRow(ts += 60000);
                 r.putInt(0, rnd.nextPositiveInt());
                 r.putStr(1, rnd.nextString(7));
                 r.putStr(2, rnd.nextString(4));
@@ -1026,11 +1020,13 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCancelRowAfterAddColumn() throws Exception {
         create(FF, PartitionBy.DAY);
         Rnd rnd = new Rnd();
+        long interval = 60000;
+        int count = 10000;
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            ts = populateProducts(writer, rnd, ts, 10000, 60 * 60000);
+            ts = populateProducts(writer, rnd, ts, count, interval);
 
-            Assert.assertEquals(10000, writer.size());
+            Assert.assertEquals(count, writer.size());
 
             writer.addColumn("abc", ColumnType.STRING);
 
@@ -1041,17 +1037,17 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertEquals(0L, writer.columns.getQuick(13).getAppendOffset());
 
             // add more data including updating new column
-            ts = populateTable2(rnd, writer, ts, 10000);
-            Assert.assertEquals(2 * 10000, writer.size());
+            ts = populateTable2(rnd, writer, ts, count, interval);
+            Assert.assertEquals(2 * count, writer.size());
 
             writer.rollback();
         }
 
         // append more
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            populateTable2(rnd, writer, ts, 10000);
+            populateTable2(rnd, writer, ts, count, interval);
             writer.commit();
-            Assert.assertEquals(2 * 10000, writer.size());
+            Assert.assertEquals(2 * count, writer.size());
         }
     }
 
@@ -1154,7 +1150,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 int cancelCount = 0;
                 int failCount = 0;
                 while (i < N) {
-                    TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+                    TableWriter.Row r = writer.newRow(ts += 60000);
                     r.putInt(0, rnd.nextPositiveInt());
                     r.putStr(1, rnd.nextString(7));
                     r.putStr(2, rnd.nextString(4));
@@ -1353,10 +1349,10 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testDayPartition() throws Exception {
         long used = Unsafe.getMemUsed();
         create(FF, PartitionBy.DAY);
-        int N = 100000;
+        int N = 10000;
 
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            populateProducts(writer, new Rnd(), DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z"), N, 60 * 60000);
+            populateProducts(writer, new Rnd(), DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z"), N, 60000);
             writer.commit();
             Assert.assertEquals(N, writer.size());
         }
@@ -1383,14 +1379,16 @@ public class TableWriterTest extends AbstractCairoTest {
         long used = Unsafe.getMemUsed();
         create(FF, PartitionBy.DAY);
         Rnd rnd = new Rnd();
+        int count = 10000;
+        long interval = 60000L;
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
             for (int k = 0; k < 3; k++) {
-                ts = populateProducts(writer, rnd, ts, 100000, 60 * 60000);
+                ts = populateProducts(writer, rnd, ts, count, interval);
                 writer.commit();
-                Assert.assertEquals(100000, writer.size());
+                Assert.assertEquals(count, writer.size());
                 writer.truncate();
             }
         }
@@ -1398,9 +1396,9 @@ public class TableWriterTest extends AbstractCairoTest {
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
             long ts = DateFormatUtils.parseDateTime("2014-03-04T00:00:00.000Z");
             Assert.assertEquals(0, writer.size());
-            populateProducts(writer, rnd, ts, 100000, 60 * 60000);
+            populateProducts(writer, rnd, ts, count, interval);
             writer.commit();
-            Assert.assertEquals(100000, writer.size());
+            Assert.assertEquals(count, writer.size());
         }
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(0L, FF.getOpenFileCount());
@@ -1828,7 +1826,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean rmdir(CompositePath name) {
-                if (Chars.endsWith(name, "2014-08-22")) {
+                if (Chars.endsWith(name, "2013-03-12")) {
                     removeAttempted = true;
                     return false;
                 }
@@ -1839,17 +1837,19 @@ public class TableWriterTest extends AbstractCairoTest {
         X ff = new X();
 
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        final long interval = 60000L;
+        int count = 10000;
         Rnd rnd = new Rnd();
         try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
 
-            ts = populateProducts(writer, rnd, ts, 10000, 60 * 60000);
+            ts = populateProducts(writer, rnd, ts, count, interval);
             writer.commit();
 
             long timestampAfterCommit = ts;
 
-            populateProducts(writer, rnd, ts, 10000, 60 * 60000);
+            populateProducts(writer, rnd, ts, count, interval);
 
-            Assert.assertEquals(20000, writer.size());
+            Assert.assertEquals(2 * count, writer.size());
             writer.rollback();
 
             Assert.assertTrue(ff.removeAttempted);
@@ -1860,10 +1860,10 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.newRow(ts).cancel();
 
             // we should be able to repeat timestamps
-            populateProducts(writer, rnd, ts, 10000, 60 * 60000);
+            populateProducts(writer, rnd, ts, count, interval);
             writer.commit();
 
-            Assert.assertEquals(20000, writer.size());
+            Assert.assertEquals(2 * count, writer.size());
         }
     }
 
@@ -2111,8 +2111,9 @@ public class TableWriterTest extends AbstractCairoTest {
     private void populateAndColumnPopulate(int n) throws NumericException {
         Rnd rnd = new Rnd();
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        long interval = 60000;
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            ts = populateProducts(writer, rnd, ts, n, 60 * 60000);
+            ts = populateProducts(writer, rnd, ts, n, interval);
             writer.commit();
 
             Assert.assertEquals(n, writer.size());
@@ -2120,7 +2121,7 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.addColumn("abc", ColumnType.STRING);
 
             // add more data including updating new column
-            ts = populateTable2(rnd, writer, ts, n);
+            ts = populateTable2(rnd, writer, ts, n, interval);
 
             writer.commit();
 
@@ -2129,7 +2130,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         // append more
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            populateTable2(rnd, writer, ts, n);
+            populateTable2(rnd, writer, ts, n, interval);
             Assert.assertEquals(3 * n, writer.size());
             writer.commit();
             Assert.assertEquals(3 * n, writer.size());
@@ -2177,9 +2178,9 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private long populateTable2(Rnd rnd, TableWriter writer, long ts, int n) {
+    private long populateTable2(Rnd rnd, TableWriter writer, long ts, int n, long interval) {
         for (int i = 0; i < n; i++) {
-            TableWriter.Row r = writer.newRow(ts += (long) (60 * 60000));
+            TableWriter.Row r = writer.newRow(ts += interval);
             r.putInt(0, rnd.nextPositiveInt());
             r.putStr(1, rnd.nextString(7));
             r.putStr(2, rnd.nextString(4));
@@ -2488,7 +2489,7 @@ public class TableWriterTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             for (int i = 0; i < 100000; i++) {
                 // one record per hour
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
+                ts = populateRow(writer, ts, rnd, 60000);
                 // do not commit often, let transaction size grow
                 if (rnd.nextPositiveInt() % 100 == 0) {
 
@@ -2664,12 +2665,12 @@ public class TableWriterTest extends AbstractCairoTest {
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
         Rnd rnd = new Rnd();
         try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            ts = populateProducts(writer, rnd, ts, 10000, 60 * 60000);
+            ts = populateProducts(writer, rnd, ts, 10000, 60000);
             writer.commit();
 
             long timestampAfterCommit = ts;
 
-            populateProducts(writer, rnd, ts, 10000, 60 * 60000);
+            populateProducts(writer, rnd, ts, 10000, 60000);
 
             Assert.assertEquals(20000, writer.size());
             writer.rollback();
@@ -2683,7 +2684,7 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.newRow(ts).cancel();
 
             // we should be able to repeat timestamps
-            populateProducts(writer, rnd, ts, 10000, 60 * 60000);
+            populateProducts(writer, rnd, ts, 10000, 60000);
             writer.commit();
 
             Assert.assertEquals(20000, writer.size());
