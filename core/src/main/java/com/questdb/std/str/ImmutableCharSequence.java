@@ -21,27 +21,46 @@
  *
  ******************************************************************************/
 
-package com.questdb.factory;
+package com.questdb.std.str;
 
-public final class FactoryConstants {
-    public static final int CR_POOL_CLOSE = 1;
-    public static final int CR_NAME_LOCK = 2;
-    public static final int CR_IDLE = 3;
-    public static final int CR_REOPEN = 4;
-    static final long UNALLOCATED = -1L;
+import com.questdb.misc.Chars;
 
-    public static String closeReasonText(int reason) {
-        switch (reason) {
-            case CR_POOL_CLOSE:
-                return "[POOL CLOSED]";
-            case CR_NAME_LOCK:
-                return "[LOCKED]";
-            case CR_IDLE:
-                return "[IDLE]";
-            case CR_REOPEN:
-                return "[REOPEN]";
-            default:
-                return "[UNKNOWN]";
+public final class ImmutableCharSequence extends AbstractCharSequence {
+
+    private final char[] chars;
+
+    private ImmutableCharSequence(CharSequence that) {
+        int len = that.length();
+        this.chars = new char[len];
+        for (int i = 0; i < len; i++) {
+            chars[i] = that.charAt(i);
         }
+    }
+
+    public static CharSequence of(CharSequence charSequence) {
+        if (charSequence instanceof ImmutableCharSequence) {
+            return charSequence;
+        }
+        return new ImmutableCharSequence(charSequence);
+    }
+
+    @Override
+    public int hashCode() {
+        return Chars.hashCode(this);
+    }
+
+    @Override
+    public boolean equals(Object that) {
+        return this == that || that instanceof CharSequence && Chars.equals(this, (CharSequence) that);
+    }
+
+    @Override
+    public int length() {
+        return chars.length;
+    }
+
+    @Override
+    public char charAt(int index) {
+        return chars[index];
     }
 }

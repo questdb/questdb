@@ -31,11 +31,11 @@ import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.ConcurrentHashMap;
 
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Iterator;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * This class maintains cache of open writers to avoid OS overhead of

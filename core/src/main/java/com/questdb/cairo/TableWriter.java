@@ -35,10 +35,7 @@ import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 import com.questdb.std.Sinkable;
-import com.questdb.std.str.CompositePath;
-import com.questdb.std.str.LPSZ;
-import com.questdb.std.str.NativeLPSZ;
-import com.questdb.std.str.Path;
+import com.questdb.std.str.*;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.DateLocaleFactory;
@@ -73,6 +70,7 @@ public class TableWriter implements Closeable {
     private final AppendMemory ddlMem;
     private final int mode = 509;
     private final int fileOperationRetryCount = 30;
+    private final CharSequence name;
     int txPartitionCount = 0;
     private LongConsumer timestampSetter;
     private int columnCount;
@@ -97,6 +95,7 @@ public class TableWriter implements Closeable {
         this.ff = ff;
         this.path = new CompositePath().of(root).concat(name);
         this.other = new CompositePath().of(root).concat(name);
+        this.name = ImmutableCharSequence.of(name);
         this.rootLen = path.length();
         try {
             this.txMem = openTxnFile();
@@ -274,6 +273,10 @@ public class TableWriter implements Closeable {
 
     public long getMaxTimestamp() {
         return maxTimestamp;
+    }
+
+    public CharSequence getName() {
+        return name;
     }
 
     public int getPartitionBy() {
