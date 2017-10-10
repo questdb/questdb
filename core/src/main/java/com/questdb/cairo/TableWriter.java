@@ -107,19 +107,18 @@ public class TableWriter implements Closeable {
 
             this.txMem.jumpTo(TableUtils.TX_EOF);
             long todo = readTodoTaskCode();
-            switch ((int) (todo & 0xff)) {
-                case -1:
-                    // nothing to do
-                    break;
-                case TableUtils.TODO_TRUNCATE:
-                    repairTruncate();
-                    break;
-                case TableUtils.TODO_RESTORE_META:
-                    repairMetaRename((int) (todo >> 8));
-                    break;
-                default:
-                    LOG.error().$("Ignoring unknown *todo* code: ").$(todo).$();
-                    break;
+            if (todo != -1L) {
+                switch ((int) (todo & 0xff)) {
+                    case TableUtils.TODO_TRUNCATE:
+                        repairTruncate();
+                        break;
+                    case TableUtils.TODO_RESTORE_META:
+                        repairMetaRename((int) (todo >> 8));
+                        break;
+                    default:
+                        LOG.error().$("Ignoring unknown *todo* code: ").$(todo).$();
+                        break;
+                }
             }
             this.ddlMem = new AppendMemory();
             this.metaMem = new ReadOnlyMemory();

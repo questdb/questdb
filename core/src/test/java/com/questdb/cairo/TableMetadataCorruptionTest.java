@@ -158,6 +158,11 @@ public class TableMetadataCorruptionTest extends AbstractCairoTest {
     }
 
     private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int partitionType, int timestampIndex, String contains) throws Exception {
+        assertMetaConstructorFailure(names, types, columnCount, partitionType, timestampIndex, contains, FilesFacadeImpl.INSTANCE.getPageSize());
+        assertMetaConstructorFailure(names, types, columnCount, partitionType, timestampIndex, contains, 65536);
+    }
+
+    private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int partitionType, int timestampIndex, String contains, long pageSize) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CompositePath path = new CompositePath()) {
                 path.of(root).concat("x").put(Path.SEPARATOR).$();
@@ -168,7 +173,7 @@ public class TableMetadataCorruptionTest extends AbstractCairoTest {
                 final int rootLen = path.length();
                 try (AppendMemory mem = new AppendMemory()) {
 
-                    mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), FilesFacadeImpl.INSTANCE.getPageSize());
+                    mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize);
 
                     mem.putInt(columnCount);
                     mem.putInt(partitionType);
