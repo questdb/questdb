@@ -70,7 +70,7 @@ public class AppendMemory extends VirtualMemory {
             try {
                 if (truncate) {
                     if (ff.truncate(fd, sz)) {
-                        LOG.info().$("Truncated and closed [fd=").$(fd).$(']').$();
+                        LOG.info().$("truncated and closed [fd=").$(fd).$(']').$();
                     } else {
                         if (ff.supportsTruncateMappedFiles()) {
                             throw CairoException.instance(Os.errno()).put("Cannot truncate fd=").put(fd);
@@ -79,14 +79,14 @@ public class AppendMemory extends VirtualMemory {
                             // To make it work size needs to be rounded up to nearest page.
                             long n = sz / getMapPageSize();
                             if (ff.truncate(fd, (n + 1) * getMapPageSize())) {
-                                LOG.info().$("Truncated and closed, second attempt [fd=").$(fd).$(']').$();
+                                LOG.info().$("truncated and closed, second attempt [fd=").$(fd).$(']').$();
                             } else {
-                                LOG.info().$("Closed without truncate [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
+                                LOG.info().$("closed without truncate [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
                             }
                         }
                     }
                 } else {
-                    LOG.info().$("Closed [fd=").$(fd).$(']').$();
+                    LOG.info().$("closed [fd=").$(fd).$(']').$();
                 }
             } finally {
                 closeFd();
@@ -106,7 +106,7 @@ public class AppendMemory extends VirtualMemory {
         if (fd == -1) {
             throw CairoException.instance(ff.errno()).put("Cannot open ").put(name);
         }
-        LOG.info().$("Open ").$(name).$(" [fd=").$(fd).$(']').$();
+        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
     }
 
     public void truncate() {

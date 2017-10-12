@@ -115,7 +115,7 @@ public class TableWriter implements Closeable {
                         repairMetaRename((int) (todo >> 8));
                         break;
                     default:
-                        LOG.error().$("Ignoring unknown *todo* code: ").$(todo).$();
+                        LOG.error().$("ignoring unknown *todo* code: ").$(todo).$();
                         break;
                 }
             }
@@ -134,8 +134,9 @@ public class TableWriter implements Closeable {
             timestampSetter = configureTimestampSetter();
             configureAppendPosition();
             purgeUnusedPartitions();
+            LOG.info().$("open '").$(name).$('\'').$();
         } catch (CairoException e) {
-            LOG.error().$("Cannot open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
+            LOG.error().$("cannot open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
             close0();
             throw e;
         }
@@ -167,7 +168,7 @@ public class TableWriter implements Closeable {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
         }
 
-        LOG.info().$("Adding column [writer] '").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
+        LOG.info().$("adding column '").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
 
         commit();
 
@@ -287,6 +288,10 @@ public class TableWriter implements Closeable {
         return txPartitionCount > 1 || transientRowCount != prevTransientRowCount;
     }
 
+    public boolean isOpen() {
+        return tempMem8b != 0;
+    }
+
     public Row newRow(long timestamp) {
         return rowFunction.newRow(timestamp);
     }
@@ -294,7 +299,7 @@ public class TableWriter implements Closeable {
     public void removeColumn(CharSequence name) {
         int index = getColumnIndex(name);
 
-        LOG.info().$("Removing column '").$(name).$("' from ").$(path).$();
+        LOG.info().$("removing column '").$(name).$("' from ").$(path).$();
 
         // check if we are moving timestamp from a partitioned table
         boolean timestamp = index == metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
@@ -557,16 +562,19 @@ public class TableWriter implements Closeable {
     }
 
     private void close0() {
-        closeColumns(true);
-        Misc.free(txMem);
-        Misc.free(metaMem);
-        Misc.free(columnSizeMem);
-        Misc.free(ddlMem);
-        Misc.free(path);
-        Misc.free(other);
-        if (tempMem8b != 0) {
-            Unsafe.free(tempMem8b, 8);
-            tempMem8b = 0;
+        if (isOpen()) {
+            closeColumns(true);
+            Misc.free(txMem);
+            Misc.free(metaMem);
+            Misc.free(columnSizeMem);
+            Misc.free(ddlMem);
+            Misc.free(path);
+            Misc.free(other);
+            if (tempMem8b != 0) {
+                Unsafe.free(tempMem8b, 8);
+                tempMem8b = 0;
+            }
+            LOG.info().$("closed '").$(name).$('\'').$();
         }
     }
 
@@ -871,9 +879,9 @@ public class TableWriter implements Closeable {
     private void removeFileAndOrLog(LPSZ name) {
         if (ff.exists(name)) {
             if (ff.remove(name)) {
-                LOG.info().$("Removed: ").$(path).$();
+                LOG.info().$("removed: ").$(path).$();
             } else {
-                LOG.error().$("Cannot remove: ").$(name).$(" [errno=").$(ff.errno()).$(']').$();
+                LOG.error().$("cannot remove: ").$(name).$(" [errno=").$(ff.errno()).$(']').$();
             }
         }
     }
@@ -914,7 +922,7 @@ public class TableWriter implements Closeable {
     }
 
     private void removePartitionDirsNewerThan(long timestamp) {
-        LOG.info().$("Looking to remove partitions newer than '").$ts(timestamp).$("' from ").$(path.$()).$();
+        LOG.info().$("looking to remove partitions newer than '").$ts(timestamp).$("' from ").$(path.$()).$();
         try {
             ff.iterateDir(path.$(), (pName, type) -> {
                 path.trimTo(rootLen);
@@ -933,9 +941,9 @@ public class TableWriter implements Closeable {
 
                     if (type == Files.DT_DIR) {
                         if (ff.rmdir(path)) {
-                            LOG.info().$("Removing partition dir: ").$(path).$();
+                            LOG.info().$("removing partition dir: ").$(path).$();
                         } else {
-                            LOG.error().$("Cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
+                            LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
                         }
                     }
                 }
@@ -965,13 +973,13 @@ public class TableWriter implements Closeable {
                 }
 
                 if (ff.exists(other) && !ff.remove(other)) {
-                    LOG.info().$("Cannot remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).$(']').$();
+                    LOG.info().$("cannot remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).$(']').$();
                     index++;
                     continue;
                 }
 
                 if (!ff.rename(path, other)) {
-                    LOG.info().$("Cannot rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).$(']').$();
+                    LOG.info().$("cannot rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).$(']').$();
                     index++;
                     continue;
                 }
@@ -1029,7 +1037,7 @@ public class TableWriter implements Closeable {
     }
 
     private void repairTruncate() {
-        LOG.info().$("Repairing abnormally terminated truncate on ").$(path).$();
+        LOG.info().$("repairing abnormally terminated truncate on ").$(path).$();
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirectories();
         }

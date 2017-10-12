@@ -21,27 +21,36 @@
  *
  ******************************************************************************/
 
-package com.questdb.factory;
+package com.questdb.cairo.pool;
 
-public final class FactoryConstants {
-    public static final int CR_POOL_CLOSE = 1;
-    public static final int CR_NAME_LOCK = 2;
-    public static final int CR_IDLE = 3;
-    public static final int CR_REOPEN = 4;
-    static final long UNALLOCATED = -1L;
+import com.questdb.cairo.FilesFacade;
+import com.questdb.std.str.ImmutableCharSequence;
 
-    public static String closeReasonText(int reason) {
-        switch (reason) {
-            case CR_POOL_CLOSE:
-                return "POOL_CLOSED";
-            case CR_NAME_LOCK:
-                return "LOCKED";
-            case CR_IDLE:
-                return "IDLE";
-            case CR_REOPEN:
-                return "REOPEN";
-            default:
-                return "UNKNOWN";
-        }
+import java.io.Closeable;
+
+abstract class AbstractPool implements Closeable {
+    protected final CharSequence root;
+    protected final FilesFacade ff;
+    private final long inactiveTtlMs;
+    protected PoolListener eventListener;
+
+    public AbstractPool(FilesFacade ff, CharSequence root, long inactiveTtlMs) {
+        this.ff = ff;
+        this.root = ImmutableCharSequence.of(root);
+        this.inactiveTtlMs = inactiveTtlMs;
     }
+
+    public PoolListener getEventListener() {
+        return eventListener;
+    }
+
+    public void setEventListener(PoolListener eventListener) {
+        this.eventListener = eventListener;
+    }
+
+    public boolean releaseInactive() {
+        return releaseAll(System.currentTimeMillis() - inactiveTtlMs);
+    }
+
+    protected abstract boolean releaseAll(long deadline);
 }
