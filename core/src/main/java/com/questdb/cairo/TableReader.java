@@ -37,6 +37,7 @@ import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormat;
@@ -134,6 +135,7 @@ public class TableReader implements Closeable, RecordCursor {
     private final ReloadMethod reloadMethod;
     private final TimestampFloorMethod timestampFloorMethod;
     private final IntervalLengthMethod intervalLengthMethod;
+    private final CharSequence name;
     private LongList columnTops;
     private ObjList<ReadOnlyColumn> columns;
     private int columnCount;
@@ -151,6 +153,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     public TableReader(FilesFacade ff, CharSequence root, CharSequence name) {
         this.ff = ff;
+        this.name = ImmutableCharSequence.of(name);
         this.path = new CompositePath().of(root).concat(name);
         this.rootLen = path.length();
         try {
@@ -211,20 +214,24 @@ public class TableReader implements Closeable, RecordCursor {
 
     @Override
     public void close() {
-        Misc.free(path);
-        Misc.free(metadata);
-        Misc.free(txMem);
-        if (columns != null) {
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                ReadOnlyColumn mem = columns.getQuick(i);
-                if (mem != null) {
-                    mem.close();
+        if (isOpen()) {
+            Misc.free(path);
+            Misc.free(metadata);
+            Misc.free(txMem);
+            if (columns != null) {
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    ReadOnlyColumn mem = columns.getQuick(i);
+                    if (mem != null) {
+                        mem.close();
+                    }
                 }
             }
-        }
-        if (tempMem8b != 0) {
-            Unsafe.free(tempMem8b, 8);
-            tempMem8b = 0;
+            if (tempMem8b != 0) {
+                Unsafe.free(tempMem8b, 8);
+                tempMem8b = 0;
+            }
+
+            LOG.info().$("closed '").$(name).$('\'').$();
         }
     }
 
@@ -242,6 +249,10 @@ public class TableReader implements Closeable, RecordCursor {
 
     public RecordMetadata getMetadata() {
         return metadata;
+    }
+
+    public CharSequence getName() {
+        return name;
     }
 
     @Override
@@ -293,6 +304,10 @@ public class TableReader implements Closeable, RecordCursor {
     public Record next() {
         record.recordIndex++;
         return record;
+    }
+
+    public boolean isOpen() {
+        return tempMem8b != 0;
     }
 
     public boolean reload() {

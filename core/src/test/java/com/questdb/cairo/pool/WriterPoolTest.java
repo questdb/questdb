@@ -42,7 +42,6 @@ public class WriterPoolTest extends AbstractCairoTest {
             final AtomicInteger errors = new AtomicInteger();
             final AtomicInteger writerCount = new AtomicInteger();
 
-
             try {
                 new Thread(() -> {
                     try {
@@ -62,7 +61,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                         e.printStackTrace();
                         errors.incrementAndGet();
                     } finally {
-                        System.out.println("THREAD 1 is done");
                         halt.countDown();
                     }
                 }).start();
@@ -80,7 +78,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                         e.printStackTrace();
                         errors.incrementAndGet();
                     } finally {
-                        System.out.println("THREAD 2 is done");
                         halt.countDown();
                     }
                 }).start();
@@ -94,7 +91,6 @@ public class WriterPoolTest extends AbstractCairoTest {
             } finally {
                 pool.close();
             }
-            System.out.println("TEST FINISHED");
         });
     }
 

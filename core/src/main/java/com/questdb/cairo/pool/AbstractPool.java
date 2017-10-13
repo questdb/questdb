@@ -29,6 +29,7 @@ import com.questdb.std.str.ImmutableCharSequence;
 import java.io.Closeable;
 
 abstract class AbstractPool implements Closeable {
+    protected static final long UNALLOCATED = -1L;
     protected final CharSequence root;
     protected final FilesFacade ff;
     private final long inactiveTtlMs;
@@ -40,11 +41,11 @@ abstract class AbstractPool implements Closeable {
         this.inactiveTtlMs = inactiveTtlMs;
     }
 
-    public PoolListener getEventListener() {
+    public PoolListener getPoolListener() {
         return eventListener;
     }
 
-    public void setEventListener(PoolListener eventListener) {
+    public void setPoolListner(PoolListener eventListener) {
         this.eventListener = eventListener;
     }
 

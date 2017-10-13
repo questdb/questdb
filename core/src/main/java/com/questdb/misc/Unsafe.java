@@ -114,10 +114,14 @@ public final class Unsafe {
         return UNSAFE.getByte(address) == 1;
     }
 
-    public static long getFieldOffset(Class clazz, String name) throws NoSuchFieldException {
-        Field f = clazz.getDeclaredField(name);
-        f.setAccessible(true);
-        return UNSAFE.objectFieldOffset(f);
+    public static long getFieldOffset(Class clazz, String name) {
+        try {
+            Field f = clazz.getDeclaredField(name);
+            f.setAccessible(true);
+            return UNSAFE.objectFieldOffset(f);
+        } catch (NoSuchFieldException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public static long getFreeCount() {

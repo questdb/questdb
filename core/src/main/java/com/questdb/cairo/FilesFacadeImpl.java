@@ -165,4 +165,9 @@ public class FilesFacadeImpl implements FilesFacade {
     public boolean supportsTruncateMappedFiles() {
         return Os.type != Os.WINDOWS;
     }
+
+    @Override
+    public int lock(long fd) {
+        return Files.lock(fd);
+    }
 }

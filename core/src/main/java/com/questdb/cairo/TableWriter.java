@@ -100,7 +100,7 @@ public class TableWriter implements Closeable {
         try {
             this.txMem = openTxnFile();
 
-            if (Files.lock(txMem.getFd()) != 0) {
+            if (ff.lock(txMem.getFd()) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
             }
 

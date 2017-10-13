@@ -23,6 +23,7 @@
 
 package com.questdb.cairo.pool;
 
+import com.questdb.cairo.CairoError;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.FilesFacade;
 import com.questdb.cairo.TableWriter;
@@ -80,14 +81,13 @@ public class WriterPool extends AbstractPool {
         closed = true;
         releaseAll(Long.MAX_VALUE);
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_CLOSED);
-
         LOG.info().$("pool closed").$();
     }
 
     public int getBusyCount() {
         int count = 0;
         for (Entry e : entries.values()) {
-            if (e.owner != -1) {
+            if (e.owner != UNALLOCATED) {
                 count++;
             }
         }
@@ -115,7 +115,7 @@ public class WriterPool extends AbstractPool {
         }
 
         // try to change owner
-        if ((Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, thread)
+        if ((Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, UNALLOCATED, thread)
                 || Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, thread, thread))) {
             LOG.info().$("locked '").$(name).$("' [thread=").$(thread).$(']').$();
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, FactoryConstants.CR_NAME_LOCK);
@@ -133,7 +133,7 @@ public class WriterPool extends AbstractPool {
         return entries.size();
     }
 
-    public void unlock(String name) {
+    public void unlock(CharSequence name) {
         long thread = Thread.currentThread().getId();
 
         Entry e = entries.get(name);
@@ -173,14 +173,14 @@ public class WriterPool extends AbstractPool {
                 // race won
                 return createWriter(name, e);
             } else {
-                LOG.info().$("Thread ").$(e.owner).$(" lost race to allocate writer '").$(name).$('\'').$();
+                LOG.info().$("Thread ").$(e.owner).$(" lost race to allocate '").$(name).$('\'').$();
                 e = other;
             }
         }
 
         long owner = e.owner;
         // try to change owner
-        if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, thread)) {
+        if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, UNALLOCATED, thread)) {
             // in a extreme race condition it is possible that e.writer will be null
             // in this case behaviour should be identical to entry missing entirely
             if (e.writer == null) {
@@ -220,7 +220,7 @@ public class WriterPool extends AbstractPool {
 
     private void checkClosed() {
         if (closed) {
-            LOG.info().$("WriterPool is closed").$();
+            LOG.info().$("is down").$();
             throw PoolClosedException.INSTANCE;
         }
     }
@@ -240,7 +240,7 @@ public class WriterPool extends AbstractPool {
     int countFreeWriters() {
         int count = 0;
         for (Entry e : entries.values()) {
-            if (e.owner == -1L) {
+            if (e.owner == UNALLOCATED) {
                 count++;
             } else {
                 LOG.info().$("'").$(e.writer.getName()).$("' is still busy [owner=").$(e.owner).$(']').$();
@@ -270,7 +270,7 @@ public class WriterPool extends AbstractPool {
     }
 
     private void notifyListener(long thread, CharSequence name, short event) {
-        PoolListener listener = getEventListener();
+        PoolListener listener = getPoolListener();
         if (listener != null) {
             listener.onEvent(PoolListener.SRC_WRITER, thread, name, event, (short) 0, (short) 0);
         }
@@ -293,15 +293,15 @@ public class WriterPool extends AbstractPool {
             Entry e = iterator.next();
             // lastReleaseTime is volatile, which makes
             // order of conditions important
-            if ((deadline > e.lastReleaseTime && e.owner == -1)) {
+            if ((deadline > e.lastReleaseTime && e.owner == UNALLOCATED)) {
                 // looks like this one can be released
                 // try to lock it
-                if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, thread)) {
+                if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, UNALLOCATED, thread)) {
                     // lock successful
                     closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
                     iterator.remove();
                     removed = true;
-                    Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, -1L);
+                    Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
                 }
             } else if (e.ex != null) {
                 LOG.info().$("Removing entry for failed to allocate writer").$();
@@ -315,7 +315,7 @@ public class WriterPool extends AbstractPool {
     private boolean returnToPool(Entry e) {
         CharSequence name = e.writer.getName();
         long thread = Thread.currentThread().getId();
-        if (e.owner != -1) {
+        if (e.owner != UNALLOCATED) {
             LOG.info().$('\'').$(name).$(" is back [thread=").$(thread).$(']').$();
             e.lastReleaseTime = System.currentTimeMillis();
 
@@ -328,7 +328,7 @@ public class WriterPool extends AbstractPool {
                 return false;
             }
 
-            e.owner = -1L;
+            e.owner = UNALLOCATED;
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
             LOG.error().$('\'').$(name).$("' has no owner").$();
@@ -371,7 +371,7 @@ public class WriterPool extends AbstractPool {
             Field f = Entry.class.getDeclaredField("owner");
             ENTRY_OWNER = Unsafe.getUnsafe().objectFieldOffset(f);
         } catch (NoSuchFieldException e) {
-            throw new RuntimeException("Cannot initialize class", e);
+            throw new CairoError("Cannot initialize class", e);
         }
     }
 }

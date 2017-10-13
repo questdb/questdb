@@ -33,11 +33,11 @@ import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 
 public class TimeZoneRulesImpl implements TimeZoneRules {
-    public static final long SAVING_INSTANT_TRANSITION;
-    public static final long STANDARD_OFFSETS;
-    public static final long LAST_RULES;
-    public static final long SAVINGS_LOCAL_TRANSITION;
-    public static final long WALL_OFFSETS;
+    public static final long SAVING_INSTANT_TRANSITION = Unsafe.getFieldOffset(ZoneRules.class, "savingsInstantTransitions");
+    public static final long STANDARD_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, "standardOffsets");
+    public static final long LAST_RULES = Unsafe.getFieldOffset(ZoneRules.class, "lastRules");
+    public static final long SAVINGS_LOCAL_TRANSITION = Unsafe.getFieldOffset(ZoneRules.class, "savingsLocalTransitions");
+    public static final long WALL_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, "wallOffsets");
     private final long cutoffTransition;
     private final LongList historicTransitions = new LongList();
     private final ObjList<TransitionRule> rules;
@@ -248,17 +248,5 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
         int minute;
         int second;
         int timeDef;
-    }
-
-    static {
-        try {
-            SAVING_INSTANT_TRANSITION = Unsafe.getFieldOffset(ZoneRules.class, "savingsInstantTransitions");
-            STANDARD_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, "standardOffsets");
-            LAST_RULES = Unsafe.getFieldOffset(ZoneRules.class, "lastRules");
-            SAVINGS_LOCAL_TRANSITION = Unsafe.getFieldOffset(ZoneRules.class, "savingsLocalTransitions");
-            WALL_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, "wallOffsets");
-        } catch (NoSuchFieldException e) {
-            throw new Error(e);
-        }
     }
 }

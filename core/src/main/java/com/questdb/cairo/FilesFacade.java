@@ -60,4 +60,6 @@ public interface FilesFacade {
     boolean exists(long fd);
 
     boolean supportsTruncateMappedFiles();
+
+    int lock(long fd);
 }
