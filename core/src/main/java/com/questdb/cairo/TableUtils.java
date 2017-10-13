@@ -225,6 +225,20 @@ public class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * 4;
     }
 
+    public static long lock(FilesFacade ff, CompositePath path) {
+        long fd = ff.openRW(path);
+        if (fd == -1) {
+            throw CairoException.instance(ff.errno()).put("Cannot open ").put(path).put(" to lock");
+        }
+
+        if (ff.lock(fd) != 0) {
+            ff.close(fd);
+
+            return -1L;
+        }
+        return fd;
+    }
+
     public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
         try {
             final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
@@ -498,8 +512,8 @@ public class TableUtils {
         return -1;
     }
 
-    static int openMetaSwapFile(FilesFacade ff, AppendMemory mem, CompositePath path, int rootLen) {
-        return openIndexedFile(ff, META_SWAP_FILE_NAME, mem, path, rootLen, 30);
+    static int openMetaSwapFile(FilesFacade ff, AppendMemory mem, CompositePath path, int rootLen, int retryCount) {
+        return openIndexedFile(ff, META_SWAP_FILE_NAME, mem, path, rootLen, retryCount);
     }
 
     /**
@@ -554,7 +568,7 @@ public class TableUtils {
 
         int index;
         try {
-            index = openMetaSwapFile(ff, ddlMem, path, rootLen);
+            index = openMetaSwapFile(ff, ddlMem, path, rootLen, 30);
 
             int columnCount = metaMem.getInt(META_OFFSET_COUNT);
 

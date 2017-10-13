@@ -1,6 +1,8 @@
 package com.questdb.cairo;
 
 public interface CairoConfiguration {
+    int getFileOperationRetryCount();
+
     FilesFacade getFilesFacade();
 
     long getIdleCheckInterval();
@@ -8,6 +10,8 @@ public interface CairoConfiguration {
     long getInactiveReaderTTL();
 
     long getInactiveWriterTTL();
+
+    int getMkDirMode();
 
     int getReaderPoolSegments();
 

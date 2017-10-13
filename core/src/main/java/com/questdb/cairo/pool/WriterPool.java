@@ -23,9 +23,9 @@
 
 package com.questdb.cairo.pool;
 
+import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.CairoError;
 import com.questdb.cairo.CairoException;
-import com.questdb.cairo.FilesFacade;
 import com.questdb.cairo.TableWriter;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
@@ -65,10 +65,12 @@ public class WriterPool extends AbstractPool {
 
     private final static long ENTRY_OWNER;
     private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
+    private final CairoConfiguration configuration;
     private volatile boolean closed = false;
 
-    public WriterPool(FilesFacade ff, CharSequence root, long inactiveTtl) {
-        super(ff, root, inactiveTtl);
+    public WriterPool(CairoConfiguration configuration) {
+        super(configuration.getFilesFacade(), configuration.getRoot(), configuration.getInactiveWriterTTL());
+        this.configuration = configuration;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
@@ -352,7 +354,7 @@ public class WriterPool extends AbstractPool {
         private Entry entry;
 
         public PooledTableWriter(WriterPool pool, Entry e, CharSequence name) {
-            super(pool.ff, pool.root, name);
+            super(pool.ff, pool.root, name, pool.configuration.getMkDirMode(), pool.configuration.getFileOperationRetryCount());
             this.pool = pool;
             this.entry = e;
         }

@@ -23,7 +23,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Before
     public void setUpInstance() throws Exception {
-        this.pool = new WriterPool(FilesFacadeImpl.INSTANCE, root, -100000);
+        this.pool = new WriterPool(new DefaultCairoConfiguration(root));
         createTable();
     }
 

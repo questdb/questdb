@@ -68,10 +68,11 @@ public class TableWriter implements Closeable {
     private final FilesFacade ff;
     private final DateFormat partitionDirFmt;
     private final AppendMemory ddlMem;
-    private final int mode = 509;
-    private final int fileOperationRetryCount = 30;
+    private final int mkDirMode;
+    private final int fileOperationRetryCount;
     private final CharSequence name;
     int txPartitionCount = 0;
+    private long lockFd = -1;
     private LongConsumer timestampSetter;
     private int columnCount;
     private ObjList<Runnable> nullers = new ObjList<>();
@@ -92,15 +93,27 @@ public class TableWriter implements Closeable {
     private int metaPrevIndex;
 
     public TableWriter(FilesFacade ff, CharSequence root, CharSequence name) {
+        this(ff, root, name, 509, 30);
+    }
+
+    public TableWriter(FilesFacade ff, CharSequence root, CharSequence name, int mkDirMode, int fileOperationRetryCount) {
         this.ff = ff;
+        this.mkDirMode = mkDirMode;
+        this.fileOperationRetryCount = fileOperationRetryCount;
         this.path = new CompositePath().of(root).concat(name);
         this.other = new CompositePath().of(root).concat(name);
         this.name = ImmutableCharSequence.of(name);
         this.rootLen = path.length();
         try {
             this.txMem = openTxnFile();
+            path.put(".lock").$();
+            try {
+                this.lockFd = TableUtils.lock(ff, path);
+            } finally {
+                path.trimTo(rootLen);
+            }
 
-            if (ff.lock(txMem.getFd()) != 0) {
+            if (this.lockFd == -1L) {
                 throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
             }
 
@@ -137,7 +150,7 @@ public class TableWriter implements Closeable {
             LOG.info().$("open '").$(name).$('\'').$();
         } catch (CairoException e) {
             LOG.error().$("cannot open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
-            close0();
+            close();
             throw e;
         }
     }
@@ -231,7 +244,23 @@ public class TableWriter implements Closeable {
 
     @Override
     public void close() {
-        close0();
+        if (isOpen()) {
+            closeColumns(true);
+            Misc.free(txMem);
+            Misc.free(metaMem);
+            Misc.free(columnSizeMem);
+            Misc.free(ddlMem);
+            Misc.free(path);
+            Misc.free(other);
+            if (lockFd != -1L) {
+                ff.close(lockFd);
+            }
+            if (tempMem8b != 0) {
+                Unsafe.free(tempMem8b, 8);
+                tempMem8b = 0;
+            }
+            LOG.info().$("closed '").$(name).$('\'').$();
+        }
     }
 
     /**
@@ -561,23 +590,6 @@ public class TableWriter implements Closeable {
         masterRef--;
     }
 
-    private void close0() {
-        if (isOpen()) {
-            closeColumns(true);
-            Misc.free(txMem);
-            Misc.free(metaMem);
-            Misc.free(columnSizeMem);
-            Misc.free(ddlMem);
-            Misc.free(path);
-            Misc.free(other);
-            if (tempMem8b != 0) {
-                Unsafe.free(tempMem8b, 8);
-                tempMem8b = 0;
-            }
-            LOG.info().$("closed '").$(name).$('\'').$();
-        }
-    }
-
     private void closeColumns(boolean truncate) {
         if (columns != null) {
             for (int i = 0, n = columns.size(); i < n; i++) {
@@ -775,7 +787,7 @@ public class TableWriter implements Closeable {
         try {
             setStateForTimestamp(timestamp, true);
             int plen = path.length();
-            if (ff.mkdirs(path.put(Path.SEPARATOR).$(), mode) != 0) {
+            if (ff.mkdirs(path.put(Path.SEPARATOR).$(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
             }
             assert columnCount > 0;
@@ -842,7 +854,7 @@ public class TableWriter implements Closeable {
 
     private int removeColumnFromMeta(int index) {
         try {
-            int metaSwapIndex = TableUtils.openMetaSwapFile(ff, ddlMem, path, rootLen);
+            int metaSwapIndex = TableUtils.openMetaSwapFile(ff, ddlMem, path, rootLen, fileOperationRetryCount);
             int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             ddlMem.putInt(columnCount - 1);
             ddlMem.putInt(partitionBy);

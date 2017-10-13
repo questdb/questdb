@@ -40,14 +40,14 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class ReaderPool extends AbstractPool {
 
-    public static final long CLOSED;
+    public static final long CLOSED = Unsafe.getFieldOffset(ReaderPool.class, "closed");
     private static final Log LOG = LogFactory.getLog(ReaderPool.class);
     private static final long UNLOCKED = -1L;
-    private static final long NEXT_STATUS;
+    private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final int ENTRY_SIZE = 32;
     private static final int TRUE = 1;
     private static final int FALSE = 0;
-    private static final long LOCK_OWNER;
+    private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
     private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
     private final int maxEntries;
@@ -333,11 +333,5 @@ public class ReaderPool extends AbstractPool {
             entry = null;
             pool = null;
         }
-    }
-
-    static {
-        NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
-        CLOSED = Unsafe.getFieldOffset(ReaderPool.class, "closed");
-        LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
     }
 }

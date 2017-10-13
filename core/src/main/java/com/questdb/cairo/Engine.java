@@ -50,7 +50,7 @@ public class Engine implements Closeable {
 
     public Engine(CairoConfiguration configuration) {
         this.configuration = configuration;
-        this.writerPool = new WriterPool(configuration.getFilesFacade(), configuration.getRoot(), configuration.getInactiveWriterTTL());
+        this.writerPool = new WriterPool(configuration);
         this.readerPool = new ReaderPool(configuration.getFilesFacade(), configuration.getRoot(), configuration.getInactiveReaderTTL(), configuration.getReaderPoolSegments());
         this.writerMaintenanceJob = new WriterMaintenanceJob(configuration.getIdleCheckInterval());
     }
