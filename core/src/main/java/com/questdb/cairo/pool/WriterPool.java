@@ -24,7 +24,6 @@
 package com.questdb.cairo.pool;
 
 import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cairo.CairoError;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.TableWriter;
 import com.questdb.cairo.pool.ex.EntryLockedException;
@@ -36,7 +35,6 @@ import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.Sinkable;
 
-import java.lang.reflect.Field;
 import java.util.Iterator;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -63,7 +61,7 @@ public class WriterPool extends AbstractPool {
 
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
 
-    private final static long ENTRY_OWNER;
+    private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
     private volatile boolean closed = false;
@@ -365,15 +363,6 @@ public class WriterPool extends AbstractPool {
                 return;
             }
             super.close();
-        }
-    }
-
-    static {
-        try {
-            Field f = Entry.class.getDeclaredField("owner");
-            ENTRY_OWNER = Unsafe.getUnsafe().objectFieldOffset(f);
-        } catch (NoSuchFieldException e) {
-            throw new CairoError("Cannot initialize class", e);
         }
     }
 }

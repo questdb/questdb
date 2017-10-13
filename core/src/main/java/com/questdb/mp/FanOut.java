@@ -23,12 +23,11 @@
 
 package com.questdb.mp;
 
-import com.questdb.ex.FatalError;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjList;
 
 public class FanOut implements Barrier {
-    private static final long HOLDER;
+    private static final long HOLDER = Unsafe.getFieldOffset(FanOut.class, "holder");
     private Holder holder;
     private Barrier barrier;
 
@@ -197,15 +196,6 @@ public class FanOut implements Barrier {
                     waitStrategies.getQuick(i).signal();
                 }
             }
-        }
-    }
-
-
-    static {
-        try {
-            HOLDER = Unsafe.getUnsafe().objectFieldOffset(FanOut.class.getDeclaredField("holder"));
-        } catch (NoSuchFieldException e) {
-            throw new FatalError("Internal error", e);
         }
     }
 }

@@ -23,11 +23,10 @@
 
 package com.questdb.mp;
 
-import com.questdb.ex.FatalError;
 import com.questdb.misc.Unsafe;
 
 public abstract class SynchronizedJob implements Job {
-    private static final long LOCKED_OFFSET;
+    private static final long LOCKED_OFFSET = Unsafe.getFieldOffset(SynchronizedJob.class, "locked");
 
     @SuppressWarnings({"unused", "FieldCanBeLocal"})
     private volatile int locked = 0;
@@ -49,13 +48,4 @@ public abstract class SynchronizedJob implements Job {
     }
 
     protected abstract boolean runSerially();
-
-    static {
-        try {
-            LOCKED_OFFSET = Unsafe.getUnsafe().objectFieldOffset(SynchronizedJob.class.getDeclaredField("locked"));
-        } catch (NoSuchFieldException e) {
-            throw new FatalError(e);
-        }
-    }
-
 }

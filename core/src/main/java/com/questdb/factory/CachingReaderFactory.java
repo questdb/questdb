@@ -32,21 +32,20 @@ import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
 
 import java.io.File;
-import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class CachingReaderFactory extends AbstractFactory implements JournalCloseInterceptor {
 
-    public static final long CLOSED;
+    private static final long CLOSED = Unsafe.getFieldOffset(CachingReaderFactory.class, "closed");
     private static final Log LOG = LogFactory.getLog(CachingReaderFactory.class);
     private static final long UNLOCKED = -1L;
-    private static final long NEXT_STATUS;
+    private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final int ENTRY_SIZE = 32;
     private static final int TRUE = 1;
     private static final int FALSE = 0;
-    private static final long LOCK_OWNER;
+    private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
     private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
     private final int maxEntries;
@@ -341,22 +340,6 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
             super(metadata, location);
             this.entry = entry;
             this.index = index;
-        }
-    }
-
-    static {
-        try {
-            Field f = Entry.class.getDeclaredField("nextStatus");
-            NEXT_STATUS = Unsafe.getUnsafe().objectFieldOffset(f);
-
-            Field f2 = CachingReaderFactory.class.getDeclaredField("closed");
-            CLOSED = Unsafe.getUnsafe().objectFieldOffset(f2);
-
-            Field f3 = Entry.class.getDeclaredField("lockOwner");
-            LOCK_OWNER = Unsafe.getUnsafe().objectFieldOffset(f3);
-
-        } catch (NoSuchFieldException e) {
-            throw new JournalRuntimeException("Cannot initialize class", e);
         }
     }
 }

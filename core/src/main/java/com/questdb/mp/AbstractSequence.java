@@ -57,8 +57,8 @@ class RhsPadding extends Value {
 }
 
 public abstract class AbstractSequence extends RhsPadding {
-    private static final long VALUE_OFFSET;
-    private static final long CACHE_OFFSET;
+    private static final long VALUE_OFFSET = Unsafe.getFieldOffset(Value.class, "value");
+    private static final long CACHE_OFFSET = Unsafe.getFieldOffset(Value.class, "cache");
 
     public AbstractSequence(WaitStrategy waitStrategy) {
         super(waitStrategy);
@@ -74,15 +74,5 @@ public abstract class AbstractSequence extends RhsPadding {
 
     protected void setCacheFenced(long cache) {
         Unsafe.getUnsafe().putOrderedLong(this, CACHE_OFFSET, cache);
-    }
-
-    static {
-        try {
-            VALUE_OFFSET = Unsafe.getUnsafe().objectFieldOffset(Value.class.getDeclaredField("value"));
-            CACHE_OFFSET = Unsafe.getUnsafe().objectFieldOffset(Value.class.getDeclaredField("cache"));
-        } catch (Throwable e) {
-            e.printStackTrace();
-            throw new Error("Failed to initialise");
-        }
     }
 }

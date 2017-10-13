@@ -33,7 +33,6 @@ import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
 
 import java.io.File;
-import java.lang.reflect.Field;
 import java.util.Iterator;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -60,7 +59,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
 
     private static final Log LOG = LogFactory.getLog(CachingWriterFactory.class);
 
-    private final static long ENTRY_OWNER;
+    private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private final ConcurrentHashMap<String, Entry> entries = new ConcurrentHashMap<>();
     private volatile boolean closed = false;
 
@@ -405,14 +404,5 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         private volatile long lastReleaseTime = System.currentTimeMillis();
         private JournalException ex = null;
         private volatile boolean locked = false;
-    }
-
-    static {
-        try {
-            Field f = Entry.class.getDeclaredField("owner");
-            ENTRY_OWNER = Unsafe.getUnsafe().objectFieldOffset(f);
-        } catch (NoSuchFieldException e) {
-            throw new RuntimeException("Cannot initialize class", e);
-        }
     }
 }

@@ -23,7 +23,6 @@
 
 package com.questdb.mp;
 
-import com.questdb.ex.FatalError;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjHashSet;
 
@@ -32,7 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class Worker extends Thread {
-    private final static long RUNNING_OFFSET;
+    private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
     private static final long YIELD_THRESHOLD = 100000L;
     private static final long SLEEP_THRESHOLD = 10000000L;
     private final static AtomicInteger COUNTER = new AtomicInteger();
@@ -100,6 +99,7 @@ public class Worker extends Thread {
         return fence;
     }
 
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     private void setupJobs() {
         if (running == 1) {
             for (int i = 0; i < jobs.size(); i++) {
@@ -115,13 +115,5 @@ public class Worker extends Thread {
 
     private void storeFence() {
         fence = 1;
-    }
-
-    static {
-        try {
-            RUNNING_OFFSET = Unsafe.getUnsafe().objectFieldOffset(Worker.class.getDeclaredField("running"));
-        } catch (NoSuchFieldException e) {
-            throw new FatalError(e);
-        }
     }
 }
