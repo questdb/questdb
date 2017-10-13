@@ -23,6 +23,7 @@
 
 package com.questdb.cairo.pool;
 
+import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.FilesFacade;
 import com.questdb.cairo.TableReader;
@@ -53,9 +54,9 @@ public class ReaderPool extends AbstractPool {
     private final int maxEntries;
     private volatile int closed = FALSE;
 
-    public ReaderPool(FilesFacade ff, CharSequence root, long inactiveTtl, int maxSegments) {
-        super(ff, root, inactiveTtl);
-        this.maxSegments = maxSegments;
+    public ReaderPool(CairoConfiguration configuration) {
+        super(configuration.getFilesFacade(), configuration.getRoot(), configuration.getInactiveReaderTTL());
+        this.maxSegments = configuration.getReaderPoolSegments();
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
 
@@ -103,7 +104,7 @@ public class ReaderPool extends AbstractPool {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                        closeReader(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolListener.EV_LOCK_CLOSE_EX, FactoryConstants.CR_NAME_LOCK);
+                        closeReader(thread, e, i, PoolListener.EV_LOCK_CLOSE, FactoryConstants.CR_NAME_LOCK);
                     } else if (Unsafe.arrayGet(e.allocations, i) != thread || Unsafe.arrayGet(e.readers, i) != null) {
                         LOG.info().$("'").$(name).$("' is busy [owner=").$(e.lockOwner).$(']').$();
                         throw EntryLockedException.INSTANCE;
@@ -216,7 +217,7 @@ public class ReaderPool extends AbstractPool {
         }
     }
 
-    private void closeReader(long thread, Entry entry, int index, short ev, short evex, int reason) {
+    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
         R r = Unsafe.arrayGet(entry.readers, index);
         if (r != null) {
             r.goodby();
@@ -251,7 +252,7 @@ public class ReaderPool extends AbstractPool {
                             // check if deadline violation still holds
                             if (deadline > Unsafe.arrayGet(e.releaseTimes, i)) {
                                 removed = true;
-                                closeReader(thread, e, i, PoolListener.EV_EXPIRE, PoolListener.EV_EXPIRE_EX, closeReason);
+                                closeReader(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
                             }
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                         }
