@@ -71,7 +71,10 @@ public class TableUtils {
     private final static ThreadLocal<AppendMemory> tlMetaAppendMem = new ThreadLocal<>(AppendMemory::new);
     private final static ThreadLocal<ReadOnlyMemory> tlMetaReadOnlyMem = new ThreadLocal<>(ReadOnlyMemory::new);
     private final static ThreadLocal<CharSequenceIntHashMap> tlColumnNameIndexMap = new ThreadLocal<>(CharSequenceIntHashMap::new);
-    private static Log LOG = LogFactory.getLog(TableUtils.class);
+    private final static Log LOG = LogFactory.getLog(TableUtils.class);
+
+    private TableUtils() {
+    }
 
     public static void addColumn(FilesFacade ff, CharSequence root, CharSequence tableName, CharSequence columnName, int columnType) {
         final CompositePath path = tlPath.get().of(root).concat(tableName);
