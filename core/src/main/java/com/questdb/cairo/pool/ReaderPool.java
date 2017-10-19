@@ -106,7 +106,7 @@ public class ReaderPool extends AbstractPool {
                     if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                         closeReader(thread, e, i, PoolListener.EV_LOCK_CLOSE, FactoryConstants.CR_NAME_LOCK);
                     } else if (Unsafe.arrayGet(e.allocations, i) != thread || Unsafe.arrayGet(e.readers, i) != null) {
-                        LOG.info().$("'").$(name).$("' is busy [owner=").$(e.lockOwner).$(']').$();
+                        LOG.info().$("'").$(name).$("' is busy [at=").$(e.index).$(':').$(i).$(", owner=").$(Unsafe.arrayGet(e.allocations, i)).$(", thread=").$(thread).$(']').$();
                         throw EntryLockedException.INSTANCE;
                     }
                 }
@@ -118,7 +118,7 @@ public class ReaderPool extends AbstractPool {
             throw EntryUnavailableException.INSTANCE;
         }
         notifyListener(thread, name, PoolListener.EV_LOCK_SUCCESS, -1, -1);
-        LOG.info().$('\'').$(name).$("' locked").$();
+        LOG.info().$('\'').$(name).$("' locked [thread=").$(thread).$(']').$();
     }
 
     public TableReader reader(CharSequence name) {
@@ -153,6 +153,7 @@ public class ReaderPool extends AbstractPool {
                     if (r == null) {
 
                         try {
+                            LOG.info().$("open '").$(name).$("' [at=").$(e.index).$(':').$(i).$(']').$();
                             r = new R(ff, this, e, i, root, name);
                         } catch (CairoException e1) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
@@ -222,7 +223,7 @@ public class ReaderPool extends AbstractPool {
         if (r != null) {
             r.goodby();
             r.close();
-            LOG.info().$("'").$(r.getName()).$("' closed [at=").$(entry.index).$(':').$(index).$(", reason=").$(FactoryConstants.closeReasonText(reason)).$(']').$();
+            LOG.info().$("closed '").$(r.getName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(FactoryConstants.closeReasonText(reason)).$(']').$();
             notifyListener(thread, r.getName(), ev, entry.index, index);
             Unsafe.arrayPut(entry.readers, index, null);
         }
@@ -281,7 +282,7 @@ public class ReaderPool extends AbstractPool {
                 return false;
             }
 
-            LOG.info().$('\'').$(name).$("' is back [thread=").$(thread).$(", at=").$(reader.entry.index).$(':').$(index).$(']').$();
+            LOG.info().$('\'').$(name).$("' [at=").$(reader.entry.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
             notifyListener(thread, name, PoolListener.EV_RETURN, reader.entry.index, index);
 
             Unsafe.arrayPut(reader.entry.releaseTimes, index, System.currentTimeMillis());

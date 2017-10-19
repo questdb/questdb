@@ -97,6 +97,7 @@ public class TableWriter implements Closeable {
     }
 
     public TableWriter(FilesFacade ff, CharSequence root, CharSequence name, int mkDirMode, int fileOperationRetryCount) {
+        LOG.info().$("open '").$(name).$('\'').$();
         this.ff = ff;
         this.mkDirMode = mkDirMode;
         this.fileOperationRetryCount = fileOperationRetryCount;
@@ -147,7 +148,6 @@ public class TableWriter implements Closeable {
             timestampSetter = configureTimestampSetter();
             configureAppendPosition();
             purgeUnusedPartitions();
-            LOG.info().$("open '").$(name).$('\'').$();
         } catch (CairoException e) {
             LOG.error().$("cannot open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
             close();

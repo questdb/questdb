@@ -5,6 +5,8 @@ import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.misc.Rnd;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
@@ -21,6 +23,7 @@ import java.util.concurrent.locks.LockSupport;
 public class ReaderPoolTest extends AbstractCairoTest {
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
     private static DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
+    private static final Log LOG = LogFactory.getLog(ReaderPoolTest.class);
 
     @Before
     public void setUpInstance() throws Exception {
@@ -54,6 +57,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    TableUtils.freeThreadLocals();
                     halt.countDown();
                 }
             }).start();
@@ -71,6 +75,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    TableUtils.freeThreadLocals();
                     halt.countDown();
                 }
             }).start();
@@ -143,6 +148,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         e.printStackTrace();
                         errors.incrementAndGet();
                     } finally {
+                        TableUtils.freeThreadLocals();
                         halt.countDown();
                     }
                 }).start();
@@ -181,9 +187,10 @@ public class ReaderPoolTest extends AbstractCairoTest {
         final String[] names = new String[readerCount];
         for (int i = 0; i < readerCount; i++) {
             names[i] = "x" + i;
-            final JournalMetadata<?> m = new JournalStructure(names[i]).$date("ts").$().build();
-            TableUtils.create(ff, root, m, 509);
+            TableUtils.create(ff, root, new JournalStructure(names[i]).$date("ts").$().build(), 509);
         }
+
+        LOG.info().$("testLockBusyReader BEGIN").$();
 
         assertWithPool(pool -> {
             final CyclicBarrier barrier = new CyclicBarrier(threadCount);
@@ -192,15 +199,13 @@ public class ReaderPoolTest extends AbstractCairoTest {
             final LongList lockTimes = new LongList();
             final LongList workerTimes = new LongList();
 
-            new Thread(() -> {
+            Thread th1 = new Thread(() -> {
                 Rnd rnd = new Rnd();
                 try {
                     barrier.await();
-                    String name = null;
+                    String name;
                     for (int i = 0; i < iterations; i++) {
-                        if (name == null) {
-                            name = names[rnd.nextPositiveInt() % readerCount];
-                        }
+                        name = names[rnd.nextPositiveInt() % readerCount];
                         while (true) {
                             try {
                                 pool.lock(name);
@@ -209,45 +214,54 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 pool.unlock(name);
                                 name = null;
                                 break;
-                            } catch (CairoException e) {
-                                if (!(e instanceof EntryLockedException)) {
-                                    e.printStackTrace();
-                                    errors.incrementAndGet();
-                                    break;
-                                }
+                            } catch (EntryLockedException ignored) {
                             }
                         }
                     }
                 } catch (Exception e) {
-                    e.printStackTrace();
                     errors.incrementAndGet();
+                    e.printStackTrace();
+                } finally {
+                    TableUtils.freeThreadLocals();
+                    System.out.println("ALL DONE");
+                    halt.countDown();
                 }
-                halt.countDown();
-            }).start();
+            });
 
-            new Thread(() -> {
+            th1.setName("thread1");
+            th1.start();
+
+            Thread th2 = new Thread(() -> {
                 Rnd rnd = new Rnd();
 
-                workerTimes.add(System.currentTimeMillis());
-                for (int i = 0; i < iterations; i++) {
-                    String name = names[rnd.nextPositiveInt() % readerCount];
-                    try (TableReader ignored = pool.reader(name)) {
-                        if (name.equals(names[readerCount - 1]) && barrier.getNumberWaiting() > 0) {
-                            barrier.await();
+                try {
+                    workerTimes.add(System.currentTimeMillis());
+                    for (int i = 0; i < iterations; i++) {
+                        String name = names[rnd.nextPositiveInt() % readerCount];
+                        try (TableReader ignored = pool.reader(name)) {
+                            if (name.equals(names[readerCount - 1]) && barrier.getNumberWaiting() > 0) {
+                                barrier.await();
+                            }
+                            LockSupport.parkNanos(10L);
+                        } catch (EntryLockedException ignored) {
+                        } catch (Exception e) {
+                            errors.incrementAndGet();
+                            e.printStackTrace();
+                            break;
                         }
-                        LockSupport.parkNanos(10L);
-                    } catch (EntryLockedException ignored) {
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                        errors.incrementAndGet();
                     }
+                    workerTimes.add(System.currentTimeMillis());
+                } finally {
+                    TableUtils.freeThreadLocals();
+                    halt.countDown();
                 }
-                workerTimes.add(System.currentTimeMillis());
+            });
 
-                halt.countDown();
-            }).start();
+            th2.setName("thread2");
+            th2.start();
 
             halt.await();
+            Assert.assertEquals(0, halt.getCount());
             Assert.assertEquals(0, errors.get());
 
             // check that there are lock times between worker times

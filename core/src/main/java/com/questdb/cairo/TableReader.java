@@ -152,6 +152,7 @@ public class TableReader implements Closeable, RecordCursor {
     private int partitionIndex = 0;
 
     public TableReader(FilesFacade ff, CharSequence root, CharSequence name) {
+        LOG.info().$("open '").$(name).$('\'').$();
         this.ff = ff;
         this.name = ImmutableCharSequence.of(name);
         this.path = new CompositePath().of(root).concat(name);

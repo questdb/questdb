@@ -461,10 +461,6 @@ public class DateFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        if (hour < 0 || hour > 23) {
-            throw NumericException.INSTANCE;
-        }
-
         if (minute < 0 || minute > 59) {
             throw NumericException.INSTANCE;
         }

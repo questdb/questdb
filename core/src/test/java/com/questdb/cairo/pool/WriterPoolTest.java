@@ -5,6 +5,8 @@ import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
 import com.questdb.factory.configuration.JournalStructure;
+import com.questdb.misc.Chars;
+import com.questdb.std.str.LPSZ;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -53,6 +55,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     errors.incrementAndGet();
                 } finally {
                     halt.countDown();
+                    TableUtils.freeThreadLocals();
                 }
             }).start();
 
@@ -70,6 +73,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     errors.incrementAndGet();
                 } finally {
                     halt.countDown();
+                    TableUtils.freeThreadLocals();
                 }
             }).start();
 
@@ -77,6 +81,30 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             Assert.assertTrue(writerCount.get() > 0);
             Assert.assertEquals(0, errors.get());
+        });
+    }
+
+    @Test
+    public void testClosedPoolLock() throws Exception {
+        assertWithPool(pool -> {
+            class X implements PoolListener {
+                short ev = -1;
+
+                @Override
+                public boolean onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                    this.ev = event;
+                    return false;
+                }
+            }
+            X x = new X();
+            pool.setPoolListner(x);
+            pool.close();
+            try {
+                pool.lock("x");
+                Assert.fail();
+            } catch (PoolClosedException ignored) {
+            }
+            Assert.assertEquals(PoolListener.EV_POOL_CLOSED, x.ev);
         });
     }
 
@@ -170,6 +198,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         result.set(false);
                     }
                     done.countDown();
+                    TableUtils.freeThreadLocals();
                 }).start();
 
                 Assert.assertTrue(done.await(1, TimeUnit.SECONDS));
@@ -267,6 +296,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                             errors.incrementAndGet();
                         } finally {
                             halt.countDown();
+                            TableUtils.freeThreadLocals();
                         }
                     }).start();
                 }
@@ -315,6 +345,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                             errors.incrementAndGet();
                         } finally {
                             halt.countDown();
+                            TableUtils.freeThreadLocals();
                         }
                     }).start();
                 }
@@ -358,6 +389,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                             errors.incrementAndGet();
                         } finally {
                             halt.countDown();
+                            TableUtils.freeThreadLocals();
                         }
                     }).start();
                 }
@@ -376,14 +408,122 @@ public class WriterPoolTest extends AbstractCairoTest {
         });
     }
 
-    private void assertWithPool(PoolAwareCode code) throws Exception {
+    @Test
+    public void testUnlockNonExisting() throws Exception {
+        assertWithPool(pool -> {
+            class X implements PoolListener {
+                short ev = -1;
+
+                @Override
+                public boolean onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                    this.ev = event;
+                    return false;
+                }
+            }
+            X x = new X();
+            pool.setPoolListner(x);
+            pool.unlock("x");
+            Assert.assertEquals(PoolListener.EV_NOT_LOCKED, x.ev);
+        });
+    }
+
+    @Test
+    public void testWriterDoubleClose() throws Exception {
+        assertWithPool(pool -> {
+            class X implements PoolListener {
+                short ev = -1;
+
+                @Override
+                public boolean onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                    this.ev = event;
+                    return false;
+                }
+            }
+            X x = new X();
+            pool.setPoolListner(x);
+            TableWriter w = pool.writer("z");
+            Assert.assertNotNull(w);
+            Assert.assertEquals(1, pool.getBusyCount());
+            w.close();
+            Assert.assertEquals(PoolListener.EV_RETURN, x.ev);
+            Assert.assertEquals(0, pool.getBusyCount());
+
+            w.close();
+            Assert.assertEquals(PoolListener.EV_UNEXPECTED_CLOSE, x.ev);
+            Assert.assertEquals(0, pool.getBusyCount());
+        });
+    }
+
+    @Test
+    public void testWriterOpenFailOnce() throws Exception {
+
+        final TestFilesFacade ff = new TestFilesFacade() {
+            int count = 1;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "z.lock") && count-- > 0) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return count <= 0;
+            }
+        };
+
+        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+
+        assertWithPool(pool -> {
+            try {
+                pool.writer("z");
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+
+            // writer has to fail again if called before
+            // release() invocation
+            try {
+                pool.writer("z");
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+
+            Assert.assertEquals(1, pool.size());
+            Assert.assertEquals(1, pool.getBusyCount());
+
+            pool.releaseInactive();
+            Assert.assertEquals(0, pool.size());
+
+            // try again
+            TableWriter w = pool.writer("z");
+            Assert.assertEquals(1, pool.getBusyCount());
+            w.close();
+        }, configuration);
+
+        Assert.assertTrue(ff.wasCalled());
+
+    }
+
+    private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         TableUtils.freeThreadLocals();
         TestUtils.assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(CONFIGURATION)) {
+            try (WriterPool pool = new WriterPool(configuration)) {
                 code.run(pool);
                 TableUtils.freeThreadLocals();
             }
         });
+    }
+
+    private void assertWithPool(PoolAwareCode code) throws Exception {
+        assertWithPool(code, CONFIGURATION);
     }
 
     private void createTable() {

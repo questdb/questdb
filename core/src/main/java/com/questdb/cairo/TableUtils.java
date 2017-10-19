@@ -73,9 +73,6 @@ public class TableUtils {
     private final static ThreadLocal<CharSequenceIntHashMap> tlColumnNameIndexMap = new ThreadLocal<>(CharSequenceIntHashMap::new);
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
 
-    private TableUtils() {
-    }
-
     public static void addColumn(FilesFacade ff, CharSequence root, CharSequence tableName, CharSequence columnName, int columnType) {
         final CompositePath path = tlPath.get().of(root).concat(tableName);
         final CompositePath other = tlRenamePath.get().of(root).concat(tableName);

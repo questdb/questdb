@@ -1199,6 +1199,37 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotLock() throws Exception {
+        create(FF, PartitionBy.NONE);
+        TestUtils.assertMemoryLeak(() -> {
+            TestFilesFacade ff = new TestFilesFacade() {
+                boolean ran = false;
+
+                @Override
+                public long openRW(LPSZ name) {
+                    if (Chars.endsWith(name, PRODUCT + ".lock")) {
+                        ran = true;
+                        return -1;
+                    }
+                    return super.openRW(name);
+                }
+
+                @Override
+                public boolean wasCalled() {
+                    return ran;
+                }
+            };
+
+            try {
+                new TableWriter(ff, root, PRODUCT);
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+            Assert.assertTrue(ff.wasCalled());
+        });
+    }
+
+    @Test
     public void testCannotMapTxFile() throws Exception {
         testConstructor(new FilesFacadeImpl() {
             int count = 2;
@@ -1312,6 +1343,126 @@ public class TableWriterTest extends AbstractCairoTest {
                 return super.read(fd, buf, len, offset);
             }
         }, false);
+    }
+
+    @Test
+    // tests scenario where truncate is supported (linux) but fails on close
+    // close is expected not to fail
+    public void testCannotTruncateColumnOnClose() throws Exception {
+        create(FF, PartitionBy.NONE);
+        testTruncateOnClose(new TestFilesFacade() {
+            long fd = -1;
+            int count = 1;
+            boolean ran = false;
+
+            @Override
+            public boolean wasCalled() {
+                return fd != -1 && ran;
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "price.d")) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public boolean supportsTruncateMappedFiles() {
+                return true;
+            }
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (this.fd == fd && count-- == 0) {
+                    ran = true;
+                    return false;
+                }
+                return super.truncate(fd, size);
+            }
+
+
+        });
+    }
+
+    @Test
+    // tests scenario where truncate is not supported (windows) but fails on close
+    // truncate on close fails once and then succeeds
+    // close is expected not to fail
+    public void testCannotTruncateColumnOnCloseAndNotSupported() throws Exception {
+        create(FF, PartitionBy.NONE);
+        testTruncateOnClose(new TestFilesFacade() {
+            long fd = -1;
+            int count = 1;
+            boolean ran = false;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "price.d")) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public boolean supportsTruncateMappedFiles() {
+                return false;
+            }
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (this.fd == fd && count-- == 0) {
+                    ran = true;
+                    return false;
+                }
+                return super.truncate(fd, size);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return fd != -1 && ran;
+            }
+        });
+    }
+
+    @Test
+    // tests scenario where truncate is not supported (windows) but fails on close
+    // truncate on close fails all the time
+    public void testCannotTruncateColumnOnCloseAndNotSupported2() throws Exception {
+        create(FF, PartitionBy.NONE);
+        testTruncateOnClose(new TestFilesFacade() {
+            long fd = -1;
+            int count = 1;
+            boolean ran = false;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "price.d")) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public boolean supportsTruncateMappedFiles() {
+                return false;
+            }
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (this.fd == fd && count-- <= 0) {
+                    ran = true;
+                    return false;
+                }
+                return super.truncate(fd, size);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return fd != -1 && ran;
+            }
+        });
     }
 
     @Test
@@ -1674,7 +1825,7 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            boolean wasCalled() {
+            public boolean wasCalled() {
                 return hit;
             }
 
@@ -1706,7 +1857,7 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            boolean wasCalled() {
+            public boolean wasCalled() {
                 return hit;
             }
 
@@ -1734,7 +1885,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int removes = 0;
 
             @Override
-            boolean wasCalled() {
+            public boolean wasCalled() {
                 return exists > 0 && removes > 0;
             }
 
@@ -1764,7 +1915,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            boolean wasCalled() {
+            public boolean wasCalled() {
                 return count > 0;
             }
 
@@ -1785,7 +1936,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 5;
 
             @Override
-            boolean wasCalled() {
+            public boolean wasCalled() {
                 return count <= 0;
             }
 
@@ -1812,7 +1963,7 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            boolean wasCalled() {
+            public boolean wasCalled() {
                 return hit;
             }
 
@@ -2937,6 +3088,20 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
+    private void testTruncateOnClose(TestFilesFacade ff) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                int N = 100000;
+                Rnd rnd = new Rnd();
+                populateProducts(writer, rnd, ts, N, 60 * 60000);
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+            }
+            Assert.assertTrue(ff.wasCalled());
+        });
+    }
+
     private void testTruncateRecoverableFailure(FilesFacade ff) throws NumericException {
         create(ff, PartitionBy.DAY);
         Rnd rnd = new Rnd();
@@ -3025,15 +3190,11 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private static abstract class TestFilesFacade extends FilesFacadeImpl {
-        abstract boolean wasCalled();
-    }
-
     private static class SwapMetaRenameDenyingFacade extends TestFilesFacade {
         boolean hit = false;
 
         @Override
-        boolean wasCalled() {
+        public boolean wasCalled() {
             return hit;
         }
 
@@ -3051,7 +3212,7 @@ public class TableWriterTest extends AbstractCairoTest {
         boolean hit = false;
 
         @Override
-        boolean wasCalled() {
+        public boolean wasCalled() {
             return hit;
         }
 
@@ -3070,7 +3231,7 @@ public class TableWriterTest extends AbstractCairoTest {
         boolean hit = false;
 
         @Override
-        boolean wasCalled() {
+        public boolean wasCalled() {
             return hit;
         }
 
@@ -3099,7 +3260,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
 
         @Override
-        boolean wasCalled() {
+        public boolean wasCalled() {
             return hit;
         }
 

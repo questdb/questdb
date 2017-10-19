@@ -33,7 +33,6 @@ import com.questdb.factory.FactoryConstants;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.Sinkable;
 
 import java.util.Iterator;
 import java.util.concurrent.ConcurrentHashMap;
@@ -171,7 +170,7 @@ public class WriterPool extends AbstractPool {
             Entry other = entries.putIfAbsent(name, e);
             if (other == null) {
                 // race won
-                return createWriter(name, e);
+                return createWriter(name, e, thread);
             } else {
                 LOG.info().$("Thread ").$(e.owner).$(" lost race to allocate '").$(name).$('\'').$();
                 e = other;
@@ -181,10 +180,10 @@ public class WriterPool extends AbstractPool {
         long owner = e.owner;
         // try to change owner
         if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, UNALLOCATED, thread)) {
-            // in a extreme race condition it is possible that e.writer will be null
+            // in an extreme race condition it is possible that e.writer will be null
             // in this case behaviour should be identical to entry missing entirely
             if (e.writer == null) {
-                return createWriter(name, e);
+                return createWriter(name, e, thread);
             }
 
             if (closed) {
@@ -250,13 +249,14 @@ public class WriterPool extends AbstractPool {
         return count;
     }
 
-    private PooledTableWriter createWriter(CharSequence name, Entry e) {
+    private PooledTableWriter createWriter(CharSequence name, Entry e, long thread) {
         try {
             checkClosed();
+            LOG.info().$("open '").$(name).$("' [thread=").$(thread).$();
             e.writer = new PooledTableWriter(this, e, name);
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
-            LOG.error().$("failed to allocate writer '").$(name).$("' in thread ").$(e.owner).$(": ").$((Sinkable) ex).$();
+            LOG.error().$("failed to allocate writer '").$(name).$("' [thread=").$(e.owner).$(']').$();
             e.ex = ex;
             notifyListener(e.owner, name, PoolListener.EV_CREATE_EX);
             throw ex;
@@ -317,8 +317,6 @@ public class WriterPool extends AbstractPool {
         long thread = Thread.currentThread().getId();
         if (e.owner != UNALLOCATED) {
             LOG.info().$('\'').$(name).$(" is back [thread=").$(thread).$(']').$();
-            e.lastReleaseTime = System.currentTimeMillis();
-
             if (closed) {
                 LOG.info().$("allowing '").$(name).$("' to close [thread=").$(e.owner).$(']').$();
                 e.writer.entry = null;
@@ -329,6 +327,7 @@ public class WriterPool extends AbstractPool {
             }
 
             e.owner = UNALLOCATED;
+            e.lastReleaseTime = System.currentTimeMillis();
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
             LOG.error().$('\'').$(name).$("' has no owner").$();
