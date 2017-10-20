@@ -31,10 +31,7 @@ import com.questdb.misc.Files;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
-import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.LongList;
-import com.questdb.std.ObjList;
-import com.questdb.std.Sinkable;
+import com.questdb.std.*;
 import com.questdb.std.str.*;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatUtils;
@@ -71,6 +68,7 @@ public class TableWriter implements Closeable {
     private final int mkDirMode;
     private final int fileOperationRetryCount;
     private final CharSequence name;
+    private final CharSequenceIntHashMap tmpValidationMap = new CharSequenceIntHashMap();
     int txPartitionCount = 0;
     private long lockFd = -1;
     private LongConsumer timestampSetter;
@@ -765,7 +763,8 @@ public class TableWriter implements Closeable {
 
     private void openMetaFile() {
         TableUtils.openViaSharedPath(ff, metaMem, path.concat(TableUtils.META_FILE_NAME).$(), rootLen);
-        TableUtils.validate(ff, metaMem);
+        tmpValidationMap.clear();
+        TableUtils.validate(ff, metaMem, tmpValidationMap);
     }
 
     private void openNewColumnFiles(CharSequence name) {

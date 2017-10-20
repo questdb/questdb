@@ -40,7 +40,8 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * This class maintains cache of open writers to avoid OS overhead of
  * opening and closing files. While doing so it abides by the the same
- * rule as non-pooled writers: there can only be one TableWriter for any given name.
+ * rule as non-pooled writers: there can only be one TableWriter instance
+ * for any given name.
  * <p>
  * This implementation is thread-safe. Writer allocated by one thread
  * cannot be used by any other threads until it is released. This factory
@@ -65,12 +66,24 @@ public class WriterPool extends AbstractPool {
     private final CairoConfiguration configuration;
     private volatile boolean closed = false;
 
+    /**
+     * Pool constructor. WriterPool root directory is passed via configuration.
+     *
+     * @param configuration configuration parameters.
+     */
     public WriterPool(CairoConfiguration configuration) {
         super(configuration.getFilesFacade(), configuration.getRoot(), configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
+    /**
+     * Closes writer pool. When pool is closed only writers that are in pool are proactively released. Writers that
+     * are outside of pool will close when their close() method is invoked.
+     * <p>
+     * After pool is closed it will notify listener with #EV_POOL_CLOSED event.
+     * </p>
+     */
     public void close() {
         if (closed) {
             return;
@@ -83,6 +96,11 @@ public class WriterPool extends AbstractPool {
         LOG.info().$("pool closed").$();
     }
 
+    /**
+     * Counts busy writers in pool.
+     *
+     * @return number of busy writer instances.
+     */
     public int getBusyCount() {
         int count = 0;
         for (Entry e : entries.values()) {
@@ -93,71 +111,8 @@ public class WriterPool extends AbstractPool {
         return count;
     }
 
-    public void lock(CharSequence name) {
 
-        checkClosed();
-
-        long thread = Thread.currentThread().getId();
-
-        Entry e = entries.get(name);
-        if (e == null) {
-            // We are racing to create new writer!
-            e = new Entry();
-            Entry other = entries.putIfAbsent(name, e);
-            if (other == null) {
-                notifyListener(thread, name, PoolListener.EV_LOCK_SUCCESS);
-                e.locked = true;
-                return;
-            } else {
-                e = other;
-            }
-        }
-
-        // try to change owner
-        if ((Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, UNALLOCATED, thread)
-                || Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, thread, thread))) {
-            LOG.info().$("locked '").$(name).$("' [thread=").$(thread).$(']').$();
-            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, FactoryConstants.CR_NAME_LOCK);
-            e.locked = true;
-            notifyListener(thread, name, PoolListener.EV_LOCK_SUCCESS);
-            return;
-        }
-
-        LOG.error().$("cannot lock '").$(name).$("' [owner=").$(e.owner).$(", thread=").$(thread).$();
-        notifyListener(thread, name, PoolListener.EV_LOCK_BUSY);
-        throw EntryUnavailableException.INSTANCE;
-    }
-
-    public int size() {
-        return entries.size();
-    }
-
-    public void unlock(CharSequence name) {
-        long thread = Thread.currentThread().getId();
-
-        Entry e = entries.get(name);
-        if (e == null) {
-            notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
-            return;
-        }
-
-        // When entry is locked, writer must be null,
-        // however if writer is not null, calling thread must be trying to unlock
-        // writer that hasn't been locked. This qualifies for "illegal state"
-        if (e.owner == thread) {
-
-            if (e.writer != null) {
-                notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
-                throw new IllegalStateException("Writer " + name + " is not locked");
-            }
-
-            // unlock must remove entry because pool does not deal with null writer
-            entries.remove(name);
-        }
-        notifyListener(thread, name, PoolListener.EV_UNLOCKED);
-    }
-
-    public TableWriter writer(CharSequence name) {
+    public TableWriter getWriter(CharSequence name) {
 
         checkClosed();
 
@@ -215,6 +170,85 @@ public class WriterPool extends AbstractPool {
             LOG.error().$('\'').$(name).$("' is busy [owner=").$(owner).$(']').$();
             throw EntryUnavailableException.INSTANCE;
         }
+    }
+
+    /**
+     * Locks writer. Locking operation is always non-blocking. Lock is usually successful
+     * when writer is in pool or owned by calling thread, in which case
+     * writer instance is closed. Lock will also succeed when writer does not exist.
+     * This will prevent from writer being created before it is unlocked.
+     * <p>
+     * Lock fails immediately with {@link EntryUnavailableException} when writer is used by another thread and with
+     * {@link PoolClosedException} when pool is closed.
+     * </p>
+     * <p>
+     * Lock is beneficial before table directory is renamed or deleted.
+     * </p>
+     *
+     * @param tableName table name
+     */
+    public void lock(CharSequence tableName) {
+
+        checkClosed();
+
+        long thread = Thread.currentThread().getId();
+
+        Entry e = entries.get(tableName);
+        if (e == null) {
+            // We are racing to create new writer!
+            e = new Entry();
+            Entry other = entries.putIfAbsent(tableName, e);
+            if (other == null) {
+                notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS);
+                e.locked = true;
+                return;
+            } else {
+                e = other;
+            }
+        }
+
+        // try to change owner
+        if ((Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, UNALLOCATED, thread)
+                || Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, thread, thread))) {
+            LOG.info().$("locked '").$(tableName).$("' [thread=").$(thread).$(']').$();
+            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, FactoryConstants.CR_NAME_LOCK);
+            e.locked = true;
+            notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS);
+            return;
+        }
+
+        LOG.error().$("cannot lock '").$(tableName).$("' [owner=").$(e.owner).$(", thread=").$(thread).$();
+        notifyListener(thread, tableName, PoolListener.EV_LOCK_BUSY);
+        throw EntryUnavailableException.INSTANCE;
+    }
+
+    public int size() {
+        return entries.size();
+    }
+
+    public void unlock(CharSequence name) {
+        long thread = Thread.currentThread().getId();
+
+        Entry e = entries.get(name);
+        if (e == null) {
+            notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
+            return;
+        }
+
+        // When entry is locked, writer must be null,
+        // however if writer is not null, calling thread must be trying to unlock
+        // writer that hasn't been locked. This qualifies for "illegal state"
+        if (e.owner == thread) {
+
+            if (e.writer != null) {
+                notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
+                throw new IllegalStateException("Writer " + name + " is not locked");
+            }
+
+            // unlock must remove entry because pool does not deal with null writer
+            entries.remove(name);
+        }
+        notifyListener(thread, name, PoolListener.EV_UNLOCKED);
     }
 
     private void checkClosed() {

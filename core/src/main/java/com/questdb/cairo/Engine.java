@@ -94,7 +94,7 @@ public class Engine implements Closeable {
     }
 
     public TableWriter getWriter(CharSequence tableName) {
-        return writerPool.writer(tableName);
+        return writerPool.getWriter(tableName);
     }
 
     public void lock(CharSequence tableName) throws JournalException {
@@ -142,7 +142,7 @@ public class Engine implements Closeable {
         try (CompositePath oldName = new CompositePath()) {
             try (CompositePath newName = new CompositePath()) {
 
-                if (TableUtils.exists(ff, root, tableName) != 0) {
+                if (TableUtils.exists(ff, oldName, root, tableName) != 0) {
                     LOG.error().$('\'').$(tableName).$("' does not exist. Rename failed.").$();
                     throw CairoException.instance(0).put("Rename failed. Table '").put(tableName).put("' does not exist");
                 }

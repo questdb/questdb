@@ -4,7 +4,6 @@ import com.questdb.PartitionBy;
 import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Files;
-import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 import com.questdb.store.ColumnType;
@@ -25,11 +24,10 @@ public class TableUtilsTest {
         final CharSequence root = temp.getRoot().getAbsolutePath();
         final JournalMetadata metadata = getJournalStructure().build();
 
-        try {
-            TableUtils.create(FF, root, metadata, 509);
-
+        try (AppendMemory appendMemory = new AppendMemory()) {
             try (CompositePath path = new CompositePath()) {
-                Assert.assertEquals(0, TableUtils.exists(FF, root, metadata.getName()));
+                TableUtils.create(FF, path, appendMemory, root, metadata, 509);
+                Assert.assertEquals(0, TableUtils.exists(FF, path, root, metadata.getName()));
 
                 path.of(root).concat(metadata.getName()).concat("_meta").$();
 
@@ -78,44 +76,36 @@ public class TableUtilsTest {
                     assertCol(mem, p, "timestamp");
                 }
             }
-        } finally {
-            TableUtils.freeThreadLocals();
         }
     }
 
     @Test
     public void testCreateFailure() throws Exception {
-        class X extends FilesFacadeImpl {
-            @Override
-            public int mkdirs(LPSZ path, int mode) {
-                return -1;
+        TestUtils.assertMemoryLeak(() -> {
+            class X extends FilesFacadeImpl {
+                @Override
+                public int mkdirs(LPSZ path, int mode) {
+                    return -1;
+                }
             }
-        }
 
-        X ff = new X();
-        JournalMetadata metadata = getJournalStructure().build();
-
-        long mem = Unsafe.getMemUsed();
-        try {
-            try {
-                TableUtils.create(ff, temp.getRoot().getAbsolutePath(), metadata, 509);
-                Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertNotNull(e.getMessage());
+            X ff = new X();
+            JournalMetadata metadata = getJournalStructure().build();
+            try (AppendMemory appendMemory = new AppendMemory()) {
+                try (CompositePath path = new CompositePath()) {
+                    TableUtils.create(ff, path, appendMemory, temp.getRoot().getAbsolutePath(), metadata, 509);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    Assert.assertNotNull(e.getMessage());
+                }
             }
-        } finally {
-            TableUtils.freeThreadLocals();
-        }
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-        Assert.assertEquals(0, ff.getOpenFileCount());
+        });
     }
 
     @Test
     public void testForeignDirectory() throws Exception {
-        try {
-            Assert.assertEquals(2, TableUtils.exists(FF, temp.getRoot().getAbsolutePath(), ""));
-        } finally {
-            TableUtils.freeThreadLocals();
+        try (CompositePath path = new CompositePath()) {
+            Assert.assertEquals(2, TableUtils.exists(FF, path, temp.getRoot().getAbsolutePath(), ""));
         }
     }
 

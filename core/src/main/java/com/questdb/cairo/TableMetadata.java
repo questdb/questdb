@@ -16,6 +16,7 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
     private final ReadOnlyMemory metaMem;
     private final CompositePath path;
     private final FilesFacade ff;
+    private final CharSequenceIntHashMap tmpValidationMap = new CharSequenceIntHashMap();
     private int timestampIndex;
     private int columnCount;
     private ReadOnlyMemory transitionMeta;
@@ -168,7 +169,8 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
         transitionMeta.of(ff, path, ff.getPageSize());
         try (ReadOnlyMemory metaMem = transitionMeta) {
 
-            TableUtils.validate(ff, metaMem);
+            tmpValidationMap.clear();
+            TableUtils.validate(ff, metaMem, tmpValidationMap);
 
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int n = Math.max(this.columnCount, columnCount);

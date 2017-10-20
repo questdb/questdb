@@ -99,6 +99,11 @@ public final class Unsafe {
         Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + (index << LONG_SCALE), value);
     }
 
+    public static <T> void arrayPutOrdered(T[] array, int index, T value) {
+        assert index > -1 && index < array.length;
+        Unsafe.getUnsafe().putOrderedObject(array, OBJ_OFFSET + (index << OBJ_SCALE), value);
+    }
+
     public static boolean cas(long[] array, int index, long expected, long value) {
         assert index > -1 && index < array.length;
         return Unsafe.getUnsafe().compareAndSwapLong(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);

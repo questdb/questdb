@@ -32,14 +32,11 @@ import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.Sinkable;
-import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatCompiler;
-import com.questdb.std.time.DateLocaleFactory;
-import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
 
 public class TableUtils {
@@ -66,113 +63,16 @@ public class TableUtils {
     static final long META_OFFSET_PARTITION_BY = 4;
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     private static final int _16M = 16 * 1024 * 1024;
-    private final static ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath::new);
-    private final static ThreadLocal<CompositePath> tlRenamePath = new ThreadLocal<>(CompositePath::new);
-    private final static ThreadLocal<AppendMemory> tlMetaAppendMem = new ThreadLocal<>(AppendMemory::new);
-    private final static ThreadLocal<ReadOnlyMemory> tlMetaReadOnlyMem = new ThreadLocal<>(ReadOnlyMemory::new);
-    private final static ThreadLocal<CharSequenceIntHashMap> tlColumnNameIndexMap = new ThreadLocal<>(CharSequenceIntHashMap::new);
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
 
-    public static void addColumn(FilesFacade ff, CharSequence root, CharSequence tableName, CharSequence columnName, int columnType) {
-        final CompositePath path = tlPath.get().of(root).concat(tableName);
-        final CompositePath other = tlRenamePath.get().of(root).concat(tableName);
-
-        int rootLen = path.length();
-
-        long buf = Unsafe.malloc(8);
-        try {
-
-            byte code = (byte) readTodo(ff, path, rootLen, buf);
-            if (code == TODO_RESTORE_META) {
-                repairMetaRename(ff, path, other, rootLen, 0);
-            }
-
-            try (ReadOnlyMemory mem = tlMetaReadOnlyMem.get()) {
-
-                openViaSharedPath(ff, mem, path.concat(META_FILE_NAME).$(), rootLen);
-
-                int columnCount = mem.getInt(META_OFFSET_COUNT);
-                int partitioBy = mem.getInt(META_OFFSET_PARTITION_BY);
-
-                if (TableUtils.getColumnIndexQuiet(mem, columnName, columnCount) != -1) {
-                    throw CairoException.instance(0).put("Column ").put(columnName).put(" already exists in ").put(path);
-                }
-
-                LOG.info().$("Adding column '").$(columnName).$('[').$(ColumnType.nameOf(columnType)).$("]' to ").$(path).$();
-
-                // create new _meta.swp
-                try (AppendMemory ddlMem = tlMetaAppendMem.get()) {
-                    TableUtils.addColumnToMeta(ff, mem, columnName, columnType, path, rootLen, ddlMem);
-                }
-
-                // re-purpose memory object
-                path.concat(TXN_FILE_NAME).$();
-                if (ff.exists(path)) {
-
-                    openViaSharedPath(ff, mem, path, rootLen);
-
-                    long transientRowCount = mem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
-                    if (transientRowCount > 0) {
-                        long timestamp = mem.getLong(TX_OFFSET_MAX_TIMESTAMP);
-
-                        path.put(Path.SEPARATOR);
-                        switch (partitioBy) {
-                            case PartitionBy.DAY:
-                                fmtDay.format(Dates.floorDD(timestamp), DateLocaleFactory.INSTANCE.getDefaultDateLocale(), null, path);
-                                break;
-                            case PartitionBy.MONTH:
-                                fmtMonth.format(Dates.floorMM(timestamp), DateLocaleFactory.INSTANCE.getDefaultDateLocale(), null, path);
-                                break;
-                            case PartitionBy.YEAR:
-                                fmtYear.format(Dates.floorYYYY(timestamp), DateLocaleFactory.INSTANCE.getDefaultDateLocale(), null, path);
-                                break;
-                            case PartitionBy.NONE:
-                                path.put(DEFAULT_PARTITION_NAME);
-                                break;
-                            default:
-                                break;
-                        }
-
-                        writeColumnTop(ff, columnName, transientRowCount, path, rootLen, buf);
-                    }
-                } else {
-                    LOG.error().$("No transaction file in ").$(path).$();
-                    path.trimTo(rootLen);
-                }
-
-                writeTodo(ff, path, TODO_RESTORE_META, rootLen, buf);
-
-                // rename _meta to _meta.prev
-                rename(ff, path, META_FILE_NAME, other, META_PREV_FILE_NAME, rootLen);
-
-                // rename _meta.swp to _meta
-                rename(ff, path, META_SWAP_FILE_NAME, other, META_FILE_NAME, rootLen);
-
-                try {
-                    if (!ff.remove(path.concat(TODO_FILE_NAME).$())) {
-                        throw CairoException.instance(Os.errno()).put("Cannot remove ").put(path);
-                    }
-                } finally {
-                    path.trimTo(rootLen);
-                }
-            } catch (CairoException e) {
-                LOG.error().$("Cannot add column '").$(columnName).$("' to '").$(tableName).$("' and this is why {").$((Sinkable) e).$('}').$();
-                throw e;
-            }
-        } finally {
-            Unsafe.free(buf, 8);
-        }
-    }
-
-    public static void create(FilesFacade ff, CharSequence root, JournalMetadata metadata, int mode) {
-        CompositePath path = tlPath.get();
+    public static void create(FilesFacade ff, CompositePath path, AppendMemory memory, CharSequence root, JournalMetadata metadata, int mode) {
         path.of(root).concat(metadata.getName()).put(Path.SEPARATOR).$();
         if (ff.mkdirs(path, mode) == -1) {
             throw CairoException.instance(ff.errno()).put("Cannot create dir: ").put(path);
         }
 
         final int rootLen = path.length();
-        try (AppendMemory mem = tlMetaAppendMem.get()) {
+        try (AppendMemory mem = memory) {
 
             mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
 
@@ -192,8 +92,7 @@ public class TableUtils {
         }
     }
 
-    public static int exists(FilesFacade ff, CharSequence root, CharSequence name) {
-        CompositePath path = tlPath.get();
+    public static int exists(FilesFacade ff, CompositePath path, CharSequence root, CharSequence name) {
         path.of(root).concat(name).$();
         if (ff.exists(path)) {
             // prepare to replace trailing \0
@@ -205,20 +104,6 @@ public class TableUtils {
         } else {
             return 1;
         }
-    }
-
-    public static void freeThreadLocals() {
-        tlMetaAppendMem.get().close();
-        tlMetaAppendMem.remove();
-
-        tlMetaReadOnlyMem.get().close();
-        tlMetaReadOnlyMem.remove();
-
-        tlPath.get().close();
-        tlPath.remove();
-
-        tlRenamePath.get().close();
-        tlRenamePath.remove();
     }
 
     public static long getColumnNameOffset(int columnCount) {
@@ -286,12 +171,6 @@ public class TableUtils {
             nameIndex.clear();
             throw e;
         }
-    }
-
-    public static void validate(FilesFacade ff, ReadOnlyMemory metaMem) {
-        CharSequenceIntHashMap map = tlColumnNameIndexMap.get();
-        map.clear();
-        validate(ff, metaMem, map);
     }
 
     static void repairMetaRename(FilesFacade ff, CompositePath path, CompositePath newPath, int rootLen, int index) {

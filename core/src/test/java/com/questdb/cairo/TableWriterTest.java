@@ -432,200 +432,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnStaticAndFailSwapRemoveByDay() throws Exception {
-        testAddColumnStaticFailSwapRemove(PartitionBy.DAY, 200);
-    }
-
-    @Test
-    public void testAddColumnStaticAndFailSwapRemoveNonPartitioned() throws Exception {
-        testAddColumnStaticFailSwapRemove(PartitionBy.NONE, 10000);
-    }
-
-    @Test
-    public void testAddColumnStaticAndFailSwapRenameByDay() throws Exception {
-        testAddColumnStaticFailSwapRename(PartitionBy.DAY, 200);
-    }
-
-    @Test
-    public void testAddColumnStaticAndFailSwapRenameNonPartitioned() throws Exception {
-        testAddColumnStaticFailSwapRename(PartitionBy.NONE, 10000);
-    }
-
-    @Test
-    public void testAddColumnStaticAndFailToRemoveTodo() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            Rnd rnd = new Rnd();
-            int N = 10000;
-
-            try {
-                create(FF, PartitionBy.NONE);
-                // populate before adding column
-                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                    ts = populateProducts(writer, rnd, ts, N, 60L * 60000);
-                    writer.commit();
-                    Assert.assertEquals(N, writer.size());
-                }
-
-                FilesFacade ff2 = new FilesFacadeImpl() {
-                    @Override
-                    public boolean remove(LPSZ name) {
-                        return !Chars.endsWith(name, TableUtils.TODO_FILE_NAME) && super.remove(name);
-                    }
-                };
-
-                // attempt to add column, make sure it is unsuccessful
-                try {
-                    TableUtils.addColumn(ff2, root, PRODUCT, "xyz", ColumnType.STRING);
-                    Assert.fail();
-                } catch (CairoException ignore) {
-                }
-
-                // ensure that table can be appended to after failed attempt to add column
-                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                    populateProducts(writer, rnd, ts, N, 60L * 60000);
-                    writer.commit();
-                    Assert.assertEquals(N * 2, writer.size());
-                }
-
-            } finally {
-                TableUtils.freeThreadLocals();
-            }
-        });
-    }
-
-    @Test
-    public void testAddColumnStaticAndMetaOpenFailByDay() throws Exception {
-        testAddColumnStaticFailMetaOpen(PartitionBy.DAY, 200);
-    }
-
-    @Test
-    public void testAddColumnStaticAndMetaOpenFailNonPartitioned() throws Exception {
-        testAddColumnStaticFailMetaOpen(PartitionBy.NONE, 10000);
-    }
-
-    @Test
-    public void testAddColumnStaticDuplicateName() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                create(FF, PartitionBy.NONE);
-                try {
-                    TableUtils.addColumn(FF, root, "product", "productName", ColumnType.FLOAT);
-                    Assert.fail();
-                } catch (CairoException ignore) {
-                }
-            } finally {
-                TableUtils.freeThreadLocals();
-            }
-        });
-    }
-
-    @Test
-    public void testAddColumnStaticFailSwapRenameAndRecover() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-            int count = 1;
-
-            @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME)) {
-                    if (count-- > 0) {
-                        return false;
-                    }
-                }
-                return super.rename(from, to);
-            }
-        };
-
-        TestUtils.assertMemoryLeak(() -> {
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            Rnd rnd = new Rnd();
-
-            try {
-                int count = 10000;
-                create(ff, PartitionBy.NONE);
-                // populate before adding column
-                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                    ts = populateProducts(writer, rnd, ts, count, 60 * 60000);
-                    writer.commit();
-                    Assert.assertEquals(count, writer.size());
-                }
-
-                // attempt to add column, make sure it is unsuccessful
-                try {
-                    TableUtils.addColumn(ff, root, PRODUCT, "xyz", ColumnType.STRING);
-                    Assert.fail();
-                } catch (CairoException ignore) {
-                }
-
-                TableUtils.addColumn(FF, root, PRODUCT, "xyz", ColumnType.STRING);
-
-                // append table including new column
-                // the catch here is .top file would have been needed when column wasn't empty
-                // and it isn't needed when table is blank.
-                // if .top file is left behind it may interfere with append operation
-                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                    for (int i = 0; i < count; i++) {
-                        TableWriter.Row r = writer.newRow(ts += 60L * 60000);
-                        r.putInt(0, rnd.nextPositiveInt());
-                        r.putStr(1, rnd.nextString(7));
-                        r.putStr(2, rnd.nextString(4));
-                        r.putStr(3, rnd.nextString(11));
-                        r.putDouble(4, rnd.nextDouble());
-                        r.putStr(6, rnd.nextString(10));
-                        r.append();
-                    }
-                    writer.commit();
-                    Assert.assertEquals(count * 2, writer.size());
-                }
-
-
-            } finally {
-                TableUtils.freeThreadLocals();
-            }
-        });
-    }
-
-    @Test
-    public void testAddColumnStaticFailTopByDay() throws Exception {
-        testAddColumnStaticFailTopFile(PartitionBy.DAY, 1000);
-    }
-
-    @Test
-    public void testAddColumnStaticFailTopByMonth() throws Exception {
-        testAddColumnStaticFailTopFile(PartitionBy.MONTH, 10000);
-    }
-
-    @Test
-    public void testAddColumnStaticFailTopByYear() throws Exception {
-        testAddColumnStaticFailTopFile(PartitionBy.YEAR, 10000);
-    }
-
-    @Test
-    public void testAddColumnStaticFailTopFileNonPartitioned() throws Exception {
-        testAddColumnStaticFailTopFile(PartitionBy.NONE, 10000);
-    }
-
-    @Test
-    public void testAddColumnStaticMissingTxFile() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                createAllTable();
-                try (CompositePath path = new CompositePath()) {
-                    Assert.assertTrue(FF.remove(path.of(root).concat("all").concat(TableUtils.TXN_FILE_NAME).$()));
-                    TableUtils.addColumn(FF, root, "all", "z", ColumnType.STRING);
-                    try {
-                        new TableWriter(FF, root, "all");
-                        Assert.fail();
-                    } catch (CairoException ignore) {
-                    }
-                }
-            } finally {
-                TableUtils.freeThreadLocals();
-            }
-        });
-    }
-
-    @Test
     public void testAddColumnSwpFileDelete() throws Exception {
 
         populateTable(FF);
@@ -1206,6 +1012,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean ran = false;
 
                 @Override
+                public boolean wasCalled() {
+                    return ran;
+                }
+
+                @Override
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, PRODUCT + ".lock")) {
                         ran = true;
@@ -1214,10 +1025,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     return super.openRW(name);
                 }
 
-                @Override
-                public boolean wasCalled() {
-                    return ran;
-                }
+
             };
 
             try {
@@ -1754,18 +1562,14 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testOpenWriterMissingTxFile() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try {
-                createAllTable();
-                try (CompositePath path = new CompositePath()) {
-                    Assert.assertTrue(FF.remove(path.of(root).concat("all").concat(TableUtils.TXN_FILE_NAME).$()));
-                    try {
-                        new TableWriter(FF, root, "all");
-                        Assert.fail();
-                    } catch (CairoException ignore) {
-                    }
+            createAllTable();
+            try (CompositePath path = new CompositePath()) {
+                Assert.assertTrue(FF.remove(path.of(root).concat("all").concat(TableUtils.TXN_FILE_NAME).$()));
+                try {
+                    new TableWriter(FF, root, "all");
+                    Assert.fail();
+                } catch (CairoException ignore) {
                 }
-            } finally {
-                TableUtils.freeThreadLocals();
             }
         });
     }
@@ -2509,33 +2313,30 @@ public class TableWriterTest extends AbstractCairoTest {
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
 
-            try {
+            create(FF, partitionBy);
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+            }
 
-                create(FF, partitionBy);
-                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                    ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
-                    writer.commit();
-                    Assert.assertEquals(N, writer.size());
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                writer.addColumn("xyz", ColumnType.STRING);
+            }
+
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = writer.newRow(ts += 60L * 60000);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putStr(2, rnd.nextString(4));
+                    r.putStr(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    r.putStr(6, rnd.nextString(10));
+                    r.append();
                 }
-
-                TableUtils.addColumn(FF, root, PRODUCT, "xyz", ColumnType.STRING);
-
-                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                    for (int i = 0; i < N; i++) {
-                        TableWriter.Row r = writer.newRow(ts += 60L * 60000);
-                        r.putInt(0, rnd.nextPositiveInt());
-                        r.putStr(1, rnd.nextString(7));
-                        r.putStr(2, rnd.nextString(4));
-                        r.putStr(3, rnd.nextString(11));
-                        r.putDouble(4, rnd.nextDouble());
-                        r.putStr(6, rnd.nextString(10));
-                        r.append();
-                    }
-                    writer.commit();
-                    Assert.assertEquals(N * 2, writer.size());
-                }
-            } finally {
-                TableUtils.freeThreadLocals();
+                writer.commit();
+                Assert.assertEquals(N * 2, writer.size());
             }
         });
     }
@@ -2575,59 +2376,55 @@ public class TableWriterTest extends AbstractCairoTest {
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
 
-            try {
-                create(ff, partitionBy);
-                // populate before adding column
-                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                    ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
-                    writer.commit();
-                    Assert.assertEquals(N, writer.size());
+            create(ff, partitionBy);
+            // populate before adding column
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+            }
+
+            // attempt to add column, make sure it is unsuccessful
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                writer.addColumn("xyz", ColumnType.STRING);
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+
+            // ensure that table can be appended to after failed attempt to add column
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
+                writer.commit();
+                Assert.assertEquals(N * 2, writer.size());
+            }
+
+            // truncate table and attempt to add column to now empty table
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                writer.truncate();
+                Assert.assertEquals(0, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                writer.addColumn("xyz", ColumnType.STRING);
+            }
+
+            // append table including new column
+            // the catch here is .top file would have been needed when column wasn't empty
+            // and it isn't needed when table is blank.
+            // if .top file is left behind it may interfere with append operation
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = writer.newRow(ts += 60L * 60000);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putStr(2, rnd.nextString(4));
+                    r.putStr(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    r.putStr(6, rnd.nextString(10));
+                    r.append();
                 }
-
-                // attempt to add column, make sure it is unsuccessful
-                try {
-                    TableUtils.addColumn(ff, root, PRODUCT, "xyz", ColumnType.STRING);
-                    Assert.fail();
-                } catch (CairoException ignore) {
-                }
-
-                // ensure that table can be appended to after failed attempt to add column
-                try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-                    ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
-                    writer.commit();
-                    Assert.assertEquals(N * 2, writer.size());
-                }
-
-                // truncate table and attempt to add column to now empty table
-                try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-                    writer.truncate();
-                    Assert.assertEquals(0, writer.size());
-                }
-
-                TableUtils.addColumn(ff, root, PRODUCT, "xyz", ColumnType.STRING);
-
-                // append table including new column
-                // the catch here is .top file would have been needed when column wasn't empty
-                // and it isn't needed when table is blank.
-                // if .top file is left behind it may interfere with append operation
-                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                    for (int i = 0; i < N; i++) {
-                        TableWriter.Row r = writer.newRow(ts += 60L * 60000);
-                        r.putInt(0, rnd.nextPositiveInt());
-                        r.putStr(1, rnd.nextString(7));
-                        r.putStr(2, rnd.nextString(4));
-                        r.putStr(3, rnd.nextString(11));
-                        r.putDouble(4, rnd.nextDouble());
-                        r.putStr(6, rnd.nextString(10));
-                        r.append();
-                    }
-                    writer.commit();
-                    Assert.assertEquals(N, writer.size());
-                }
-
-
-            } finally {
-                TableUtils.freeThreadLocals();
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
             }
         });
     }

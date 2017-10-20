@@ -3,7 +3,6 @@ package com.questdb.cairo.pool;
 import com.questdb.cairo.*;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
-import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -22,8 +21,8 @@ import java.util.concurrent.locks.LockSupport;
 
 public class ReaderPoolTest extends AbstractCairoTest {
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
-    private static DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
     private static final Log LOG = LogFactory.getLog(ReaderPoolTest.class);
+    private static DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
 
     @Before
     public void setUpInstance() throws Exception {
@@ -57,7 +56,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
-                    TableUtils.freeThreadLocals();
                     halt.countDown();
                 }
             }).start();
@@ -75,7 +73,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
-                    TableUtils.freeThreadLocals();
                     halt.countDown();
                 }
             }).start();
@@ -120,8 +117,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
         final String[] names = new String[readerCount];
         for (int i = 0; i < readerCount; i++) {
             names[i] = "x" + i;
-            final JournalMetadata<?> m = new JournalStructure(names[i]).$date("ts").$().build();
-            TableUtils.create(ff, root, m, 509);
+            CairoTestUtils.createTable(ff, root, new JournalStructure(names[i]).$date("ts").$());
         }
 
         assertWithPool(pool -> {
@@ -148,7 +144,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         e.printStackTrace();
                         errors.incrementAndGet();
                     } finally {
-                        TableUtils.freeThreadLocals();
                         halt.countDown();
                     }
                 }).start();
@@ -187,7 +182,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
         final String[] names = new String[readerCount];
         for (int i = 0; i < readerCount; i++) {
             names[i] = "x" + i;
-            TableUtils.create(ff, root, new JournalStructure(names[i]).$date("ts").$().build(), 509);
+            CairoTestUtils.createTable(ff, root, new JournalStructure(names[i]).$date("ts").$());
         }
 
         LOG.info().$("testLockBusyReader BEGIN").$();
@@ -222,8 +217,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     errors.incrementAndGet();
                     e.printStackTrace();
                 } finally {
-                    TableUtils.freeThreadLocals();
-                    System.out.println("ALL DONE");
                     halt.countDown();
                 }
             });
@@ -252,7 +245,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     }
                     workerTimes.add(System.currentTimeMillis());
                 } finally {
-                    TableUtils.freeThreadLocals();
                     halt.countDown();
                 }
             });
@@ -287,11 +279,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testLockUnlock() throws Exception {
         // create journals
-        final JournalMetadata<?> m1 = new JournalStructure("x").$date("ts").$().build();
-        TableUtils.create(ff, root, m1, 509);
-
-        final JournalMetadata<?> m2 = new JournalStructure("y").$date("ts").$().build();
-        TableUtils.create(ff, root, m2, 509);
+        CairoTestUtils.createTable(ff, root, new JournalStructure("x").$date("ts").$());
+        CairoTestUtils.createTable(ff, root, new JournalStructure("y").$date("ts").$());
 
         assertWithPool(pool -> {
             TableReader x, y;
@@ -375,21 +364,15 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     private void assertWithPool(PoolAwareCode code) throws Exception {
-        // clear thread locals so that initial memory usage reading
-        // does not include these values
-        TableUtils.freeThreadLocals();
         TestUtils.assertMemoryLeak(() -> {
             try (ReaderPool pool = new ReaderPool(configuration)) {
                 code.run(pool);
             }
-            // clear thread locals at end of test to exclude any memory usage by
-            // those from assertion
-            TableUtils.freeThreadLocals();
         });
     }
 
     private void createTable() {
-        TableUtils.create(FilesFacadeImpl.INSTANCE, root, new JournalStructure("z").$date("ts").$().build(), 509);
+        CairoTestUtils.createTable(FilesFacadeImpl.INSTANCE, root, new JournalStructure("z").$date("ts").$());
     }
 
     private interface PoolAwareCode {

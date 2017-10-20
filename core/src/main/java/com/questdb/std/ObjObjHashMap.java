@@ -66,18 +66,26 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         Arrays.fill(keys, noEntryValue);
     }
 
-    public V get(K key) {
-        int index = key.hashCode() & mask;
+    public int entryIndex(K key) {
+        final int index = key.hashCode() & mask;
 
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            return null;
+            return index;
         }
 
         if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-            return Unsafe.arrayGet(values, index);
+            return -index - 1;
         }
 
-        return probe(key, index);
+        return probeEntry(key, index);
+    }
+
+    public V get(K key) {
+        return getAt(entryIndex(key));
+    }
+
+    public V getAt(int index) {
+        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
     }
 
     public Iterable<Entry<K, V>> immutableIterator() {
@@ -92,50 +100,47 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
     }
 
     public void put(K key, V value) {
-        int index = key.hashCode() & mask;
-        if (cantPutAt(index, key, value)) {
-            probeInsert(key, index, value);
+        putAt(entryIndex(key), key, value);
+    }
+
+    public void putAt(int index, K key, V value) {
+        if (index < 0) {
+            Unsafe.arrayPut(values, -index - 1, value);
+        } else {
+            Unsafe.arrayPut(keys, index, key);
+            Unsafe.arrayPut(values, index, value);
+            if (--free == 0) {
+                rehash();
+            }
         }
+    }
+
+    public V remove(K key) {
+        int index = entryIndex(key);
+        if (index < 0) {
+            V value = Unsafe.arrayGet(values, -index - 1);
+            Unsafe.arrayPut(values, -index - 1, null);
+            free++;
+            return value;
+        }
+        return null;
     }
 
     public int size() {
         return capacity - free;
     }
 
-    private boolean cantPutAt(int index, K key, V value) {
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
-            free--;
-            if (free == 0) {
-                rehash();
-            }
-            return false;
-        }
-
-        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-            Unsafe.arrayPut(values, index, value);
-            return false;
-        }
-        return true;
-    }
-
-    private V probe(K key, int index) {
-        do {
+    private int probeEntry(K key, int index) {
+        for (; ; ) {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                return null;
+                return index;
             }
-            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-                return Unsafe.arrayGet(values, index);
-            }
-        } while (true);
-    }
 
-    private void probeInsert(K key, int index, V value) {
-        do {
-            index = (index + 1) & mask;
-        } while (cantPutAt(index, key, value));
+            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+                return -index - 1;
+            }
+        }
     }
 
     @SuppressWarnings({"unchecked"})

@@ -52,6 +52,7 @@ public class Worker extends Thread {
         running = 2;
     }
 
+    @SuppressWarnings("ResultOfMethodCallIgnored")
     @Override
     public void run() {
         if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {

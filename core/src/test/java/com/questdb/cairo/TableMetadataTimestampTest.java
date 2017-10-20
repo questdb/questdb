@@ -176,28 +176,23 @@ public class TableMetadataTimestampTest extends AbstractCairoTest {
                         writer.removeColumn("timestamp");
                     }
 
+                    long address = metadata.createTransitionIndex();
+                    StringSink sink = new StringSink();
                     try {
-                        long address = metadata.createTransitionIndex();
-                        StringSink sink = new StringSink();
-                        try {
-                            metadata.applyTransitionIndex(address);
-                            Assert.assertEquals(columnCount, metadata.getColumnCount());
-                            for (int i = 0; i < columnCount; i++) {
-                                RecordColumnMetadata m = metadata.getColumnQuick(i);
-                                sink.put(m.getName()).put(':').put(ColumnType.nameOf(m.getType())).put('\n');
-                            }
-
-                            TestUtils.assertEquals(expected, sink);
-                            Assert.assertEquals(-1, metadata.getTimestampIndex());
-                        } finally {
-                            TableMetadata.freeTransitionIndex(address);
+                        metadata.applyTransitionIndex(address);
+                        Assert.assertEquals(columnCount, metadata.getColumnCount());
+                        for (int i = 0; i < columnCount; i++) {
+                            RecordColumnMetadata m = metadata.getColumnQuick(i);
+                            sink.put(m.getName()).put(':').put(ColumnType.nameOf(m.getType())).put('\n');
                         }
+
+                        TestUtils.assertEquals(expected, sink);
+                        Assert.assertEquals(-1, metadata.getTimestampIndex());
                     } finally {
-                        TableUtils.freeThreadLocals();
+                        TableMetadata.freeTransitionIndex(address);
                     }
                 }
             }
-
         });
     }
 
@@ -216,28 +211,23 @@ public class TableMetadataTimestampTest extends AbstractCairoTest {
                         manipulator.restructure(writer);
                     }
 
+                    long address = metadata.createTransitionIndex();
+                    StringSink sink = new StringSink();
                     try {
-                        long address = metadata.createTransitionIndex();
-                        StringSink sink = new StringSink();
-                        try {
-                            metadata.applyTransitionIndex(address);
-                            Assert.assertEquals(expectedColumnCount, metadata.getColumnCount());
-                            for (int i = 0; i < expectedColumnCount; i++) {
-                                RecordColumnMetadata m = metadata.getColumnQuick(i);
-                                sink.put(m.getName()).put(':').put(ColumnType.nameOf(m.getType())).put('\n');
-                            }
-
-                            TestUtils.assertEquals(expected, sink);
-                            Assert.assertEquals(expectedFinalTimestampIndex, metadata.getTimestampIndex());
-                        } finally {
-                            TableMetadata.freeTransitionIndex(address);
+                        metadata.applyTransitionIndex(address);
+                        Assert.assertEquals(expectedColumnCount, metadata.getColumnCount());
+                        for (int i = 0; i < expectedColumnCount; i++) {
+                            RecordColumnMetadata m = metadata.getColumnQuick(i);
+                            sink.put(m.getName()).put(':').put(ColumnType.nameOf(m.getType())).put('\n');
                         }
+
+                        TestUtils.assertEquals(expected, sink);
+                        Assert.assertEquals(expectedFinalTimestampIndex, metadata.getTimestampIndex());
                     } finally {
-                        TableUtils.freeThreadLocals();
+                        TableMetadata.freeTransitionIndex(address);
                     }
                 }
             }
         });
     }
-
 }

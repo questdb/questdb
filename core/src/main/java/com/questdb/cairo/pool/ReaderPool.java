@@ -225,7 +225,7 @@ public class ReaderPool extends AbstractPool {
             r.close();
             LOG.info().$("closed '").$(r.getName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(FactoryConstants.closeReasonText(reason)).$(']').$();
             notifyListener(thread, r.getName(), ev, entry.index, index);
-            Unsafe.arrayPut(entry.readers, index, null);
+            Unsafe.arrayPutOrdered(entry.readers, index, null);
         }
     }
 
@@ -276,7 +276,7 @@ public class ReaderPool extends AbstractPool {
 
             if (closed == TRUE) {
                 // keep locked and close
-                Unsafe.arrayPut(reader.entry.readers, index, null);
+                Unsafe.arrayPutOrdered(reader.entry.readers, index, null);
                 notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE, reader.entry.index, index);
                 LOG.info().$("allowing '").$(name).$("' to close [thread=").$(thread).$(']').$();
                 return false;

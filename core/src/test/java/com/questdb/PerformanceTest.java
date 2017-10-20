@@ -23,10 +23,7 @@
 
 package com.questdb;
 
-import com.questdb.cairo.FilesFacadeImpl;
-import com.questdb.cairo.TableReader;
-import com.questdb.cairo.TableUtils;
-import com.questdb.cairo.TableWriter;
+import com.questdb.cairo.*;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
@@ -43,6 +40,7 @@ import com.questdb.ql.parser.QueryCompiler;
 import com.questdb.query.api.QueryAllBuilder;
 import com.questdb.query.api.QueryHeadBuilder;
 import com.questdb.std.LongList;
+import com.questdb.std.str.CompositePath;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Interval;
 import com.questdb.store.KVIndex;
@@ -279,8 +277,8 @@ public class PerformanceTest extends AbstractTest {
         long result;
 
         CharSequence root = getFactory().getConfiguration().getJournalBase().getAbsolutePath();
-        try {
-            TableUtils.create(FilesFacadeImpl.INSTANCE, root, getFactory().getConfiguration().createMetadata(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE)), 509);
+        try (CompositePath path = new CompositePath(); AppendMemory mem = new AppendMemory()) {
+            TableUtils.create(FilesFacadeImpl.INSTANCE, path, mem, root, getFactory().getConfiguration().createMetadata(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE)), 509);
             try (TableWriter w = new TableWriter(FilesFacadeImpl.INSTANCE, root, "quote")) {
                 for (int i = -count; i < count; i++) {
                     if (i == 0) {
@@ -307,8 +305,6 @@ public class PerformanceTest extends AbstractTest {
                 }
                 result = System.nanoTime() - t;
             }
-        } finally {
-            TableUtils.freeThreadLocals();
         }
 
         LOG.info().$("Cairo append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();

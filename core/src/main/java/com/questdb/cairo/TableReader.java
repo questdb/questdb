@@ -35,7 +35,6 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
-import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.NativeLPSZ;
@@ -83,8 +82,6 @@ public class TableReader implements Closeable, RecordCursor {
 
     private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.path.concat(TableUtils.DEFAULT_PARTITION_NAME).$();
 
-    private static final ThreadLocal<ColumnCopyStruct> tlSTRUCT = new ThreadLocal<>(ColumnCopyStruct::new);
-
     private static final ReloadMethod PARTITIONED_RELOAD_METHOD = reader -> {
         long currentPartitionTimestamp = reader.timestampFloorMethod.floor(reader.maxTimestamp);
         boolean b = reader.readTxn();
@@ -108,7 +105,6 @@ public class TableReader implements Closeable, RecordCursor {
         }
         return false;
     };
-
     private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = reader -> {
         // calling readTxn will set "size" member variable
         if (reader.readTxn()) {
@@ -118,11 +114,10 @@ public class TableReader implements Closeable, RecordCursor {
         }
         return false;
     };
-
     private static final TimestampFloorMethod INAPPROPRIATE_FLOOR_METHOD = timestamp -> {
         throw CairoException.instance(0).put("Cannot get partition floor for non-partitioned table");
     };
-
+    private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
     private final CompositePath path;
     private final int rootLen;
@@ -364,22 +359,16 @@ public class TableReader implements Closeable, RecordCursor {
         return true;
     }
 
-    private static void fetchColumnsFrom(ObjList<ReadOnlyColumn> columns, LongList columnTops, ColumnCopyStruct struct, int base, int index) {
-        struct.mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, index), null);
-        struct.mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, index), null);
-        struct.top = columnTops.getQuick(base / 2 + index);
-    }
-
-    private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, ColumnCopyStruct struct, int base, int index) {
-        if (struct.mem1 != null && !ff.exists(struct.mem1.getFd())) {
-            Misc.free(struct.mem1);
-            Misc.free(struct.mem2);
-            fetchColumnsFrom(columns, columnTops, struct, base, index);
+    private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, int base, int index) {
+        if (tempCopyStruct.mem1 != null && !ff.exists(tempCopyStruct.mem1.getFd())) {
+            Misc.free(tempCopyStruct.mem1);
+            Misc.free(tempCopyStruct.mem2);
+            fetchColumnsFrom(columns, columnTops, base, index);
             createColumnInstanceAt(path, columns, columnTops, index, base);
         } else {
-            struct.mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, index), struct.mem1);
-            struct.mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, index), struct.mem2);
-            struct.top = columnTops.getAndSetQuick(base / 2 + index, struct.top);
+            tempCopyStruct.mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, index), tempCopyStruct.mem1);
+            tempCopyStruct.mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, index), tempCopyStruct.mem2);
+            tempCopyStruct.top = columnTops.getAndSetQuick(base / 2 + index, tempCopyStruct.top);
         }
     }
 
@@ -415,8 +404,6 @@ public class TableReader implements Closeable, RecordCursor {
 
     private void createNewColumnList(int columnCount, long address, int columnBits) {
         int capacity = partitionCount << columnBits;
-        ColumnCopyStruct struct = tlSTRUCT.get();
-
         ObjList<ReadOnlyColumn> columns = new ObjList<>(capacity);
         LongList columnTops = new LongList();
         columns.setPos(capacity);
@@ -431,8 +418,8 @@ public class TableReader implements Closeable, RecordCursor {
                 for (int i = 0; i < columnCount; i++) {
                     final int copyFrom = Unsafe.getUnsafe().getInt(address + i * 8) - 1;
                     if (copyFrom > -1) {
-                        fetchColumnsFrom(this.columns, this.columnTops, struct, oldBase, copyFrom);
-                        copyColumnsTo(columns, columnTops, struct, base, i);
+                        fetchColumnsFrom(this.columns, this.columnTops, oldBase, copyFrom);
+                        copyColumnsTo(columns, columnTops, base, i);
                     } else {
                         // new instance
                         createColumnInstanceAt(path, columns, columnTops, i, base);
@@ -479,6 +466,12 @@ public class TableReader implements Closeable, RecordCursor {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    private void fetchColumnsFrom(ObjList<ReadOnlyColumn> columns, LongList columnTops, int base, int index) {
+        tempCopyStruct.mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, index), null);
+        tempCopyStruct.mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, index), null);
+        tempCopyStruct.top = columnTops.getQuick(base / 2 + index);
     }
 
     private long findPartitionMinimum(DateFormat partitionDirFmt) {
@@ -633,7 +626,6 @@ public class TableReader implements Closeable, RecordCursor {
     }
 
     private void reshuffleExistingColumnList(int columnCount, long address, long stateAddress) {
-        ColumnCopyStruct struct = tlSTRUCT.get();
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             int base = getColumnBase(partitionIndex);
@@ -652,15 +644,15 @@ public class TableReader implements Closeable, RecordCursor {
                         }
 
                         if (copyFrom > -1) {
-                            fetchColumnsFrom(this.columns, this.columnTops, struct, base, copyFrom);
-                            copyColumnsTo(this.columns, this.columnTops, struct, base, i);
+                            fetchColumnsFrom(this.columns, this.columnTops, base, copyFrom);
+                            copyColumnsTo(this.columns, this.columnTops, base, i);
                             int copyTo = Unsafe.getUnsafe().getInt(address + i * 8 + 4) - 1;
                             while (copyTo > -1 && isEntryToBeProcessed(stateAddress, copyTo)) {
-                                copyColumnsTo(this.columns, this.columnTops, struct, base, copyTo);
+                                copyColumnsTo(this.columns, this.columnTops, base, copyTo);
                                 copyTo = Unsafe.getUnsafe().getInt(address + (copyTo - 1) * 8 + 4);
                             }
-                            Misc.free(struct.mem1);
-                            Misc.free(struct.mem2);
+                            Misc.free(tempCopyStruct.mem1);
+                            Misc.free(tempCopyStruct.mem2);
                         } else {
                             // new instance
                             createColumnInstanceAt(path, this.columns, this.columnTops, i, base);

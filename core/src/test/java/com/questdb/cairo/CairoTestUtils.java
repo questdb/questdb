@@ -2,6 +2,7 @@ package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
 import com.questdb.factory.configuration.JournalStructure;
+import com.questdb.std.str.CompositePath;
 import com.questdb.std.time.Dates;
 
 public class CairoTestUtils {
@@ -12,14 +13,14 @@ public class CairoTestUtils {
 
     public static String createTable(FilesFacade ff, CharSequence root, JournalStructure struct) {
         String name = struct.getName();
-        try {
-            if (TableUtils.exists(ff, root, name) == 1) {
-                TableUtils.create(ff, root, struct.build(), 509);
-            } else {
-                throw CairoException.instance(0).put("Table ").put(name).put(" already exists");
+        try (AppendMemory mem = new AppendMemory()) {
+            try (CompositePath path = new CompositePath()) {
+                if (TableUtils.exists(ff, path, root, name) == 1) {
+                    TableUtils.create(ff, path, mem, root, struct.build(), 509);
+                } else {
+                    throw CairoException.instance(0).put("Table ").put(name).put(" already exists");
+                }
             }
-        } finally {
-            TableUtils.freeThreadLocals();
         }
         return name;
     }
