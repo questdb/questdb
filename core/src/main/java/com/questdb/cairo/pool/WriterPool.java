@@ -33,9 +33,9 @@ import com.questdb.factory.FactoryConstants;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.ConcurrentHashMap;
 
 import java.util.Iterator;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * This class maintains cache of open writers to avoid OS overhead of

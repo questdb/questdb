@@ -34,10 +34,10 @@ import com.questdb.factory.FactoryConstants;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
+import com.questdb.std.ConcurrentHashMap;
 
 import java.util.Arrays;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class ReaderPool extends AbstractPool {
 
