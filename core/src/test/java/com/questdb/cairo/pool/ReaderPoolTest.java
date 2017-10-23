@@ -3,12 +3,15 @@ package com.questdb.cairo.pool;
 import com.questdb.cairo.*;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
+import com.questdb.cairo.pool.ex.PoolClosedException;
 import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Rnd;
 import com.questdb.std.LongList;
+import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import com.questdb.txt.RecordSourcePrinter;
@@ -87,6 +90,18 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseReaderWhenPoolClosed() throws Exception {
+        assertWithPool(pool -> {
+            TableReader reader = pool.getReader("z");
+            Assert.assertNotNull(reader);
+            pool.close();
+            Assert.assertTrue(reader.isOpen());
+            reader.close();
+            reader.close();
+        });
+    }
+
+    @Test
     public void testCloseWithActiveReader() throws Exception {
         assertWithPool(pool -> {
             TableReader reader = pool.getReader("z");
@@ -153,6 +168,91 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             halt.await();
             Assert.assertEquals(0, errors.get());
+        });
+    }
+
+    @Test
+    public void testGetMultipleReaders() throws Exception {
+        assertWithPool(pool -> {
+            ObjHashSet<TableReader> readers = new ObjHashSet<>();
+            for (int i = 0; i < 64; i++) {
+                Assert.assertTrue(readers.add(pool.getReader("z")));
+            }
+            for (int i = 0, n = readers.size(); i < n; i++) {
+                TableReader reader = readers.get(i);
+                Assert.assertTrue(reader.isOpen());
+                reader.close();
+            }
+        });
+    }
+
+    @Test
+    public void testGetReaderFailure() throws Exception {
+        final int N = 3;
+        final int K = 40;
+
+        TestFilesFacade ff = new TestFilesFacade() {
+            int count = N;
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (count-- > 0) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return count < N;
+            }
+        };
+
+        assertWithPool(pool -> {
+            for (int i = 0; i < 3; i++) {
+                try {
+                    pool.getReader("z");
+                    Assert.fail();
+                } catch (CairoException ignored) {
+                }
+
+                Assert.assertEquals(0, pool.getBusyCount());
+            }
+
+            ObjHashSet<TableReader> readers = new ObjHashSet<>();
+            for (int i = 0; i < K; i++) {
+                Assert.assertTrue(readers.add(pool.getReader("z")));
+            }
+
+            Assert.assertEquals(K, pool.getBusyCount());
+            Assert.assertEquals(K, readers.size());
+
+            for (int i = 0; i < K; i++) {
+                TableReader reader = readers.get(i);
+                Assert.assertTrue(reader.isOpen());
+                reader.close();
+            }
+
+        }, new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        });
+
+        Assert.assertTrue(ff.wasCalled());
+    }
+
+    @Test
+    public void testGetReaderWhenPoolClosed() throws Exception {
+        assertWithPool(pool -> {
+            pool.close();
+
+            try {
+                pool.getReader("z");
+                Assert.fail();
+            } catch (PoolClosedException ignored) {
+            }
         });
     }
 
@@ -302,6 +402,29 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLockMultipleReaders() throws Exception {
+        assertWithPool(pool -> {
+            ObjHashSet<TableReader> readers = new ObjHashSet<>();
+            for (int i = 0; i < 64; i++) {
+                Assert.assertTrue(readers.add(pool.getReader("z")));
+            }
+            Assert.assertEquals(64, pool.getBusyCount());
+
+            for (int i = 0, n = readers.size(); i < n; i++) {
+                TableReader reader = readers.get(i);
+                Assert.assertTrue(reader.isOpen());
+                reader.close();
+            }
+            pool.lock("z");
+            Assert.assertEquals(0, pool.getBusyCount());
+            for (int i = 0, n = readers.size(); i < n; i++) {
+                Assert.assertFalse(readers.get(i).isOpen());
+            }
+            pool.unlock("z");
+        });
+    }
+
+    @Test
     public void testLockUnlock() throws Exception {
         // create journals
         CairoTestUtils.createTable(ff, root, new JournalStructure("x").$date("ts").$());
@@ -389,6 +512,10 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     private void assertWithPool(PoolAwareCode code) throws Exception {
+        assertWithPool(code, configuration);
+    }
+
+    private void assertWithPool(PoolAwareCode code, final CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (ReaderPool pool = new ReaderPool(configuration)) {
                 code.run(pool);

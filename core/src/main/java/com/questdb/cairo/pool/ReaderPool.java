@@ -109,9 +109,9 @@ public class ReaderPool extends AbstractPool {
                         try {
                             LOG.info().$("open '").$(name).$("' [at=").$(e.index).$(':').$(i).$(']').$();
                             r = new R(ff, this, e, i, root, name);
-                        } catch (CairoException e1) {
+                        } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
-                            throw e1;
+                            throw ex;
                         }
 
                         Unsafe.arrayPut(e.readers, i, r);
@@ -254,7 +254,7 @@ public class ReaderPool extends AbstractPool {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                         }
                     } else {
-                        if (deadline < Long.MAX_VALUE) {
+                        if (deadline == Long.MAX_VALUE) {
                             R r = Unsafe.arrayGet(e.readers, i);
                             if (r != null) {
                                 LOG.info().$("shutting down. '").$(r.getName()).$("' is left behind").$();
@@ -300,6 +300,7 @@ public class ReaderPool extends AbstractPool {
                 Unsafe.arrayPutOrdered(reader.entry.readers, index, null);
                 notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE, reader.entry.index, index);
                 LOG.info().$("allowing '").$(name).$("' to close [thread=").$(thread).$(']').$();
+                reader.goodby();
                 return false;
             }
 
