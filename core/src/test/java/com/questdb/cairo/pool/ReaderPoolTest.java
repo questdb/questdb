@@ -8,10 +8,8 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Rnd;
-import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.LongList;
-import com.questdb.std.ObjHashSet;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
+import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
@@ -439,14 +437,11 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     for (int i = 0; i < iterations; i++) {
                         name = names[rnd.nextPositiveInt() % readerCount];
                         while (true) {
-                            try {
-                                pool.lock(name);
+                            if (pool.lock(name)) {
                                 lockTimes.add(System.currentTimeMillis());
                                 LockSupport.parkNanos(10L);
                                 pool.unlock(name);
-                                name = null;
                                 break;
-                            } catch (EntryUnavailableException ignored) {
                             }
                         }
                     }
@@ -529,7 +524,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 Assert.assertTrue(reader.isOpen());
                 reader.close();
             }
-            pool.lock("z");
+            Assert.assertTrue(pool.lock("z"));
             Assert.assertEquals(0, pool.getBusyCount());
             for (int i = 0, n = readers.size(); i < n; i++) {
                 Assert.assertFalse(readers.get(i).isOpen());
@@ -553,16 +548,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
             Assert.assertNotNull(y);
 
             // expect lock to fail because we have "x" open
-            try {
-                pool.lock("x");
-                Assert.fail();
-            } catch (EntryUnavailableException ignore) {
-            }
+            Assert.assertFalse(pool.lock("x"));
 
             x.close();
 
             // expect lock to succeed after we closed "x"
-            pool.lock("x");
+            Assert.assertTrue(pool.lock("x"));
 
             // expect "x" to be physically closed
             Assert.assertFalse(x.isOpen());
@@ -599,13 +590,47 @@ public class ReaderPoolTest extends AbstractCairoTest {
             TableReader r1 = pool.getReader("z");
             TableReader r2 = pool.getReader("z");
             r1.close();
-            try {
-                pool.lock("z");
-            } catch (EntryUnavailableException ignored) {
-            }
+            Assert.assertFalse(pool.lock("z"));
             r2.close();
-            pool.lock("z");
+            Assert.assertTrue(pool.lock("z"));
             pool.unlock("z");
+        });
+    }
+
+    @Test
+    public void testReaderDoubleClose() throws Exception {
+        assertWithPool(pool -> {
+
+            class Listener implements PoolListener {
+                private ObjList<CharSequence> names = new ObjList<>();
+                private IntList events = new IntList();
+
+                @Override
+                public boolean onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                    names.add(name == null ? "" : ImmutableCharSequence.of(name));
+                    events.add(event);
+                    return false;
+                }
+            }
+
+            Listener listener = new Listener();
+            pool.setPoolListner(listener);
+
+            TableReader reader = pool.getReader("z");
+
+            Assert.assertNotNull(reader);
+            Assert.assertTrue(reader.isOpen());
+            Assert.assertEquals(1, pool.getBusyCount());
+            reader.close();
+            Assert.assertEquals(0, pool.getBusyCount());
+            reader.close();
+
+            reader = pool.getReader("z");
+            Assert.assertNotNull(reader);
+            Assert.assertTrue(reader.isOpen());
+            reader.close();
+
+            Assert.assertEquals("[10,1,11,1]", listener.events.toString());
         });
     }
 

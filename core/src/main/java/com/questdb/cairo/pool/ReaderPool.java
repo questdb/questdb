@@ -127,6 +127,8 @@ public class ReaderPool extends AbstractPool {
                     if (isClosed()) {
                         Unsafe.arrayPut(e.readers, i, null);
                         r.goodby();
+                        LOG.info().$('\'').$(name).$("' born free").$();
+                        return r;
                     }
 
                     LOG.info().$('\'').$(name).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
@@ -150,20 +152,19 @@ public class ReaderPool extends AbstractPool {
         throw EntryUnavailableException.INSTANCE;
     }
 
-    public void lock(CharSequence name) {
+    public boolean lock(CharSequence name) {
 
         checkClosed();
 
         Entry e = entries.get(name);
         if (e == null) {
-            LOG.info().$('\'').$(name).$("' not found, cannot lock").$();
-            return;
+            LOG.info().$('\'').$(name).$("' not found, nothing to lock").$();
+            return true;
         }
 
         long thread = Thread.currentThread().getId();
 
-        if (Unsafe.getUnsafe().compareAndSwapLong(e, LOCK_OWNER, UNLOCKED, thread) ||
-                Unsafe.getUnsafe().compareAndSwapLong(e, LOCK_OWNER, thread, thread)) {
+        if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || Unsafe.cas(e, LOCK_OWNER, thread, thread)) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
@@ -172,11 +173,11 @@ public class ReaderPool extends AbstractPool {
                         // same thread, don't need to order reads
                         if (Unsafe.arrayGet(e.readers, i) != null) {
                             // this thread has busy reader, it should close first
-                            throw EntryUnavailableException.INSTANCE;
+                            return false;
                         }
                     } else {
                         LOG.info().$("'").$(name).$("' is busy [at=").$(e.index).$(':').$(i).$(", owner=").$(Unsafe.arrayGet(e.allocations, i)).$(", thread=").$(thread).$(']').$();
-                        throw EntryUnavailableException.INSTANCE;
+                        return false;
                     }
                 }
 
@@ -190,7 +191,7 @@ public class ReaderPool extends AbstractPool {
                         if (e.next == null) {
                             // lost the race
                             LOG.info().$("'").$(name).$("' is busy [at=").$(e.index + 1).$(':').$(0).$(", owner=unknown").$(", thread=").$(thread).$(']').$();
-                            throw EntryUnavailableException.INSTANCE;
+                            return false;
                         }
                     }
                 }
@@ -198,12 +199,13 @@ public class ReaderPool extends AbstractPool {
 
             } while (e != null);
         } else {
-            LOG.error().$('\'').$(name).$("' is already locked [owner=").$(e.lockOwner).$(']').$();
+            LOG.error().$('\'').$(name).$("' already locked [owner=").$(e.lockOwner).$(']').$();
             notifyListener(thread, name, PoolListener.EV_LOCK_BUSY, -1, -1);
-            throw EntryUnavailableException.INSTANCE;
+            return false;
         }
         notifyListener(thread, name, PoolListener.EV_LOCK_SUCCESS, -1, -1);
         LOG.info().$('\'').$(name).$("' locked [thread=").$(thread).$(']').$();
+        return true;
     }
 
     public void unlock(CharSequence name) {
@@ -316,7 +318,7 @@ public class ReaderPool extends AbstractPool {
             return true;
         }
         LOG.error().$('\'').$(name).$("' is available [at=").$(reader.entry.index).$(':').$(index).$(']');
-        return false;
+        return true;
     }
 
     private static class Entry {

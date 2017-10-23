@@ -65,7 +65,7 @@ public abstract class AbstractSequence extends RhsPadding {
     }
 
     protected boolean casValue(long expected, long value) {
-        return Unsafe.getUnsafe().compareAndSwapLong(this, VALUE_OFFSET, expected, value);
+        return Unsafe.cas(this, VALUE_OFFSET, expected, value);
     }
 
     protected long getValue() {

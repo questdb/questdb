@@ -16,8 +16,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public void close(long fd) {
-        Files.close(fd);
+    public boolean close(long fd) {
+        return Files.close(fd) == 0;
     }
 
     @Override

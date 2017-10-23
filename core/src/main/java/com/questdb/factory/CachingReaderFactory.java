@@ -168,8 +168,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
 
         long thread = Thread.currentThread().getId();
 
-        if (Unsafe.getUnsafe().compareAndSwapLong(e, LOCK_OWNER, UNLOCKED, thread) ||
-                Unsafe.getUnsafe().compareAndSwapLong(e, LOCK_OWNER, thread, thread)) {
+        if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || Unsafe.cas(e, LOCK_OWNER, thread, thread)) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     if (Unsafe.cas(e.allocations, i, FactoryConstants.UNALLOCATED, thread)) {

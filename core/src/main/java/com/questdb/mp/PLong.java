@@ -43,16 +43,8 @@ class PLong {
         return Long.toString(fencedGet());
     }
 
-    boolean cas(final long expected, final long value) {
-        return Unsafe.getUnsafe().compareAndSwapLong(this.value, VALUE_OFFSET, expected, value);
-    }
-
     long fencedGet() {
         return Unsafe.getUnsafe().getLongVolatile(value, VALUE_OFFSET);
-    }
-
-    void fencedSet(final long value) {
-        Unsafe.getUnsafe().putLongVolatile(this.value, VALUE_OFFSET, value);
     }
 
     void increment(long n) {

@@ -7,7 +7,7 @@ import com.questdb.std.str.LPSZ;
 public interface FilesFacade {
     long append(long fd, long buf, int len);
 
-    void close(long fd);
+    boolean close(long fd);
 
     int errno();
 

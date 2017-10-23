@@ -36,7 +36,7 @@ import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatCompiler;
 import com.questdb.store.ColumnType;
 
-public class TableUtils {
+public final class TableUtils {
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     static final long META_OFFSET_COLUMN_TYPES = 12;
@@ -108,16 +108,18 @@ public class TableUtils {
     }
 
     public static long lock(FilesFacade ff, CompositePath path) {
-        long fd = ff.openRW(path);
+        long fd = ff.openRW(path.put(".lock").$());
         if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot open ").put(path).put(" to lock");
+            LOG.error().$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
+            return -1L;
         }
 
         if (ff.lock(fd) != 0) {
+            LOG.error().$("cannot lock '").$(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
             ff.close(fd);
-
             return -1L;
         }
+
         return fd;
     }
 

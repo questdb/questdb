@@ -25,6 +25,7 @@ package com.questdb.cairo.pool;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.CairoException;
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.TableWriter;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
@@ -32,8 +33,10 @@ import com.questdb.cairo.pool.ex.PoolClosedException;
 import com.questdb.factory.FactoryConstants;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ConcurrentHashMap;
+import com.questdb.std.str.CompositePath;
 
 import java.util.Iterator;
 
@@ -64,6 +67,7 @@ public class WriterPool extends AbstractPool {
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
+    private final CompositePath path = new CompositePath();
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
@@ -76,6 +80,20 @@ public class WriterPool extends AbstractPool {
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
+    /**
+     * Counts busy writers in pool.
+     *
+     * @return number of busy writer instances.
+     */
+    public int getBusyCount() {
+        int count = 0;
+        for (Entry e : entries.values()) {
+            if (e.owner != UNALLOCATED) {
+                count++;
+            }
+        }
+        return count;
+    }
 
     public TableWriter getWriter(CharSequence name) {
 
@@ -98,7 +116,7 @@ public class WriterPool extends AbstractPool {
 
         long owner = e.owner;
         // try to change owner
-        if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+        if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
             // in an extreme race condition it is possible that e.writer will be null
             // in this case behaviour should be identical to entry missing entirely
             if (e.writer == null) {
@@ -108,13 +126,12 @@ public class WriterPool extends AbstractPool {
             if (isClosed()) {
                 // pool closed but we somehow managed to lock writer
                 // make sure that interceptor cleared to allow calling thread close writer normally
-                e.writer.entry = null;
+                e.writer.goodby();
             }
             return logAndReturn(e, PoolListener.EV_GET);
         } else {
             if (e.owner == thread) {
-
-                if (e.locked) {
+                if (e.lockFd != -1L) {
                     throw EntryLockedException.INSTANCE;
                 }
 
@@ -126,35 +143,13 @@ public class WriterPool extends AbstractPool {
                 }
 
                 if (isClosed()) {
-                    LOG.info().$("Writer '").$(name).$("' is detached").$();
-                    e.writer.entry = null;
+                    LOG.info().$('\'').$(name).$("' born free").$();
+                    e.writer.goodby();
                 }
                 return logAndReturn(e, PoolListener.EV_GET);
             }
             LOG.error().$('\'').$(name).$("' is busy [owner=").$(owner).$(']').$();
             throw EntryUnavailableException.INSTANCE;
-        }
-    }
-
-    /**
-     * Counts busy writers in pool.
-     *
-     * @return number of busy writer instances.
-     */
-    public int getBusyCount() {
-        int count = 0;
-        for (Entry e : entries.values()) {
-            if (e.owner != UNALLOCATED) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private void checkClosed() {
-        if (isClosed()) {
-            LOG.info().$("is closed").$();
-            throw PoolClosedException.INSTANCE;
         }
     }
 
@@ -173,7 +168,7 @@ public class WriterPool extends AbstractPool {
      *
      * @param tableName table name
      */
-    public void lock(CharSequence tableName) {
+    public boolean lock(CharSequence tableName) {
 
         checkClosed();
 
@@ -185,27 +180,21 @@ public class WriterPool extends AbstractPool {
             e = new Entry();
             Entry other = entries.putIfAbsent(tableName, e);
             if (other == null) {
-                notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS);
-                e.locked = true;
-                return;
+                return lockAndNotify(thread, e, tableName);
             } else {
                 e = other;
             }
         }
 
         // try to change owner
-        if ((Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, UNALLOCATED, thread)
-                || Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, thread, thread))) {
-            LOG.info().$("locked '").$(tableName).$("' [thread=").$(thread).$(']').$();
+        if ((Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread) || Unsafe.cas(e, ENTRY_OWNER, thread, thread))) {
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, FactoryConstants.CR_NAME_LOCK);
-            e.locked = true;
-            notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS);
-            return;
+            return lockAndNotify(thread, e, tableName);
         }
 
-        LOG.error().$("cannot lock '").$(tableName).$("' [owner=").$(e.owner).$(", thread=").$(thread).$();
+        LOG.error().$("cannot lock '").$(tableName).$("', busy [owner=").$(e.owner).$(", thread=").$(thread).$();
         notifyListener(thread, tableName, PoolListener.EV_LOCK_BUSY);
-        throw EntryUnavailableException.INSTANCE;
+        return false;
     }
 
     public int size() {
@@ -230,11 +219,21 @@ public class WriterPool extends AbstractPool {
                 notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
                 throw new IllegalStateException("Writer " + name + " is not locked");
             }
-
             // unlock must remove entry because pool does not deal with null writer
             entries.remove(name);
         }
+
+        if (e.lockFd != -1) {
+            ff.close(e.lockFd);
+        }
         notifyListener(thread, name, PoolListener.EV_UNLOCKED);
+    }
+
+    private void checkClosed() {
+        if (isClosed()) {
+            LOG.info().$("is closed").$();
+            throw PoolClosedException.INSTANCE;
+        }
     }
 
     /**
@@ -247,6 +246,7 @@ public class WriterPool extends AbstractPool {
     @Override
     protected void closePool() {
         super.closePool();
+        Misc.free(path);
         LOG.info().$("closed").$();
     }
 
@@ -254,45 +254,12 @@ public class WriterPool extends AbstractPool {
         PooledTableWriter w = e.writer;
         if (w != null) {
             CharSequence name = e.writer.getName();
-            w.entry = null;
+            w.goodby();
             w.close();
             e.writer = null;
             LOG.info().$("closed '").$(name).$("' [reason=").$(FactoryConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
             notifyListener(thread, name, ev);
         }
-    }
-
-    int countFreeWriters() {
-        int count = 0;
-        for (Entry e : entries.values()) {
-            if (e.owner == UNALLOCATED) {
-                count++;
-            } else {
-                LOG.info().$("'").$(e.writer.getName()).$("' is still busy [owner=").$(e.owner).$(']').$();
-            }
-        }
-
-        return count;
-    }
-
-    private PooledTableWriter createWriter(CharSequence name, Entry e, long thread) {
-        try {
-            checkClosed();
-            LOG.info().$("open '").$(name).$("' [thread=").$(thread).$();
-            e.writer = new PooledTableWriter(this, e, name);
-            return logAndReturn(e, PoolListener.EV_CREATE);
-        } catch (CairoException ex) {
-            LOG.error().$("failed to allocate writer '").$(name).$("' [thread=").$(e.owner).$(']').$();
-            e.ex = ex;
-            notifyListener(e.owner, name, PoolListener.EV_CREATE_EX);
-            throw ex;
-        }
-    }
-
-    private PooledTableWriter logAndReturn(Entry e, short event) {
-        LOG.info().$('\'').$(e.writer.getName()).$("' is assigned [thread=").$(e.owner).$(']').$();
-        notifyListener(e.owner, e.writer.getName(), event);
-        return e.writer;
     }
 
     @Override
@@ -315,12 +282,18 @@ public class WriterPool extends AbstractPool {
             if ((deadline > e.lastReleaseTime && e.owner == UNALLOCATED)) {
                 // looks like this one can be released
                 // try to lock it
-                if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
                     // lock successful
                     closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
                     iterator.remove();
                     removed = true;
                     Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
+                }
+            } else if (e.lockFd != -1L) {
+                if (ff.close(e.lockFd)) {
+                    e.lockFd = -1L;
+                    iterator.remove();
+                    removed = true;
                 }
             } else if (e.ex != null) {
                 LOG.info().$("Removing entry for failed to allocate writer").$();
@@ -331,6 +304,51 @@ public class WriterPool extends AbstractPool {
         return removed;
     }
 
+    int countFreeWriters() {
+        int count = 0;
+        for (Entry e : entries.values()) {
+            if (e.owner == UNALLOCATED) {
+                count++;
+            } else {
+                LOG.info().$("'").$(e.writer.getName()).$("' is still busy [owner=").$(e.owner).$(']').$();
+            }
+        }
+
+        return count;
+    }
+
+    private PooledTableWriter createWriter(CharSequence name, Entry e, long thread) {
+        try {
+            checkClosed();
+            LOG.info().$("open '").$(name).$("' [thread=").$(thread).$(']').$();
+            e.writer = new PooledTableWriter(this, e, name);
+            return logAndReturn(e, PoolListener.EV_CREATE);
+        } catch (CairoException ex) {
+            LOG.error().$("failed to allocate writer '").$(name).$("' [thread=").$(e.owner).$(']').$();
+            e.ex = ex;
+            notifyListener(e.owner, name, PoolListener.EV_CREATE_EX);
+            throw ex;
+        }
+    }
+
+    private boolean lockAndNotify(long thread, Entry e, CharSequence tableName) {
+        e.lockFd = TableUtils.lock(ff, path.of(configuration.getRoot()).concat(tableName));
+        if (e.lockFd == -1L) {
+            LOG.error().$("cannot lock '").$(tableName).$("' [thread=").$(thread).$(']').$();
+            e.owner = UNALLOCATED;
+            return false;
+        }
+        LOG.info().$('\'').$(tableName).$("' locked [thread=").$(thread).$(']').$();
+        notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS);
+        return true;
+    }
+
+    private PooledTableWriter logAndReturn(Entry e, short event) {
+        LOG.info().$('\'').$(e.writer.getName()).$("' is assigned [thread=").$(e.owner).$(']').$();
+        notifyListener(e.owner, e.writer.getName(), event);
+        return e.writer;
+    }
+
     private boolean returnToPool(Entry e) {
         CharSequence name = e.writer.getName();
         long thread = Thread.currentThread().getId();
@@ -338,7 +356,7 @@ public class WriterPool extends AbstractPool {
             LOG.info().$('\'').$(name).$(" is back [thread=").$(thread).$(']').$();
             if (isClosed()) {
                 LOG.info().$("allowing '").$(name).$("' to close [thread=").$(e.owner).$(']').$();
-                e.writer.entry = null;
+                e.writer.goodby();
                 e.writer = null;
                 entries.remove(name);
                 notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE);
@@ -362,7 +380,7 @@ public class WriterPool extends AbstractPool {
         // time writer was last released
         private volatile long lastReleaseTime = System.currentTimeMillis();
         private CairoException ex = null;
-        private volatile boolean locked = false;
+        private volatile long lockFd = -1L;
     }
 
     private static class PooledTableWriter extends TableWriter {
@@ -373,6 +391,10 @@ public class WriterPool extends AbstractPool {
             super(pool.ff, pool.root, name, pool.configuration.getMkDirMode(), pool.configuration.getFileOperationRetryCount());
             this.pool = pool;
             this.entry = e;
+        }
+
+        private void goodby() {
+            this.entry = null;
         }
 
         @Override

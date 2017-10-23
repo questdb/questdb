@@ -104,9 +104,13 @@ public final class Unsafe {
         Unsafe.getUnsafe().putOrderedObject(array, OBJ_OFFSET + (index << OBJ_SCALE), value);
     }
 
+    public static boolean cas(Object o, long offset, long expected, long value) {
+        return UNSAFE.compareAndSwapLong(o, offset, expected, value);
+    }
+
     public static boolean cas(long[] array, int index, long expected, long value) {
         assert index > -1 && index < array.length;
-        return Unsafe.getUnsafe().compareAndSwapLong(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);
+        return Unsafe.cas(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);
     }
 
     public static void free(long ptr, long size) {

@@ -83,5 +83,4 @@ abstract class AbstractPool implements Closeable {
     }
 
     protected abstract boolean releaseAll(long deadline);
-
 }

@@ -1354,16 +1354,14 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
     private void addCount(long x, int check) {
         CounterCell[] as;
         long b, s;
-        if ((as = counterCells) != null ||
-                !Unsafe.getUnsafe().compareAndSwapLong(this, BASECOUNT, b = baseCount, s = b + x)) {
+        if ((as = counterCells) != null || !Unsafe.cas(this, BASECOUNT, b = baseCount, s = b + x)) {
             CounterCell a;
             long v;
             int m;
             boolean uncontended = true;
             if (as == null || (m = as.length - 1) < 0 ||
                     (a = as[getProbe() & m]) == null ||
-                    !(uncontended =
-                            Unsafe.getUnsafe().compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))) {
+                    !(uncontended = Unsafe.cas(a, CELLVALUE, v = a.value, v + x))) {
                 fullAddCount(x, uncontended);
                 return;
             }
@@ -1433,7 +1431,7 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
                     collide = false;
                 } else if (!wasUncontended)       // CAS already known to fail
                     wasUncontended = true;      // Continue after rehash
-                else if (Unsafe.getUnsafe().compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))
+                else if (Unsafe.cas(a, CELLVALUE, v = a.value, v + x))
                     break;
                 else if (counterCells != as || n >= NCPU)
                     collide = false;            // At max size or stale
@@ -1469,7 +1467,7 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
                 }
                 if (init)
                     break;
-            } else if (Unsafe.getUnsafe().compareAndSwapLong(this, BASECOUNT, v = baseCount, v + x))
+            } else if (Unsafe.cas(this, BASECOUNT, v = baseCount, v + x))
                 break;                          // Fall back on using base
         }
     }

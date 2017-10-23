@@ -97,28 +97,31 @@ public class Engine implements Closeable {
         return writerPool.getWriter(tableName);
     }
 
-    public void lock(CharSequence tableName) throws JournalException {
-        writerPool.lock(tableName);
-        try {
-            readerPool.lock(tableName);
-        } catch (CairoException e) {
+    public boolean lock(CharSequence tableName) {
+        if (writerPool.lock(tableName)) {
+            boolean locked = readerPool.lock(tableName);
+            if (locked) {
+                return true;
+            }
             writerPool.unlock(tableName);
-            throw e;
         }
+        return false;
     }
 
-    public void remove(CharSequence tableName) throws JournalException {
-        lock(tableName);
-        try {
-            path.of(configuration.getRoot()).concat(tableName).$();
-            if (!configuration.getFilesFacade().rmdir(path)) {
-                int error = configuration.getFilesFacade().errno();
-                LOG.error().$("remove failed [tableName='").$(tableName).$("', error=").$(error).$(']').$();
-                throw CairoException.instance(error).put("Table remove failed");
+    public void remove(CharSequence tableName) {
+        if (lock(tableName)) {
+            try {
+                path.of(configuration.getRoot()).concat(tableName).$();
+                if (!configuration.getFilesFacade().rmdir(path)) {
+                    int error = configuration.getFilesFacade().errno();
+                    LOG.error().$("remove failed [tableName='").$(tableName).$("', error=").$(error).$(']').$();
+                    throw CairoException.instance(error).put("Table remove failed");
+                }
+            } finally {
+                unlock(tableName);
             }
-        } finally {
-            unlock(tableName);
         }
+        throw CairoException.instance(configuration.getFilesFacade().errno()).put("Cannot lock ").put(tableName);
     }
 
     public void rename(CharSequence tableName, String newName) throws JournalException {

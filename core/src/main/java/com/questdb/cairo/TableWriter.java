@@ -102,7 +102,6 @@ public class TableWriter implements Closeable {
         this.rootLen = path.length();
         try {
             this.txMem = openTxnFile();
-            path.put(".lock").$();
             try {
                 this.lockFd = TableUtils.lock(ff, path);
             } finally {
@@ -910,15 +909,13 @@ public class TableWriter implements Closeable {
                 if (todoFd == -1) {
                     throw CairoException.instance(Os.errno()).put("Cannot open *todo*: ").put(path);
                 }
-                try {
-                    if (ff.read(todoFd, tempMem8b, 8, 0) != 8) {
-                        LOG.info().$("Cannot read *todo* code. File seems to be truncated. Ignoring. [file=").$(path).$(']').$();
-                        return -1;
-                    }
-                    return Unsafe.getUnsafe().getLong(tempMem8b);
-                } finally {
-                    ff.close(todoFd);
+                long len = ff.read(todoFd, tempMem8b, 8, 0);
+                ff.close(todoFd);
+                if (len != 8L) {
+                    LOG.info().$("Cannot read *todo* code. File seems to be truncated. Ignoring. [file=").$(path).$(']').$();
+                    return -1;
                 }
+                return Unsafe.getUnsafe().getLong(tempMem8b);
             }
             return -1;
         } finally {

@@ -125,37 +125,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         notifyListener(Thread.currentThread().getId(), null, FactoryEventListener.EV_POOL_CLOSED);
     }
 
-    @Override
-    protected boolean releaseAll(long deadline) {
-        long thread = Thread.currentThread().getId();
-        boolean removed = false;
-        final int reason = deadline == Long.MAX_VALUE ? FactoryConstants.CR_POOL_CLOSE : FactoryConstants.CR_IDLE;
-
-        Iterator<Entry> iterator = entries.values().iterator();
-        while (iterator.hasNext()) {
-            Entry e = iterator.next();
-            // lastReleaseTime is volatile, which makes
-            // order of conditions important
-            if ((deadline > e.lastReleaseTime && e.owner == -1)) {
-                // looks like this one can be released
-                // try to lock it
-                if (Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, thread)) {
-                    // lock successful
-                    closeWriter(thread, e, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, reason);
-                    iterator.remove();
-                    removed = true;
-                    Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, -1L);
-                }
-            } else if (e.ex != null) {
-                LOG.info().$("Removing entry for failed to allocate writer").$();
-                iterator.remove();
-                removed = true;
-            }
-        }
-
-        return removed;
-    }
-
     public int getBusyCount() {
 
         int count = 0;
@@ -192,7 +161,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         // try to change owner
 
         if (e != null) {
-            if ((Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, thread) || Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, thread, thread))) {
+            if ((Unsafe.cas(e, ENTRY_OWNER, -1L, thread) || Unsafe.cas(e, ENTRY_OWNER, thread, thread))) {
                 LOG.info().$("Thread ").$(e.owner).$(" locked writer ").$(name).$();
                 closeWriter(thread, e, FactoryEventListener.EV_LOCK_CLOSE, FactoryEventListener.EV_LOCK_CLOSE_EX, FactoryConstants.CR_NAME_LOCK);
                 e.locked = true;
@@ -204,6 +173,37 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         }
         notifyListener(thread, name, FactoryEventListener.EV_LOCK_BUSY);
         throw WriterBusyException.INSTANCE;
+    }
+
+    @Override
+    protected boolean releaseAll(long deadline) {
+        long thread = Thread.currentThread().getId();
+        boolean removed = false;
+        final int reason = deadline == Long.MAX_VALUE ? FactoryConstants.CR_POOL_CLOSE : FactoryConstants.CR_IDLE;
+
+        Iterator<Entry> iterator = entries.values().iterator();
+        while (iterator.hasNext()) {
+            Entry e = iterator.next();
+            // lastReleaseTime is volatile, which makes
+            // order of conditions important
+            if ((deadline > e.lastReleaseTime && e.owner == -1)) {
+                // looks like this one can be released
+                // try to lock it
+                if (Unsafe.cas(e, ENTRY_OWNER, -1L, thread)) {
+                    // lock successful
+                    closeWriter(thread, e, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, reason);
+                    iterator.remove();
+                    removed = true;
+                    Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, -1L);
+                }
+            } else if (e.ex != null) {
+                LOG.info().$("Removing entry for failed to allocate writer").$();
+                iterator.remove();
+                removed = true;
+            }
+        }
+
+        return removed;
     }
 
     public int size() {
@@ -352,7 +352,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
 
 
         // try to change owner
-        if (e != null && Unsafe.getUnsafe().compareAndSwapLong(e, ENTRY_OWNER, -1L, thread)) {
+        if (e != null && Unsafe.cas(e, ENTRY_OWNER, -1L, thread)) {
             // in a race condition it is possible that e.writer will be null
             // in this case behaviour should be identical to entry missing entirely
             if (e.writer == null) {
