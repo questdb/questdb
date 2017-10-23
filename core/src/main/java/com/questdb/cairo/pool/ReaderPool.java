@@ -46,6 +46,9 @@ public class ReaderPool extends AbstractPool {
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final int ENTRY_SIZE = 32;
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
+    private static final int NEXT_OPEN = 0;
+    private static final int NEXT_ALLOCATED = 1;
+    private static final int NEXT_LOCKED = 2;
     private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
     private final int maxEntries;
@@ -134,7 +137,7 @@ public class ReaderPool extends AbstractPool {
             LOG.debug().$("Thread ").$(thread).$(" is moving to entry ").$(e.index + 1).$();
 
             // all allocated, create next entry if possible
-            if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, 0, 1)) {
+            if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
                 e.next = new Entry(e.index + 1);
             }
@@ -179,7 +182,7 @@ public class ReaderPool extends AbstractPool {
 
                 if (e.next == null) {
                     // prevent new entries from being created
-                    if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, 0, 2)) {
+                    if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
                         break;
                     } else {
                         // right, failed to lock next entry

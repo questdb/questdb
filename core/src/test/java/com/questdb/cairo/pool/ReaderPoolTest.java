@@ -8,6 +8,7 @@ import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Rnd;
+import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
@@ -167,6 +168,119 @@ public class ReaderPoolTest extends AbstractCairoTest {
             }
 
             halt.await();
+            Assert.assertEquals(0, errors.get());
+        });
+    }
+
+    @Test
+    public void testConcurrentRead() throws Exception {
+        final int readerCount = 5;
+        int threadCount = 2;
+        final int iterations = 1000000;
+        Rnd dataRnd = new Rnd();
+
+
+        final String[] names = new String[readerCount];
+        final String[] expectedRows = new String[readerCount];
+        final CharSequenceObjHashMap<String> expectedRowMap = new CharSequenceObjHashMap<>();
+
+        for (int i = 0; i < readerCount; i++) {
+            names[i] = "x" + i;
+            CairoTestUtils.createTable(ff, root, new JournalStructure(names[i]).$date("ts").$());
+
+            try (TableWriter w = new TableWriter(ff, root, names[i])) {
+                for (int k = 0; k < 10; k++) {
+                    TableWriter.Row r = w.newRow(0);
+                    r.putDate(0, dataRnd.nextLong());
+                    r.append();
+                }
+                w.commit();
+            }
+
+            sink.clear();
+            try (TableReader r = new TableReader(ff, root, names[i])) {
+                printer.print(r, true, r.getMetadata());
+            }
+            expectedRows[i] = sink.toString();
+            expectedRowMap.put(names[i], expectedRows[i]);
+        }
+
+        assertWithPool((ReaderPool pool) -> {
+            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            final CountDownLatch halt = new CountDownLatch(threadCount);
+            final AtomicInteger errors = new AtomicInteger();
+
+            for (int k = 0; k < threadCount; k++) {
+                new Thread(new Runnable() {
+
+                    final ObjHashSet<TableReader> readers = new ObjHashSet<>();
+                    final StringSink sink = new StringSink();
+                    final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+
+                    @Override
+                    public void run() {
+                        Rnd rnd = new Rnd();
+                        try {
+                            barrier.await();
+                            String name;
+
+                            // on each iteration thread will do between 1 and 3 things:
+                            // 1. it will open a random reader
+                            // 2. it will read from one of readers it has opened
+                            // 3. it will close of of readers if has opened
+                            for (int i = 0; i < iterations; i++) {
+
+                                if (readers.size() == 0 || (readers.size() < 40 && rnd.nextPositiveInt() % 4 == 0)) {
+                                    name = names[rnd.nextPositiveInt() % readerCount];
+                                    try {
+                                        Assert.assertTrue(readers.add(pool.getReader(name)));
+                                    } catch (EntryUnavailableException ignore) {
+                                    }
+                                }
+
+                                Thread.yield();
+
+                                if (readers.size() == 0) {
+                                    continue;
+                                }
+
+                                int index = rnd.nextPositiveInt() % readers.size();
+                                TableReader reader = readers.get(index);
+                                Assert.assertTrue(reader.isOpen());
+
+                                // read rows
+                                reader.toTop();
+                                sink.clear();
+                                printer.print(reader, true, reader.getMetadata());
+                                TestUtils.assertEquals(expectedRowMap.get(reader.getName()), sink);
+
+                                Thread.yield();
+
+                                if (readers.size() > 0 && rnd.nextPositiveInt() % 4 == 0) {
+                                    TableReader r2 = readers.get(rnd.nextPositiveInt() % readers.size());
+                                    Assert.assertTrue(r2.isOpen());
+                                    r2.close();
+                                    Assert.assertTrue(readers.remove(r2));
+                                }
+
+                                Thread.yield();
+
+                            }
+                        } catch (Exception e) {
+                            errors.incrementAndGet();
+                            e.printStackTrace();
+                        } finally {
+                            for (int i = 0; i < readers.size(); i++) {
+                                readers.get(i).close();
+                            }
+                            halt.countDown();
+                        }
+                    }
+                }).start();
+            }
+
+            halt.await();
+            Assert.assertEquals(0, halt.getCount());
             Assert.assertEquals(0, errors.get());
         });
     }

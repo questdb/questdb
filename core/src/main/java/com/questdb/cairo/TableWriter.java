@@ -27,10 +27,7 @@ import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Files;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
+import com.questdb.misc.*;
 import com.questdb.std.*;
 import com.questdb.std.str.*;
 import com.questdb.std.time.DateFormat;
@@ -141,7 +138,7 @@ public class TableWriter implements Closeable {
             this.columns = new ObjList<>(columnCount);
             this.nullers = new ObjList<>(columnCount);
             this.columnTops = new LongList(columnCount);
-            this.partitionDirFmt = TableUtils.selectPartitionDirFmt(partitionBy);
+            this.partitionDirFmt = selectPartitionDirFmt(partitionBy);
             configureColumnMemory();
             timestampSetter = configureTimestampSetter();
             configureAppendPosition();
@@ -175,7 +172,7 @@ public class TableWriter implements Closeable {
      */
     public void addColumn(CharSequence name, int type) {
 
-        if (TableUtils.getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
+        if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
         }
 
@@ -184,7 +181,7 @@ public class TableWriter implements Closeable {
         commit();
 
         // create new _meta.swp
-        this.metaSwapIndex = TableUtils.addColumnToMeta(ff, metaMem, name, type, path, rootLen, ddlMem);
+        this.metaSwapIndex = addColumnToMeta(name, type);
 
         // close _meta so we can rename it
         metaMem.close();
@@ -214,7 +211,7 @@ public class TableWriter implements Closeable {
             try {
                 openNewColumnFiles(name);
             } catch (CairoException e) {
-                TableUtils.runFragile(() -> {
+                runFragile(() -> {
                     removeMetaFile();
                     removeLastColumn();
                     rename(TableUtils.META_PREV_FILE_NAME, metaPrevIndex, TableUtils.META_FILE_NAME);
@@ -292,7 +289,7 @@ public class TableWriter implements Closeable {
     }
 
     public int getColumnIndex(CharSequence name) {
-        int index = TableUtils.getColumnIndexQuiet(metaMem, name, columnCount);
+        int index = getColumnIndexQuiet(metaMem, name, columnCount);
         if (index == -1) {
             throw CairoException.instance(0).put("Invalid column name: ").put(name);
         }
@@ -502,6 +499,77 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private static DateFormat selectPartitionDirFmt(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return TableUtils.fmtDay;
+            case PartitionBy.MONTH:
+                return TableUtils.fmtMonth;
+            case PartitionBy.YEAR:
+                return TableUtils.fmtYear;
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
+     * is that we don't keep column name strings on heap. We only use this method when adding new column, where
+     * high performance of name check does not matter much.
+     *
+     * @param name to check
+     * @return 0 based column index.
+     */
+    private static int getColumnIndexQuiet(ReadOnlyMemory metaMem, CharSequence name, int columnCount) {
+        long nameOffset = TableUtils.getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            CharSequence col = metaMem.getStr(nameOffset);
+            if (Chars.equals(col, name)) {
+                return i;
+            }
+            nameOffset += VirtualMemory.getStorageLength(col);
+        }
+        return -1;
+    }
+
+    private static void runFragile(Runnable runnable, CairoException e) {
+        try {
+            runnable.run();
+        } catch (CairoException err) {
+            LOG.error().$("DOUBLE ERROR: 1st: '").$((Sinkable) e).$('\'').$();
+            throw new CairoError(err);
+        }
+        throw e;
+    }
+
+    private int addColumnToMeta(CharSequence name, int type) {
+        int index;
+        try {
+            index = TableUtils.openMetaSwapFile(ff, ddlMem, path, rootLen, 30);
+
+            int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+
+            ddlMem.putInt(columnCount + 1);
+            ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
+            ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
+            for (int i = 0; i < columnCount; i++) {
+                ddlMem.putInt(TableUtils.getColumnType(metaMem, i));
+            }
+            ddlMem.putInt(type);
+
+            long nameOffset = TableUtils.getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                ddlMem.putStr(columnName);
+                nameOffset += VirtualMemory.getStorageLength(columnName);
+            }
+            ddlMem.putStr(name);
+        } finally {
+            ddlMem.close();
+        }
+        return index;
+    }
+
     private void bumpMasterRef() {
         if ((masterRef & 1) != 0) {
             cancelRow();
@@ -606,7 +674,7 @@ public class TableWriter implements Closeable {
                 long partitionTimestamp = columnSizeMem.getLong(offset + 8);
                 setStateForTimestamp(partitionTimestamp, false);
 
-                long fd = TableUtils.openAppend(ff, path.concat(TableUtils.ARCHIVE_FILE_NAME).$());
+                long fd = openAppend(path.concat(TableUtils.ARCHIVE_FILE_NAME).$());
                 try {
                     int len = 8;
                     long o = offset;
@@ -742,6 +810,14 @@ public class TableWriter implements Closeable {
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
+    private long openAppend(LPSZ name) {
+        long fd = ff.openAppend(name);
+        if (fd == -1) {
+            throw CairoException.instance(Os.errno()).put("Cannot open for append: ").put(name);
+        }
+        return fd;
+    }
+
     private void openColumnFiles(CharSequence name, int i, int plen) {
         AppendMemory mem1 = getPrimaryColumn(i);
         AppendMemory mem2 = getSecondaryColumn(i);
@@ -762,7 +838,12 @@ public class TableWriter implements Closeable {
     }
 
     private void openMetaFile() {
-        TableUtils.openViaSharedPath(ff, metaMem, path.concat(TableUtils.META_FILE_NAME).$(), rootLen);
+        path.concat(TableUtils.META_FILE_NAME).$();
+        try {
+            metaMem.of(ff, path, ff.getPageSize());
+        } finally {
+            path.trimTo(rootLen);
+        }
         tmpValidationMap.clear();
         TableUtils.validate(ff, metaMem, tmpValidationMap);
     }
@@ -775,7 +856,7 @@ public class TableWriter implements Closeable {
             openColumnFiles(name, columnCount - 1, plen);
             if (transientRowCount > 0) {
                 // write .top file
-                TableUtils.writeColumnTop(ff, name, transientRowCount, path, plen, tempMem8b);
+                writeColumnTop(name);
             }
         } finally {
             path.trimTo(rootLen);
@@ -823,7 +904,26 @@ public class TableWriter implements Closeable {
     }
 
     private long readTodoTaskCode() {
-        return TableUtils.readTodo(ff, path, rootLen, tempMem8b);
+        try {
+            if (ff.exists(path.concat(TableUtils.TODO_FILE_NAME).$())) {
+                long todoFd = ff.openRO(path);
+                if (todoFd == -1) {
+                    throw CairoException.instance(Os.errno()).put("Cannot open *todo*: ").put(path);
+                }
+                try {
+                    if (ff.read(todoFd, tempMem8b, 8, 0) != 8) {
+                        LOG.info().$("Cannot read *todo* code. File seems to be truncated. Ignoring. [file=").$(path).$(']').$();
+                        return -1;
+                    }
+                    return Unsafe.getUnsafe().getLong(tempMem8b);
+                } finally {
+                    ff.close(todoFd);
+                }
+            }
+            return -1;
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     private void removeColumn(int index) {
@@ -966,7 +1066,13 @@ public class TableWriter implements Closeable {
     }
 
     private void removeTodoFile() {
-        TableUtils.removeTodoFile(ff, path, rootLen);
+        try {
+            if (!ff.remove(path.concat(TableUtils.TODO_FILE_NAME).$())) {
+                throw CairoException.instance(Os.errno()).put("Recovery operation completed successfully but I cannot remove todo file: ").put(path).put(". Please remove manually before opening table again,");
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     private int rename(CharSequence from, CharSequence toBase, int retries) {
@@ -1027,7 +1133,7 @@ public class TableWriter implements Closeable {
         try {
             this.metaPrevIndex = rename(TableUtils.META_FILE_NAME, TableUtils.META_PREV_FILE_NAME, fileOperationRetryCount);
         } catch (CairoException e) {
-            TableUtils.runFragile(this::openMetaFile, e);
+            runFragile(this::openMetaFile, e);
         }
     }
 
@@ -1036,7 +1142,7 @@ public class TableWriter implements Closeable {
         try {
             rename(TableUtils.META_SWAP_FILE_NAME, metaSwapIndex, TableUtils.META_FILE_NAME);
         } catch (CairoException e) {
-            TableUtils.runFragile(() -> {
+            runFragile(() -> {
                 rename(TableUtils.META_PREV_FILE_NAME, metaPrevIndex, TableUtils.META_FILE_NAME);
                 openMetaFile();
                 removeTodoFile();
@@ -1045,7 +1151,29 @@ public class TableWriter implements Closeable {
     }
 
     private void repairMetaRename(int index) {
-        TableUtils.repairMetaRename(ff, path, other, rootLen, index);
+        try {
+            path.concat(TableUtils.META_PREV_FILE_NAME);
+            if (index > 0) {
+                path.put('.').put(index);
+            }
+            path.$();
+
+            if (ff.exists(path)) {
+                LOG.info().$("Repairing metadata from: ").$(path).$();
+                if (ff.exists(other.concat(TableUtils.META_FILE_NAME).$()) && !ff.remove(other)) {
+                    throw CairoException.instance(Os.errno()).put("Repair failed. Cannot replace ").put(other);
+                }
+
+                if (!ff.rename(path, other)) {
+                    throw CairoException.instance(Os.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);
+                }
+            }
+        } finally {
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
+        }
+
+        removeTodoFile();
     }
 
     private void repairTruncate() {
@@ -1154,11 +1282,23 @@ public class TableWriter implements Closeable {
         this.timestampSetter.accept(timestamp);
     }
 
+    private void writeColumnTop(CharSequence name) {
+        long fd = openAppend(path.concat(name).put(".top").$());
+        try {
+            Unsafe.getUnsafe().putLong(tempMem8b, transientRowCount);
+            if (ff.append(fd, tempMem8b, 8) != 8) {
+                throw CairoException.instance(Os.errno()).put("Cannot append ").put(path);
+            }
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     private void writeRestoreMetaTodo() {
         try {
             writeTodo(((long) metaPrevIndex << 8) | TableUtils.TODO_RESTORE_META);
         } catch (CairoException e) {
-            TableUtils.runFragile(() -> {
+            runFragile(() -> {
                 rename(TableUtils.META_PREV_FILE_NAME, metaPrevIndex, TableUtils.META_FILE_NAME);
                 openMetaFile();
             }, e);
@@ -1166,7 +1306,19 @@ public class TableWriter implements Closeable {
     }
 
     private void writeTodo(long code) {
-        TableUtils.writeTodo(ff, path, code, rootLen, tempMem8b);
+        try {
+            long fd = openAppend(path.concat(TableUtils.TODO_FILE_NAME).$());
+            try {
+                Unsafe.getUnsafe().putLong(tempMem8b, code);
+                if (ff.append(fd, tempMem8b, 8) != 8) {
+                    throw CairoException.instance(Os.errno()).put("Cannot write ").put(TableUtils.getTodoText(code)).put(" *todo*: ").put(path);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     private class OpenPartitionRowFunction implements RowFunction {
