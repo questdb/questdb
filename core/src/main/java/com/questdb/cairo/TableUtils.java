@@ -66,12 +66,12 @@ public class TableUtils {
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
 
     public static void create(FilesFacade ff, CompositePath path, AppendMemory memory, CharSequence root, JournalMetadata metadata, int mode) {
-        path.of(root).concat(metadata.getName()).put(Path.SEPARATOR).$();
-        if (ff.mkdirs(path, mode) == -1) {
+        path.of(root).concat(metadata.getName());
+        final int rootLen = path.length();
+        if (ff.mkdirs(path.put(Path.SEPARATOR).$(), mode) == -1) {
             throw CairoException.instance(ff.errno()).put("Cannot create dir: ").put(path);
         }
 
-        final int rootLen = path.length();
         try (AppendMemory mem = memory) {
 
             mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
@@ -236,17 +236,6 @@ public class TableUtils {
             mem.of(ff, path, ff.getPageSize());
         } finally {
             path.trimTo(rootLen);
-        }
-    }
-
-    static void rename(FilesFacade ff, CompositePath path, CharSequence name, CompositePath newPath, CharSequence newName, int rootLen) {
-        try {
-            if (!ff.rename(path.concat(name).$(), newPath.concat(newName).$())) {
-                throw CairoException.instance(Os.errno()).put("Cannot rename ").put(path).put(" -> ").put(newPath);
-            }
-        } finally {
-            path.trimTo(rootLen);
-            newPath.trimTo(rootLen);
         }
     }
 

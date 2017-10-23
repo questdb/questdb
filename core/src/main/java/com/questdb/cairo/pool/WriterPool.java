@@ -64,7 +64,6 @@ public class WriterPool extends AbstractPool {
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
-    private volatile boolean closed = false;
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
@@ -75,40 +74,6 @@ public class WriterPool extends AbstractPool {
         super(configuration.getFilesFacade(), configuration.getRoot(), configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
-    }
-
-    /**
-     * Closes writer pool. When pool is closed only writers that are in pool are proactively released. Writers that
-     * are outside of pool will close when their close() method is invoked.
-     * <p>
-     * After pool is closed it will notify listener with #EV_POOL_CLOSED event.
-     * </p>
-     */
-    public void close() {
-        if (closed) {
-            return;
-        }
-        LOG.info().$("closing pool").$();
-
-        closed = true;
-        releaseAll(Long.MAX_VALUE);
-        notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_CLOSED);
-        LOG.info().$("pool closed").$();
-    }
-
-    /**
-     * Counts busy writers in pool.
-     *
-     * @return number of busy writer instances.
-     */
-    public int getBusyCount() {
-        int count = 0;
-        for (Entry e : entries.values()) {
-            if (e.owner != UNALLOCATED) {
-                count++;
-            }
-        }
-        return count;
     }
 
 
@@ -127,7 +92,6 @@ public class WriterPool extends AbstractPool {
                 // race won
                 return createWriter(name, e, thread);
             } else {
-                LOG.info().$("Thread ").$(e.owner).$(" lost race to allocate '").$(name).$('\'').$();
                 e = other;
             }
         }
@@ -141,7 +105,7 @@ public class WriterPool extends AbstractPool {
                 return createWriter(name, e, thread);
             }
 
-            if (closed) {
+            if (isClosed()) {
                 // pool closed but we somehow managed to lock writer
                 // make sure that interceptor cleared to allow calling thread close writer normally
                 e.writer.entry = null;
@@ -161,7 +125,7 @@ public class WriterPool extends AbstractPool {
                     throw e.ex;
                 }
 
-                if (closed) {
+                if (isClosed()) {
                     LOG.info().$("Writer '").$(name).$("' is detached").$();
                     e.writer.entry = null;
                 }
@@ -169,6 +133,28 @@ public class WriterPool extends AbstractPool {
             }
             LOG.error().$('\'').$(name).$("' is busy [owner=").$(owner).$(']').$();
             throw EntryUnavailableException.INSTANCE;
+        }
+    }
+
+    /**
+     * Counts busy writers in pool.
+     *
+     * @return number of busy writer instances.
+     */
+    public int getBusyCount() {
+        int count = 0;
+        for (Entry e : entries.values()) {
+            if (e.owner != UNALLOCATED) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void checkClosed() {
+        if (isClosed()) {
+            LOG.info().$("is closed").$();
+            throw PoolClosedException.INSTANCE;
         }
     }
 
@@ -251,11 +237,17 @@ public class WriterPool extends AbstractPool {
         notifyListener(thread, name, PoolListener.EV_UNLOCKED);
     }
 
-    private void checkClosed() {
-        if (closed) {
-            LOG.info().$("is down").$();
-            throw PoolClosedException.INSTANCE;
-        }
+    /**
+     * Closes writer pool. When pool is closed only writers that are in pool are proactively released. Writers that
+     * are outside of pool will close when their close() method is invoked.
+     * <p>
+     * After pool is closed it will notify listener with #EV_POOL_CLOSED event.
+     * </p>
+     */
+    @Override
+    protected void closePool() {
+        super.closePool();
+        LOG.info().$("closed").$();
     }
 
     private void closeWriter(long thread, Entry e, short ev, int reason) {
@@ -303,13 +295,6 @@ public class WriterPool extends AbstractPool {
         return e.writer;
     }
 
-    private void notifyListener(long thread, CharSequence name, short event) {
-        PoolListener listener = getPoolListener();
-        if (listener != null) {
-            listener.onEvent(PoolListener.SRC_WRITER, thread, name, event, (short) 0, (short) 0);
-        }
-    }
-
     @Override
     protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().getId();
@@ -351,7 +336,7 @@ public class WriterPool extends AbstractPool {
         long thread = Thread.currentThread().getId();
         if (e.owner != UNALLOCATED) {
             LOG.info().$('\'').$(name).$(" is back [thread=").$(thread).$(']').$();
-            if (closed) {
+            if (isClosed()) {
                 LOG.info().$("allowing '").$(name).$("' to close [thread=").$(e.owner).$(']').$();
                 e.writer.entry = null;
                 e.writer = null;

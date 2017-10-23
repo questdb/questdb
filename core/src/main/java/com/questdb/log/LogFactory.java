@@ -43,6 +43,7 @@ public class LogFactory implements Closeable {
 
     public static final LogFactory INSTANCE = new LogFactory();
     public static final String DEBUG_TRIGGER = "ebug";
+    public static final String CONFIG_SYSTEM_PROPERTY = "questdbLog";
 
     private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
@@ -172,7 +173,7 @@ public class LogFactory implements Closeable {
     }
 
     static void configureFromSystemProperties(LogFactory factory) {
-        String conf = System.getProperty("questDbLog");
+        String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
         if (conf == null) {
             conf = DEFAULT_CONFIG;
         }

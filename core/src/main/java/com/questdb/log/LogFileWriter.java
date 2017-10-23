@@ -25,10 +25,7 @@ package com.questdb.log;
 
 import com.questdb.ex.LogError;
 import com.questdb.ex.NumericException;
-import com.questdb.misc.Files;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Os;
-import com.questdb.misc.Unsafe;
+import com.questdb.misc.*;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.mp.SynchronizedJob;
@@ -48,6 +45,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private long _wptr;
     private String location;
     // can be set via reflection
+    private String truncate;
     private String bufferSize;
     private int bufSize;
 
@@ -70,7 +68,14 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         }
         this.buf = _wptr = Unsafe.malloc(bufSize);
         this.lim = buf + bufSize;
-        this.fd = Files.openAppend(new Path(location));
+        try (Path path = new Path(location)) {
+            if (truncate != null && Chars.equalsIgnoreCase(truncate, "true")) {
+                this.fd = Files.openRW(path);
+                Files.truncate(fd, 0);
+            } else {
+                this.fd = Files.openAppend(path);
+            }
+        }
         if (this.fd == -1) {
             throw new LogError("Cannot open file for append: " + location);
         }

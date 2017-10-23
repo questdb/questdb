@@ -25,10 +25,7 @@ package com.questdb;
 
 import com.questdb.factory.Factory;
 import com.questdb.iter.clock.MilliClock;
-import com.questdb.log.LogFactory;
-import com.questdb.log.LogFileWriter;
-import com.questdb.log.LogLevel;
-import com.questdb.log.LogWriterConfig;
+import com.questdb.log.*;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
 import com.questdb.mon.FactoryEventLogger;
@@ -205,20 +202,17 @@ class BootstrapMain {
     }
 
     private static void configureLoggers(final ServerConfiguration configuration) {
-        LogFactory.INSTANCE.add(new LogWriterConfig("access", LogLevel.LOG_LEVEL_ALL, (ring, seq, level) -> {
+
+        LogWriterFactory factory = (ring, seq, level) -> {
             LogFileWriter w = new LogFileWriter(ring, seq, level);
             w.setLocation(configuration.getAccessLog().getAbsolutePath());
             return w;
-        }));
+        };
 
-        final int level = System.getProperty(LogFactory.DEBUG_TRIGGER) != null ? LogLevel.LOG_LEVEL_ALL : LogLevel.LOG_LEVEL_ERROR | LogLevel.LOG_LEVEL_INFO;
-        LogFactory.INSTANCE.add(new LogWriterConfig(level,
-                (ring, seq, level1) -> {
-                    LogFileWriter w = new LogFileWriter(ring, seq, level1);
-                    w.setLocation(configuration.getErrorLog().getAbsolutePath());
-                    return w;
-                }));
-
+        LogFactory.INSTANCE.add(new LogWriterConfig("access", LogLevel.LOG_LEVEL_ALL, factory));
+        LogFactory.INSTANCE.add(new LogWriterConfig(
+                System.getProperty(LogFactory.DEBUG_TRIGGER) != null ? LogLevel.LOG_LEVEL_ALL : LogLevel.LOG_LEVEL_ERROR | LogLevel.LOG_LEVEL_INFO,
+                factory));
         LogFactory.INSTANCE.bind();
     }
 

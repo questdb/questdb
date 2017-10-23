@@ -41,7 +41,7 @@ public class LogFactoryTest {
 
     @Test(expected = LogError.class)
     public void testBadWriter() throws Exception {
-        System.setProperty("questDbLog", "/nfslog-bad-writer.conf");
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog-bad-writer.conf");
 
         try (LogFactory factory = new LogFactory()) {
             LogFactory.configureFromSystemProperties(factory);
@@ -101,7 +101,7 @@ public class LogFactoryTest {
 
     @Test
     public void testNoConfig() throws Exception {
-        System.setProperty("questDbLog", "/nfslog2.conf");
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog2.conf");
 
         try (LogFactory factory = new LogFactory()) {
             LogFactory.configureFromSystemProperties(factory);
@@ -115,7 +115,7 @@ public class LogFactoryTest {
 
     @Test
     public void testNoDefault() throws Exception {
-        System.setProperty("questDbLog", "/nfslog1.conf");
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog1.conf");
 
         try (LogFactory factory = new LogFactory()) {
             LogFactory.configureFromSystemProperties(factory);
@@ -243,7 +243,7 @@ public class LogFactoryTest {
                 "w.file.bufferSize=4M"
         );
 
-        System.setProperty("questDbLog", conf.getAbsolutePath());
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
 
         try (LogFactory factory = new LogFactory()) {
             LogFactory.configureFromSystemProperties(factory);
@@ -266,7 +266,7 @@ public class LogFactoryTest {
 
     @Test
     public void testSilent() throws Exception {
-        System.setProperty("questDbLog", "/nfslog-silent.conf");
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog-silent.conf");
 
         try (LogFactory factory = new LogFactory()) {
             LogFactory.configureFromSystemProperties(factory);

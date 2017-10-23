@@ -798,6 +798,7 @@ public class TableWriter implements Closeable {
                 columnTops.extendAndSet(i, TableUtils.readColumnTop(ff, path, name, plen, tempMem8b));
                 nameOffset += VirtualMemory.getStorageLength(name);
             }
+            LOG.info().$("switched partition to '").$(path).$('\'').$();
         } finally {
             path.trimTo(rootLen);
         }

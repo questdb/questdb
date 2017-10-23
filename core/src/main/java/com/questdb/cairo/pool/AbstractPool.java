@@ -24,16 +24,22 @@
 package com.questdb.cairo.pool;
 
 import com.questdb.cairo.FilesFacade;
+import com.questdb.misc.Unsafe;
 import com.questdb.std.str.ImmutableCharSequence;
 
 import java.io.Closeable;
 
 abstract class AbstractPool implements Closeable {
+    public static final long CLOSED = Unsafe.getFieldOffset(AbstractPool.class, "closed");
     protected static final long UNALLOCATED = -1L;
+    private static final int TRUE = 1;
+    private static final int FALSE = 0;
     protected final CharSequence root;
     protected final FilesFacade ff;
     private final long inactiveTtlMs;
-    protected PoolListener eventListener;
+    private PoolListener eventListener;
+    @SuppressWarnings("FieldCanBeLocal")
+    private volatile int closed = FALSE;
 
     public AbstractPool(FilesFacade ff, CharSequence root, long inactiveTtlMs) {
         this.ff = ff;
@@ -41,17 +47,41 @@ abstract class AbstractPool implements Closeable {
         this.inactiveTtlMs = inactiveTtlMs;
     }
 
-    public PoolListener getPoolListener() {
-        return eventListener;
+    @Override
+    public final void close() {
+        if (Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, FALSE, TRUE)) {
+            closePool();
+        }
     }
 
-    public void setPoolListner(PoolListener eventListener) {
-        this.eventListener = eventListener;
+    public PoolListener getPoolListener() {
+        return eventListener;
     }
 
     public boolean releaseInactive() {
         return releaseAll(System.currentTimeMillis() - inactiveTtlMs);
     }
 
+    public void setPoolListner(PoolListener eventListener) {
+        this.eventListener = eventListener;
+    }
+
+    protected void closePool() {
+        releaseAll(Long.MAX_VALUE);
+        notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_CLOSED);
+    }
+
+    protected boolean isClosed() {
+        return closed == TRUE;
+    }
+
+    protected void notifyListener(long thread, CharSequence name, short event) {
+        PoolListener listener = getPoolListener();
+        if (listener != null) {
+            listener.onEvent(PoolListener.SRC_WRITER, thread, name, event, (short) 0, (short) 0);
+        }
+    }
+
     protected abstract boolean releaseAll(long deadline);
+
 }

@@ -546,7 +546,7 @@ public class TableReader implements Closeable, RecordCursor {
                     partitionSize = readPartitionSize(ff, path, tempMem8b);
                 }
 
-                LOG.info().$("Open partition: ").$(path.$()).$(" [size=").$(partitionSize).$(']').$();
+                LOG.info().$("open partition ").$(path.$()).$(" [size=").$(partitionSize).$(']').$();
 
                 if (partitionSize > 0) {
                     openPartitionColumns(path, columnBase);

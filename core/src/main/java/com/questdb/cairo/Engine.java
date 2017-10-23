@@ -90,7 +90,7 @@ public class Engine implements Closeable {
     }
 
     public TableReader getReader(CharSequence tableName) {
-        return readerPool.reader(tableName);
+        return readerPool.getReader(tableName);
     }
 
     public TableWriter getWriter(CharSequence tableName) {

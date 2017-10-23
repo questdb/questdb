@@ -188,33 +188,37 @@ public class JsonLexerTest {
         } else {
             p = new Path(path);
         }
-        long l = Files.length(p);
-        long fd = Files.openRO(p);
-        JsonListener listener = new NoOpListener();
         try {
-            long buf = Unsafe.malloc(l);
+            long l = Files.length(p);
+            long fd = Files.openRO(p);
+            JsonListener listener = new NoOpListener();
             try {
-                Assert.assertEquals(l, Files.read(fd, buf, (int) l, 0));
-                JsonLexer lexer = new JsonLexer(1024);
+                long buf = Unsafe.malloc(l);
+                try {
+                    Assert.assertEquals(l, Files.read(fd, buf, (int) l, 0));
+                    JsonLexer lexer = new JsonLexer(1024);
 
-                long t = System.nanoTime();
-                for (int i = 0; i < l; i++) {
-                    try {
-                        lexer.clear();
-                        lexer.parse(buf, i, listener);
-                        lexer.parse(buf + i, l - i, listener);
-                        lexer.parseLast();
-                    } catch (JsonException e) {
-                        System.out.println(i);
-                        throw e;
+                    long t = System.nanoTime();
+                    for (int i = 0; i < l; i++) {
+                        try {
+                            lexer.clear();
+                            lexer.parse(buf, i, listener);
+                            lexer.parse(buf + i, l - i, listener);
+                            lexer.parseLast();
+                        } catch (JsonException e) {
+                            System.out.println(i);
+                            throw e;
+                        }
                     }
+                    System.out.println((System.nanoTime() - t) / l);
+                } finally {
+                    Unsafe.free(buf, l);
                 }
-                System.out.println((System.nanoTime() - t) / l);
             } finally {
-                Unsafe.free(buf, l);
+                Files.close(fd);
             }
         } finally {
-            Files.close(fd);
+            p.close();
         }
     }
 

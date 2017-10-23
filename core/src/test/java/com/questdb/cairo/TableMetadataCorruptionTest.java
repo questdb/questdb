@@ -165,12 +165,12 @@ public class TableMetadataCorruptionTest extends AbstractCairoTest {
     private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int partitionType, int timestampIndex, String contains, long pageSize) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CompositePath path = new CompositePath()) {
-                path.of(root).concat("x").put(Path.SEPARATOR).$();
-                if (FilesFacadeImpl.INSTANCE.mkdirs(path, 509) == -1) {
+                path.of(root).concat("x");
+                final int rootLen = path.length();
+                if (FilesFacadeImpl.INSTANCE.mkdirs(path.put(Path.SEPARATOR).$(), 509) == -1) {
                     throw CairoException.instance(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 
-                final int rootLen = path.length();
                 try (AppendMemory mem = new AppendMemory()) {
 
                     mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize);

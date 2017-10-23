@@ -53,67 +53,62 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void tesFrequentCommit() throws Exception {
-        long used = Unsafe.getMemUsed();
-        create(FF, PartitionBy.NONE);
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.NONE);
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-            Rnd rnd = new Rnd();
-            for (int i = 0; i < 100000; i++) {
-                ts = populateRow(writer, ts, rnd, 60 * 60000);
-                writer.commit();
+                Rnd rnd = new Rnd();
+                for (int i = 0; i < 100000; i++) {
+                    ts = populateRow(writer, ts, rnd, 60 * 60000);
+                    writer.commit();
+                }
             }
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
+        });
     }
 
     @Test
     public void testAddColumnAndFailToReadTopFile() throws Exception {
-        create(FF, PartitionBy.DAY);
-
-        long mem = Unsafe.getMemUsed();
-
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            int N = 10000;
-            Rnd rnd = new Rnd();
-            populateProducts(writer, rnd, ts, N, 60000);
-            writer.addColumn("xyz", ColumnType.STRING);
-            Assert.assertEquals(N, writer.size());
-        }
-
-        class X extends FilesFacadeImpl {
-            long fd = -1;
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, "xyz.top")) {
-                    return this.fd = super.openRO(name);
-                }
-                return super.openRO(name);
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY);
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                int N = 10000;
+                Rnd rnd = new Rnd();
+                populateProducts(writer, rnd, ts, N, 60000);
+                writer.addColumn("xyz", ColumnType.STRING);
+                Assert.assertEquals(N, writer.size());
             }
 
-            @Override
-            public long read(long fd, long buf, int len, long offset) {
-                if (fd == this.fd) {
-                    this.fd = -1;
-                    return -1;
+            class X extends FilesFacadeImpl {
+                long fd = -1;
+
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Chars.endsWith(name, "xyz.top")) {
+                        return this.fd = super.openRO(name);
+                    }
+                    return super.openRO(name);
                 }
-                return super.read(fd, buf, len, offset);
+
+                @Override
+                public long read(long fd, long buf, int len, long offset) {
+                    if (fd == this.fd) {
+                        this.fd = -1;
+                        return -1;
+                    }
+                    return super.read(fd, buf, len, offset);
+                }
             }
-        }
 
-        try {
-            new TableWriter(new X(), root, PRODUCT);
-            Assert.fail();
-        } catch (CairoException ignore) {
+            try {
+                new TableWriter(new X(), root, PRODUCT);
+                Assert.fail();
+            } catch (CairoException ignore) {
 
-        }
-
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-        Assert.assertEquals(0, Files.getOpenFileCount());
+            }
+        });
     }
 
     @Test
@@ -434,39 +429,36 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnSwpFileDelete() throws Exception {
 
-        populateTable(FF);
-        // simulate existence of _meta.swp
+        TestUtils.assertMemoryLeak(() -> {
+            populateTable(FF);
+            // simulate existence of _meta.swp
 
-        class X extends FilesFacadeImpl {
-            boolean deleteAttempted = false;
+            class X extends FilesFacadeImpl {
+                boolean deleteAttempted = false;
 
-            @Override
-            public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
-            }
-
-            @Override
-            public boolean remove(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    return deleteAttempted = true;
+                @Override
+                public boolean exists(LPSZ path) {
+                    return Chars.endsWith(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
                 }
-                return super.remove(name);
+
+                @Override
+                public boolean remove(LPSZ name) {
+                    if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
+                        return deleteAttempted = true;
+                    }
+                    return super.remove(name);
+                }
             }
-        }
 
-        long mem = Unsafe.getMemUsed();
+            X ff = new X();
 
-        X ff = new X();
-
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            Assert.assertEquals(12, writer.columns.size());
-            writer.addColumn("abc", ColumnType.STRING);
-            Assert.assertEquals(14, writer.columns.size());
-            Assert.assertTrue(ff.deleteAttempted);
-        }
-
-        Assert.assertEquals(0, Files.getOpenFileCount());
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                Assert.assertEquals(12, writer.columns.size());
+                writer.addColumn("abc", ColumnType.STRING);
+                Assert.assertEquals(14, writer.columns.size());
+                Assert.assertTrue(ff.deleteAttempted);
+            }
+        });
     }
 
     @Test
@@ -543,8 +535,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 return super.openAppend(name);
             }
-
-
         });
     }
 
@@ -562,264 +552,255 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAutoCancelFirstRowNonPartitioned() throws Exception {
-        long used = Unsafe.getMemUsed();
-        create(FF, PartitionBy.NONE);
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.NONE);
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            TableWriter.Row r = writer.newRow(ts);
-            r.putInt(0, 1234);
-            populateProducts(writer, new Rnd(), ts, 10000, 60 * 60000);
-            Assert.assertEquals(10000, writer.size());
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                TableWriter.Row r = writer.newRow(ts);
+                r.putInt(0, 1234);
+                populateProducts(writer, new Rnd(), ts, 10000, 60 * 60000);
+                Assert.assertEquals(10000, writer.size());
+            }
+        });
     }
 
     @Test
     public void testCancelFailureFollowedByTableClose() throws Exception {
-        long used = Unsafe.getMemUsed();
-        create(FF, PartitionBy.DAY);
-        Rnd rnd = new Rnd();
-        final int N = 47;
-        class X extends FilesFacadeImpl {
-            long fd = -1;
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY);
+            Rnd rnd = new Rnd();
+            final int N = 47;
+            class X extends FilesFacadeImpl {
+                long fd = -1;
 
-            @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "supplier.i")) {
-                    return fd = super.openRW(name);
+                @Override
+                public long openRW(LPSZ name) {
+                    if (Chars.endsWith(name, "supplier.i")) {
+                        return fd = super.openRW(name);
+                    }
+                    return super.openRW(name);
                 }
-                return super.openRW(name);
-            }
 
-            @Override
-            public long read(long fd, long buf, int len, long offset) {
-                if (fd == this.fd) {
-                    this.fd = -1;
-                    return -1;
+                @Override
+                public long read(long fd, long buf, int len, long offset) {
+                    if (fd == this.fd) {
+                        this.fd = -1;
+                        return -1;
+                    }
+                    return super.read(fd, buf, len, offset);
                 }
-                return super.read(fd, buf, len, offset);
             }
-        }
 
-        X ff = new X();
+            X ff = new X();
 
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
-            writer.commit();
-            Assert.assertEquals(N, writer.size());
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                ts = populateProducts(writer, rnd, ts, N, 60 * 60000);
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
 
-            TableWriter.Row r = writer.newRow(ts + 60 * 60000);
-            r.putInt(0, rnd.nextInt());
-            try {
-                r.cancel();
-                Assert.fail();
-            } catch (CairoException ignore) {
+                TableWriter.Row r = writer.newRow(ts + 60 * 60000);
+                r.putInt(0, rnd.nextInt());
+                try {
+                    r.cancel();
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
             }
-        }
 
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            Assert.assertEquals(N, writer.size());
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                Assert.assertEquals(N, writer.size());
+            }
+        });
     }
 
     @Test
     public void testCancelFirstRowFailurePartitioned() throws Exception {
-        class X extends FilesFacadeImpl {
-            boolean fail = false;
+        TestUtils.assertMemoryLeak(() -> {
+            class X extends FilesFacadeImpl {
+                boolean fail = false;
 
-            @Override
-            public long read(long fd, long buf, int len, long offset) {
-                if (fail) {
-                    return -1;
-                }
-                return super.read(fd, buf, len, offset);
-            }
-        }
-
-        X ff = new X();
-
-        long used = Unsafe.getMemUsed();
-        Rnd rnd = new Rnd();
-        create(ff, PartitionBy.DAY);
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            // add 48 hours
-            ts = populateProducts(writer, rnd, ts, 47, 60 * 60000);
-            TableWriter.Row r = writer.newRow(ts += 60 * 60000);
-            r.putInt(0, rnd.nextPositiveInt());
-            r.putStr(1, rnd.nextString(7));
-            r.putStr(2, rnd.nextString(4));
-            r.putStr(3, rnd.nextString(11));
-            r.putDouble(4, rnd.nextDouble());
-
-            ff.fail = true;
-            try {
-                r.cancel();
-                Assert.fail();
-            } catch (CairoException ignore) {
-            }
-            ff.fail = false;
-            r.cancel();
-
-            populateProducts(writer, rnd, ts, 47, 60 * 60000);
-
-            writer.commit();
-            Assert.assertEquals(94, writer.size());
-            Assert.assertTrue(getDirCount() == 6);
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, ff.getOpenFileCount());
-    }
-
-    @Test
-    public void testCancelFirstRowNonPartitioned() throws Exception {
-        long used = Unsafe.getMemUsed();
-        create(FF, PartitionBy.NONE);
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-
-
-            TableWriter.Row r = writer.newRow(ts);
-            r.putInt(0, 1234);
-            r.cancel();
-
-            populateProducts(writer, new Rnd(), ts, 10000, 60 * 60000);
-            Assert.assertEquals(10000, writer.size());
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
-    }
-
-    @Test
-    public void testCancelFirstRowPartitioned() throws Exception {
-        long used = Unsafe.getMemUsed();
-        create(FF, PartitionBy.DAY);
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            TableWriter.Row r = writer.newRow(ts);
-            r.cancel();
-            writer.commit();
-            Assert.assertEquals(0, writer.size());
-            Assert.assertTrue(getDirCount() == 2);
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
-    }
-
-    @Test
-    public void testCancelFirstRowPartitioned2() throws Exception {
-        long used = Unsafe.getMemUsed();
-        Rnd rnd = new Rnd();
-        create(FF, PartitionBy.DAY);
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            // add 48 hours
-            ts = populateProducts(writer, rnd, ts, 47, 60 * 60000);
-
-            TableWriter.Row r = writer.newRow(ts += 60 * 60000);
-            r.putInt(0, rnd.nextPositiveInt());
-            r.putStr(1, rnd.nextString(7));
-            r.putStr(2, rnd.nextString(4));
-            r.putStr(3, rnd.nextString(11));
-            r.putDouble(4, rnd.nextDouble());
-
-            for (int i = 0; i < 1000; i++) {
-                r.cancel();
-            }
-
-            populateProducts(writer, rnd, ts, 47, 60 * 60000);
-
-            writer.commit();
-            Assert.assertEquals(94, writer.size());
-            Assert.assertTrue(getDirCount() == 6);
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
-    }
-
-    @Test
-    public void testCancelMidPartition() throws Exception {
-        long used = Unsafe.getMemUsed();
-        final Rnd rnd = new Rnd();
-        create(FF, PartitionBy.DAY);
-
-        // this contraption will verify that all timestamps that are
-        // supposed to be stored have matching partitions
-        try (VirtualMemory vmem = new VirtualMemory(FF.getPageSize())) {
-            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-                int i = 0;
-                final int N = 10000;
-
-                int cancelCount = 0;
-                while (i < N) {
-                    TableWriter.Row r = writer.newRow(ts += 60000);
-                    r.putInt(0, rnd.nextPositiveInt());
-                    r.putStr(1, rnd.nextString(7));
-                    r.putStr(2, rnd.nextString(4));
-                    r.putStr(3, rnd.nextString(11));
-                    r.putDouble(4, rnd.nextDouble());
-                    if (rnd.nextPositiveInt() % 30 == 0) {
-                        r.cancel();
-                        cancelCount++;
-                    } else {
-                        r.append();
-                        // second append() is expected to be a NOOP
-                        r.append();
-                        vmem.putLong(ts);
-                        i++;
+                @Override
+                public long read(long fd, long buf, int len, long offset) {
+                    if (fail) {
+                        return -1;
                     }
+                    return super.read(fd, buf, len, offset);
                 }
-                writer.commit();
-                Assert.assertEquals(N, writer.size());
-                Assert.assertTrue(cancelCount > 0);
-                verifyTimestampPartitions(vmem, N);
             }
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
-    }
 
-    @Test
-    public void testCancelMidRowNonPartitioned() throws Exception {
-        long used = Unsafe.getMemUsed();
-        create(FF, PartitionBy.NONE);
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-
-            int cancelCount = 0;
+            X ff = new X();
             Rnd rnd = new Rnd();
-            int i = 0;
-            TableWriter.Row r;
-            while (i < 10000) {
-                r = writer.newRow(ts += 60000);
+            create(ff, PartitionBy.DAY);
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                // add 48 hours
+                ts = populateProducts(writer, rnd, ts, 47, 60 * 60000);
+                TableWriter.Row r = writer.newRow(ts += 60 * 60000);
                 r.putInt(0, rnd.nextPositiveInt());
                 r.putStr(1, rnd.nextString(7));
                 r.putStr(2, rnd.nextString(4));
                 r.putStr(3, rnd.nextString(11));
                 r.putDouble(4, rnd.nextDouble());
-                if (rnd.nextBoolean()) {
-                    r.append();
-                    i++;
-                } else {
-                    cancelCount++;
+
+                ff.fail = true;
+                try {
+                    r.cancel();
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
+                ff.fail = false;
+                r.cancel();
+
+                populateProducts(writer, rnd, ts, 47, 60 * 60000);
+
+                writer.commit();
+                Assert.assertEquals(94, writer.size());
+                Assert.assertTrue(getDirCount() == 6);
+            }
+        });
+    }
+
+    @Test
+    public void testCancelFirstRowNonPartitioned() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.NONE);
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+
+                TableWriter.Row r = writer.newRow(ts);
+                r.putInt(0, 1234);
+                r.cancel();
+
+                populateProducts(writer, new Rnd(), ts, 10000, 60 * 60000);
+                Assert.assertEquals(10000, writer.size());
+            }
+        });
+    }
+
+    @Test
+    public void testCancelFirstRowPartitioned() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY);
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                TableWriter.Row r = writer.newRow(ts);
+                r.cancel();
+                writer.commit();
+                Assert.assertEquals(0, writer.size());
+                Assert.assertTrue(getDirCount() == 2);
+            }
+        });
+    }
+
+    @Test
+    public void testCancelFirstRowPartitioned2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+            create(FF, PartitionBy.DAY);
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                // add 48 hours
+                ts = populateProducts(writer, rnd, ts, 47, 60 * 60000);
+
+                TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+                r.putInt(0, rnd.nextPositiveInt());
+                r.putStr(1, rnd.nextString(7));
+                r.putStr(2, rnd.nextString(4));
+                r.putStr(3, rnd.nextString(11));
+                r.putDouble(4, rnd.nextDouble());
+
+                for (int i = 0; i < 1000; i++) {
+                    r.cancel();
+                }
+
+                populateProducts(writer, rnd, ts, 47, 60 * 60000);
+
+                writer.commit();
+                Assert.assertEquals(94, writer.size());
+                Assert.assertTrue(getDirCount() == 6);
+            }
+        });
+    }
+
+    @Test
+    public void testCancelMidPartition() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final Rnd rnd = new Rnd();
+            create(FF, PartitionBy.DAY);
+
+            // this contraption will verify that all timestamps that are
+            // supposed to be stored have matching partitions
+            try (VirtualMemory vmem = new VirtualMemory(FF.getPageSize())) {
+                try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                    long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                    int i = 0;
+                    final int N = 10000;
+
+                    int cancelCount = 0;
+                    while (i < N) {
+                        TableWriter.Row r = writer.newRow(ts += 60000);
+                        r.putInt(0, rnd.nextPositiveInt());
+                        r.putStr(1, rnd.nextString(7));
+                        r.putStr(2, rnd.nextString(4));
+                        r.putStr(3, rnd.nextString(11));
+                        r.putDouble(4, rnd.nextDouble());
+                        if (rnd.nextPositiveInt() % 30 == 0) {
+                            r.cancel();
+                            cancelCount++;
+                        } else {
+                            r.append();
+                            // second append() is expected to be a NOOP
+                            r.append();
+                            vmem.putLong(ts);
+                            i++;
+                        }
+                    }
+                    writer.commit();
+                    Assert.assertEquals(N, writer.size());
+                    Assert.assertTrue(cancelCount > 0);
+                    verifyTimestampPartitions(vmem, N);
                 }
             }
-            r = writer.newRow(ts);
-            r.putStr(2, "XYZ");
+        });
+    }
 
-            writer.commit();
-            Assert.assertTrue(cancelCount > 0);
-            Assert.assertEquals(10000, writer.size());
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
+    @Test
+    public void testCancelMidRowNonPartitioned() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.NONE);
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+                int cancelCount = 0;
+                Rnd rnd = new Rnd();
+                int i = 0;
+                TableWriter.Row r;
+                while (i < 10000) {
+                    r = writer.newRow(ts += 60000);
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putStr(2, rnd.nextString(4));
+                    r.putStr(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    if (rnd.nextBoolean()) {
+                        r.append();
+                        i++;
+                    } else {
+                        cancelCount++;
+                    }
+                }
+                r = writer.newRow(ts);
+                r.putStr(2, "XYZ");
+
+                writer.commit();
+                Assert.assertTrue(cancelCount > 0);
+                Assert.assertEquals(10000, writer.size());
+            }
+        });
     }
 
     @Test
@@ -859,136 +840,134 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelRowRecovery() throws Exception {
-        long used = Unsafe.getMemUsed();
-        final Rnd rnd = new Rnd();
+        TestUtils.assertMemoryLeak(() -> {
+            final Rnd rnd = new Rnd();
 
-        class X extends FilesFacadeImpl {
-            boolean fail = false;
+            class X extends FilesFacadeImpl {
+                boolean fail = false;
 
-            @Override
-            public boolean rmdir(CompositePath name) {
-                return !fail && super.rmdir(name);
-            }
-
-            @Override
-            public long read(long fd, long buf, int len, long offset) {
-                return fail ? -1 : super.read(fd, buf, len, offset);
-            }
-        }
-
-        X ff = new X();
-
-        create(ff, PartitionBy.DAY);
-
-        // this contraption will verify that all timestamps that are
-        // supposed to be stored have matching partitions
-        try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize())) {
-            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-                int i = 0;
-                final int N = 10000;
-
-                int cancelCount = 0;
-                while (i < N) {
-                    TableWriter.Row r = writer.newRow(ts += 60 * 60000);
-                    r.putInt(0, rnd.nextPositiveInt());
-                    r.putStr(1, rnd.nextString(7));
-                    r.putStr(2, rnd.nextString(4));
-                    r.putStr(3, rnd.nextString(11));
-                    r.putDouble(4, rnd.nextDouble());
-                    if (rnd.nextPositiveInt() % 50 == 0) {
-                        ff.fail = true;
-                        try {
-                            r.cancel();
-                            Assert.fail();
-                        } catch (CairoException ignored) {
-                        }
-                        ff.fail = false;
-                        r.cancel();
-                        cancelCount++;
-                    } else {
-                        r.append();
-                        // second append() is expected to be a NOOP
-                        r.append();
-                        vmem.putLong(ts);
-                        i++;
-                    }
+                @Override
+                public boolean rmdir(CompositePath name) {
+                    return !fail && super.rmdir(name);
                 }
-                writer.commit();
-                Assert.assertEquals(N, writer.size());
-                Assert.assertTrue(cancelCount > 0);
-                verifyTimestampPartitions(vmem, N);
+
+                @Override
+                public long read(long fd, long buf, int len, long offset) {
+                    return fail ? -1 : super.read(fd, buf, len, offset);
+                }
             }
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
+
+            X ff = new X();
+
+            create(ff, PartitionBy.DAY);
+
+            // this contraption will verify that all timestamps that are
+            // supposed to be stored have matching partitions
+            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize())) {
+                try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                    long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                    int i = 0;
+                    final int N = 10000;
+
+                    int cancelCount = 0;
+                    while (i < N) {
+                        TableWriter.Row r = writer.newRow(ts += 60 * 60000);
+                        r.putInt(0, rnd.nextPositiveInt());
+                        r.putStr(1, rnd.nextString(7));
+                        r.putStr(2, rnd.nextString(4));
+                        r.putStr(3, rnd.nextString(11));
+                        r.putDouble(4, rnd.nextDouble());
+                        if (rnd.nextPositiveInt() % 50 == 0) {
+                            ff.fail = true;
+                            try {
+                                r.cancel();
+                                Assert.fail();
+                            } catch (CairoException ignored) {
+                            }
+                            ff.fail = false;
+                            r.cancel();
+                            cancelCount++;
+                        } else {
+                            r.append();
+                            // second append() is expected to be a NOOP
+                            r.append();
+                            vmem.putLong(ts);
+                            i++;
+                        }
+                    }
+                    writer.commit();
+                    Assert.assertEquals(N, writer.size());
+                    Assert.assertTrue(cancelCount > 0);
+                    verifyTimestampPartitions(vmem, N);
+                }
+            }
+        });
     }
 
     @Test
     public void testCancelRowRecoveryFromAppendPosErrors() throws Exception {
-        long used = Unsafe.getMemUsed();
-        final Rnd rnd = new Rnd();
+        TestUtils.assertMemoryLeak(() -> {
+            final Rnd rnd = new Rnd();
 
-        class X extends FilesFacadeImpl {
-            boolean fail = false;
+            class X extends FilesFacadeImpl {
+                boolean fail = false;
 
-            @Override
-            public long read(long fd, long buf, int len, long offset) {
-                if (fail) {
-                    return -1;
-                }
-                return super.read(fd, buf, len, offset);
-            }
-        }
-
-        X ff = new X();
-
-        create(ff, PartitionBy.DAY);
-
-        // this contraption will verify that all timestamps that are
-        // supposed to be stored have matching partitions
-        try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize())) {
-            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-                int i = 0;
-                final int N = 10000;
-
-                int cancelCount = 0;
-                int failCount = 0;
-                while (i < N) {
-                    TableWriter.Row r = writer.newRow(ts += 60000);
-                    r.putInt(0, rnd.nextPositiveInt());
-                    r.putStr(1, rnd.nextString(7));
-                    r.putStr(2, rnd.nextString(4));
-                    r.putStr(3, rnd.nextString(11));
-                    r.putDouble(4, rnd.nextDouble());
-                    if (rnd.nextPositiveInt() % 50 == 0) {
-                        ff.fail = true;
-                        try {
-                            r.cancel();
-                        } catch (CairoException ignored) {
-                            failCount++;
-                            ff.fail = false;
-                            r.cancel();
-                        }
-                        cancelCount++;
-                    } else {
-                        r.append();
-                        // second append() is expected to be a NOOP
-                        r.append();
-                        vmem.putLong(ts);
-                        i++;
+                @Override
+                public long read(long fd, long buf, int len, long offset) {
+                    if (fail) {
+                        return -1;
                     }
+                    return super.read(fd, buf, len, offset);
                 }
-                writer.commit();
-                Assert.assertEquals(N, writer.size());
-                Assert.assertTrue(cancelCount > 0);
-                Assert.assertTrue(failCount > 0);
-                verifyTimestampPartitions(vmem, N);
             }
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
+
+            X ff = new X();
+
+            create(ff, PartitionBy.DAY);
+
+            // this contraption will verify that all timestamps that are
+            // supposed to be stored have matching partitions
+            try (VirtualMemory vmem = new VirtualMemory(ff.getPageSize())) {
+                try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                    long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                    int i = 0;
+                    final int N = 10000;
+
+                    int cancelCount = 0;
+                    int failCount = 0;
+                    while (i < N) {
+                        TableWriter.Row r = writer.newRow(ts += 60000);
+                        r.putInt(0, rnd.nextPositiveInt());
+                        r.putStr(1, rnd.nextString(7));
+                        r.putStr(2, rnd.nextString(4));
+                        r.putStr(3, rnd.nextString(11));
+                        r.putDouble(4, rnd.nextDouble());
+                        if (rnd.nextPositiveInt() % 50 == 0) {
+                            ff.fail = true;
+                            try {
+                                r.cancel();
+                            } catch (CairoException ignored) {
+                                failCount++;
+                                ff.fail = false;
+                                r.cancel();
+                            }
+                            cancelCount++;
+                        } else {
+                            r.append();
+                            // second append() is expected to be a NOOP
+                            r.append();
+                            vmem.putLong(ts);
+                            i++;
+                        }
+                    }
+                    writer.commit();
+                    Assert.assertEquals(N, writer.size());
+                    Assert.assertTrue(cancelCount > 0);
+                    Assert.assertTrue(failCount > 0);
+                    verifyTimestampPartitions(vmem, N);
+                }
+            }
+        });
     }
 
     @Test
@@ -1306,21 +1285,20 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testDayPartition() throws Exception {
-        long used = Unsafe.getMemUsed();
-        create(FF, PartitionBy.DAY);
-        int N = 10000;
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY);
+            int N = 10000;
 
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            populateProducts(writer, new Rnd(), DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z"), N, 60000);
-            writer.commit();
-            Assert.assertEquals(N, writer.size());
-        }
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                populateProducts(writer, new Rnd(), DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z"), N, 60000);
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+            }
 
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            Assert.assertEquals((long) N, writer.size());
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                Assert.assertEquals((long) N, writer.size());
+            }
+        });
     }
 
     @Test
@@ -1395,32 +1373,31 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testDayPartitionTruncate() throws Exception {
-        long used = Unsafe.getMemUsed();
-        create(FF, PartitionBy.DAY);
-        Rnd rnd = new Rnd();
-        int count = 10000;
-        long interval = 60000L;
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY);
+            Rnd rnd = new Rnd();
+            int count = 10000;
+            long interval = 60000L;
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-            for (int k = 0; k < 3; k++) {
-                ts = populateProducts(writer, rnd, ts, count, interval);
+                for (int k = 0; k < 3; k++) {
+                    ts = populateProducts(writer, rnd, ts, count, interval);
+                    writer.commit();
+                    Assert.assertEquals(count, writer.size());
+                    writer.truncate();
+                }
+            }
+
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                long ts = DateFormatUtils.parseDateTime("2014-03-04T00:00:00.000Z");
+                Assert.assertEquals(0, writer.size());
+                populateProducts(writer, rnd, ts, count, interval);
                 writer.commit();
                 Assert.assertEquals(count, writer.size());
-                writer.truncate();
             }
-        }
-
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            long ts = DateFormatUtils.parseDateTime("2014-03-04T00:00:00.000Z");
-            Assert.assertEquals(0, writer.size());
-            populateProducts(writer, rnd, ts, count, interval);
-            writer.commit();
-            Assert.assertEquals(count, writer.size());
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
+        });
     }
 
     @Test
@@ -1549,14 +1526,13 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testNulls() throws Exception {
-        long mem = Unsafe.getMemUsed();
-        createAllTable();
-        Rnd rnd = new Rnd();
-        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-        ts = testAppendNulls(rnd, FF, ts);
-        testAppendNulls(rnd, FF, ts);
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-        Assert.assertEquals(0, FF.getOpenFileCount());
+        TestUtils.assertMemoryLeak(() -> {
+            createAllTable();
+            Rnd rnd = new Rnd();
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            ts = testAppendNulls(rnd, FF, ts);
+            testAppendNulls(rnd, FF, ts);
+        });
     }
 
     @Test
@@ -1576,18 +1552,17 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testOutOfOrderAfterReopen() throws Exception {
-        long mem = Unsafe.getMemUsed();
-        createAllTable();
-        Rnd rnd = new Rnd();
-        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-        testAppendNulls(rnd, FF, ts);
-        try {
+        TestUtils.assertMemoryLeak(() -> {
+            createAllTable();
+            Rnd rnd = new Rnd();
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
             testAppendNulls(rnd, FF, ts);
-            Assert.fail();
-        } catch (CairoException ignore) {
-        }
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-        Assert.assertEquals(0, FF.getOpenFileCount());
+            try {
+                testAppendNulls(rnd, FF, ts);
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+        });
     }
 
     @Test
@@ -1960,32 +1935,30 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testSinglePartitionTruncate() throws Exception {
-        long used = Unsafe.getMemUsed();
-        create(FF, PartitionBy.YEAR);
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.YEAR);
 
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            writer.truncate();
-            Assert.assertEquals(0, writer.size());
-        }
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                writer.truncate();
+                Assert.assertEquals(0, writer.size());
+            }
 
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            Assert.assertEquals(0, writer.size());
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                Assert.assertEquals(0, writer.size());
+            }
+        });
     }
 
     @Test
     public void testTableDoesNotExist() throws Exception {
-        long mem = Unsafe.getMemUsed();
-        try {
-            new TableWriter(FF, root, PRODUCT);
-            Assert.fail();
-        } catch (CairoException e) {
-            LOG.info().$((Sinkable) e).$();
-        }
-        Assert.assertEquals(0, FF.getOpenFileCount());
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                new TableWriter(FF, root, PRODUCT);
+                Assert.fail();
+            } catch (CairoException e) {
+                LOG.info().$((Sinkable) e).$();
+            }
+        });
     }
 
     @Test
@@ -2046,26 +2019,25 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testTxCannotMap() throws Exception {
-        long mem = Unsafe.getMemUsed();
-        class X extends CountingFilesFacade {
-            @Override
-            public long mmap(long fd, long len, long offset, int mode) {
-                if (--count > 0) {
-                    return super.mmap(fd, len, offset, mode);
+        TestUtils.assertMemoryLeak(() -> {
+            class X extends CountingFilesFacade {
+                @Override
+                public long mmap(long fd, long len, long offset, int mode) {
+                    if (--count > 0) {
+                        return super.mmap(fd, len, offset, mode);
+                    }
+                    return -1;
                 }
-                return -1;
             }
-        }
-        X ff = new X();
-        create(ff, PartitionBy.NONE);
-        try {
-            ff.count = 0;
-            new TableWriter(ff, root, PRODUCT);
-            Assert.fail();
-        } catch (CairoException ignore) {
-        }
-        Assert.assertEquals(0, FF.getOpenFileCount());
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
+            X ff = new X();
+            create(ff, PartitionBy.NONE);
+            try {
+                ff.count = 0;
+                new TableWriter(ff, root, PRODUCT);
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+        });
     }
 
     @Test
@@ -2237,10 +2209,11 @@ public class TableWriterTest extends AbstractCairoTest {
 
     long populateTable(FilesFacade ff, int partitionBy) throws NumericException {
         long used = Unsafe.getMemUsed();
+        long fileCount = ff.getOpenFileCount();
         create(ff, partitionBy);
         long ts = populateTable0(ff);
         Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, ff.getOpenFileCount());
+        Assert.assertEquals(fileCount, ff.getOpenFileCount());
         return ts;
     }
 
@@ -2341,34 +2314,32 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testAddColumnErrorFollowedByRepairFail(FilesFacade ff) throws NumericException {
-        long ts = populateTable(FF);
-        long mem = Unsafe.getMemUsed();
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            ts = populateProducts(writer, rnd, ts, 10000, 60000);
-            writer.commit();
-            Assert.assertEquals(20000, writer.size());
+    private void testAddColumnErrorFollowedByRepairFail(FilesFacade ff) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long ts = populateTable(FF);
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                ts = populateProducts(writer, rnd, ts, 10000, 60000);
+                writer.commit();
+                Assert.assertEquals(20000, writer.size());
 
-            Assert.assertEquals(12, writer.columns.size());
+                Assert.assertEquals(12, writer.columns.size());
+
+                try {
+                    writer.addColumn("abc", ColumnType.STRING);
+                    Assert.fail();
+                } catch (CairoError ignore) {
+                }
+            }
 
             try {
-                writer.addColumn("abc", ColumnType.STRING);
+                new TableWriter(ff, root, PRODUCT);
                 Assert.fail();
-            } catch (CairoError ignore) {
+            } catch (CairoException ignore) {
             }
-        }
 
-        try {
-            new TableWriter(ff, root, PRODUCT);
-            Assert.fail();
-        } catch (CairoException ignore) {
-        }
-
-        appendAndAssert10K(ts, rnd);
-
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-        Assert.assertEquals(0, Files.getOpenFileCount());
+            appendAndAssert10K(ts, rnd);
+        });
     }
 
     private void testAddColumnFailAndOpenWriter(FilesFacade ff, int partitionBy, int N) throws Exception {
@@ -2429,105 +2400,32 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testAddColumnRecoverableFault(FilesFacade ff) throws NumericException {
-        long ts = populateTable(FF);
-        long mem = Unsafe.getMemUsed();
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            Assert.assertEquals(12, writer.columns.size());
-            ts = populateProducts(writer, rnd, ts, 10000, 60000);
-            writer.commit();
-            try {
-                writer.addColumn("abc", ColumnType.STRING);
-                Assert.fail();
-            } catch (CairoException ignore) {
-            }
-
-            // ignore error and add more rows
-            ts = populateProducts(writer, rnd, ts, 10000, 60000);
-            writer.commit();
-            Assert.assertEquals(30000, writer.size());
-        }
-
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            populateProducts(writer, rnd, ts, 10000, 60000);
-            writer.commit();
-            Assert.assertEquals(40000, writer.size());
-        }
-
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-        Assert.assertEquals(0, Files.getOpenFileCount());
-    }
-
-    private void testAddColumnStaticFailMetaOpen(int partitionBy, int count) throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-
-            int count = 1;
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --count == 0) {
-                    return -1;
+    private void testAddColumnRecoverableFault(FilesFacade ff) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long ts = populateTable(FF);
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                Assert.assertEquals(12, writer.columns.size());
+                ts = populateProducts(writer, rnd, ts, 10000, 60000);
+                writer.commit();
+                try {
+                    writer.addColumn("abc", ColumnType.STRING);
+                    Assert.fail();
+                } catch (CairoException ignore) {
                 }
-                return super.openRO(name);
-            }
-        };
-        testAddColumnFailAndOpenWriter(ff, partitionBy, count);
-    }
 
-    private void testAddColumnStaticFailSwapRemove(int partitionBy, int count) throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-            int count = 1;
-
-            @Override
-            public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, TableUtils.META_SWAP_FILE_NAME) && --count == 0 || super.exists(path);
+                // ignore error and add more rows
+                ts = populateProducts(writer, rnd, ts, 10000, 60000);
+                writer.commit();
+                Assert.assertEquals(30000, writer.size());
             }
 
-            @Override
-            public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME) || count != 0 && super.remove(name);
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                populateProducts(writer, rnd, ts, 10000, 60000);
+                writer.commit();
+                Assert.assertEquals(40000, writer.size());
             }
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && --count == 0) {
-                    return -1;
-                }
-                return super.openRO(name);
-            }
-        };
-        testAddColumnFailAndOpenWriter(ff, partitionBy, count);
-    }
-
-    private void testAddColumnStaticFailSwapRename(int partitionBy, int count) throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-            int count = 1;
-
-            @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME)) {
-                    if (count-- > 0) {
-                        return false;
-                    }
-                }
-                return super.rename(from, to);
-            }
-        };
-        testAddColumnFailAndOpenWriter(ff, partitionBy, count);
-    }
-
-    private void testAddColumnStaticFailTopFile(int partitionBy, int count) throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public long openAppend(LPSZ name) {
-                if (Chars.endsWith(name, ".top")) {
-                    return -1;
-                }
-                return super.openAppend(name);
-            }
-        };
-        testAddColumnFailAndOpenWriter(ff, partitionBy, count);
+        });
     }
 
     private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts) throws NumericException {
@@ -2586,190 +2484,182 @@ public class TableWriterTest extends AbstractCairoTest {
         return ts;
     }
 
-    void testCommitRetryAfterFailure(CountingFilesFacade ff) throws NumericException {
-        long failureCount = 0;
-        long used = Unsafe.getMemUsed();
-        create(ff, PartitionBy.DAY);
-        boolean valid = false;
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+    void testCommitRetryAfterFailure(CountingFilesFacade ff) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long failureCount = 0;
+            create(ff, PartitionBy.DAY);
+            boolean valid = false;
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
 
-            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
-            Rnd rnd = new Rnd();
-            for (int i = 0; i < 10000; i++) {
-                // one record per hour
-                ts = populateRow(writer, ts, rnd, 10 * 60000);
-                // do not commit often, let transaction size grow
-                if (rnd.nextPositiveInt() % 100 == 0) {
+                Rnd rnd = new Rnd();
+                for (int i = 0; i < 10000; i++) {
+                    // one record per hour
+                    ts = populateRow(writer, ts, rnd, 10 * 60000);
+                    // do not commit often, let transaction size grow
+                    if (rnd.nextPositiveInt() % 100 == 0) {
 
-                    // reduce frequency of failures
-                    boolean fail = rnd.nextPositiveInt() % 20 == 0;
-                    if (fail) {
-                        // if we destined to fail, prepare to retry commit
-                        try {
-                            // do not fail on first partition, fail on last
-                            ff.count = writer.txPartitionCount - 1;
-                            valid = valid || writer.txPartitionCount > 1;
-                            writer.commit();
-                            // sometimes commit may pass because transaction does not span multiple partition
-                            // out transaction size is random after all
-                            // if this happens return count to non-failing state
-                            ff.count = Long.MAX_VALUE;
-                        } catch (CairoException ignore) {
-                            failureCount++;
-                            ff.count = Long.MAX_VALUE;
+                        // reduce frequency of failures
+                        boolean fail = rnd.nextPositiveInt() % 20 == 0;
+                        if (fail) {
+                            // if we destined to fail, prepare to retry commit
+                            try {
+                                // do not fail on first partition, fail on last
+                                ff.count = writer.txPartitionCount - 1;
+                                valid = valid || writer.txPartitionCount > 1;
+                                writer.commit();
+                                // sometimes commit may pass because transaction does not span multiple partition
+                                // out transaction size is random after all
+                                // if this happens return count to non-failing state
+                                ff.count = Long.MAX_VALUE;
+                            } catch (CairoException ignore) {
+                                failureCount++;
+                                ff.count = Long.MAX_VALUE;
+                                writer.commit();
+                            }
+                        } else {
                             writer.commit();
                         }
-                    } else {
-                        writer.commit();
                     }
                 }
             }
-        }
-        // test is valid if we covered cases of failed commit on transactions that span
-        // multiple partitions
-        Assert.assertTrue(valid);
-        Assert.assertTrue(failureCount > 0);
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
+            // test is valid if we covered cases of failed commit on transactions that span
+            // multiple partitions
+            Assert.assertTrue(valid);
+            Assert.assertTrue(failureCount > 0);
+        });
     }
 
-    private void testConstructor(FilesFacade ff) {
+    private void testConstructor(FilesFacade ff) throws Exception {
         testConstructor(ff, true);
     }
 
-    private void testConstructor(FilesFacade ff, boolean create) {
-        long mem = Unsafe.getMemUsed();
-        if (create) {
-            create(ff, PartitionBy.NONE);
-        }
-        try {
-            new TableWriter(ff, root, PRODUCT);
-            Assert.fail();
-        } catch (CairoException e) {
-            LOG.info().$((Sinkable) e).$();
-        }
-        Assert.assertEquals(0, ff.getOpenFileCount());
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
+    private void testConstructor(FilesFacade ff, boolean create) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            if (create) {
+                create(ff, PartitionBy.NONE);
+            }
+            try {
+                new TableWriter(ff, root, PRODUCT);
+                Assert.fail();
+            } catch (CairoException e) {
+                LOG.info().$((Sinkable) e).$();
+            }
+        });
     }
 
-    private void testOutOfOrderRecords() throws NumericException {
-        long used = Unsafe.getMemUsed();
-        int N = 10000;
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+    private void testOutOfOrderRecords() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
 
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+
+                Rnd rnd = new Rnd();
+                int i = 0;
+                long failureCount = 0;
+                while (i < N) {
+                    TableWriter.Row r;
+                    boolean fail = rnd.nextBoolean();
+                    if (fail) {
+                        try {
+                            writer.newRow(0);
+                            Assert.fail();
+                        } catch (CairoException ignore) {
+                            failureCount++;
+                        }
+                        continue;
+                    } else {
+                        r = writer.newRow(ts += (long) (60 * 60000));
+                    }
+                    r.putInt(0, rnd.nextPositiveInt());
+                    r.putStr(1, rnd.nextString(7));
+                    r.putStr(2, rnd.nextString(4));
+                    r.putStr(3, rnd.nextString(11));
+                    r.putDouble(4, rnd.nextDouble());
+                    r.append();
+                    i++;
+                }
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
+                Assert.assertTrue(failureCount > 0);
+            }
+
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                Assert.assertEquals((long) N, writer.size());
+            }
+        });
+    }
+
+    private void testRemoveColumn(JournalStructure struct) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String name = CairoTestUtils.createTable(FF, root, struct.partitionBy(PartitionBy.DAY));
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
 
             Rnd rnd = new Rnd();
-            int i = 0;
-            long failureCount = 0;
-            while (i < N) {
-                TableWriter.Row r;
-                boolean fail = rnd.nextBoolean();
-                if (fail) {
-                    try {
-                        writer.newRow(0);
-                        Assert.fail();
-                    } catch (CairoException ignore) {
-                        failureCount++;
-                    }
-                    continue;
-                } else {
-                    r = writer.newRow(ts += (long) (60 * 60000));
-                }
-                r.putInt(0, rnd.nextPositiveInt());
-                r.putStr(1, rnd.nextString(7));
-                r.putStr(2, rnd.nextString(4));
-                r.putStr(3, rnd.nextString(11));
-                r.putDouble(4, rnd.nextDouble());
-                r.append();
-                i++;
-            }
-            writer.commit();
-            Assert.assertEquals(N, writer.size());
-            Assert.assertTrue(failureCount > 0);
-        }
+            try (TableWriter writer = new TableWriter(FF, root, name)) {
 
-        try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
-            Assert.assertEquals((long) N, writer.size());
-        }
-        Assert.assertEquals(used, Unsafe.getMemUsed());
-        Assert.assertEquals(0L, FF.getOpenFileCount());
-    }
+                ts = append10KProducts(ts, rnd, writer);
 
-    private void testRemoveColumn(JournalStructure struct) throws NumericException {
-        String name = CairoTestUtils.createTable(FF, root, struct.partitionBy(PartitionBy.DAY));
-
-        long mem = Unsafe.getMemUsed();
-
-        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(FF, root, name)) {
-
-            ts = append10KProducts(ts, rnd, writer);
-
-            writer.removeColumn("supplier");
-
-            final NativeLPSZ lpsz = new NativeLPSZ();
-            try (CompositePath path = new CompositePath()) {
-                path.of(root).concat(name);
-                final int plen = path.length();
-                FF.iterateDir(path.$(), (file, type) -> {
-                    lpsz.of(file);
-                    if (type == Files.DT_DIR && !Chars.equals(lpsz, '.') && !Chars.equals(lpsz, "..")) {
-                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.i").$()));
-                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.d").$()));
-                        Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.top").$()));
-                    }
-                });
-            }
-
-            ts = append10KNoSupplier(ts, rnd, writer);
-
-            writer.commit();
-
-            Assert.assertEquals(20000, writer.size());
-        }
-
-        try (TableWriter writer = new TableWriter(FF, root, name)) {
-            append10KNoSupplier(ts, rnd, writer);
-            writer.commit();
-            Assert.assertEquals(30000, writer.size());
-        }
-
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-        Assert.assertEquals(0, Files.getOpenFileCount());
-    }
-
-    private void testRemoveColumnRecoverableFailure(TestFilesFacade ff) throws NumericException {
-        create(FF, PartitionBy.DAY);
-        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-        Rnd rnd = new Rnd();
-        long mem = Unsafe.getMemUsed();
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            ts = append10KProducts(ts, rnd, writer);
-            writer.commit();
-
-            try {
                 writer.removeColumn("supplier");
-                Assert.fail();
-            } catch (CairoException ignore) {
+
+                final NativeLPSZ lpsz = new NativeLPSZ();
+                try (CompositePath path = new CompositePath()) {
+                    path.of(root).concat(name);
+                    final int plen = path.length();
+                    FF.iterateDir(path.$(), (file, type) -> {
+                        lpsz.of(file);
+                        if (type == Files.DT_DIR && !Chars.equals(lpsz, '.') && !Chars.equals(lpsz, "..")) {
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.i").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.d").$()));
+                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(lpsz).concat("supplier.top").$()));
+                        }
+                    });
+                }
+
+                ts = append10KNoSupplier(ts, rnd, writer);
+
+                writer.commit();
+
+                Assert.assertEquals(20000, writer.size());
             }
 
-            Assert.assertTrue(ff.wasCalled());
+            try (TableWriter writer = new TableWriter(FF, root, name)) {
+                append10KNoSupplier(ts, rnd, writer);
+                writer.commit();
+                Assert.assertEquals(30000, writer.size());
+            }
+        });
+    }
 
-            ts = append10KProducts(ts, rnd, writer);
-            writer.commit();
-        }
+    private void testRemoveColumnRecoverableFailure(TestFilesFacade ff) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY);
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                ts = append10KProducts(ts, rnd, writer);
+                writer.commit();
 
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            append10KProducts(ts, rnd, writer);
-            writer.commit();
-            Assert.assertEquals(30000, writer.size());
-        }
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-        Assert.assertEquals(0, Files.getOpenFileCount());
+                try {
+                    writer.removeColumn("supplier");
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
+
+                Assert.assertTrue(ff.wasCalled());
+
+                ts = append10KProducts(ts, rnd, writer);
+                writer.commit();
+            }
+
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                append10KProducts(ts, rnd, writer);
+                writer.commit();
+                Assert.assertEquals(30000, writer.size());
+            }
+        });
     }
 
     private void testRollback() throws NumericException {
@@ -2802,39 +2692,38 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private void testSetAppendPositionFailure(String failFile) throws NumericException {
-        createAllTable();
+    private void testSetAppendPositionFailure(String failFile) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            createAllTable();
 
-        class X extends FilesFacadeImpl {
-            long fd = -1;
+            class X extends FilesFacadeImpl {
+                long fd = -1;
 
-            @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, failFile)) {
-                    return fd = super.openRW(name);
+                @Override
+                public long openRW(LPSZ name) {
+                    if (Chars.endsWith(name, failFile)) {
+                        return fd = super.openRW(name);
+                    }
+                    return super.openRW(name);
                 }
-                return super.openRW(name);
-            }
 
-            @Override
-            public long read(long fd, long buf, int len, long offset) {
-                if (fd == this.fd) {
-                    this.fd = -1;
-                    return -1;
+                @Override
+                public long read(long fd, long buf, int len, long offset) {
+                    if (fd == this.fd) {
+                        this.fd = -1;
+                        return -1;
+                    }
+                    return super.read(fd, buf, len, offset);
                 }
-                return super.read(fd, buf, len, offset);
             }
-        }
-        final X ff = new X();
-        long mem = Unsafe.getMemUsed();
-        testAppendNulls(new Rnd(), FF, DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z"));
-        try {
-            new TableWriter(ff, root, "all");
-            Assert.fail();
-        } catch (CairoException ignore) {
-        }
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-        Assert.assertEquals(0, ff.getOpenFileCount());
+            final X ff = new X();
+            testAppendNulls(new Rnd(), FF, DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z"));
+            try {
+                new TableWriter(ff, root, "all");
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+        });
     }
 
     private void testTruncate(CountingFilesFacade ff, boolean retry) throws Exception {
@@ -2922,52 +2811,48 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
-    private void testUnrecoverableAddColumn(FilesFacade ff) throws NumericException {
-        long ts = populateTable(FF);
-        long mem = Unsafe.getMemUsed();
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            ts = populateProducts(writer, rnd, ts, 10000, 60000);
-            writer.commit();
+    private void testUnrecoverableAddColumn(FilesFacade ff) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long ts = populateTable(FF);
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                ts = populateProducts(writer, rnd, ts, 10000, 60000);
+                writer.commit();
 
-            Assert.assertEquals(12, writer.columns.size());
+                Assert.assertEquals(12, writer.columns.size());
 
-            try {
-                writer.addColumn("abc", ColumnType.STRING);
-                Assert.fail();
-            } catch (CairoError ignore) {
+                try {
+                    writer.addColumn("abc", ColumnType.STRING);
+                    Assert.fail();
+                } catch (CairoError ignore) {
+                }
             }
-        }
-
-        appendAndAssert10K(ts, rnd);
-
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-        Assert.assertEquals(0, Files.getOpenFileCount());
+            appendAndAssert10K(ts, rnd);
+        });
     }
 
-    private void testUnrecoverableRemoveColumn(FilesFacade ff) throws NumericException {
-        create(FF, PartitionBy.DAY);
-        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-        Rnd rnd = new Rnd();
-        long mem = Unsafe.getMemUsed();
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            ts = append10KProducts(ts, rnd, writer);
-            writer.commit();
+    private void testUnrecoverableRemoveColumn(FilesFacade ff) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY);
+            long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                ts = append10KProducts(ts, rnd, writer);
+                writer.commit();
 
-            try {
-                writer.removeColumn("supplier");
-                Assert.fail();
-            } catch (CairoError ignore) {
+                try {
+                    writer.removeColumn("supplier");
+                    Assert.fail();
+                } catch (CairoError ignore) {
+                }
             }
-        }
 
-        try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
-            append10KProducts(ts, rnd, writer);
-            writer.commit();
-            Assert.assertEquals(20000, writer.size());
-        }
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
-        Assert.assertEquals(0, Files.getOpenFileCount());
+            try (TableWriter writer = new TableWriter(ff, root, PRODUCT)) {
+                append10KProducts(ts, rnd, writer);
+                writer.commit();
+                Assert.assertEquals(20000, writer.size());
+            }
+        });
     }
 
     void verifyTimestampPartitions(VirtualMemory vmem, int n) {

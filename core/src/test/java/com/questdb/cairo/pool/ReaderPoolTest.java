@@ -9,7 +9,9 @@ import com.questdb.log.LogFactory;
 import com.questdb.misc.Rnd;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
+import com.questdb.txt.RecordSourcePrinter;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -42,7 +44,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     for (int i = 0; i < 1000; i++) {
-                        try (TableReader ignored = pool.reader("z")) {
+                        try (TableReader ignored = pool.getReader("z")) {
                             readerCount.incrementAndGet();
                         } catch (EntryUnavailableException ignored) {
                         }
@@ -87,7 +89,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testCloseWithActiveReader() throws Exception {
         assertWithPool(pool -> {
-            TableReader reader = pool.reader("z");
+            TableReader reader = pool.getReader("z");
             Assert.assertNotNull(reader);
             pool.close();
             Assert.assertTrue(reader.isOpen());
@@ -99,7 +101,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testCloseWithInactiveReader() throws Exception {
         assertWithPool(pool -> {
-            TableReader reader = pool.reader("z");
+            TableReader reader = pool.getReader("z");
             Assert.assertNotNull(reader);
             reader.close();
             Assert.assertTrue(reader.isOpen());
@@ -135,7 +137,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         for (int i1 = 0; i1 < iterations; i1++) {
                             String m = names[rnd.nextPositiveInt() % readerCount];
 
-                            try (TableReader ignored = pool.reader(m)) {
+                            try (TableReader ignored = pool.getReader(m)) {
                                 LockSupport.parkNanos(100);
                             }
                         }
@@ -161,7 +163,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             ObjList<TableReader> readers = new ObjList<>();
             try {
                 do {
-                    readers.add(pool.reader("z"));
+                    readers.add(pool.getReader("z"));
                 } while (true);
             } catch (EntryUnavailableException e) {
                 Assert.assertEquals(pool.getMaxEntries(), readers.size());
@@ -178,11 +180,32 @@ public class ReaderPoolTest extends AbstractCairoTest {
         final int readerCount = 5;
         int threadCount = 2;
         final int iterations = 10000;
+        Rnd dataRnd = new Rnd();
+        StringSink sink = new StringSink();
+        RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+
 
         final String[] names = new String[readerCount];
+        final String[] expectedRows = new String[readerCount];
+
         for (int i = 0; i < readerCount; i++) {
             names[i] = "x" + i;
             CairoTestUtils.createTable(ff, root, new JournalStructure(names[i]).$date("ts").$());
+
+            try (TableWriter w = new TableWriter(ff, root, names[i])) {
+                for (int k = 0; k < 10; k++) {
+                    TableWriter.Row r = w.newRow(0);
+                    r.putDate(0, dataRnd.nextLong());
+                    r.append();
+                }
+                w.commit();
+            }
+
+            sink.clear();
+            try (TableReader r = new TableReader(ff, root, names[i])) {
+                printer.print(r, true, r.getMetadata());
+            }
+            expectedRows[i] = sink.toString();
         }
 
         LOG.info().$("testLockBusyReader BEGIN").$();
@@ -194,7 +217,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             final LongList lockTimes = new LongList();
             final LongList workerTimes = new LongList();
 
-            Thread th1 = new Thread(() -> {
+            new Thread(() -> {
                 Rnd rnd = new Rnd();
                 try {
                     barrier.await();
@@ -205,11 +228,11 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             try {
                                 pool.lock(name);
                                 lockTimes.add(System.currentTimeMillis());
-                                LockSupport.parkNanos(100L);
+                                LockSupport.parkNanos(10L);
                                 pool.unlock(name);
                                 name = null;
                                 break;
-                            } catch (EntryLockedException ignored) {
+                            } catch (EntryUnavailableException ignored) {
                             }
                         }
                     }
@@ -219,24 +242,27 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 } finally {
                     halt.countDown();
                 }
-            });
+            }).start();
 
-            th1.setName("thread1");
-            th1.start();
-
-            Thread th2 = new Thread(() -> {
+            new Thread(() -> {
                 Rnd rnd = new Rnd();
 
                 try {
                     workerTimes.add(System.currentTimeMillis());
                     for (int i = 0; i < iterations; i++) {
-                        String name = names[rnd.nextPositiveInt() % readerCount];
-                        try (TableReader ignored = pool.reader(name)) {
+                        int index = rnd.nextPositiveInt() % readerCount;
+                        String name = names[index];
+                        try (TableReader r = pool.getReader(name)) {
+                            r.toTop();
+                            sink.clear();
+                            printer.print(r, true, r.getMetadata());
+                            TestUtils.assertEquals(expectedRows[index], sink);
+
                             if (name.equals(names[readerCount - 1]) && barrier.getNumberWaiting() > 0) {
                                 barrier.await();
                             }
                             LockSupport.parkNanos(10L);
-                        } catch (EntryLockedException ignored) {
+                        } catch (EntryLockedException | EntryUnavailableException ignored) {
                         } catch (Exception e) {
                             errors.incrementAndGet();
                             e.printStackTrace();
@@ -247,10 +273,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 } finally {
                     halt.countDown();
                 }
-            });
-
-            th2.setName("thread2");
-            th2.start();
+            }).start();
 
             halt.await();
             Assert.assertEquals(0, halt.getCount());
@@ -273,6 +296,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 }
             }
             Assert.assertTrue(count > 0);
+
+            LOG.info().$("testLockBusyReader END").$();
         });
     }
 
@@ -284,17 +309,17 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
         assertWithPool(pool -> {
             TableReader x, y;
-            x = pool.reader("x");
+            x = pool.getReader("x");
             Assert.assertNotNull(x);
 
-            y = pool.reader("y");
+            y = pool.getReader("y");
             Assert.assertNotNull(y);
 
             // expect lock to fail because we have "x" open
             try {
                 pool.lock("x");
                 Assert.fail();
-            } catch (EntryLockedException ignore) {
+            } catch (EntryUnavailableException ignore) {
             }
 
             x.close();
@@ -307,13 +332,13 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             // "x" is locked, expect this to fail
             try {
-                Assert.assertNull(pool.reader("x"));
+                Assert.assertNull(pool.getReader("x"));
             } catch (EntryLockedException ignored) {
             }
 
             pool.unlock("x");
 
-            x = pool.reader("x");
+            x = pool.getReader("x");
             Assert.assertNotNull(x);
             x.close();
 
@@ -334,12 +359,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testLockUnlockMultiple() throws Exception {
         assertWithPool(pool -> {
-            TableReader r1 = pool.reader("z");
-            TableReader r2 = pool.reader("z");
+            TableReader r1 = pool.getReader("z");
+            TableReader r2 = pool.getReader("z");
             r1.close();
             try {
                 pool.lock("z");
-            } catch (EntryLockedException ignored) {
+            } catch (EntryUnavailableException ignored) {
             }
             r2.close();
             pool.lock("z");
@@ -352,7 +377,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
             TableReader firstReader = null;
             for (int i = 0; i < 1000; i++) {
-                try (TableReader reader = pool.reader("z")) {
+                try (TableReader reader = pool.getReader("z")) {
                     if (firstReader == null) {
                         firstReader = reader;
                     }
