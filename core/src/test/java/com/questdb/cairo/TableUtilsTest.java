@@ -110,6 +110,11 @@ public class TableUtilsTest {
     }
 
     @Test
+    public void testInstantiation() throws Exception {
+        new TableUtils();
+    }
+
+    @Test
     public void testUnknownTodo() throws Exception {
         TestUtils.assertEquals("unknown", TableUtils.getTodoText(7879797987L));
     }

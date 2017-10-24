@@ -25,6 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
+import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.*;
 import com.questdb.ql.Record;
 import com.questdb.std.BinarySequence;
@@ -39,6 +40,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableReaderTest extends AbstractCairoTest {
     public static final int MUST_SWITCH = 1;
@@ -877,6 +881,66 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testReadNonPartitioned() throws Exception {
         CairoTestUtils.createAllTable(root, PartitionBy.NONE);
         TestUtils.assertMemoryLeak(this::testTableCursor);
+    }
+
+    @Test
+    public void testReaderAndWriterRace() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            JournalStructure struct = new JournalStructure("x").$ts().partitionBy(PartitionBy.NONE);
+            CairoTestUtils.createTable(FF, root, struct);
+            CountDownLatch stopLatch = new CountDownLatch(2);
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            int count = 1000000;
+            AtomicInteger reloadCount = new AtomicInteger(0);
+
+            try (TableWriter writer = new TableWriter(FF, root, "x"); TableReader reader = new TableReader(FF, root, "x")) {
+
+                new Thread(() -> {
+                    try {
+                        barrier.await();
+                        for (int i = 0; i < count; i++) {
+                            TableWriter.Row row = writer.newRow(i);
+                            row.append();
+                            writer.commit();
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    } finally {
+                        stopLatch.countDown();
+                    }
+
+                }).start();
+
+                new Thread(() -> {
+                    try {
+                        barrier.await();
+                        int max = 0;
+                        while (max < count) {
+                            if (reader.reload()) {
+                                reloadCount.incrementAndGet();
+                                reader.toTop();
+                                int localCount = 0;
+                                while (reader.hasNext()) {
+                                    reader.next();
+                                    localCount++;
+                                }
+                                if (localCount > max) {
+                                    max = localCount;
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    } finally {
+                        stopLatch.countDown();
+                    }
+                }).start();
+
+                stopLatch.await();
+
+                Assert.assertTrue(reloadCount.get() > 0);
+            }
+        });
     }
 
     @Test
