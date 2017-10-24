@@ -90,7 +90,6 @@ public class WorkerPoolOneToThreePerformanceTest {
         private final RingQueue<Event> queue;
         private final CyclicBarrier barrier;
         private final CountDownLatch latch;
-        private final PLong pLong = new PLong();
 
         BusyConsumer(Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch) {
             this.sequence = sequence;
@@ -119,7 +118,6 @@ public class WorkerPoolOneToThreePerformanceTest {
                     if (v == Integer.MIN_VALUE) {
                         break;
                     }
-                    pLong.increment(1);
                 }
                 latch.countDown();
             } catch (Exception e) {
