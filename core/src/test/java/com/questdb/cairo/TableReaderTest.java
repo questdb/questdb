@@ -25,13 +25,11 @@ package com.questdb.cairo;
 
 import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Os;
-import com.questdb.misc.Rnd;
-import com.questdb.misc.Unsafe;
+import com.questdb.misc.*;
 import com.questdb.ql.Record;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.LongList;
+import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.ColumnType;
@@ -547,6 +545,115 @@ public class TableReaderTest extends AbstractCairoTest {
     };
 
     @Test
+    public void testCloseColumnNonPartitioned1() throws Exception {
+        testCloseColumn(PartitionBy.NONE, 2000, 6000L, "bin");
+    }
+
+    @Test
+    public void testCloseColumnNonPartitioned2() throws Exception {
+        testCloseColumn(PartitionBy.NONE, 2000, 6000L, "int");
+    }
+
+    @Test
+    public void testCloseColumnPartitioned1() throws Exception {
+        testCloseColumn(PartitionBy.DAY, 1000, 60000L, "bin");
+    }
+
+    @Test
+    public void testCloseColumnPartitioned2() throws Exception {
+        testCloseColumn(PartitionBy.DAY, 1000, 60000L, "double");
+    }
+
+    @Test
+    public void testDummyFacade() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CairoTestUtils.createAllTable(root, PartitionBy.NONE);
+            try (TableReader reader = new TableReader(FF, root, "all")) {
+                Assert.assertNull(reader.getStorageFacade());
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionArchiveDoesNotExist() throws Exception {
+        RecoverableTestFilesFacade ff = new RecoverableTestFilesFacade() {
+
+            boolean called = false;
+
+            @Override
+            public boolean wasCalled() {
+                return called;
+            }
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (!recovered && Chars.endsWith(path, TableUtils.ARCHIVE_FILE_NAME)) {
+                    called = true;
+                    return false;
+                }
+                return super.exists(path);
+            }
+        };
+        testSwitchPartitionFail(ff);
+    }
+
+    @Test
+    public void testPartitionArchiveDoesNotOpen() throws Exception {
+        RecoverableTestFilesFacade ff = new RecoverableTestFilesFacade() {
+
+            boolean called = false;
+
+            @Override
+            public boolean wasCalled() {
+                return called;
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (!recovered && Chars.endsWith(name, TableUtils.ARCHIVE_FILE_NAME)) {
+                    called = true;
+                    return -1L;
+                }
+                return super.openRO(name);
+            }
+        };
+        testSwitchPartitionFail(ff);
+    }
+
+    @Test
+    public void testPartitionCannotReadArchive() throws Exception {
+        RecoverableTestFilesFacade ff = new RecoverableTestFilesFacade() {
+
+            boolean called = false;
+            long fd = -1L;
+
+            @Override
+            public boolean wasCalled() {
+                return called;
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (!recovered && Chars.endsWith(name, TableUtils.ARCHIVE_FILE_NAME)) {
+                    called = true;
+                    fd = super.openRO(name);
+                    return fd;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long read(long fd, long buf, int len, long offset) {
+                if (this.fd == fd && !recovered) {
+                    return 0;
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        };
+        testSwitchPartitionFail(ff);
+    }
+
+    @Test
     public void testReadByDay() throws Exception {
         CairoTestUtils.createAllTable(root, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(this::testTableCursor);
@@ -1042,6 +1149,60 @@ public class TableReaderTest extends AbstractCairoTest {
         return ts;
     }
 
+    private void testCloseColumn(int partitionBy, int count, long increment, String column) throws Exception {
+        final Rnd rnd = new Rnd();
+        final LongList fds = new LongList();
+        String dcol = column + ".d";
+        String icol = column + ".i";
+
+        TestFilesFacade ff = new TestFilesFacade() {
+
+            boolean called = false;
+
+            @Override
+            public boolean close(long fd) {
+                fds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return called;
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
+                if (Chars.endsWith(name, dcol) || Chars.endsWith(name, icol)) {
+                    fds.add(fd);
+                    called = true;
+                }
+                return fd;
+            }
+
+
+        };
+
+        long blob = allocBlob();
+        try {
+            TestUtils.assertMemoryLeak(() -> {
+                CairoTestUtils.createAllTable(root, partitionBy);
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                testAppend(rnd, ff, ts, count, increment, blob, 0, BATCH1_GENERATOR);
+
+                try (TableReader reader = new TableReader(ff, root, "all")) {
+                    assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
+                    reader.closeColumn(column);
+                }
+
+                Assert.assertTrue(ff.wasCalled());
+                Assert.assertEquals(0, fds.size());
+            });
+        } finally {
+            freeBlob(blob);
+        }
+    }
+
     private void testReload(int partitionBy, int count, long increment, final int testPartitionSwitch) throws Exception {
         CairoTestUtils.createAllTable(root, partitionBy);
 
@@ -1198,6 +1359,34 @@ public class TableReaderTest extends AbstractCairoTest {
         });
     }
 
+    private void testSwitchPartitionFail(RecoverableTestFilesFacade ff) throws Exception {
+        final Rnd rnd = new Rnd();
+
+        int count = 1000;
+        long increment = 60 * 60000L;
+        long blob = allocBlob();
+        try {
+            TestUtils.assertMemoryLeak(() -> {
+                CairoTestUtils.createAllTable(root, PartitionBy.DAY);
+                long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+                testAppend(rnd, ff, ts, count, increment, blob, 0, BATCH1_GENERATOR);
+
+                try (TableReader reader = new TableReader(ff, root, "all")) {
+                    try {
+                        assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
+                        Assert.fail();
+                    } catch (CairoException ignored) {
+                    }
+                    ff.setRecovered(true);
+                    assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
+                }
+                Assert.assertTrue(ff.wasCalled());
+            });
+        } finally {
+            freeBlob(blob);
+        }
+    }
+
     private void testTableCursor(long increment, String expected) throws IOException, NumericException {
         Rnd rnd = new Rnd();
         int N = 100;
@@ -1347,5 +1536,13 @@ public class TableReaderTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface FieldGenerator {
         void generate(TableWriter.Row r, Rnd rnd, long ts, long blob);
+    }
+
+    private abstract class RecoverableTestFilesFacade extends TestFilesFacade {
+        protected boolean recovered = false;
+
+        public void setRecovered(boolean recovered) {
+            this.recovered = recovered;
+        }
     }
 }

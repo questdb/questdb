@@ -230,11 +230,26 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
+    /**
+     * Closes column files. This method should be used before call to TableWriter.removeColumn() on
+     * Windows OS.
+     *
+     * @param columnName name of column to be closed.
+     * @throws com.questdb.ex.NoSuchColumnException when column is not found.
+     */
     public void closeColumn(CharSequence columnName) {
         closeColumn(metadata.getColumnIndex(columnName));
     }
 
+    /**
+     * Closed column files. Similarly to {@link #closeColumn(CharSequence)} closed reader column files before
+     * column can be removed. This method takes column index usually resolved from column name by #TableMetadata.
+     * Bounds checking is performed via assertion.
+     *
+     * @param columnIndex column index
+     */
     public void closeColumn(int columnIndex) {
+        assert columnIndex > -1 && columnIndex < columnCount;
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             final int base = getColumnBase(partitionIndex);
             Misc.free(columns.getAndSetQuick(getPrimaryColumnIndex(base, columnIndex), NullColumn.INSTANCE));
