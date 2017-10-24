@@ -783,10 +783,6 @@ public class TableWriter implements Closeable {
             return value -> {
             };
         } else {
-            // validate type
-            if (TableUtils.getColumnType(metaMem, index) != ColumnType.DATE) {
-                throw CairoException.instance(0).put("Column ").put(index).put(" is ").put(ColumnType.nameOf(TableUtils.getColumnType(metaMem, index))).put(". Expected DATE.");
-            }
             return getPrimaryColumn(index)::putLong;
         }
     }

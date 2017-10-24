@@ -83,9 +83,11 @@ public class TableReader implements Closeable, RecordCursor {
     private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.path.concat(TableUtils.DEFAULT_PARTITION_NAME).$();
 
     private static final ReloadMethod PARTITIONED_RELOAD_METHOD = reader -> {
+        assert reader.timestampFloorMethod != null;
         long currentPartitionTimestamp = reader.timestampFloorMethod.floor(reader.maxTimestamp);
         boolean b = reader.readTxn();
         if (b) {
+            assert reader.intervalLengthMethod != null;
             int delta = (int) reader.intervalLengthMethod.calculate(currentPartitionTimestamp, reader.timestampFloorMethod.floor(reader.maxTimestamp));
             int partitionIndex = reader.partitionCount - 1;
             if (delta > 0) {
@@ -113,9 +115,6 @@ public class TableReader implements Closeable, RecordCursor {
             return true;
         }
         return false;
-    };
-    private static final TimestampFloorMethod INAPPROPRIATE_FLOOR_METHOD = timestamp -> {
-        throw CairoException.instance(0).put("Cannot get partition floor for non-partitioned table");
     };
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
@@ -168,7 +167,7 @@ public class TableReader implements Closeable, RecordCursor {
                     timestampFloorMethod = Dates::floorDD;
                     intervalLengthMethod = Dates::getDaysBetween;
                     partitionMin = findPartitionMinimum(TableUtils.fmtDay);
-                    partitionCount = getPartitionCount();
+                    partitionCount = calculatePartitionCount();
                     break;
                 case PartitionBy.MONTH:
                     partitionPathGenerator = MONTH_GEN;
@@ -176,7 +175,7 @@ public class TableReader implements Closeable, RecordCursor {
                     timestampFloorMethod = Dates::floorMM;
                     intervalLengthMethod = Dates::getMonthsBetween;
                     partitionMin = findPartitionMinimum(TableUtils.fmtMonth);
-                    partitionCount = getPartitionCount();
+                    partitionCount = calculatePartitionCount();
                     break;
                 case PartitionBy.YEAR:
                     partitionPathGenerator = YEAR_GEN;
@@ -184,13 +183,13 @@ public class TableReader implements Closeable, RecordCursor {
                     timestampFloorMethod = Dates::floorYYYY;
                     intervalLengthMethod = Dates::getYearsBetween;
                     partitionMin = findPartitionMinimum(TableUtils.fmtYear);
-                    partitionCount = getPartitionCount();
+                    partitionCount = calculatePartitionCount();
                     break;
                 default:
                     partitionPathGenerator = DEFAULT_GEN;
                     reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
-                    timestampFloorMethod = INAPPROPRIATE_FLOOR_METHOD;
-                    intervalLengthMethod = (min, max) -> 0;
+                    timestampFloorMethod = null;
+                    intervalLengthMethod = null;
                     partitionCount = 1;
                     break;
             }
@@ -359,6 +358,14 @@ public class TableReader implements Closeable, RecordCursor {
         return true;
     }
 
+    private int calculatePartitionCount() {
+        if (partitionMin == Long.MAX_VALUE) {
+            return 0;
+        } else {
+            return (int) (intervalLengthMethod.calculate(partitionMin, timestampFloorMethod.floor(maxTimestamp)) + 1);
+        }
+    }
+
     private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, int base, int index) {
         if (tempCopyStruct.mem1 != null && !ff.exists(tempCopyStruct.mem1.getFd())) {
             Misc.free(tempCopyStruct.mem1);
@@ -505,14 +512,6 @@ public class TableReader implements Closeable, RecordCursor {
 
     private int getColumnBase(int partitionIndex) {
         return partitionIndex << columnCountBits;
-    }
-
-    private int getPartitionCount() {
-        if (partitionMin == Long.MAX_VALUE) {
-            return 0;
-        } else {
-            return (int) (intervalLengthMethod.calculate(partitionMin, timestampFloorMethod.floor(maxTimestamp)) + 1);
-        }
     }
 
     private void incrementPartitionCountBy(int delta) {

@@ -1340,7 +1340,6 @@ public class TableReaderTest extends AbstractCairoTest {
         testTableCursor(60 * 60000, expected);
     }
 
-    @FunctionalInterface
     private interface RecordAssert {
         void assertRecord(Record r, Rnd rnd, long ts, long blob);
     }
