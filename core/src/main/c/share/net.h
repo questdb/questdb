@@ -39,6 +39,14 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_configureNonBlocking
 
 /*
  * Class:     com_questdb_misc_Net
+ * Method:    freeMsgHeaders
+ * Signature: (J)V
+ */
+JNIEXPORT void JNICALL Java_com_questdb_misc_Net_freeMsgHeaders
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_misc_Net
  * Method:    freeSockAddr
  * Signature: (J)V
  */
@@ -71,11 +79,35 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_isDead
 
 /*
  * Class:     com_questdb_misc_Net
+ * Method:    recvmmsg
+ * Signature: (JJI)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_recvmmsg
+        (JNIEnv *, jclass, jlong, jlong, jint);
+
+/*
+ * Class:     com_questdb_misc_Net
+ * Method:    join
+ * Signature: (JII)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_join
+        (JNIEnv *, jclass, jlong, jint, jint);
+
+/*
+ * Class:     com_questdb_misc_Net
  * Method:    listen
  * Signature: (JI)V
  */
 JNIEXPORT void JNICALL Java_com_questdb_misc_Net_listen
         (JNIEnv *, jclass, jlong, jint);
+
+/*
+ * Class:     com_questdb_misc_Net
+ * Method:    msgHeaders
+ * Signature: (II)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_msgHeaders
+        (JNIEnv *, jclass, jint, jint);
 
 /*
  * Class:     com_questdb_misc_Net
@@ -131,6 +163,30 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketTcp
  * Signature: ()J
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_misc_Net
+ * Method:    getMsgHeaderSize
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_getMsgHeaderSize
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_misc_Net
+ * Method:    getMsgHeaderBufferAddressOffset
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_getMsgHeaderBufferAddressOffset
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_misc_Net
+ * Method:    getMsgHeaderBufferLengthOffset
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_getMsgHeaderBufferLengthOffset
         (JNIEnv *, jclass);
 
 /*

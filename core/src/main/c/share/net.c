@@ -21,6 +21,8 @@
  *
  ******************************************************************************/
 
+#define _GNU_SOURCE
+
 #include <jni.h>
 #include <sys/socket.h>
 #include <sys/fcntl.h>
@@ -29,6 +31,8 @@
 #include <unistd.h>
 #include <sys/errno.h>
 #include <stdlib.h>
+#include <stddef.h>
+#include <string.h>
 #include "net.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketTcp
@@ -88,6 +92,16 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_bind
     return (jboolean) (bind((int) fd, (struct sockaddr *) &addr, sizeof(addr)) == 0);
 }
 
+JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_join
+        (JNIEnv *e, jclass cl, jlong fd, jint bindAddress, jint groupAddress) {
+    struct ip_mreq mreq;
+    mreq.imr_interface.s_addr = htonl((uint32_t) bindAddress);
+    mreq.imr_multiaddr.s_addr = htonl((uint32_t) groupAddress);
+    return (jboolean) (setsockopt((int) fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0 ? JNI_FALSE
+                                                                                                    : JNI_TRUE);
+}
+
+
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_accept
         (JNIEnv *e, jobject cl, jlong fd) {
     return accept((int) fd, NULL, NULL);
@@ -126,6 +140,57 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Net_isDead
         (JNIEnv *e, jclass cl, jlong fd) {
     int c;
     return (jboolean) (recv((int) fd, &c, 1, 0) == 0);
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_recvmmsg
+        (JNIEnv *e, jclass cl, jlong fd, jlong msgvec, jint vlen) {
+    struct timespec timeout;
+    timeout.tv_sec = 1;
+    timeout.tv_nsec = 0;
+    return recvmmsg((int) fd, (struct mmsghdr *) msgvec, (unsigned int) vlen, MSG_DONTWAIT, &timeout);
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_msgHeaders
+        (JNIEnv *e, jclass cl, jint blockSize, jint blockCount) {
+    struct mmsghdr *msgs = malloc(sizeof(struct mmsghdr) * blockCount);
+    struct iovec *iovecs = malloc(sizeof(struct iovec) * blockCount);
+    void *buf = malloc(((size_t) blockSize * (size_t) blockCount));
+
+    EWOULDBLOCK
+
+    memset(msgs, 0, sizeof(struct mmsghdr) * blockCount);
+    for (int i = 0; i < blockCount; i++) {
+        iovecs[i].iov_base = buf;
+        iovecs[i].iov_len = (size_t) blockSize;
+        msgs[i].msg_hdr.msg_iov = &iovecs[i];
+        msgs[i].msg_hdr.msg_iovlen = 1;
+        buf += blockSize;
+    }
+
+    return (jlong) msgs;
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_getMsgHeaderSize
+        (JNIEnv *e, jclass cl) {
+    return sizeof(struct mmsghdr);
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_getMsgHeaderBufferAddressOffset
+        (JNIEnv *e, jclass cl) {
+    return offsetof(struct mmsghdr, msg_hdr) + offsetof(struct msghdr, msg_iov);
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_getMsgHeaderBufferLengthOffset
+        (JNIEnv *e, jclass cl) {
+    return (jint) offsetof(struct mmsghdr, msg_len);
+}
+
+JNIEXPORT void JNICALL Java_com_questdb_misc_Net_freeMsgHeaders
+        (JNIEnv *e, jclass cl, jlong address) {
+    struct mmsghdr *msgs = (struct mmsghdr *) address;
+    free(msgs[0].msg_hdr.msg_iov->iov_base);
+    free(msgs[0].msg_hdr.msg_iov);
+    free(msgs);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Net_configureNonBlocking
@@ -170,9 +235,8 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_getPeerIP
     if (getpeername((int) fd, &peer, &nameLen) == 0) {
         if (peer.sa_family == AF_INET) {
             return inet_addr(inet_ntoa(((struct sockaddr_in *) &peer)->sin_addr));
-        } else {
-            return -2;
         }
+        return -2;
     }
     return -1;
 

@@ -32,6 +32,25 @@ import com.questdb.std.str.CharSink;
 
 import java.io.File;
 
+/**
+ * Builds and sends log messages to writer thread. Log messages are constructed using "builder" pattern,
+ * which usually begins with "level method" {@link #debug()}, {@link #info()} or {@link #error()} followed by
+ * $(x) to append log message content and must terminate with {@link #$()}. There are $(x) methods for all types
+ * of "x" parameter to help avoid string concatenation and string creation in general.
+ * <p>
+ * <code>
+ * private static final Log LOG = LogFactory.getLog(MyClass.class);
+ * ...
+ * LOG.info().$("Hello world: ").$(123).$();
+ * </code>
+ * <p>
+ * <p>
+ * Logger appends messages to native memory buffer and dispatches buffer to writer thread queue with {@link #$()} call.
+ * When writer queue is full all logger method calls between level and $() become no-ops. In this case queue size
+ * have to be increased or choice of log storage has to be reviewed. Depending on complexity of log message
+ * structure it should be possible to log between 1,000,000 and 10,000,000 messages per second to SSD device.
+ * </p>
+ */
 class Logger implements LogRecord, Log {
     private final CharSequence name;
     private final RingQueue<LogRecordSink> debugRing;

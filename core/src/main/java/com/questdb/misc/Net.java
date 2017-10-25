@@ -29,8 +29,11 @@ import com.questdb.std.str.CharSink;
 
 public final class Net {
 
-    public static final int EWOULDBLOCK;
+    public static final long MMSGHDR_SIZE;
+    public static final long MMSGHDR_BUFFER_ADDRESS_OFFSET;
+    public static final long MMSGHDR_BUFFER_LENGTH_OFFSET;
 
+    public static final int EWOULDBLOCK;
     public static final int ERETRY = 0;
     public static final int EPEERDISCONNECT = -1;
     @SuppressWarnings("unused")
@@ -57,6 +60,8 @@ public final class Net {
 
     public static native int configureNonBlocking(long fd);
 
+    public static native void freeMsgHeaders(long msgHeaders);
+
     public native static void freeSockAddr(long sockaddr);
 
     public native static long getPeerIP(long fd);
@@ -65,7 +70,17 @@ public final class Net {
 
     public static native boolean isDead(long fd);
 
+    public static boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
+        return join(fd, parseIPv4(bindIPv4Address), parseIPv4(groupIPv4Address));
+    }
+
+    public native static boolean join(long fd, int bindIPv4Address, int groupIPv4Address);
+
+    public static native long msgHeaders(int blockSize, int count);
+
     public native static void listen(long fd, int backlog);
+
+    public static native int recvmmsg(long fd, long msgvec, int vlen);
 
     public static native int recv(long fd, long ptr, int len);
 
@@ -84,6 +99,12 @@ public final class Net {
     public native static long socketTcp(boolean blocking);
 
     public native static long socketUdp();
+
+    private static native long getMsgHeaderSize();
+
+    private static native long getMsgHeaderBufferAddressOffset();
+
+    private static native long getMsgHeaderBufferLengthOffset();
 
     private native static int getEwouldblock();
 
@@ -114,5 +135,14 @@ public final class Net {
 
     static {
         EWOULDBLOCK = getEwouldblock();
+        if (Os.type == Os.LINUX) {
+            MMSGHDR_SIZE = getMsgHeaderSize();
+            MMSGHDR_BUFFER_ADDRESS_OFFSET = getMsgHeaderBufferAddressOffset();
+            MMSGHDR_BUFFER_LENGTH_OFFSET = getMsgHeaderBufferLengthOffset();
+        } else {
+            MMSGHDR_SIZE = -1L;
+            MMSGHDR_BUFFER_ADDRESS_OFFSET = -1L;
+            MMSGHDR_BUFFER_LENGTH_OFFSET = -1L;
+        }
     }
 }
