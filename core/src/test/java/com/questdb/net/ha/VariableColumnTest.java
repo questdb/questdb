@@ -23,10 +23,10 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.JournalMode;
 import com.questdb.ex.JournalException;
 import com.questdb.net.ha.comsumer.VariableColumnDeltaConsumer;
 import com.questdb.net.ha.producer.VariableColumnDeltaProducer;
+import com.questdb.store.JournalMode;
 import com.questdb.store.MemoryFile;
 import com.questdb.store.VariableColumn;
 import org.junit.*;

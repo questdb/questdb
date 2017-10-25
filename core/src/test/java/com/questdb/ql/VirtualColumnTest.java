@@ -24,21 +24,20 @@
 package com.questdb.ql;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.JournalEntryWriter;
-import com.questdb.JournalWriter;
-import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Rnd;
 import com.questdb.net.http.ServerConfiguration;
-import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
-import com.questdb.ql.impl.virtual.VirtualColumnRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.col.DoubleRecordSourceColumn;
 import com.questdb.ql.ops.constant.DoubleConstant;
 import com.questdb.ql.ops.plus.AddDoubleOperator;
+import com.questdb.ql.select.SelectedColumnsRecordSource;
+import com.questdb.ql.virtual.VirtualColumnRecordSource;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.StringSink;
+import com.questdb.store.JournalEntryWriter;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.AbstractTest;
-import com.questdb.txt.RecordSourcePrinter;
 import org.junit.Assert;
 import org.junit.Test;
 

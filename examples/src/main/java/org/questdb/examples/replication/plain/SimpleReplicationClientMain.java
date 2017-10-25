@@ -23,13 +23,13 @@
 
 package org.questdb.examples.replication.plain;
 
-import com.questdb.Journal;
-import com.questdb.JournalIterators;
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.JournalConfiguration;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalClient;
+import com.questdb.store.Journal;
+import com.questdb.store.JournalIterators;
 import com.questdb.store.JournalListener;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.JournalConfiguration;
+import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import org.questdb.examples.support.Price;
 
 /**

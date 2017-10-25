@@ -23,11 +23,11 @@
 
 package com.questdb.cairo;
 
-import com.questdb.PartitionBy;
 import com.questdb.misc.Os;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.Path;
 import com.questdb.store.ColumnType;
+import com.questdb.store.PartitionBy;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

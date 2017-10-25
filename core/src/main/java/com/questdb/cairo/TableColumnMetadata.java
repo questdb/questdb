@@ -1,11 +1,11 @@
 package com.questdb.cairo;
 
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.store.SymbolTable;
+import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 class TableColumnMetadata implements RecordColumnMetadata {
     private final int type;
-    private String name;
+    private final String name;
 
     public TableColumnMetadata(String name, int type) {
         this.name = name;

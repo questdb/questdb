@@ -1,11 +1,11 @@
 package com.questdb.cairo;
 
-import com.questdb.PartitionBy;
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.std.ObjIntHashMap;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.StringSink;
 import com.questdb.store.ColumnType;
+import com.questdb.store.PartitionBy;
+import com.questdb.store.factory.configuration.RecordColumnMetadata;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;

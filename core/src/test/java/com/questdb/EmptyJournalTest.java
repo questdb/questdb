@@ -25,6 +25,8 @@ package com.questdb;
 
 import com.questdb.model.Quote;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.store.Journal;
+import com.questdb.store.JournalWriter;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;

@@ -23,15 +23,10 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.JournalKey;
-import com.questdb.JournalWriter;
-import com.questdb.PartitionBy;
 import com.questdb.ex.IncompatibleJournalException;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.WriterFactory;
-import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Chars;
@@ -62,8 +57,9 @@ import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
-import com.questdb.store.JournalEvents;
-import com.questdb.store.JournalListener;
+import com.questdb.store.*;
+import com.questdb.store.factory.WriterFactory;
+import com.questdb.store.factory.configuration.JournalMetadata;
 
 import java.io.File;
 import java.io.IOException;

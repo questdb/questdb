@@ -47,7 +47,7 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
     private final long lastWall;
     private final int historyOverlapCheckCutoff;
     private final String id;
-    private long standardOffset;
+    private final long standardOffset;
 
     public TimeZoneRulesImpl(String id, ZoneRules rules) {
         this.id = id;

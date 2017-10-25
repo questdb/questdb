@@ -28,7 +28,7 @@ import com.questdb.std.ObjList;
 
 public class FanOut implements Barrier {
     private static final long HOLDER = Unsafe.getFieldOffset(FanOut.class, "holder");
-    private Holder holder;
+    private final Holder holder;
     private Barrier barrier;
 
     public FanOut(Barrier... barriers) {

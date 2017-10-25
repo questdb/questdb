@@ -23,21 +23,17 @@
 
 package com.questdb.ql.ops.stat;
 
-import com.questdb.factory.configuration.ColumnMetadata;
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Misc;
-import com.questdb.ql.AggregatorFunction;
-import com.questdb.ql.Record;
-import com.questdb.ql.impl.CollectionRecordMetadata;
-import com.questdb.ql.impl.RecordColumnMetadataImpl;
-import com.questdb.ql.impl.RecordList;
-import com.questdb.ql.impl.map.DirectMapValues;
-import com.questdb.ql.impl.map.MapRecordValueInterceptor;
+import com.questdb.ql.*;
+import com.questdb.ql.map.DirectMapValues;
+import com.questdb.ql.map.MapRecordValueInterceptor;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.std.ObjList;
 import com.questdb.store.ColumnType;
+import com.questdb.store.factory.configuration.ColumnMetadata;
+import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 import java.io.Closeable;
 

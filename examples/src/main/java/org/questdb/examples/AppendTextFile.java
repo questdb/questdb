@@ -25,8 +25,8 @@ package org.questdb.examples;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.Factory;
-import com.questdb.txt.ImportManager;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.util.ImportManager;
 
 import java.io.IOException;
 

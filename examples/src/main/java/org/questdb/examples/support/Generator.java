@@ -23,15 +23,15 @@
 
 package org.questdb.examples.support;
 
-import com.questdb.JournalEntryWriter;
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.WriterFactory;
-import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
+import com.questdb.store.JournalEntryWriter;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.WriterFactory;
+import com.questdb.store.factory.configuration.JournalStructure;
 
 import java.io.File;
 import java.util.Random;

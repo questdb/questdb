@@ -138,7 +138,7 @@ public class Engine implements Closeable {
         writerPool.unlock(tableName);
     }
 
-    private void rename0(CharSequence tableName, CharSequence to) throws JournalException {
+    private void rename0(CharSequence tableName, CharSequence to) {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
 

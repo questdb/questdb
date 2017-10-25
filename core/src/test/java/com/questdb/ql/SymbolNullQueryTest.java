@@ -23,15 +23,15 @@
 
 package com.questdb.ql;
 
-import com.questdb.JournalEntryWriter;
-import com.questdb.JournalWriter;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Rnd;
-import com.questdb.ql.parser.AbstractOptimiserTest;
-import com.questdb.ql.parser.QueryError;
+import com.questdb.parser.sql.AbstractOptimiserTest;
+import com.questdb.parser.sql.QueryError;
 import com.questdb.std.ObjList;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.store.JournalEntryWriter;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.configuration.JournalStructure;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;

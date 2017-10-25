@@ -23,23 +23,22 @@
 
 package com.questdb.ql;
 
-import com.questdb.JournalEntryWriter;
-import com.questdb.JournalWriter;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Rnd;
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.impl.NoRowIdRecordSource;
-import com.questdb.ql.impl.join.AsOfJoinRecordSource;
-import com.questdb.ql.impl.join.AsOfPartitionedJoinRecordSource;
-import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
-import com.questdb.ql.parser.AbstractOptimiserTest;
-import com.questdb.ql.parser.QueryError;
+import com.questdb.parser.sql.AbstractOptimiserTest;
+import com.questdb.parser.sql.QueryError;
+import com.questdb.ql.join.AsOfJoinRecordSource;
+import com.questdb.ql.join.AsOfPartitionedJoinRecordSource;
+import com.questdb.ql.map.RecordKeyCopierCompiler;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.store.JournalEntryWriter;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;

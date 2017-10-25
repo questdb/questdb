@@ -23,7 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.JournalMode;
 import com.questdb.ex.JournalException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Files;

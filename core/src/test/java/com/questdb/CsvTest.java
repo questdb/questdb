@@ -24,14 +24,14 @@
 package com.questdb;
 
 import com.questdb.net.http.ServerConfiguration;
+import com.questdb.parser.plaintext.PlainTextLexer;
+import com.questdb.parser.plaintext.PlainTextParser;
+import com.questdb.parser.typeprobe.TypeProbeCollection;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.StringSink;
+import com.questdb.store.util.ImportManager;
 import com.questdb.test.tools.TestUtils;
-import com.questdb.txt.ImportManager;
-import com.questdb.txt.parser.DelimitedTextParser;
-import com.questdb.txt.parser.listener.Listener;
-import com.questdb.txt.parser.listener.probe.TypeProbeCollection;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -61,10 +61,10 @@ public class CsvTest {
 
 
         ImportManager.parse(new File(this.getClass().getResource("/csv/test-headers.csv").getFile())
-                , new DelimitedTextParser(env).of(',')
+                , new PlainTextLexer(env).of(',')
                 , 1024 * 1024
                 , true
-                , new Listener() {
+                , new PlainTextParser() {
                     @Override
                     public void onError(int line) {
 
@@ -100,22 +100,22 @@ public class CsvTest {
 
     @Test
     public void testParseDosCsvSmallBuf() throws Exception {
-        assertFile("/csv/test-dos.csv", 10, new DelimitedTextParser(env).of(','));
+        assertFile("/csv/test-dos.csv", 10, new PlainTextLexer(env).of(','));
     }
 
     @Test
     public void testParseTab() throws Exception {
-        assertFile("/csv/test.txt", 1024 * 1024, new DelimitedTextParser(env).of('\t'));
+        assertFile("/csv/test.txt", 1024 * 1024, new PlainTextLexer(env).of('\t'));
     }
 
     @Test
     public void testParseTabSmallBuf() throws Exception {
-        assertFile("/csv/test.txt", 10, new DelimitedTextParser(env).of('\t'));
+        assertFile("/csv/test.txt", 10, new PlainTextLexer(env).of('\t'));
     }
 
     @Test
     public void testParseUnixCsvSmallBuf() throws Exception {
-        assertFile("/csv/test-unix.csv", 10, new DelimitedTextParser(env).of(','));
+        assertFile("/csv/test-unix.csv", 10, new PlainTextLexer(env).of(','));
     }
 
 /*
@@ -196,7 +196,7 @@ public class CsvTest {
     }
 */
 
-    private void assertFile(String file, long bufSize, DelimitedTextParser parser) throws Exception {
+    private void assertFile(String file, long bufSize, PlainTextLexer parser) throws Exception {
         String expected = "123,abc,2015-01-20T21:00:00.000Z,3.1415,TRUE,Lorem ipsum dolor sit amet.,122\n" +
                 "124,abc,2015-01-20T21:00:00.000Z,7.342,FALSE,Lorem ipsum \n" +
                 "\n" +
@@ -222,7 +222,7 @@ public class CsvTest {
         Assert.assertEquals(7, parser.getLineCount());
     }
 
-    private static class TestCsvListener implements Listener {
+    private static class TestCsvListener implements PlainTextParser {
         private final StringSink sink = new StringSink();
         private int errorCounter = 0;
         private int errorLine = -1;

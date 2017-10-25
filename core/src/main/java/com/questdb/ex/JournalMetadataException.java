@@ -23,13 +23,13 @@
 
 package com.questdb.ex;
 
-import com.questdb.PartitionBy;
-import com.questdb.factory.configuration.ColumnMetadata;
-import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.log.LogRecord;
 import com.questdb.store.ColumnType;
+import com.questdb.store.PartitionBy;
+import com.questdb.store.factory.configuration.ColumnMetadata;
+import com.questdb.store.factory.configuration.JournalMetadata;
 
 public class JournalMetadataException extends JournalException {
     private static final Log LOG = LogFactory.getLog(JournalMetadataException.class);

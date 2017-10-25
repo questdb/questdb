@@ -1,12 +1,12 @@
 package com.questdb.cairo;
 
-import com.questdb.factory.configuration.AbstractRecordMetadata;
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CompositePath;
+import com.questdb.store.factory.configuration.AbstractRecordMetadata;
+import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 import java.io.Closeable;
 

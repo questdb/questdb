@@ -23,16 +23,14 @@
 
 package com.questdb.ql;
 
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.model.Quote;
-import com.questdb.ql.impl.JournalPartitionSource;
-import com.questdb.ql.impl.JournalRecordSource;
-import com.questdb.ql.impl.latest.HeapMergingRowSource;
-import com.questdb.ql.impl.latest.KvIndexSymLookupRowSource;
-import com.questdb.ql.impl.latest.MergingRowSource;
+import com.questdb.ql.latest.HeapMergingRowSource;
+import com.questdb.ql.latest.KvIndexSymLookupRowSource;
+import com.questdb.ql.latest.MergingRowSource;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.store.JournalWriter;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

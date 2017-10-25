@@ -23,8 +23,6 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.Journal;
-import com.questdb.JournalWriter;
 import com.questdb.ex.FatalError;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
@@ -34,7 +32,9 @@ import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.net.ha.krb.SSOCredentialProvider;
+import com.questdb.store.Journal;
 import com.questdb.store.JournalListener;
+import com.questdb.store.JournalWriter;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

@@ -23,7 +23,7 @@
 
 package com.questdb.net.ha.model;
 
-import com.questdb.Journal;
+import com.questdb.store.Journal;
 
 public class IndexedJournal {
     private final int index;

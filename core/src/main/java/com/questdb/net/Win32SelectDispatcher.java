@@ -24,7 +24,6 @@
 package com.questdb.net;
 
 import com.questdb.ex.NetworkError;
-import com.questdb.iter.clock.Clock;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Misc;
@@ -35,6 +34,7 @@ import com.questdb.mp.*;
 import com.questdb.std.LongIntHashMap;
 import com.questdb.std.LongMatrix;
 import com.questdb.std.ObjectFactory;
+import com.questdb.std.clock.Clock;
 
 import java.io.IOException;
 

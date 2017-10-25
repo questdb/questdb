@@ -23,7 +23,7 @@
 
 package com.questdb.ex;
 
-import com.questdb.ql.parser.QueryError;
+import com.questdb.parser.sql.QueryError;
 
 @SuppressWarnings("ThrowableInstanceNeverThrown")
 public final class ParserException extends Exception {

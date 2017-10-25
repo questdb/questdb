@@ -23,7 +23,6 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.model.RDFNode;
 import com.questdb.net.ha.comsumer.JournalClientStateConsumer;
@@ -31,6 +30,7 @@ import com.questdb.net.ha.comsumer.JournalSymbolTableConsumer;
 import com.questdb.net.ha.model.IndexedJournal;
 import com.questdb.net.ha.producer.JournalClientStateProducer;
 import com.questdb.net.ha.producer.JournalSymbolTableProducer;
+import com.questdb.store.JournalWriter;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.After;

@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -35,6 +34,7 @@ import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
+import com.questdb.store.PartitionBy;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;

@@ -24,12 +24,12 @@
 package com.questdb.ql.ops;
 
 import com.questdb.ex.ParserException;
+import com.questdb.parser.sql.QueryError;
 import com.questdb.ql.Record;
 import com.questdb.ql.StorageFacade;
-import com.questdb.ql.parser.QueryError;
-import com.questdb.regex.Matcher;
-import com.questdb.regex.Pattern;
-import com.questdb.regex.PatternSyntaxException;
+import com.questdb.ql.ops.regex.Matcher;
+import com.questdb.ql.ops.regex.Pattern;
+import com.questdb.ql.ops.regex.PatternSyntaxException;
 import com.questdb.std.IntHashSet;
 import com.questdb.store.ColumnType;
 import com.questdb.store.SymbolTable;

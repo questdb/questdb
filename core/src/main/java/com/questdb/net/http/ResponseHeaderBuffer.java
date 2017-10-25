@@ -24,10 +24,10 @@
 package com.questdb.net.http;
 
 import com.questdb.ex.ResponseHeaderBufferTooSmallException;
-import com.questdb.iter.clock.Clock;
 import com.questdb.misc.*;
 import com.questdb.std.IntObjHashMap;
 import com.questdb.std.Mutable;
+import com.questdb.std.clock.Clock;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.time.DateFormatUtils;

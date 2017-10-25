@@ -23,14 +23,14 @@
 
 package com.questdb.net.ha.producer;
 
-import com.questdb.JournalMode;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
-import com.questdb.factory.configuration.Constants;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Unsafe;
 import com.questdb.net.ha.ChannelProducer;
+import com.questdb.store.JournalMode;
 import com.questdb.store.UnstructuredFile;
+import com.questdb.store.factory.configuration.Constants;
 
 import java.io.Closeable;
 import java.io.File;

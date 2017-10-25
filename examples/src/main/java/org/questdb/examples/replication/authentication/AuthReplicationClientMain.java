@@ -23,17 +23,14 @@
 
 package org.questdb.examples.replication.authentication;
 
-import com.questdb.Journal;
-import com.questdb.JournalIterators;
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.JournalConfiguration;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalClient;
-import com.questdb.net.ha.auth.CredentialProvider;
+import com.questdb.store.Journal;
+import com.questdb.store.JournalIterators;
 import com.questdb.store.JournalListener;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.JournalConfiguration;
+import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import org.questdb.examples.support.Price;
-
-import java.io.UnsupportedEncodingException;
 
 /**
  * Single journal replication client example.
@@ -45,12 +42,7 @@ public class AuthReplicationClientMain {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(args[0]);
         Factory factory = new Factory(configuration);
 
-        final JournalClient client = new JournalClient(factory, new CredentialProvider() {
-            @Override
-            public byte[] createToken() throws UnsupportedEncodingException {
-                return "MY SECRET".getBytes("UTF8");
-            }
-        });
+        final JournalClient client = new JournalClient(factory, () -> "MY SECRET".getBytes("UTF8"));
 
         final Journal<Price> reader = factory.reader(Price.class, "price-copy");
         reader.setSequentialAccess(true);

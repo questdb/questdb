@@ -23,9 +23,9 @@
 
 package com.questdb.ql;
 
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.std.Sinkable;
+import com.questdb.store.factory.ReaderFactory;
+import com.questdb.store.factory.configuration.JournalMetadata;
 
 public interface PartitionSource extends Sinkable {
 

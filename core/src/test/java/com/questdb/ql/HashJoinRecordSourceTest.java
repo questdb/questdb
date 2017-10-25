@@ -23,23 +23,19 @@
 
 package com.questdb.ql;
 
-import com.questdb.JournalWriter;
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.BytecodeAssembler;
 import com.questdb.model.Album;
 import com.questdb.model.Band;
-import com.questdb.ql.impl.AllRowSource;
-import com.questdb.ql.impl.JournalPartitionSource;
-import com.questdb.ql.impl.JournalRecordSource;
-import com.questdb.ql.impl.join.HashJoinRecordSource;
-import com.questdb.ql.impl.map.RecordKeyCopierCompiler;
-import com.questdb.ql.impl.select.SelectedColumnsRecordSource;
+import com.questdb.ql.join.HashJoinRecordSource;
+import com.questdb.ql.map.RecordKeyCopierCompiler;
+import com.questdb.ql.select.SelectedColumnsRecordSource;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.StringSink;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.test.tools.FactoryContainer;
-import com.questdb.txt.RecordSourcePrinter;
 import org.junit.*;
 
 public class HashJoinRecordSourceTest {

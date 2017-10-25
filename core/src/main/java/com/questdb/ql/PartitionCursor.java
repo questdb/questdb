@@ -23,8 +23,8 @@
 
 package com.questdb.ql;
 
-import com.questdb.Partition;
 import com.questdb.std.ImmutableIterator;
+import com.questdb.store.Partition;
 
 public interface PartitionCursor extends ImmutableIterator<PartitionSlice> {
     Partition getPartition(int index);

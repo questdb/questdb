@@ -23,7 +23,6 @@
 
 package com.questdb.net.http.handlers;
 
-import com.questdb.JournalMode;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
@@ -34,6 +33,7 @@ import com.questdb.std.LocalValue;
 import com.questdb.std.Mutable;
 import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.store.JournalMode;
 import com.questdb.store.PlainFile;
 
 import java.io.Closeable;

@@ -23,18 +23,17 @@
 
 package com.questdb.ql;
 
-import com.questdb.JournalEntryWriter;
-import com.questdb.JournalKey;
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.Factory;
-import com.questdb.ql.parser.QueryCompiler;
-import com.questdb.ql.parser.QueryError;
+import com.questdb.parser.sql.QueryCompiler;
+import com.questdb.parser.sql.QueryError;
 import com.questdb.std.str.StringSink;
+import com.questdb.store.JournalEntryWriter;
+import com.questdb.store.JournalKey;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.Factory;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
-import com.questdb.txt.RecordSourcePrinter;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;

@@ -883,12 +883,12 @@ public final class Numbers {
         return c < '0' || c > '9';
     }
 
-    private static double roundHalfUp0(double value, int scale) throws NumericException {
+    private static double roundHalfUp0(double value, int scale) {
         long val = (long) (value * Unsafe.arrayGet(pow10, scale + 2) + TOLERANCE);
         return val % 100 < 50 ? roundDown0(value, scale) : roundUp0(value, scale);
     }
 
-    private static double roundHalfEven0(double value, int scale) throws NumericException {
+    private static double roundHalfEven0(double value, int scale) {
         long val = (long) (value * Unsafe.arrayGet(pow10, scale + 2) + TOLERANCE);
         long remainder = val % 100;
 
@@ -903,7 +903,7 @@ public final class Numbers {
         return roundUp0(value, scale);
     }
 
-    private static double roundHalfDown0(double value, int scale) throws NumericException {
+    private static double roundHalfDown0(double value, int scale) {
         long val = (long) (value * Unsafe.arrayGet(pow10, scale + 2) + TOLERANCE);
         return val % 100 > 50 ? roundUp0(value, scale) : roundDown0(value, scale);
     }

@@ -27,8 +27,6 @@ import com.questdb.BootstrapEnv;
 import com.questdb.ex.FatalError;
 import com.questdb.ex.JournalRuntimeException;
 import com.questdb.ex.NetworkError;
-import com.questdb.iter.clock.Clock;
-import com.questdb.iter.clock.MilliClock;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Misc;
@@ -38,6 +36,8 @@ import com.questdb.net.*;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
+import com.questdb.std.clock.Clock;
+import com.questdb.std.clock.MilliClock;
 
 import java.net.InetSocketAddress;
 import java.util.concurrent.CountDownLatch;

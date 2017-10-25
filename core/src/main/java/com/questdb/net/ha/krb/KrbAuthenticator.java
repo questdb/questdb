@@ -23,9 +23,9 @@
 
 package com.questdb.net.ha.krb;
 
-import com.questdb.JournalKey;
 import com.questdb.net.ha.auth.AuthorizationHandler;
 import com.questdb.std.ObjList;
+import com.questdb.store.JournalKey;
 
 public class KrbAuthenticator implements AuthorizationHandler {
 

@@ -23,7 +23,7 @@
 
 package com.questdb.ql.collections;
 
-import com.questdb.ql.impl.join.asof.FreeList;
+import com.questdb.ql.join.asof.FreeList;
 import org.junit.Assert;
 import org.junit.Test;
 

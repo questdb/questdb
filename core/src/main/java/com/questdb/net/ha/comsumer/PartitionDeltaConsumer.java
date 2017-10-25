@@ -23,11 +23,11 @@
 
 package com.questdb.net.ha.comsumer;
 
-import com.questdb.Journal;
-import com.questdb.Partition;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.net.ha.ChannelConsumer;
 import com.questdb.store.AbstractColumn;
+import com.questdb.store.Journal;
+import com.questdb.store.Partition;
 import com.questdb.store.VariableColumn;
 
 public class PartitionDeltaConsumer extends ChannelConsumerGroup {

@@ -23,11 +23,8 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.JournalKey;
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalDisconnectedChannelException;
 import com.questdb.ex.JournalNetworkException;
-import com.questdb.factory.ReaderFactory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.NamedDaemonThreadFactory;
@@ -43,6 +40,9 @@ import com.questdb.net.ha.protocol.CommandProducer;
 import com.questdb.net.ha.protocol.commands.IntResponseConsumer;
 import com.questdb.net.ha.protocol.commands.IntResponseProducer;
 import com.questdb.std.ObjIntHashMap;
+import com.questdb.store.JournalKey;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.ReaderFactory;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;

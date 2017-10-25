@@ -23,21 +23,21 @@
 
 package org.questdb.examples.replication.cluster;
 
-import com.questdb.JournalKey;
-import com.questdb.JournalWriter;
-import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.JournalConfiguration;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Numbers;
 import com.questdb.net.ha.ClusterController;
 import com.questdb.net.ha.ClusterStatusListener;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
+import com.questdb.store.JournalKey;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.PartitionBy;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.JournalConfiguration;
+import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import org.questdb.examples.support.Price;
 
 import java.io.IOException;
@@ -77,12 +77,7 @@ public class ClusteredProducerMain {
 
         cc.start();
 
-        Runtime.getRuntime().addShutdownHook(new Thread() {
-            @Override
-            public void run() {
-                cc.halt();
-            }
-        });
+        Runtime.getRuntime().addShutdownHook(new Thread(cc::halt));
     }
 
     /**
@@ -143,37 +138,34 @@ public class ClusteredProducerMain {
         }
 
         public void start() {
-            new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        long t = writer.getMaxTimestamp();
-                        if (t == 0) {
-                            System.currentTimeMillis();
-                        }
-
-                        while (true) {
-                            for (int i = 0; i < 50000; i++) {
-                                p.setTimestamp(t += i);
-                                p.setNanos(System.currentTimeMillis());
-                                p.setSym(String.valueOf(i % 20));
-                                p.setPrice(i * 1.04598 + i);
-                                writer.append(p);
-                            }
-                            writer.commit();
-
-                            if (breakLatch.await(2, TimeUnit.SECONDS)) {
-                                break;
-                            }
-
-                        }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    } finally {
-                        haltLatch.countDown();
+            new Thread(() -> {
+                try {
+                    long t = writer.getMaxTimestamp();
+                    if (t == 0) {
+                        System.currentTimeMillis();
                     }
+
+                    while (true) {
+                        for (int i = 0; i < 50000; i++) {
+                            p.setTimestamp(t += i);
+                            p.setNanos(System.currentTimeMillis());
+                            p.setSym(String.valueOf(i % 20));
+                            p.setPrice(i * 1.04598 + i);
+                            writer.append(p);
+                        }
+                        writer.commit();
+
+                        if (breakLatch.await(2, TimeUnit.SECONDS)) {
+                            break;
+                        }
+
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } finally {
+                    haltLatch.countDown();
                 }
-            }.start();
+            }).start();
         }
     }
 }

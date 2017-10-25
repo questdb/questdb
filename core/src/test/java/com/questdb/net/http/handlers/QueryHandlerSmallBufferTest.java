@@ -29,7 +29,7 @@ import com.questdb.net.http.HttpServer;
 import com.questdb.net.http.QueryResponse;
 import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
-import com.questdb.ql.parser.AbstractOptimiserTest;
+import com.questdb.parser.sql.AbstractOptimiserTest;
 import org.apache.http.MalformedChunkCodingException;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;

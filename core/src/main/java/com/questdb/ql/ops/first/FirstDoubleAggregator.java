@@ -24,7 +24,7 @@
 package com.questdb.ql.ops.first;
 
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.map.DirectMapValues;
+import com.questdb.ql.map.DirectMapValues;
 import com.questdb.ql.ops.AbstractUnaryAggregator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;

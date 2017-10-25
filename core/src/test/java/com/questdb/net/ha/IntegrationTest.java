@@ -23,11 +23,7 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.Journal;
-import com.questdb.JournalKey;
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.model.Quote;
@@ -35,8 +31,8 @@ import com.questdb.model.TestEntity;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.std.time.DateFormatUtils;
-import com.questdb.store.JournalEvents;
-import com.questdb.store.JournalListener;
+import com.questdb.store.*;
+import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

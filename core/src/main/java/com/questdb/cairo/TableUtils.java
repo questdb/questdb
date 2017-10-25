@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Os;
@@ -35,6 +34,7 @@ import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatCompiler;
 import com.questdb.store.ColumnType;
+import com.questdb.store.factory.configuration.JournalMetadata;
 
 public final class TableUtils {
     static final byte TODO_RESTORE_META = 2;

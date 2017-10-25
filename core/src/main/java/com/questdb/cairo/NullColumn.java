@@ -5,7 +5,7 @@ import com.questdb.std.BinarySequence;
 
 public final class NullColumn implements ReadOnlyColumn {
 
-    public static NullColumn INSTANCE = new NullColumn();
+    public static final NullColumn INSTANCE = new NullColumn();
 
     @Override
     public void close() {

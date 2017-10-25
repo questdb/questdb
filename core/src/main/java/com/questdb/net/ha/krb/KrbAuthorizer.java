@@ -23,8 +23,8 @@
 
 package com.questdb.net.ha.krb;
 
-import com.questdb.JournalKey;
 import com.questdb.std.ObjList;
+import com.questdb.store.JournalKey;
 
 public interface KrbAuthorizer {
     boolean isAuthorized(String principal, ObjList<JournalKey> requestedKeys);

@@ -23,8 +23,6 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.Journal;
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.model.Quote;
@@ -33,6 +31,8 @@ import com.questdb.net.ha.comsumer.JournalDeltaConsumer;
 import com.questdb.net.ha.model.IndexedJournal;
 import com.questdb.net.ha.producer.JournalClientStateProducer;
 import com.questdb.net.ha.producer.JournalDeltaProducer;
+import com.questdb.store.Journal;
+import com.questdb.store.JournalWriter;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.After;

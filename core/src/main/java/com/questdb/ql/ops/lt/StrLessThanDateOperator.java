@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.lt;
 
-import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
@@ -39,10 +38,6 @@ public class StrLessThanDateOperator extends StrToDateCmpBaseOperator {
 
     @Override
     public boolean getBool(Record rec) {
-        if (alwaysFalse) {
-            return false;
-        }
-        long d = rhs.getDate(rec);
-        return date < d && d > Numbers.LONG_NaN;
+        return !alwaysFalse && date < rhs.getDate(rec);
     }
 }

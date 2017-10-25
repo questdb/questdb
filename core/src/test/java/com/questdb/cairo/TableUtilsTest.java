@@ -1,12 +1,12 @@
 package com.questdb.cairo;
 
-import com.questdb.PartitionBy;
-import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Files;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 import com.questdb.store.ColumnType;
+import com.questdb.store.PartitionBy;
+import com.questdb.store.factory.configuration.JournalMetadata;
+import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.ClassRule;

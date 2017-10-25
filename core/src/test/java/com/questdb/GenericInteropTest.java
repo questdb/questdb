@@ -25,12 +25,16 @@ package com.questdb;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalMetadataException;
-import com.questdb.factory.configuration.JournalMetadataBuilder;
-import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.misc.Files;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
+import com.questdb.store.Journal;
+import com.questdb.store.JournalEntryWriter;
+import com.questdb.store.JournalIterators;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.configuration.JournalMetadataBuilder;
+import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

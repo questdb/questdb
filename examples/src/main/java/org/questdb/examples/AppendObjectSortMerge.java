@@ -23,16 +23,15 @@
 
 package org.questdb.examples;
 
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import org.questdb.examples.support.Quote;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
@@ -100,7 +99,7 @@ public class AppendObjectSortMerge {
                     }
 
                     // batch must be sorted before being presented to writer
-                    Collections.sort(batch, writer.getTimestampComparator());
+                    batch.sort(writer.getTimestampComparator());
 
                     // append batch and have journal merge data
                     writer.mergeAppend(batch);

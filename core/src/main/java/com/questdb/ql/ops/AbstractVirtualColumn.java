@@ -24,8 +24,8 @@
 package com.questdb.ql.ops;
 
 import com.questdb.ex.ParserException;
+import com.questdb.parser.sql.QueryError;
 import com.questdb.ql.Record;
-import com.questdb.ql.parser.QueryError;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;

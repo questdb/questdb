@@ -23,8 +23,8 @@
 
 package com.questdb.net.ha.auth;
 
-import com.questdb.JournalKey;
 import com.questdb.std.ObjList;
+import com.questdb.store.JournalKey;
 
 public interface AuthorizationHandler {
     boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) throws Exception;

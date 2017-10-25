@@ -23,14 +23,14 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.Journal;
-import com.questdb.JournalWriter;
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Os;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
+import com.questdb.store.Journal;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.test.tools.FactoryContainer;
 import com.questdb.test.tools.TestUtils;
 import org.junit.*;

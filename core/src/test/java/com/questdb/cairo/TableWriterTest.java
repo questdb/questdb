@@ -23,9 +23,7 @@
 
 package com.questdb.cairo;
 
-import com.questdb.PartitionBy;
 import com.questdb.ex.NumericException;
-import com.questdb.factory.configuration.JournalStructure;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Chars;
@@ -39,6 +37,8 @@ import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.*;
 import com.questdb.store.ColumnType;
+import com.questdb.store.PartitionBy;
+import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

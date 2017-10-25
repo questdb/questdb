@@ -27,8 +27,6 @@ import com.questdb.BootstrapEnv;
 import com.questdb.ex.DisconnectedChannelException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.ex.SlowWritableChannelException;
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.RecordColumnMetadata;
 import com.questdb.misc.Numbers;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.ContextHandler;
@@ -37,6 +35,8 @@ import com.questdb.ql.Record;
 import com.questdb.std.LocalValue;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.ColumnType;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;

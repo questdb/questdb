@@ -1,6 +1,5 @@
 package com.questdb.cairo;
 
-import com.questdb.factory.configuration.RecordMetadata;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
@@ -8,6 +7,7 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Mutable;
 import com.questdb.store.ColumnType;
+import com.questdb.store.factory.configuration.RecordMetadata;
 
 import java.io.Closeable;
 

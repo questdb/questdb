@@ -23,23 +23,19 @@
 
 package com.questdb.ql;
 
-import com.questdb.Journal;
-import com.questdb.JournalEntryWriter;
-import com.questdb.JournalWriter;
-import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
 import com.questdb.misc.Unsafe;
-import com.questdb.ql.parser.QueryCompiler;
-import com.questdb.ql.parser.QueryError;
+import com.questdb.parser.sql.QueryCompiler;
+import com.questdb.parser.sql.QueryError;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
-import com.questdb.store.ColumnType;
+import com.questdb.store.*;
+import com.questdb.store.factory.configuration.JournalMetadata;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

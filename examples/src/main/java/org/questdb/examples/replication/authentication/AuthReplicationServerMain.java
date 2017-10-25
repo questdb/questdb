@@ -23,18 +23,14 @@
 
 package org.questdb.examples.replication.authentication;
 
-import com.questdb.JournalKey;
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.JournalConfiguration;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.net.ha.JournalServer;
-import com.questdb.net.ha.auth.AuthorizationHandler;
-import com.questdb.std.ObjList;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.JournalConfiguration;
+import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import org.questdb.examples.support.Price;
 
-import java.io.UnsupportedEncodingException;
 import java.util.concurrent.TimeUnit;
 
 public class AuthReplicationServerMain {
@@ -53,12 +49,7 @@ public class AuthReplicationServerMain {
         JournalConfiguration configuration = new JournalConfigurationBuilder().build(location);
         Factory factory = new Factory(configuration, 1000, 2, 0);
 
-        JournalServer server = new JournalServer(factory, new AuthorizationHandler() {
-            @Override
-            public boolean isAuthorized(byte[] token, ObjList<JournalKey> requestedKeys) throws UnsupportedEncodingException {
-                return "MY SECRET".equals(new String(token, "UTF8"));
-            }
-        });
+        JournalServer server = new JournalServer(factory, (token, requestedKeys) -> "MY SECRET".equals(new String(token, "UTF8")));
 
         JournalWriter<Price> writer = factory.writer(Price.class);
         server.publish(writer);

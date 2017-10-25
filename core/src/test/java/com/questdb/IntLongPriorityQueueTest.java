@@ -26,6 +26,7 @@ package com.questdb;
 import com.questdb.misc.Rnd;
 import com.questdb.std.IntLongPriorityQueue;
 import com.questdb.store.IndexCursor;
+import com.questdb.store.JournalMode;
 import com.questdb.store.KVIndex;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;

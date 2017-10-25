@@ -23,10 +23,10 @@
 
 package org.questdb.examples;
 
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.Factory;
 import com.questdb.misc.Files;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.Factory;
 import org.questdb.examples.support.Quote;
 
 import java.io.File;

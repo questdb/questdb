@@ -23,10 +23,10 @@
 
 package com.questdb.test.tools;
 
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.JournalConfiguration;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.JournalConfiguration;
+import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;

@@ -23,11 +23,11 @@
 
 package com.questdb.net.ha.producer;
 
-import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.std.ObjList;
 import com.questdb.store.AbstractColumn;
+import com.questdb.store.Partition;
 import com.questdb.store.VariableColumn;
 
 import java.nio.channels.WritableByteChannel;

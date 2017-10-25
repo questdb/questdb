@@ -23,9 +23,9 @@
 
 package com.questdb.ql;
 
-import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.ql.impl.map.DirectMapValues;
+import com.questdb.ql.map.DirectMapValues;
 import com.questdb.std.ObjList;
+import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 public interface AggregatorFunction {
 

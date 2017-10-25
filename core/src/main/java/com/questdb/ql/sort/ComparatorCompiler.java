@@ -1,0 +1,301 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
+package com.questdb.ql.sort;
+
+import com.questdb.ex.JournalUnsupportedTypeException;
+import com.questdb.misc.BytecodeAssembler;
+import com.questdb.misc.Chars;
+import com.questdb.misc.Numbers;
+import com.questdb.parser.sql.QueryParser;
+import com.questdb.ql.Record;
+import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.IntList;
+import com.questdb.std.Transient;
+import com.questdb.store.ColumnType;
+import com.questdb.store.factory.configuration.RecordMetadata;
+
+public class ComparatorCompiler {
+    private final BytecodeAssembler asm;
+    private final CharSequenceIntHashMap typeMap = new CharSequenceIntHashMap();
+    private final CharSequenceIntHashMap methodMap = new CharSequenceIntHashMap();
+    private final CharSequenceIntHashMap comparatorMap = new CharSequenceIntHashMap();
+    private final IntList fieldIndices = new IntList();
+    private final IntList fieldNameIndices = new IntList();
+    private final IntList fieldTypeIndices = new IntList();
+    private final IntList fieldRecordAccessorIndicesA = new IntList();
+    private final IntList fieldRecordAccessorIndicesB = new IntList();
+    private final IntList comparatorAccessorIndices = new IntList();
+    private final IntList branches = new IntList();
+
+    public ComparatorCompiler(BytecodeAssembler asm) {
+        this.asm = asm;
+    }
+
+    public RecordComparator compile(RecordMetadata m, @Transient IntList keyColumnIndices) {
+
+        assert keyColumnIndices.size() < QueryParser.MAX_ORDER_BY_COLUMNS;
+
+        asm.init(RecordComparator.class);
+        asm.setupPool();
+
+        int stackMapTableIndex = asm.poolUtf8("StackMapTable");
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
+        int interfaceClassIndex = asm.poolClass(RecordComparator.class);
+        int recordClassIndex = asm.poolClass(Record.class);
+        // this is name re-use, it used on all static interfaces that compare values
+        int compareNameIndex = asm.poolUtf8("compare");
+        // our compare method signature
+        int compareDescIndex = asm.poolUtf8("(Lcom/questdb/ql/Record;)I");
+        poolFieldArtifacts(compareNameIndex, thisClassIndex, recordClassIndex, m, keyColumnIndices);
+        // elements for setLeft() method
+        int setLeftNameIndex = asm.poolUtf8("setLeft");
+        int setLeftDescIndex = asm.poolUtf8("(Lcom/questdb/ql/Record;)V");
+        //
+        asm.finishPool();
+        asm.defineClass(thisClassIndex);
+        asm.interfaceCount(1);
+        asm.putShort(interfaceClassIndex);
+        asm.fieldCount(fieldNameIndices.size());
+        for (int i = 0, n = fieldNameIndices.size(); i < n; i++) {
+            asm.defineField(fieldNameIndices.getQuick(i), fieldTypeIndices.getQuick(i));
+        }
+        asm.methodCount(3);
+        asm.defineDefaultConstructor();
+        instrumentSetLeftMethod(setLeftNameIndex, setLeftDescIndex, keyColumnIndices);
+        instrumentCompareMethod(stackMapTableIndex, compareNameIndex, compareDescIndex, keyColumnIndices);
+
+        // class attribute count
+        asm.putShort(0);
+        return asm.newInstance();
+    }
+
+    private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, IntList keyColumns) {
+        branches.clear();
+        int sz = keyColumns.size();
+        asm.startMethod(nameIndex, descIndex, sz + 3, 3);
+
+        for (int i = 0; i < sz; i++) {
+            if (i > 0) {
+                asm.iload(2);
+                // last one does not jump
+                branches.add(asm.ifne());
+            }
+            asm.aload(0);
+            asm.getfield(fieldIndices.getQuick(i));
+            asm.aload(1);
+            int index = keyColumns.getQuick(i);
+            asm.iconst((index > 0 ? index : -index) - 1);
+            asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 1);
+            asm.invokeStatic(comparatorAccessorIndices.getQuick(i));
+            if (index < 0) {
+                asm.ineg();
+            }
+            asm.istore(2);
+        }
+        int p = asm.position();
+        asm.iload(2);
+        asm.ireturn();
+
+
+        // update ifne jumps to jump to "p" position
+        for (int i = 0, n = branches.size(); i < n; i++) {
+            asm.setJmp(branches.getQuick(i), p);
+        }
+
+        asm.endMethodCode();
+        // exceptions
+        asm.putShort(0);
+
+        // we have to add stack map table as branch target
+        // jvm requires it
+
+        // attributes: 1 - StackMapTable
+        asm.putShort(1);
+        // verification to ensure that return type is int and there is correct
+        // value present on stack
+        asm.startStackMapTables(stackMapTableIndex, 1);
+        // frame type APPEND
+        asm.append_frame(1, p - asm.getCodeStart());
+        asm.putITEM_Integer();
+        asm.endStackMapTables();
+        asm.endMethod();
+    }
+
+    /*
+     * setLeft(Record)
+     *
+     * This code generates method setLeft(Record), which assigns selected fields from
+     * the record to class fields. Generally this method looks like:
+     * f1 = record.getInt(3);
+     * f2 = record.getFlyweightStr(5);
+     *
+     * as you can see record fields are accessed by constants, to speed up the process.
+     *
+     * Class like that would translate to bytecode:
+     *
+     * aload_0
+     * aload_1
+     * invokeinterface index
+     * putfield index
+     * ...
+     *
+     * and so on for each field
+     * bytecode finishes with
+     *
+     * return
+     *
+     * all this complicated dancing around is to have class names, method names, field names
+     * method signatures in constant pool in bytecode.
+     */
+    private void instrumentSetLeftMethod(int nameIndex, int descIndex, IntList keyColumns) {
+        asm.startMethod(nameIndex, descIndex, 3, 2);
+        for (int i = 0, n = keyColumns.size(); i < n; i++) {
+            asm.aload(0);
+            asm.aload(1);
+            int index = keyColumns.getQuick(i);
+            // make sure column index is valid in case of "descending sort" flag
+            asm.iconst((index > 0 ? index : -index) - 1);
+            asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), 1);
+            asm.putfield(fieldIndices.getQuick(i));
+        }
+        asm.return_();
+        asm.endMethodCode();
+        // exceptions
+        asm.putShort(0);
+        // attributes
+        asm.putShort(0);
+        asm.endMethod();
+    }
+
+    private void poolFieldArtifacts(int compareMethodIndex, int thisClassIndex, int recordClassIndex, RecordMetadata m, IntList keyColumnIndices) {
+        typeMap.clear();
+        fieldIndices.clear();
+        fieldNameIndices.clear();
+        fieldTypeIndices.clear();
+        fieldRecordAccessorIndicesA.clear();
+        fieldRecordAccessorIndicesB.clear();
+        comparatorAccessorIndices.clear();
+        methodMap.clear();
+
+        // define names and types
+        for (int i = 0, n = keyColumnIndices.size(); i < n; i++) {
+            String fieldType;
+            String getterNameA;
+            String getterNameB = null;
+            Class comparatorClass;
+            String comparatorDesc = null;
+            int index = keyColumnIndices.getQuick(i);
+
+            if (index < 0) {
+                index = -index;
+            }
+
+            // decrement to get real column index
+            index--;
+
+            switch (m.getColumnQuick(index).getType()) {
+                case ColumnType.BOOLEAN:
+                    fieldType = "Z";
+                    getterNameA = "getBool";
+                    comparatorClass = Boolean.class;
+                    break;
+                case ColumnType.BYTE:
+                    fieldType = "B";
+                    getterNameA = "get";
+                    comparatorClass = Byte.class;
+                    break;
+                case ColumnType.DOUBLE:
+                    fieldType = "D";
+                    getterNameA = "getDouble";
+                    comparatorClass = Numbers.class;
+                    break;
+                case ColumnType.FLOAT:
+                    fieldType = "F";
+                    getterNameA = "getFloat";
+                    comparatorClass = Numbers.class;
+                    break;
+                case ColumnType.INT:
+                    fieldType = "I";
+                    getterNameA = "getInt";
+                    comparatorClass = Integer.class;
+                    break;
+                case ColumnType.LONG:
+                case ColumnType.DATE:
+                    fieldType = "J";
+                    getterNameA = "getLong";
+                    comparatorClass = Long.class;
+                    break;
+                case ColumnType.SHORT:
+                    fieldType = "S";
+                    getterNameA = "getShort";
+                    comparatorClass = Short.class;
+                    break;
+                case ColumnType.STRING:
+                    getterNameA = "getFlyweightStr";
+                    getterNameB = "getFlyweightStrB";
+                    fieldType = "Ljava/lang/CharSequence;";
+                    comparatorClass = Chars.class;
+                    break;
+                case ColumnType.SYMBOL:
+                    getterNameA = "getSym";
+                    fieldType = "Ljava/lang/CharSequence;";
+                    comparatorClass = Chars.class;
+                    comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
+                    break;
+                default:
+                    throw new JournalUnsupportedTypeException(ColumnType.nameOf(m.getColumnQuick(index).getType()));
+            }
+
+            int nameIndex;
+            int typeIndex = typeMap.get(fieldType);
+            if (typeIndex == -1) {
+                typeMap.put(fieldType, typeIndex = asm.poolUtf8(fieldType));
+            }
+            fieldTypeIndices.add(typeIndex);
+            fieldNameIndices.add(nameIndex = asm.poolUtf8().put('f').put(i).$());
+            fieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex)));
+
+            int methodIndex = methodMap.get(getterNameA);
+            if (methodIndex == -1) {
+                methodMap.put(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameA, "(I)" + fieldType));
+            }
+            fieldRecordAccessorIndicesA.add(methodIndex);
+
+            if (getterNameB != null) {
+                methodIndex = methodMap.get(getterNameB);
+                if (methodIndex == -1) {
+                    methodMap.put(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameB, "(I)" + fieldType));
+                }
+            }
+            fieldRecordAccessorIndicesB.add(methodIndex);
+
+            int comparatorIndex = comparatorMap.get(comparatorClass.getName());
+            if (comparatorIndex == -1) {
+                int nt = asm.poolNameAndType(compareMethodIndex, comparatorDesc == null ? asm.poolUtf8().put('(').put(fieldType).put(fieldType).put(")I").$() : asm.poolUtf8(comparatorDesc));
+                comparatorIndex = asm.poolMethod(asm.poolClass(comparatorClass), nt);
+            }
+            comparatorAccessorIndices.add(comparatorIndex);
+        }
+    }
+}

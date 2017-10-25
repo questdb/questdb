@@ -24,30 +24,30 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.PartitionBy;
 import com.questdb.ex.*;
-import com.questdb.factory.configuration.ColumnMetadata;
-import com.questdb.factory.configuration.JournalMetadata;
-import com.questdb.factory.configuration.RecordColumnMetadata;
-import com.questdb.json.JsonException;
-import com.questdb.json.JsonLexer;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Misc;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.IOContext;
 import com.questdb.net.http.RequestHeaderBuffer;
 import com.questdb.net.http.ResponseSink;
+import com.questdb.parser.ImportedColumnMetadata;
+import com.questdb.parser.JsonSchemaParser;
+import com.questdb.parser.json.JsonException;
+import com.questdb.parser.json.JsonLexer;
+import com.questdb.parser.plaintext.JournalImportListener;
+import com.questdb.parser.plaintext.PlainTextDelimiterLexer;
+import com.questdb.parser.plaintext.PlainTextLexer;
 import com.questdb.std.*;
 import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.FileNameExtractorCharSequence;
 import com.questdb.store.ColumnType;
-import com.questdb.txt.ImportedColumnMetadata;
-import com.questdb.txt.SchemaParser;
-import com.questdb.txt.parser.DelimitedTextParser;
-import com.questdb.txt.parser.DelimiterDetector;
-import com.questdb.txt.parser.listener.JournalImportListener;
+import com.questdb.store.PartitionBy;
+import com.questdb.store.factory.configuration.ColumnMetadata;
+import com.questdb.store.factory.configuration.JournalMetadata;
+import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -68,7 +68,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     private static final int TO_STRING_COL5_PAD = 10;
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
-    private static final ThreadLocal<DelimiterDetector> PARSER = new ThreadLocal<>();
+    private static final ThreadLocal<PlainTextDelimiterLexer> PARSER = new ThreadLocal<>();
     private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
     private final LocalValue<ImportHandlerContext> lvContext = new LocalValue<>();
     private final BootstrapEnv env;
@@ -197,7 +197,7 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     @Override
     public void setupThread() {
-        PARSER.set(DelimiterDetector.FACTORY.newInstance());
+        PARSER.set(PlainTextDelimiterLexer.FACTORY.newInstance());
     }
 
     private static void resumeJson(ImportHandlerContext ctx, ChunkedResponse r) throws DisconnectedChannelException, SlowWritableChannelException {
@@ -390,12 +390,12 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     private void analyseFormat(ImportHandlerContext context, long address, int len) {
-        final DelimiterDetector delimiterDetector = PARSER.get();
+        final PlainTextDelimiterLexer plainTextDelimiterLexer = PARSER.get();
 
-        delimiterDetector.of(address, len);
-        if (delimiterDetector.getDelimiter() != 0 && delimiterDetector.getStdDev() < 0.5) {
+        plainTextDelimiterLexer.of(address, len);
+        if (plainTextDelimiterLexer.getDelimiter() != 0 && plainTextDelimiterLexer.getStdDev() < 0.5) {
             context.state = ImportHandlerContext.STATE_OK;
-            context.textParser.of(delimiterDetector.getDelimiter());
+            context.textParser.of(plainTextDelimiterLexer.getDelimiter());
         } else {
             context.state = ImportHandlerContext.STATE_INVALID_FORMAT;
             context.stateMessage = "Unsupported Data Format";
@@ -418,7 +418,7 @@ public class ImportHandler extends AbstractMultipartHandler {
             analyseFormat(h, lo, len);
             if (h.state == ImportHandlerContext.STATE_OK) {
                 try {
-                    h.textParser.analyseStructure(lo, len, env.configuration.getHttpImportSampleSize(), h.importer, h.forceHeader, h.schemaParser.getMetadata());
+                    h.textParser.analyseStructure(lo, len, env.configuration.getHttpImportSampleSize(), h.importer, h.forceHeader, h.jsonSchemaParser.getMetadata());
                     h.textParser.parse(lo, len, Integer.MAX_VALUE, h.importer);
                 } catch (JournalRuntimeException e) {
                     if (env.configuration.isHttpAbortBrokenUploads()) {
@@ -435,7 +435,7 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     private void parseSchema(IOContext context, ImportHandlerContext h, long lo, int len) throws IOException {
         try {
-            h.jsonLexer.parse(lo, len, h.schemaParser);
+            h.jsonLexer.parse(lo, len, h.jsonSchemaParser);
         } catch (JsonException e) {
             handleJsonException(context, h, e);
         }
@@ -479,9 +479,9 @@ public class ImportHandler extends AbstractMultipartHandler {
         public static final int STATE_OK = 0;
         public static final int STATE_INVALID_FORMAT = 1;
         public static final int STATE_DATA_ERROR = 2;
-        private final DelimitedTextParser textParser;
+        private final PlainTextLexer textParser;
         private final JournalImportListener importer;
-        private final SchemaParser schemaParser;
+        private final JsonSchemaParser jsonSchemaParser;
         private final JsonLexer jsonLexer;
         public int columnIndex = 0;
         private int state;
@@ -494,8 +494,8 @@ public class ImportHandler extends AbstractMultipartHandler {
 
         private ImportHandlerContext(BootstrapEnv env) {
             this.importer = new JournalImportListener(env);
-            this.textParser = new DelimitedTextParser(env);
-            this.schemaParser = new SchemaParser(env);
+            this.textParser = new PlainTextLexer(env);
+            this.jsonSchemaParser = new JsonSchemaParser(env);
             this.jsonLexer = new JsonLexer(env.configuration.getHttpImportMaxJsonStringLen());
         }
 
@@ -509,7 +509,7 @@ public class ImportHandler extends AbstractMultipartHandler {
             textParser.clear();
             importer.clear();
             jsonLexer.clear();
-            schemaParser.clear();
+            jsonSchemaParser.clear();
         }
 
         @Override

@@ -23,11 +23,11 @@
 
 package com.questdb.net.ha.producer;
 
-import com.questdb.Journal;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.misc.ByteBuffers;
 import com.questdb.net.ha.ChannelProducer;
 import com.questdb.std.ObjList;
+import com.questdb.store.Journal;
 import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.Tx;
 

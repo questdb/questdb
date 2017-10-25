@@ -24,11 +24,11 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.misc.Chars;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
 import com.questdb.net.http.ResponseSink;
+import com.questdb.store.factory.configuration.JournalConfiguration;
 
 import java.io.IOException;
 

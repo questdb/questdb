@@ -23,13 +23,11 @@
 
 package com.questdb.ql;
 
-import com.questdb.JournalWriter;
 import com.questdb.model.Quote;
-import com.questdb.ql.impl.TopRecordSource;
 import com.questdb.ql.ops.constant.LongConstant;
+import com.questdb.store.JournalWriter;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
-import com.questdb.txt.RecordSourcePrinter;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;

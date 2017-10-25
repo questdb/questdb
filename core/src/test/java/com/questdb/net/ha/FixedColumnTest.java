@@ -23,11 +23,11 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.JournalMode;
 import com.questdb.ex.JournalException;
 import com.questdb.net.ha.comsumer.FixedColumnDeltaConsumer;
 import com.questdb.net.ha.producer.FixedColumnDeltaProducer;
 import com.questdb.store.FixedColumn;
+import com.questdb.store.JournalMode;
 import com.questdb.store.MemoryFile;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;

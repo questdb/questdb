@@ -23,12 +23,12 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.JournalWriter;
-import com.questdb.factory.configuration.JournalConfiguration;
-import com.questdb.factory.configuration.JournalMetadata;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.comsumer.HugeBufferConsumer;
 import com.questdb.net.ha.producer.HugeBufferProducer;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.configuration.JournalConfiguration;
+import com.questdb.store.factory.configuration.JournalMetadata;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;

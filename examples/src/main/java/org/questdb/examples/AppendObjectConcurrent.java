@@ -23,17 +23,16 @@
 
 package org.questdb.examples;
 
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.JournalConfiguration;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Rnd;
 import com.questdb.mp.MPSequence;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.SCSequence;
-import com.questdb.std.ObjectFactory;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.JournalConfiguration;
 import org.questdb.examples.support.ModelConfiguration;
 import org.questdb.examples.support.Quote;
 
@@ -57,12 +56,7 @@ public class AppendObjectConcurrent {
         }
 
         //
-        RingQueue<Quote> queue = new RingQueue<>(new ObjectFactory<Quote>() {
-            @Override
-            public Quote newInstance() {
-                return new Quote();
-            }
-        }, 4096);
+        RingQueue<Quote> queue = new RingQueue<>(Quote::new, 4096);
 
         // publisher sequence
         final MPSequence pubSequence = new MPSequence(queue.getCapacity());

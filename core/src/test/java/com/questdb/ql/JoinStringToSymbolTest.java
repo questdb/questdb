@@ -23,19 +23,15 @@
 
 package com.questdb.ql;
 
-import com.questdb.JournalWriter;
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.model.Album;
 import com.questdb.model.Band;
-import com.questdb.ql.impl.AllRowSource;
-import com.questdb.ql.impl.JournalPartitionSource;
-import com.questdb.ql.impl.JournalRecordSource;
-import com.questdb.ql.impl.join.CrossJoinRecordSource;
+import com.questdb.ql.join.CrossJoinRecordSource;
 import com.questdb.std.str.StringSink;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.test.tools.FactoryContainer;
 import com.questdb.test.tools.TestUtils;
-import com.questdb.txt.RecordSourcePrinter;
 import org.junit.*;
 
 public class JoinStringToSymbolTest {

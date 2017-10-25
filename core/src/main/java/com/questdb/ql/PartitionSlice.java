@@ -23,7 +23,7 @@
 
 package com.questdb.ql;
 
-import com.questdb.Partition;
+import com.questdb.store.Partition;
 
 public class PartitionSlice {
     public Partition partition;

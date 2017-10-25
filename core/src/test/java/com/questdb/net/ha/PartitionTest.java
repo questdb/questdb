@@ -23,8 +23,6 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.JournalWriter;
-import com.questdb.Partition;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.comsumer.JournalClientStateConsumer;
@@ -35,6 +33,8 @@ import com.questdb.net.ha.producer.JournalClientStateProducer;
 import com.questdb.net.ha.producer.JournalSymbolTableProducer;
 import com.questdb.net.ha.producer.PartitionDeltaProducer;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.Partition;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.After;

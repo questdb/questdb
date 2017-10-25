@@ -23,16 +23,16 @@
 
 package com.questdb.net.ha.comsumer;
 
-import com.questdb.JournalWriter;
-import com.questdb.Partition;
 import com.questdb.ex.IncompatibleJournalException;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
-import com.questdb.std.time.Interval;
 import com.questdb.net.ha.AbstractChannelConsumer;
 import com.questdb.net.ha.model.JournalServerState;
 import com.questdb.std.ObjList;
+import com.questdb.std.time.Interval;
 import com.questdb.store.JournalEvents;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.Partition;
 
 import java.nio.channels.ReadableByteChannel;
 

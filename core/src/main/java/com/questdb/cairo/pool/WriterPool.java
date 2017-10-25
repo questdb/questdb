@@ -30,13 +30,13 @@ import com.questdb.cairo.TableWriter;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
-import com.questdb.factory.FactoryConstants;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ConcurrentHashMap;
 import com.questdb.std.str.CompositePath;
+import com.questdb.store.factory.FactoryConstants;
 
 import java.util.Iterator;
 

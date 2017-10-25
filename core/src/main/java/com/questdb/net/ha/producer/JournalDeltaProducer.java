@@ -23,8 +23,6 @@
 
 package com.questdb.net.ha.producer;
 
-import com.questdb.Journal;
-import com.questdb.Partition;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.log.Log;
@@ -33,6 +31,8 @@ import com.questdb.misc.Rows;
 import com.questdb.net.ha.ChannelProducer;
 import com.questdb.net.ha.model.JournalServerState;
 import com.questdb.std.ObjList;
+import com.questdb.store.Journal;
+import com.questdb.store.Partition;
 import com.questdb.store.Tx;
 
 import java.nio.channels.WritableByteChannel;

@@ -23,11 +23,11 @@
 
 package com.questdb.ql;
 
-import com.questdb.JournalWriter;
 import com.questdb.ex.ParserException;
-import com.questdb.factory.configuration.JournalStructure;
-import com.questdb.ql.parser.AbstractOptimiserTest;
-import com.questdb.ql.parser.QueryError;
+import com.questdb.parser.sql.AbstractOptimiserTest;
+import com.questdb.parser.sql.QueryError;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.BeforeClass;

@@ -23,15 +23,15 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalNetworkException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.factory.Factory;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.Factory;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;

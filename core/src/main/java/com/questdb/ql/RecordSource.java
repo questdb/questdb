@@ -23,12 +23,11 @@
 
 package com.questdb.ql;
 
-import com.questdb.factory.ReaderFactory;
-import com.questdb.factory.configuration.RecordMetadata;
-import com.questdb.ql.impl.NoOpCancellationHandler;
 import com.questdb.ql.ops.Parameter;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.Sinkable;
+import com.questdb.store.factory.ReaderFactory;
+import com.questdb.store.factory.configuration.RecordMetadata;
 
 import java.io.Closeable;
 

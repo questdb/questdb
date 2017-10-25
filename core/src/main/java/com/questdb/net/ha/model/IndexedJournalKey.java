@@ -23,7 +23,7 @@
 
 package com.questdb.net.ha.model;
 
-import com.questdb.JournalKey;
+import com.questdb.store.JournalKey;
 
 public class IndexedJournalKey {
     private final JournalKey key;

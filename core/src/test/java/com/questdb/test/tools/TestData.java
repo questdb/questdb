@@ -23,11 +23,11 @@
 
 package com.questdb.test.tools;
 
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.model.Quote;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.store.JournalWriter;
 
 public final class TestData {
 

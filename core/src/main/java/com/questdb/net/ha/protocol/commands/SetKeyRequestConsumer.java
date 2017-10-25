@@ -23,9 +23,9 @@
 
 package com.questdb.net.ha.protocol.commands;
 
-import com.questdb.JournalKey;
 import com.questdb.net.ha.AbstractImmutableObjectConsumer;
 import com.questdb.net.ha.model.IndexedJournalKey;
+import com.questdb.store.JournalKey;
 
 import java.nio.ByteBuffer;
 

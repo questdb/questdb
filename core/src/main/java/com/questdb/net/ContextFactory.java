@@ -23,7 +23,7 @@
 
 package com.questdb.net;
 
-import com.questdb.iter.clock.Clock;
+import com.questdb.std.clock.Clock;
 
 public interface ContextFactory<C extends Context> {
     C newInstance(long fd, Clock clock);

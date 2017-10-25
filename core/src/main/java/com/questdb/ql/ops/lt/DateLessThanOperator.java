@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops.lt;
 
-import com.questdb.misc.Numbers;
 import com.questdb.ql.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -40,7 +39,6 @@ public class DateLessThanOperator extends AbstractBinaryOperator {
 
     @Override
     public boolean getBool(Record rec) {
-        long r = rhs.getDate(rec);
-        return lhs.getDate(rec) < r && r > Numbers.LONG_NaN;
+        return lhs.getDate(rec) < rhs.getDate(rec);
     }
 }

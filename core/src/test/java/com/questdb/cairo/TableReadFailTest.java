@@ -1,8 +1,8 @@
 package com.questdb.cairo;
 
-import com.questdb.PartitionBy;
 import com.questdb.misc.Chars;
 import com.questdb.std.str.LPSZ;
+import com.questdb.store.PartitionBy;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

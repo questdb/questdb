@@ -23,13 +23,13 @@
 
 package org.questdb.examples;
 
-import com.questdb.JournalWriter;
-import com.questdb.PartitionBy;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.Factory;
-import com.questdb.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.misc.Files;
 import com.questdb.misc.Rnd;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.PartitionBy;
+import com.questdb.store.factory.Factory;
+import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import org.questdb.examples.support.Quote;
 
 import java.io.File;

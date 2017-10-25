@@ -23,11 +23,11 @@
 
 package org.questdb.examples.replication.ssl;
 
-import com.questdb.JournalWriter;
 import com.questdb.ex.JournalException;
-import com.questdb.factory.Factory;
 import com.questdb.net.ha.JournalServer;
 import com.questdb.net.ha.config.ServerConfig;
+import com.questdb.store.JournalWriter;
+import com.questdb.store.factory.Factory;
 import org.questdb.examples.support.Price;
 
 import java.io.InputStream;

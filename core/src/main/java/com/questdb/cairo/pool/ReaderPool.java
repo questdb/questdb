@@ -30,11 +30,11 @@ import com.questdb.cairo.TableReader;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
-import com.questdb.factory.FactoryConstants;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ConcurrentHashMap;
+import com.questdb.store.factory.FactoryConstants;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -341,7 +341,7 @@ public class ReaderPool extends AbstractPool {
     public static class R extends TableReader {
         private ReaderPool pool;
         private Entry entry;
-        private int index;
+        private final int index;
 
         public R(FilesFacade ff, ReaderPool pool, Entry entry, int index, CharSequence root, CharSequence name) {
             super(ff, root, name);

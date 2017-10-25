@@ -1,8 +1,8 @@
 package com.questdb.cairo;
 
+import com.questdb.ql.CollectionRecordMetadata;
 import com.questdb.ql.Record;
-import com.questdb.ql.impl.CollectionRecordMetadata;
-import com.questdb.ql.impl.RecordColumnMetadataImpl;
+import com.questdb.ql.RecordColumnMetadataImpl;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.LongList;
 import com.questdb.store.ColumnType;
