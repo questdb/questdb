@@ -10,7 +10,7 @@ import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 import java.io.Closeable;
 
-class TableMetadata extends AbstractRecordMetadata implements Closeable {
+class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
     private final ObjList<TableColumnMetadata> columnMetadata;
     private final CharSequenceIntHashMap columnNameIndexMap = new CharSequenceIntHashMap();
     private final ReadOnlyMemory metaMem;
@@ -21,7 +21,7 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
     private int columnCount;
     private ReadOnlyMemory transitionMeta;
 
-    public TableMetadata(FilesFacade ff, CompositePath path) {
+    public TableReaderMetadata(FilesFacade ff, CompositePath path) {
         this.ff = ff;
         this.path = new CompositePath().of(path).$();
         try {
@@ -35,8 +35,8 @@ class TableMetadata extends AbstractRecordMetadata implements Closeable {
             // don't create strings in this loop, we already have them in columnNameIndexMap
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(offset);
-                int index = columnNameIndexMap.getEntry(name);
-                columnMetadata.add(new TableColumnMetadata(columnNameIndexMap.entryKey(index).toString(), TableUtils.getColumnType(metaMem, i)));
+                int index = columnNameIndexMap.keyIndex(name);
+                columnMetadata.add(new TableColumnMetadata(columnNameIndexMap.keyAt(index).toString(), TableUtils.getColumnType(metaMem, i)));
                 offset += ReadOnlyMemory.getStorageLength(name);
             }
         } catch (CairoException e) {

@@ -10,7 +10,7 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TableMetadataTimestampTest extends AbstractCairoTest {
+public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testReAddColumn() throws Exception {
@@ -168,7 +168,7 @@ public class TableMetadataTimestampTest extends AbstractCairoTest {
         int columnCount = 11;
         TestUtils.assertMemoryLeak(() -> {
             try (CompositePath path = new CompositePath().of(root).concat("all")) {
-                try (TableMetadata metadata = new TableMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
@@ -189,21 +189,21 @@ public class TableMetadataTimestampTest extends AbstractCairoTest {
                         TestUtils.assertEquals(expected, sink);
                         Assert.assertEquals(-1, metadata.getTimestampIndex());
                     } finally {
-                        TableMetadata.freeTransitionIndex(address);
+                        TableReaderMetadata.freeTransitionIndex(address);
                     }
                 }
             }
         });
     }
 
-    private void assertThatTimestampRemains(TableMetadataTest.ColumnManipulator manipulator,
+    private void assertThatTimestampRemains(TableReaderMetadataTest.ColumnManipulator manipulator,
                                             String expected,
                                             int expectedInitialTimestampIndex,
                                             int expectedFinalTimestampIndex,
                                             int expectedColumnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CompositePath path = new CompositePath().of(root).concat("all")) {
-                try (TableMetadata metadata = new TableMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
@@ -224,7 +224,7 @@ public class TableMetadataTimestampTest extends AbstractCairoTest {
                         TestUtils.assertEquals(expected, sink);
                         Assert.assertEquals(expectedFinalTimestampIndex, metadata.getTimestampIndex());
                     } finally {
-                        TableMetadata.freeTransitionIndex(address);
+                        TableReaderMetadata.freeTransitionIndex(address);
                     }
                 }
             }

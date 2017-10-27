@@ -33,10 +33,10 @@ import com.questdb.parser.ImportedColumnMetadata;
 import com.questdb.parser.JsonSchemaParser;
 import com.questdb.parser.json.JsonException;
 import com.questdb.parser.json.JsonLexer;
-import com.questdb.parser.plaintext.JournalImportListener;
 import com.questdb.parser.plaintext.MetadataAwareTextParser;
 import com.questdb.parser.plaintext.PlainTextLexer;
 import com.questdb.parser.plaintext.PlainTextParser;
+import com.questdb.parser.plaintext.PlainTextStoringParser;
 import com.questdb.parser.typeprobe.TypeProbeCollection;
 import com.questdb.std.ObjList;
 import com.questdb.std.time.DateFormatFactory;
@@ -118,7 +118,7 @@ public final class ImportManager {
                 case JournalConfiguration.EXISTS_FOREIGN:
                     throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
                 default:
-                    try (JournalImportListener l = new JournalImportListener(env).of(location, false, false, JournalImportListener.ATOMICITY_RELAXED)) {
+                    try (PlainTextStoringParser l = new PlainTextStoringParser(env).of(location, false, false, PlainTextStoringParser.ATOMICITY_RELAXED)) {
                         analyzeAndParse(file, parser, l, schema, sampleSize, forceHeader);
                     }
                     break;

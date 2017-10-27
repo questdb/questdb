@@ -35,9 +35,9 @@ import com.questdb.parser.ImportedColumnMetadata;
 import com.questdb.parser.JsonSchemaParser;
 import com.questdb.parser.json.JsonException;
 import com.questdb.parser.json.JsonLexer;
-import com.questdb.parser.plaintext.JournalImportListener;
 import com.questdb.parser.plaintext.PlainTextDelimiterLexer;
 import com.questdb.parser.plaintext.PlainTextLexer;
+import com.questdb.parser.plaintext.PlainTextStoringParser;
 import com.questdb.std.*;
 import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.CharSink;
@@ -382,11 +382,11 @@ public class ImportHandler extends AbstractMultipartHandler {
 
     private static int getAtomicity(CharSequence name) {
         if (name == null) {
-            return JournalImportListener.ATOMICITY_RELAXED;
+            return PlainTextStoringParser.ATOMICITY_RELAXED;
         }
 
         int atomicity = atomicityParamMap.get(name);
-        return atomicity == -1 ? JournalImportListener.ATOMICITY_RELAXED : atomicity;
+        return atomicity == -1 ? PlainTextStoringParser.ATOMICITY_RELAXED : atomicity;
     }
 
     private void analyseFormat(ImportHandlerContext context, long address, int len) {
@@ -480,7 +480,7 @@ public class ImportHandler extends AbstractMultipartHandler {
         public static final int STATE_INVALID_FORMAT = 1;
         public static final int STATE_DATA_ERROR = 2;
         private final PlainTextLexer textParser;
-        private final JournalImportListener importer;
+        private final PlainTextStoringParser importer;
         private final JsonSchemaParser jsonSchemaParser;
         private final JsonLexer jsonLexer;
         public int columnIndex = 0;
@@ -493,7 +493,7 @@ public class ImportHandler extends AbstractMultipartHandler {
         private boolean forceHeader = false;
 
         private ImportHandlerContext(BootstrapEnv env) {
-            this.importer = new JournalImportListener(env);
+            this.importer = new PlainTextStoringParser(env);
             this.textParser = new PlainTextLexer(env);
             this.jsonSchemaParser = new JsonSchemaParser(env);
             this.jsonLexer = new JsonLexer(env.configuration.getHttpImportMaxJsonStringLen());
@@ -522,7 +522,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     static {
-        atomicityParamMap.put("relaxed", JournalImportListener.ATOMICITY_RELAXED);
-        atomicityParamMap.put("strict", JournalImportListener.ATOMICITY_STRICT);
+        atomicityParamMap.put("relaxed", PlainTextStoringParser.ATOMICITY_RELAXED);
+        atomicityParamMap.put("strict", PlainTextStoringParser.ATOMICITY_STRICT);
     }
 }

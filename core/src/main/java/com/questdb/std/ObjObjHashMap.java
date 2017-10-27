@@ -66,7 +66,11 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         Arrays.fill(keys, noEntryValue);
     }
 
-    public int entryIndex(K key) {
+    public V get(K key) {
+        return getAt(keyIndex(key));
+    }
+
+    public int keyIndex(K key) {
         final int index = key.hashCode() & mask;
 
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
@@ -77,11 +81,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
             return -index - 1;
         }
 
-        return probeEntry(key, index);
-    }
-
-    public V get(K key) {
-        return getAt(entryIndex(key));
+        return probe(key, index);
     }
 
     public V getAt(int index) {
@@ -100,7 +100,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
     }
 
     public void put(K key, V value) {
-        putAt(entryIndex(key), key, value);
+        putAt(keyIndex(key), key, value);
     }
 
     public void putAt(int index, K key, V value) {
@@ -116,7 +116,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
     }
 
     public V remove(K key) {
-        int index = entryIndex(key);
+        int index = keyIndex(key);
         if (index < 0) {
             V value = Unsafe.arrayGet(values, -index - 1);
             Unsafe.arrayPut(values, -index - 1, null);
@@ -130,7 +130,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         return capacity - free;
     }
 
-    private int probeEntry(K key, int index) {
+    private int probe(K key, int index) {
         for (; ; ) {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {

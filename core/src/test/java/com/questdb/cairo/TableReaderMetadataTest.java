@@ -11,7 +11,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class TableMetadataTest extends AbstractCairoTest {
+public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Before
     public void setUp2() throws Exception {
@@ -51,7 +51,7 @@ public class TableMetadataTest extends AbstractCairoTest {
         expected.put("bool", 8);
 
         try (CompositePath path = new CompositePath().of(root).concat("all").concat(TableUtils.META_FILE_NAME).$();
-             TableMetadata metadata = new TableMetadata(FilesFacadeImpl.INSTANCE, path)) {
+             TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
             for (ObjIntHashMap.Entry<String> e : expected) {
                 Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
             }
@@ -80,7 +80,7 @@ public class TableMetadataTest extends AbstractCairoTest {
 
     @Test
     public void testFreeNullAddressAsIndex() throws Exception {
-        TableMetadata.freeTransitionIndex(0);
+        TableReaderMetadata.freeTransitionIndex(0);
     }
 
     @Test
@@ -229,7 +229,7 @@ public class TableMetadataTest extends AbstractCairoTest {
     private void assertThat(String expected, ColumnManipulator manipulator, int columnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CompositePath path = new CompositePath().of(root).concat("all")) {
-                try (TableMetadata metadata = new TableMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     try (TableWriter writer = new TableWriter(FilesFacadeImpl.INSTANCE, root, "all")) {
                         manipulator.restructure(writer);
@@ -257,7 +257,7 @@ public class TableMetadataTest extends AbstractCairoTest {
                             }
                         }
                     } finally {
-                        TableMetadata.freeTransitionIndex(address);
+                        TableReaderMetadata.freeTransitionIndex(address);
                     }
                 }
             }

@@ -403,16 +403,16 @@ public final class Chars {
         return b.toString();
     }
 
-    public static void utf8Decode(ByteSequence in, CharSink builder) {
+    public static void utf8Decode(ByteSequence in, CharSink sink) {
         int index = 0;
         int len = in.length();
 
         while (index < len) {
             byte b = in.byteAt(index);
             if (b < 0) {
-                index += utf8DecodeMultiByte(in, b, index, len, builder);
+                index += utf8DecodeMultiByte(in, b, index, len, sink);
             } else {
-                builder.put((char) b);
+                sink.put((char) b);
                 ++index;
             }
         }

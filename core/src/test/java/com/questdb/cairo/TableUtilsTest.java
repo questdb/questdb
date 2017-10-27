@@ -13,6 +13,9 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import static com.questdb.cairo.TableUtils.TABLE_EXISTS;
+import static com.questdb.cairo.TableUtils.TABLE_RESERVED;
+
 public class TableUtilsTest {
     private final static FilesFacade FF = FilesFacadeImpl.INSTANCE;
     @ClassRule
@@ -27,7 +30,7 @@ public class TableUtilsTest {
         try (AppendMemory appendMemory = new AppendMemory()) {
             try (CompositePath path = new CompositePath()) {
                 TableUtils.create(FF, path, appendMemory, root, metadata, 509);
-                Assert.assertEquals(0, TableUtils.exists(FF, path, root, metadata.getName()));
+                Assert.assertEquals(TABLE_EXISTS, TableUtils.exists(FF, path, root, metadata.getName()));
 
                 path.of(root).concat(metadata.getName()).concat("_meta").$();
 
@@ -105,7 +108,7 @@ public class TableUtilsTest {
     @Test
     public void testForeignDirectory() throws Exception {
         try (CompositePath path = new CompositePath()) {
-            Assert.assertEquals(2, TableUtils.exists(FF, path, temp.getRoot().getAbsolutePath(), ""));
+            Assert.assertEquals(TABLE_RESERVED, TableUtils.exists(FF, path, temp.getRoot().getAbsolutePath(), ""));
         }
     }
 

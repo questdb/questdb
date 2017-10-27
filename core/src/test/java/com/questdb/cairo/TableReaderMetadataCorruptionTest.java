@@ -32,7 +32,7 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class TableMetadataCorruptionTest extends AbstractCairoTest {
+public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
 
     @Test
     public void testColumnCountIsBeyondFileSize() throws Exception {
@@ -187,7 +187,7 @@ public class TableMetadataCorruptionTest extends AbstractCairoTest {
                 }
 
                 try {
-                    new TableMetadata(FilesFacadeImpl.INSTANCE, path);
+                    new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), contains);
@@ -206,7 +206,7 @@ public class TableMetadataCorruptionTest extends AbstractCairoTest {
 
                 long len = FilesFacadeImpl.INSTANCE.length(path);
 
-                try (TableMetadata metadata = new TableMetadata(FilesFacadeImpl.INSTANCE, path)) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
                     try (AppendMemory mem = new AppendMemory()) {
                         mem.of(FilesFacadeImpl.INSTANCE, path, FilesFacadeImpl.INSTANCE.getPageSize());
                         mem.putInt(columnCount);

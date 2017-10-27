@@ -2,19 +2,18 @@ package com.questdb.parser.typeprobe;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.ByteBuffers;
+import com.questdb.misc.Files;
+import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.DateLocale;
 import com.questdb.std.time.DateLocaleFactory;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 
 public class TypeProbeCollection {
     private static final Log LOG = LogFactory.getLog(TypeProbeCollection.class);
@@ -33,7 +32,7 @@ public class TypeProbeCollection {
         this.probeCount = probes.size();
     }
 
-    public TypeProbeCollection(File file, DateFormatFactory dateFormatFactory, DateLocaleFactory dateLocaleFactory) throws IOException {
+    public TypeProbeCollection(CharSequence file, DateFormatFactory dateFormatFactory, DateLocaleFactory dateLocaleFactory) throws IOException {
         addDefaultProbes();
         parseFile(file, dateFormatFactory, dateLocaleFactory);
         this.probeCount = probes.size();
@@ -54,16 +53,22 @@ public class TypeProbeCollection {
         probes.add(new BooleanProbe());
     }
 
-    private void parseFile(File file, DateFormatFactory dateFormatFactory, DateLocaleFactory dateLocaleFactory) throws IOException {
+    private void parseFile(CharSequence fileName, DateFormatFactory dateFormatFactory, DateLocaleFactory dateLocaleFactory) throws IOException {
         final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-        try (FileInputStream fis = new FileInputStream(file)) {
-            int sz;
-            ByteBuffer buf = ByteBuffer.allocateDirect(sz = fis.available());
+        try (Path path = new Path(fileName)) {
+            long fd = Files.openRO(path);
+            if (fd < 0) {
+                throw new IOException("Cannot open " + fileName + " [errno=" + Os.errno() + ']');
+            }
+
+
+            long sz = Files.length(fd);
+            long buf = Unsafe.malloc(sz);
             try {
 
-                fis.getChannel().read(buf);
+                Files.read(fd, buf, sz, 0);
 
-                long p = ByteBuffers.getAddress(buf);
+                long p = buf;
                 long hi = p + sz;
                 long _lo = p;
 
@@ -172,10 +177,9 @@ public class TypeProbeCollection {
                             }
                             break;
                     }
-
                 }
             } finally {
-                ByteBuffers.release(buf);
+                Unsafe.free(buf, sz);
             }
         }
     }

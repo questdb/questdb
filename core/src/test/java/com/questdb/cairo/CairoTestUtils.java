@@ -15,7 +15,7 @@ public class CairoTestUtils {
         String name = struct.getName();
         try (AppendMemory mem = new AppendMemory()) {
             try (CompositePath path = new CompositePath()) {
-                if (TableUtils.exists(ff, path, root, name) == 1) {
+                if (TableUtils.exists(ff, path, root, name) == TableUtils.TABLE_DOES_NOT_EXIST) {
                     TableUtils.create(ff, path, mem, root, struct.build(), 509);
                 } else {
                     throw CairoException.instance(0).put("Table ").put(name).put(" already exists");

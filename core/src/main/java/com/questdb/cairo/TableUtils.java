@@ -37,6 +37,9 @@ import com.questdb.store.ColumnType;
 import com.questdb.store.factory.configuration.JournalMetadata;
 
 public final class TableUtils {
+    public static final int TABLE_EXISTS = 0;
+    public static final int TABLE_DOES_NOT_EXIST = 1;
+    public static final int TABLE_RESERVED = 2;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     static final long META_OFFSET_COLUMN_TYPES = 12;
@@ -94,12 +97,12 @@ public final class TableUtils {
         if (ff.exists(path)) {
             // prepare to replace trailing \0
             if (ff.exists(path.chopZ().concat(TXN_FILE_NAME).$())) {
-                return 0;
+                return TABLE_EXISTS;
             } else {
-                return 2;
+                return TABLE_RESERVED;
             }
         } else {
-            return 1;
+            return TABLE_DOES_NOT_EXIST;
         }
     }
 

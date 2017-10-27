@@ -6,12 +6,10 @@ import com.questdb.std.time.DateLocaleFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.File;
-
 public class TypeProbeCollectionTest {
     @Test
     public void testTypeProbeCollectionInstantiation() throws Exception {
-        TypeProbeCollection typeProbeCollection = new TypeProbeCollection(new File(this.getClass().getResource("/date_test.formats").getFile()),
+        TypeProbeCollection typeProbeCollection = new TypeProbeCollection(this.getClass().getResource("/date_test.formats").getFile(),
                 new DateFormatFactory(), DateLocaleFactory.INSTANCE);
 
         Assert.assertEquals(7, typeProbeCollection.getProbeCount());

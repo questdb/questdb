@@ -27,7 +27,10 @@ import com.questdb.ex.NumericException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
-import com.questdb.std.*;
+import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.LongList;
+import com.questdb.std.ObjList;
+import com.questdb.std.Sinkable;
 import com.questdb.std.str.*;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatUtils;
@@ -35,6 +38,7 @@ import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.std.time.Dates;
 import com.questdb.store.ColumnType;
 import com.questdb.store.PartitionBy;
+import com.questdb.store.factory.configuration.RecordMetadata;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -65,7 +69,7 @@ public class TableWriter implements Closeable {
     private final int mkDirMode;
     private final int fileOperationRetryCount;
     private final CharSequence name;
-    private final CharSequenceIntHashMap tmpValidationMap = new CharSequenceIntHashMap();
+    private final TableWriterMetadata metadata;
     int txPartitionCount = 0;
     private long lockFd = -1;
     private LongConsumer timestampSetter;
@@ -130,7 +134,8 @@ public class TableWriter implements Closeable {
             this.ddlMem = new AppendMemory();
             this.metaMem = new ReadOnlyMemory();
             openMetaFile();
-            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            this.metadata = new TableWriterMetadata(ff, metaMem);
+            this.columnCount = metadata.getColumnCount();
             this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
             this.columnSizeMem = new VirtualMemory(ff.getPageSize());
             this.refs.extendAndSet(columnCount, 0);
@@ -233,6 +238,8 @@ public class TableWriter implements Closeable {
 
         bumpStructureVersion();
 
+        metadata.addColumn(name, type);
+
         LOG.info().$("ADDED column '").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
     }
 
@@ -288,7 +295,7 @@ public class TableWriter implements Closeable {
     }
 
     public int getColumnIndex(CharSequence name) {
-        int index = getColumnIndexQuiet(metaMem, name, columnCount);
+        int index = metadata.getColumnIndexQuiet(name);
         if (index == -1) {
             throw CairoException.instance(0).put("Invalid column name: ").put(name);
         }
@@ -297,6 +304,10 @@ public class TableWriter implements Closeable {
 
     public long getMaxTimestamp() {
         return maxTimestamp;
+    }
+
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     public CharSequence getName() {
@@ -376,6 +387,8 @@ public class TableWriter implements Closeable {
         }
 
         bumpStructureVersion();
+
+        metadata.removeColumn(name);
 
         LOG.info().$("REMOVED column '").$(name).$("' from ").$(path).$();
     }
@@ -778,7 +791,7 @@ public class TableWriter implements Closeable {
     }
 
     private LongConsumer configureTimestampSetter() {
-        int index = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+        int index = metadata.getTimestampIndex();
         if (index == -1) {
             return value -> {
             };
@@ -839,8 +852,6 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
-        tmpValidationMap.clear();
-        TableUtils.validate(ff, metaMem, tmpValidationMap);
     }
 
     private void openNewColumnFiles(CharSequence name) {
@@ -867,12 +878,10 @@ public class TableWriter implements Closeable {
             }
             assert columnCount > 0;
 
-            long nameOffset = TableUtils.getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
-                CharSequence name = metaMem.getStr(nameOffset);
+                CharSequence name = metadata.getColumnQuick(i).getName();
                 openColumnFiles(name, i, plen);
                 columnTops.extendAndSet(i, TableUtils.readColumnTop(ff, path, name, plen, tempMem8b));
-                nameOffset += VirtualMemory.getStorageLength(name);
             }
             LOG.info().$("switched partition to '").$(path).$('\'').$();
         } finally {

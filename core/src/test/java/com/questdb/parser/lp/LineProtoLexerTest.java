@@ -19,13 +19,13 @@ public class LineProtoLexerTest {
         @Override
         public void onEvent(ByteSequence token, int type) {
             switch (type) {
-                case LineProtoLexer.EVT_MEASUREMENT:
+                case LineProtoParser.EVT_MEASUREMENT:
                     sink.put(token);
                     break;
-                case LineProtoLexer.EVT_TAG_NAME:
+                case LineProtoParser.EVT_TAG_NAME:
                     sink.put(',').put(token).put('=');
                     break;
-                case LineProtoLexer.EVT_FIELD_NAME:
+                case LineProtoParser.EVT_FIELD_NAME:
                     if (fields) {
                         sink.put(',');
                     } else {
@@ -38,16 +38,16 @@ public class LineProtoLexerTest {
                     }
                     sink.put(token).put('=');
                     break;
-                case LineProtoLexer.EVT_TAG_VALUE:
-                case LineProtoLexer.EVT_FIELD_VALUE:
+                case LineProtoParser.EVT_TAG_VALUE:
+                case LineProtoParser.EVT_FIELD_VALUE:
                     sink.put(token);
                     break;
-                case LineProtoLexer.EVT_TIMESTAMP:
+                case LineProtoParser.EVT_TIMESTAMP:
                     if (token.length() > 0) {
                         sink.put(' ').put(token);
                     }
                     break;
-                case LineProtoLexer.EVT_END:
+                case LineProtoParser.EVT_END:
                     sink.put('\n');
                     fields = false;
                     break;
@@ -55,7 +55,6 @@ public class LineProtoLexerTest {
                     break;
 
             }
-
         }
     };
 
@@ -280,18 +279,35 @@ public class LineProtoLexerTest {
 
     private void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
         final int len = line.length();
-        long ptr = TestUtils.toMemory(line);
-        try {
-            for (int i = 0; i < len; i++) {
-                sink.clear();
-                lexer.clear();
-                lexer.parse(ptr, i, lineAssemblingListener);
-                lexer.parse(ptr + i, len - i, lineAssemblingListener);
-                lexer.parseLast(lineAssemblingListener);
-                TestUtils.assertEquals(expected, sink);
+        if (len < 10) {
+            long ptr = TestUtils.toMemory(line);
+            try {
+                for (int i = 0; i < len; i++) {
+                    sink.clear();
+                    lexer.clear();
+                    lexer.parse(ptr, i, lineAssemblingListener);
+                    lexer.parse(ptr + i, len - i, lineAssemblingListener);
+                    lexer.parseLast(lineAssemblingListener);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            } finally {
+                Unsafe.free(ptr, len);
             }
-        } finally {
-            Unsafe.free(ptr, len);
+        } else {
+            long ptr = TestUtils.toMemory(line);
+            try {
+                for (int i = 0; i < len - 10; i++) {
+                    sink.clear();
+                    lexer.clear();
+                    lexer.parse(ptr, i, lineAssemblingListener);
+                    lexer.parse(ptr + i, 10, lineAssemblingListener);
+                    lexer.parse(ptr + i + 10, len - i - 10, lineAssemblingListener);
+                    lexer.parseLast(lineAssemblingListener);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            } finally {
+                Unsafe.free(ptr, len);
+            }
         }
     }
 

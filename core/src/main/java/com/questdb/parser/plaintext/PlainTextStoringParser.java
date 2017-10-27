@@ -50,11 +50,11 @@ import java.io.Closeable;
 import static com.questdb.store.factory.configuration.JournalConfiguration.DOES_NOT_EXIST;
 import static com.questdb.store.factory.configuration.JournalConfiguration.EXISTS;
 
-public class JournalImportListener implements MetadataAwareTextParser, Closeable, Mutable {
+public class PlainTextStoringParser implements MetadataAwareTextParser, Closeable, Mutable {
     public static final int ATOMICITY_STRICT = 0;
     public static final int ATOMICITY_RELAXED = 1;
 
-    private static final Log LOG = LogFactory.getLog(JournalImportListener.class);
+    private static final Log LOG = LogFactory.getLog(PlainTextStoringParser.class);
     private final Factory factory;
     private final LongList errors = new LongList();
     private final DirectCharSink utf8Sink = new DirectCharSink(4096);
@@ -67,7 +67,7 @@ public class JournalImportListener implements MetadataAwareTextParser, Closeable
     private boolean durable;
     private int atomicity;
 
-    public JournalImportListener(BootstrapEnv env) {
+    public PlainTextStoringParser(BootstrapEnv env) {
         this.factory = env.factory;
     }
 
@@ -122,7 +122,7 @@ public class JournalImportListener implements MetadataAwareTextParser, Closeable
         return header;
     }
 
-    public JournalImportListener of(String name, boolean overwrite, boolean durable, int atomicity) {
+    public PlainTextStoringParser of(String name, boolean overwrite, boolean durable, int atomicity) {
         this.name = name;
         this.overwrite = overwrite;
         this.durable = durable;

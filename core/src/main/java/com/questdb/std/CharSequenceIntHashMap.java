@@ -70,172 +70,96 @@ public class CharSequenceIntHashMap implements Mutable {
         free = this.capacity;
     }
 
-    public CharSequence entryKey(int index) {
-        return Unsafe.arrayGet(keys, index);
-    }
-
     public int get(CharSequence key) {
-        int index = Chars.hashCode(key) & mask;
-
-        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-            return noEntryValue;
-        }
-
-        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            return Unsafe.arrayGet(values, index);
-        }
-
-        return probe(key, index);
-    }
-
-    public int getEntry(CharSequence key) {
-        int index = Chars.hashCode(key) & mask;
-
-        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-            return noEntryValue;
-        }
-
-        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            return index;
-        }
-
-        return probeEntry(key, index);
+        return valueAt(keyIndex(key));
     }
 
     public void increment(CharSequence key) {
-        int index = Chars.hashCode(key) & mask;
-        if (cantIncrementAt(index, key)) {
-            probeIncrement(key, index);
+        int index = keyIndex(key);
+        if (index < 0) {
+            Unsafe.arrayPut(values, -index - 1, Unsafe.arrayGet(values, -index - 1) + 1);
+        } else {
+            putAt0(index, key, 0);
         }
     }
 
-    public boolean put(CharSequence key, int value) {
+    public CharSequence keyAt(int index) {
+        return index < 0 ? Unsafe.arrayGet(keys, -index - 1) : null;
+    }
+
+    public int keyIndex(CharSequence key) {
         int index = Chars.hashCode(key) & mask;
+
         if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
-            free--;
-            if (free == 0) {
-                rehash();
-            }
-            return true;
+            return index;
         }
 
         if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            Unsafe.arrayPut(values, index, value);
-            return false;
+            return -index - 1;
         }
 
-        return probeInsert(key, index, value);
+        return probe0(key, index);
+    }
+
+    public boolean put(CharSequence key, int value) {
+        return putAt(keyIndex(key), key, value);
+    }
+
+    public boolean putAt(int index, CharSequence key, int value) {
+        if (index < 0) {
+            Unsafe.arrayPut(values, -index - 1, value);
+            return false;
+        }
+        putAt0(index, key, value);
+        return true;
     }
 
     public void putIfAbsent(CharSequence key, int value) {
-        int index = key.hashCode() & mask;
-        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-            keys[index] = key;
-            values[index] = value;
-            free--;
-            if (free == 0) {
-                rehash();
-            }
+        int index = keyIndex(key);
+        if (index > -1) {
+            putAt0(index, key, value);
         }
+    }
 
-        if (Chars.equals(Unsafe.arrayGet(keys, index), key)) {
-            return;
+    public boolean remove(CharSequence key) {
+        return removeAt(keyIndex(key));
+    }
+
+    public boolean removeAt(int index) {
+        if (index < 0) {
+            Unsafe.arrayPut(values, -index - 1, noEntryValue);
+            free++;
+            return true;
         }
-
-        probeInsertIfAbsent(key, index, value);
+        return false;
     }
 
     public int size() {
         return capacity - free;
     }
 
-    private boolean cantIncrementAt(int index, CharSequence key) {
-        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
-            free--;
-            if (free == 0) {
-                rehash();
-            }
-            return false;
-        }
-
-        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            Unsafe.arrayPut(values, index, Unsafe.arrayGet(values, index) + 1);
-            return false;
-        }
-        return true;
+    public int valueAt(int index) {
+        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : noEntryValue;
     }
 
-    private int probe(CharSequence key, int index) {
+    private int probe0(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-                return noEntryValue;
-            }
-            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                return Unsafe.arrayGet(values, index);
-            }
-        } while (true);
-    }
-
-    private int probeEntry(CharSequence key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-                return noEntryValue;
-            }
-            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
                 return index;
             }
-        } while (true);
-    }
-
-    private void probeIncrement(CharSequence key, int index) {
-        do {
-            index = (index + 1) & mask;
-        } while (cantIncrementAt(index, key));
-    }
-
-    private boolean probeInsert(CharSequence key, int index, int value) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, value);
-                free--;
-                if (free == 0) {
-                    rehash();
-                }
-                return true;
-            }
-
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                Unsafe.arrayPut(values, index, value);
-                return false;
+                return -index - 1;
             }
         } while (true);
     }
 
-    private void probeInsertIfAbsent(CharSequence key, int index, int value) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, value);
-                free--;
-                if (free == 0) {
-                    rehash();
-                }
-                return;
-            }
-
-            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                return;
-            }
-        } while (true);
+    private void putAt0(int index, CharSequence key, int value) {
+        Unsafe.arrayPut(keys, index, key);
+        Unsafe.arrayPut(values, index, value);
+        if (--free == 0) {
+            rehash();
+        }
     }
 
     private void rehash() {

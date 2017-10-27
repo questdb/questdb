@@ -122,7 +122,7 @@ public class TableReader implements Closeable, RecordCursor {
     private final int rootLen;
     private final ReadOnlyMemory txMem;
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
-    private final TableMetadata metadata;
+    private final TableReaderMetadata metadata;
     private final LongList partitionSizes;
     private final TableRecord record = new TableRecord();
     private final PartitionPathGenerator partitionPathGenerator;
@@ -243,7 +243,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     /**
      * Closed column files. Similarly to {@link #closeColumn(CharSequence)} closed reader column files before
-     * column can be removed. This method takes column index usually resolved from column name by #TableMetadata.
+     * column can be removed. This method takes column index usually resolved from column name by #TableReaderMetadata.
      * Bounds checking is performed via assertion.
      *
      * @param columnIndex column index
@@ -476,7 +476,7 @@ public class TableReader implements Closeable, RecordCursor {
             }
             this.columnCount = columnCount;
         } finally {
-            TableMetadata.freeTransitionIndex(address);
+            TableReaderMetadata.freeTransitionIndex(address);
         }
     }
 
@@ -539,9 +539,9 @@ public class TableReader implements Closeable, RecordCursor {
         columnTops.setPos(capacity / 2);
     }
 
-    private TableMetadata openMetaFile() {
+    private TableReaderMetadata openMetaFile() {
         try {
-            return new TableMetadata(ff, path.concat(TableUtils.META_FILE_NAME).$());
+            return new TableReaderMetadata(ff, path.concat(TableUtils.META_FILE_NAME).$());
         } finally {
             path.trimTo(rootLen);
         }
